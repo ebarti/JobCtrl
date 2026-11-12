@@ -264,7 +264,7 @@ def _recipe_command(recipe: str):
     return command
 
 
-for _recipe in ("enrich", "analyze", "score", "tailor", "prepare"):
+for _recipe in ("assess", "enrich", "analyze", "score", "tailor", "prepare"):
     app.command(_recipe, help=f"Submit the explicit {_recipe} preparation recipe.")(_recipe_command(_recipe))
 
 
@@ -306,8 +306,8 @@ def run(
     chosen = stages or ["run"]
     if chosen == ["all"]:
         chosen = ["discover"]
-    if len(chosen) != 1 or chosen[0] not in {"run", "discover", "enrich", "analyze", "score", "tailor", "prepare"}:
-        _fail("explicit_recipe_required", "Choose one recipe: run, discover, enrich, analyze, score, tailor or prepare. Custom implicit stage combinations are no longer accepted.", exit_code=2)
+    if len(chosen) != 1 or chosen[0] not in {"run", "discover", "assess", "enrich", "analyze", "score", "tailor", "prepare"}:
+        _fail("explicit_recipe_required", "Choose one recipe: run, discover, assess, enrich, analyze, score, tailor or prepare. Custom implicit stage combinations are no longer accepted.", exit_code=2)
     _output(_run(_preparation(chosen[0], job_id, limit=limit, force=force, min_fit_score=min_fit_score,
                              allow_below_threshold=allow_below_threshold, wait=wait, idempotency_key=idempotency_key)))
 

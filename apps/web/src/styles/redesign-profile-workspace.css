@@ -161,6 +161,18 @@
 .profile-peer-workspace .profile-sections--resume-data .repeat-list {
   padding-inline: 0;
 }
+.profile-peer-workspace .profile-skill-group-heading {
+  width: 100%;
+  min-width: 0;
+}
+.profile-peer-workspace .profile-skill-group-title {
+  border-color: transparent;
+  padding-inline: 0;
+  background: transparent;
+}
+.profile-peer-workspace .profile-skill-group-title:is(:hover, :focus-visible) {
+  border-color: var(--input);
+}
 .profile-peer-workspace .skill-list[data-slot="field-group"] {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
@@ -192,35 +204,57 @@
   width: auto;
 }
 
-.profile-achievement {
-  padding-block: 20px;
-  border-bottom: 1px solid var(--border);
+.profile-achievement[data-slot="field"] {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: none;
+  gap: 10px;
+  padding: 14px 16px;
 }
-.profile-achievement > .profile-achievement-source {
-  grid-area: text;
+.profile-achievement > * {
   min-width: 0;
 }
-.profile-achievement > :not(.bullet-row-top, .bullet-row-actions, .profile-achievement-source) {
-  grid-column: 1 / -1;
-  min-width: 0;
+.profile-achievement-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 20px;
+  color: var(--muted-foreground);
+  font-size: 12px;
 }
-.profile-achievement .bullet-row-top > .bullet-choice {
-  flex: 0 1 auto;
+.profile-achievement-tools > details {
   width: auto;
   min-width: 0;
+}
+.profile-achievement-tools > details[open] {
+  flex-basis: 100%;
+}
+.profile-achievement-tools summary {
+  cursor: pointer;
+}
+.profile-achievement-source > p {
+  margin: 8px 0;
+  max-width: 90ch;
+}
+.profile-achievement-options > .bullet-choice {
+  width: fit-content;
+  margin: 12px 0 8px;
+}
+.profile-achievement-options .bullet-row-actions {
+  width: fit-content;
 }
 .profile-achievement:focus {
   outline: 2px solid var(--ring);
   outline-offset: 5px;
 }
-.profile-achievement > textarea {
+.profile-achievement-source > textarea {
   min-height: 90px;
+  width: 100%;
   resize: vertical;
 }
 .profile-achievement-wordings {
   display: grid;
-  gap: 14px;
-  padding-top: 12px;
+  gap: 12px;
 }
 .profile-wording-card {
   border: 1px solid var(--border);
@@ -228,6 +262,27 @@
   padding: 16px;
   min-width: 0;
   background: var(--card);
+}
+.profile-wording-card:is([data-kind="current"], [data-kind="source"]) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 16px;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+.profile-wording-card:is([data-kind="current"], [data-kind="source"]) > * {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.profile-wording-card:is([data-kind="current"], [data-kind="source"])
+  > .profile-wording-actions {
+  grid-column: 1;
+}
+.profile-wording-card:is([data-kind="current"], [data-kind="source"])
+  > .profile-wording-audit:not([open]) {
+  grid-column: 2;
+  align-self: center;
 }
 .profile-wording-card__heading {
   display: flex;
@@ -249,10 +304,40 @@
 .profile-wording-card p {
   margin-block: 10px;
 }
+.profile-wording-card > .profile-wording-text {
+  margin: 0;
+  line-height: 1.6;
+}
+.profile-wording-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.profile-wording-card:is([data-kind="current"], [data-kind="source"])
+  > .profile-wording-actions {
+  margin: 0;
+}
+.profile-wording-caption {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
 .profile-wording-card details {
   margin-block: 12px;
   color: var(--muted-foreground);
   font-size: 12px;
+}
+.profile-wording-card > .profile-wording-audit {
+  margin: 0;
+}
+.profile-wording-audit > summary {
+  cursor: pointer;
+}
+.profile-wording-audit h5 {
+  margin: 14px 0 0;
+  font-size: 12px;
+  font-weight: 600;
 }
 .profile-wording-card details li {
   overflow-wrap: anywhere;
@@ -263,7 +348,8 @@
   font-size: 14px;
   font-weight: 600;
 }
-.profile-wording-edit textarea {
+.profile-wording-card .profile-wording-edit textarea {
+  grid-area: auto;
   font-size: 14px;
   font-weight: 400;
   line-height: 1.6;
@@ -362,8 +448,12 @@
   .profile-recovery li {
     flex-direction: column;
   }
-  .profile-wording-card .toolbar {
-    flex-wrap: wrap;
+  .profile-wording-card:is([data-kind="current"], [data-kind="source"]) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .profile-wording-card:is([data-kind="current"], [data-kind="source"])
+    > .profile-wording-audit:not([open]) {
+    grid-column: 1;
   }
 }
 @media (max-width: 480px) {

@@ -167,12 +167,94 @@ test("Profile peer sections save complete role, summary, skills and education ed
     addedLibraryRole.achievements.map((row) => row.achievement_id),
   ).toEqual(added.achievement_ids);
 
-  const authored = page.getByRole("article", {
-    name: "Authored wording",
+  const achievementCard = page.getByRole("group", {
+    name: "Achievement 1",
     exact: true,
   });
+  const facts = achievementCard
+    .locator("summary")
+    .filter({ hasText: /^Edit facts$/ });
+  // A newly added achievement starts with its facts editor open. Inspect the
+  // collapsed reading state after saving, whether or not the editor remounted.
+  if (
+    (await achievementCard
+      .locator(".profile-achievement-source")
+      .getAttribute("open")) !== null
+  )
+    await facts.click();
+  const authored = achievementCard.getByRole("article", {
+    name: "Saved wording",
+    exact: true,
+  });
+  await expect(authored.locator(".profile-wording-text")).toHaveText(
+    achievementText,
+  );
+  await expect(achievementCard.locator(".profile-wording-text")).toHaveCount(1);
+  await expect(
+    achievementCard.getByRole("textbox", {
+      name: "Achievement 1",
+      exact: true,
+    }),
+  ).toBeHidden();
+  await expect(
+    achievementCard.getByRole("checkbox", {
+      name: "Include in coaching",
+      exact: true,
+    }),
+  ).toBeHidden();
+  for (const viewport of [
+    { width: 1440, height: 1000 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(
+      authored.getByRole("button", { name: "Edit wording", exact: true }),
+    ).toBeEnabled();
+    const geometry = await achievementCard.evaluate((element) => ({
+      width: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.width);
+    await testInfo.attach(`achievement-saved-wording-${viewport.width}`, {
+      contentType: "image/png",
+      body: await achievementCard.screenshot(),
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await facts.click();
+  await expect(
+    achievementCard.getByRole("textbox", {
+      name: "Achievement 1",
+      exact: true,
+    }),
+  ).toHaveValue(achievementText);
+  await expect(achievementCard).toContainText(
+    "Saving facts updates this achievement’s source",
+  );
+  await testInfo.attach("achievement-edit-facts", {
+    contentType: "image/png",
+    body: await achievementCard.screenshot(),
+  });
+  await facts.click();
+  const options = achievementCard
+    .locator("summary")
+    .filter({ hasText: /^Achievement options$/ });
+  await options.click();
+  await expect(
+    achievementCard.getByRole("checkbox", {
+      name: "Include in coaching",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    achievementCard.getByRole("button", {
+      name: "Remove achievement 1",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await options.click();
   await authored
-    .getByRole("button", { name: "Propose revision", exact: true })
+    .getByRole("button", { name: "Edit wording", exact: true })
     .click();
   const firstDraft =
     "Established a versioned recovery practice and kept its reviewed operating record.";
@@ -249,12 +331,56 @@ test("Profile peer sections save complete role, summary, skills and education ed
   } finally {
     await guardedDocument.dispose();
   }
+  await expect(
+    authored.getByRole("button", {
+      name: "Restore unfinished edit",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await testInfo.attach("achievement-wording-recovery", {
+    contentType: "image/png",
+    body: await achievementCard.screenshot(),
+  });
   await authored
     .getByRole("button", { name: "Restore unfinished edit", exact: true })
     .click();
   await expect(
     authored.getByRole("textbox", { name: "Wording text", exact: true }),
   ).toHaveValue(firstDraft);
+  for (const viewport of [
+    { width: 1440, height: 1000 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const geometry = await authored
+      .getByRole("textbox", { name: "Wording text", exact: true })
+      .evaluate((element) => {
+        const editor = element.getBoundingClientRect();
+        const label = element.closest("label")!.getBoundingClientRect();
+        return {
+          editorWidth: editor.width,
+          labelWidth: label.width,
+          editorLeft: editor.left,
+          labelLeft: label.left,
+        };
+      });
+    expect(
+      Math.abs(geometry.editorLeft - geometry.labelLeft),
+    ).toBeLessThanOrEqual(1);
+    expect(
+      Math.abs(geometry.editorWidth - geometry.labelWidth),
+    ).toBeLessThanOrEqual(1);
+    await testInfo.attach(
+      viewport.width === 1440
+        ? "achievement-wording-edit"
+        : `achievement-wording-edit-${viewport.width}`,
+      {
+        contentType: "image/png",
+        body: await achievementCard.screenshot({ animations: "disabled" }),
+      },
+    );
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await authored
     .getByRole("button", { name: "Discard edit", exact: true })
     .click();
@@ -277,6 +403,13 @@ test("Profile peer sections save complete role, summary, skills and education ed
   await expect(proposal.locator(".profile-wording-text")).toHaveText(
     firstDraft,
   );
+  await expect(authored.locator(".profile-wording-text")).toHaveText(
+    achievementText,
+  );
+  await testInfo.attach("achievement-proposed-revision", {
+    contentType: "image/png",
+    body: await achievementCard.screenshot(),
+  });
   let proposalLibrary = await json<Library>(api, "get", "/v1/profile/wording");
   const proposed = proposalLibrary.variants.find(
     (variant) => variant.text === firstDraft,
@@ -338,6 +471,31 @@ test("Profile peer sections save complete role, summary, skills and education ed
   expect(revisions.revisions.map((revision) => revision.text)).toEqual(
     expect.arrayContaining([firstDraft, finalDraft]),
   );
+  const earlierWordings = achievementCard.locator(".profile-wording-history");
+  await earlierWordings.locator("summary").first().click();
+  const accepted = earlierWordings.getByRole("article", {
+    name: "Earlier wording 1",
+    exact: true,
+  });
+  await expect(accepted.locator(".profile-wording-text")).toHaveText(
+    finalDraft,
+  );
+  await accepted
+    .locator("summary")
+    .filter({ hasText: /^Approval and history$/ })
+    .click();
+  await expect(accepted.getByText(firstDraft, { exact: true })).toBeVisible();
+  await expect(
+    accepted.getByRole("button", {
+      name: "Restore text as draft",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await testInfo.attach("achievement-approved-wording-history", {
+    contentType: "image/png",
+    body: await achievementCard.screenshot(),
+  });
+  await earlierWordings.locator("summary").first().click();
   expect(
     (await canonical()).profile.resume.experience_entries.find(
       (role) => role.id === added.id,
@@ -346,7 +504,7 @@ test("Profile peer sections save complete role, summary, skills and education ed
 
   await page
     .locator("summary:visible")
-    .filter({ hasText: /^Achievement source and facts$/ })
+    .filter({ hasText: /^Achievement options$/ })
     .click();
   await page
     .getByRole("button", { name: "Remove achievement 1", exact: true })
@@ -379,7 +537,7 @@ test("Profile peer sections save complete role, summary, skills and education ed
     .click();
   await page
     .locator("summary:visible")
-    .filter({ hasText: /^Achievement source and facts$/ })
+    .filter({ hasText: /^Edit facts$/ })
     .click();
   await expect(
     page.getByRole("textbox", { name: "Achievement 1", exact: true }),
@@ -432,6 +590,59 @@ test("Profile peer sections save complete role, summary, skills and education ed
   await expect(
     page.getByRole("textbox", { name: "Title", exact: true }),
   ).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Label", exact: true }),
+  ).toHaveCount(0);
+  const originalCategory = original.profile.resume.skill_categories[0]!;
+  const groupTitle = page
+    .getByRole("group", { name: originalCategory.label, exact: true })
+    .getByRole("textbox", { name: "Skill group title", exact: true });
+  const renamedTitle = "Engineering & Recovery";
+  const autosavedTitle = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === "/v1/profile" &&
+      response.request().method() === "PATCH",
+  );
+  await groupTitle.focus();
+  await groupTitle.press("ControlOrMeta+A");
+  await groupTitle.pressSequentially(renamedTitle);
+  const renamedCategory = page.getByRole("group", {
+    name: renamedTitle,
+    exact: true,
+  });
+  await expect(
+    renamedCategory.getByRole("textbox", { name: "Skill group title", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    renamedCategory.getByRole("button", { name: "Remove skill category", exact: true }),
+  ).toBeFocused();
+  const titleResponse = await autosavedTitle;
+  expect(titleResponse.status(), await titleResponse.text()).toBe(200);
+  saved = await canonical();
+  expect(
+    saved.profile.resume.skill_categories.find((item) => item.id === originalCategory.id),
+  ).toEqual({ ...originalCategory, label: renamedTitle });
+  await page.reload();
+  for (const viewport of [
+    { width: 1440, height: 1000 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(
+      renamedCategory.getByRole("textbox", { name: "Skill group title", exact: true }),
+    ).toHaveValue(renamedTitle);
+    const geometry = await renamedCategory.evaluate((element) => ({
+      width: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+    }));
+    expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.width);
+    await testInfo.attach(`skill-group-title-${viewport.width}`, {
+      contentType: "image/png",
+      body: await page.locator("#profile-skills").screenshot({ animations: "disabled" }),
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page
     .getByRole("button", { name: "Add skill category", exact: true })
     .click();
@@ -440,7 +651,7 @@ test("Profile peer sections save complete role, summary, skills and education ed
     exact: true,
   });
   await category
-    .getByRole("textbox", { name: "Label", exact: true })
+    .getByRole("textbox", { name: "Skill group title", exact: true })
     .fill("Synthetic Recovery Skills");
   const namedCategory = page.getByRole("group", {
     name: "Synthetic Recovery Skills",
@@ -460,6 +671,19 @@ test("Profile peer sections save complete role, summary, skills and education ed
   await namedCategory
     .getByRole("textbox", { name: "Skill 1", exact: true })
     .fill("Recovery review and provenance");
+  await namedCategory.getByRole("button", { name: "Add skill", exact: true }).click();
+  await namedCategory
+    .getByRole("textbox", { name: "Skill 2", exact: true })
+    .fill("Synthetic incident protocols");
+  saved = await save();
+  expect(
+    saved.profile.resume.skill_categories.find(
+      (item) => item.id === categoryId,
+    )!.items,
+  ).toEqual(["Recovery review and provenance", "Synthetic incident protocols"]);
+  await namedCategory
+    .getByRole("button", { name: "Remove skill 2", exact: true })
+    .click();
   saved = await save();
   expect(
     saved.profile.resume.skill_categories.find(

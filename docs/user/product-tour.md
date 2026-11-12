@@ -21,7 +21,7 @@ do not establish a release or hosted deployment. Follow the
 
 ## Jobs: Compare And Act
 
-![Original Jobs comparison table with recorded pay, fit, application state and explicit unknowns](../assets/screenshots/original-jobs.png)
+![Original Jobs comparison table with recorded fit, column filters and explicit unknowns](../assets/screenshots/original-jobs.png)
 
 *Owned synthetic source workspace. Detailed columns and cross-job resources stay
 reachable around the main comparison table.*
@@ -37,12 +37,19 @@ pay, Fit and Apply, plus selection. Detailed/source columns remain optional
 choices, and custom persisted layouts are retained. Posted pay uses its recorded
 range, currency and unit rather than an invented comparable number.
 
-**Search for jobs** opens the search task; **Filter saved jobs** searches only
-existing records. The search task shows saved criteria, source/limit scope,
-readiness, explicit **Start search**, progress and recovery. **Edit search
-preferences** and connection remedies return to that task. Opening or saving it
-does not launch work. **Import job** and manual capture remain available for
+**Start search** launches the saved search directly from Jobs, with progress,
+counts and recovery beside the table. **Search preferences** edits its criteria
+and source limits. **Filter saved jobs** searches only existing records; column
+filters and the table's **Filter a column** control refine that same query, including
+criteria for hidden columns. Opening or saving preferences does not launch work.
+**Import job** and manual capture remain available for
 known postings.
+
+![A single column filter dialog with known market pay and annual bounds](../assets/screenshots/jobs-column-filter-desktop.png)
+
+*Owned synthetic workspace. The column dialog owns its range and availability
+criteria; active chips show the saved query. There is no second full-page filter
+form.*
 
 The Jobs workspace also reaches **Requirements**, **Applications**, **Outcomes**,
 **Interview library**, **Contacts** and **Materials** when their features are
@@ -119,6 +126,17 @@ inventory and secondary tools stay nearby. Add/edit/remove controls belong besid
 the record; **Restore removed experience** recovers retained roles or achievements without replacing newer
 Profile edits. Autosave, explicit saves, errors and revision conflicts remain
 visible. Profile edits do not regenerate documents or refresh matches.
+
+Each achievement leads with its saved or current wording and **Edit wording**.
+Requirement tags stay visible beside **Link requirement**. **Edit facts** opens
+the underlying authored record; **Achievement options** contains coaching,
+ordering and removal. **Approval and history** keeps exact source references and
+earlier revisions available without crowding the reading view.
+
+![Achievement wording editor with original text, draft comparison and explicit save](../assets/screenshots/achievement-wording-edit.png)
+
+*Owned synthetic achievement. Editing the wording creates a proposed revision;
+it preserves the reviewed wording and the underlying factual record.*
 
 ### Requirement-Led Wording
 

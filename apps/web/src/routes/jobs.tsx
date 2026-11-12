@@ -14,6 +14,7 @@ function JobsRoute() {
   return <div className="route-page jobs-route">
     <JobsSearchHeader
       preferencesAction={<Link className={buttonVariants({ variant: "outline" })} to="/discovery" search={(previous) => ({ ...previous, returnTo: "jobs", jobsReturn: search })}>Search preferences</Link>}
+      spendingAction={<Link className={buttonVariants({ variant: "outline", size: "sm" })} to="/settings/budgets" search={{ returnTo: "jobs", returnJobs: search }}>Review spending setup</Link>}
       connectionAction={<Link className={buttonVariants({ variant: "outline", size: "sm" })} to="/settings" search={{ returnTo: "jobs", returnJobs: search }}>Review connections</Link>} />
     <div className={`jobs-daily-workspace${activeJobId ? " jobs-daily-workspace--selected" : ""}${focused ? " jobs-daily-workspace--document" : ""}`}>
       <section className="jobs-grid-pane" aria-label="Saved jobs workspace" hidden={focused}><JobsWorkspace activeJobId={activeJobId} activeRunId={activeRunId} /></section>

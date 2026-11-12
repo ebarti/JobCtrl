@@ -107,7 +107,7 @@ def validate_settings(value):
     return result
 
 
-def search_units(settings, targets=None):
+def search_units(settings, targets=None, *, isolate_boards=False):
     """Execute literal authored/provider queries; never generate meaning from words."""
     queries = settings.get("queries") or (targets or {}).get("queries") or []
     locations = settings.get("locations") or (targets or {}).get("locations") or []
@@ -138,11 +138,12 @@ def search_units(settings, targets=None):
                 "linkedin_fetch_description": False,
                 "source_family": "broad_boards",
             }
-            if spec["sites"]:
-                result.append(
-                    {
-                        "unit_id": fingerprint({key: value for key, value in spec.items() if key != "source_family"}),
-                        **spec,
-                    }
-                )
+            selections = [[site] for site in spec["sites"]] if isolate_boards else [spec["sites"]]
+            for sites in selections:
+                if sites:
+                    board_spec = {**spec, "sites": sites}
+                    result.append({
+                        "unit_id": fingerprint({key: value for key, value in board_spec.items() if key != "source_family"}),
+                        **board_spec,
+                    })
     return list({unit["unit_id"]: unit for unit in result}.values())

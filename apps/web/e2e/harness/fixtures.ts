@@ -38,6 +38,7 @@ export type ApplicationStack = {
     setCatalog(value: { providers: Record<string, unknown>[] }): void;
     next(options?: { timeout?: number }): Promise<ExternalCall>;
   };
+  discoveryCheckpoint(runId: string): Promise<{ adapters: { site: string; state: Record<string, unknown>; emittedCount: number; completed: boolean }[]; receipts: Record<string, number> }>;
   restartWorker(): Promise<{ previous: number; current: number }>;
   failRendering(): Promise<void>;
   restoreRendering(): Promise<void>;
@@ -64,6 +65,8 @@ type Fixtures = {
   api: APIRequestContext;
   consoleErrors: string[];
   features: string | undefined;
+  discoveryTransport: "http" | "jobstreaming";
+  nativeAccountingPreflight: boolean;
   expectedTransportFailures: {
     request: Request;
     errorText: "net::ERR_FAILED";
@@ -78,6 +81,8 @@ type Fixtures = {
 
 export const test = base.extend<Fixtures, WorkerFixtures>({
   features: [undefined, { option: true }],
+  discoveryTransport: ["http", { option: true }],
+  nativeAccountingPreflight: [false, { option: true }],
   expectedTransportFailures: async ({}, use) => {
     await use([]);
   },
@@ -131,10 +136,10 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     { scope: "worker", timeout: 60_000 },
   ],
   app: [
-    async ({ temporal, features }, use, testInfo) => {
+    async ({ temporal, features, discoveryTransport, nativeAccountingPreflight }, use, testInfo) => {
       const runtime: ApplicationStack = await applicationStack(
         temporal.address,
-        { features },
+        { features, discoveryTransport, nativeAccountingPreflight },
       );
       await testInfo.attach("runtime-setup", {
         contentType: "application/json",

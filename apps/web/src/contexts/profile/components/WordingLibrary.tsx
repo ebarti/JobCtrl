@@ -759,47 +759,26 @@ function Variant({
     kind === "current"
       ? "Current wording"
       : kind === "source"
-        ? "Authored wording"
+        ? "Saved wording"
         : kind === "proposal"
           ? `Proposed revision ${ordinal}`
           : `Earlier wording ${ordinal}`;
   return (
-    <article className="profile-wording-card" aria-label={title}>
-      <div className="profile-wording-card__heading">
-        <h4>{title}</h4>
-        <span className="status-badge" data-state={variant.status}>
-          {wordingStatusLabel(variant.status)}
-        </span>
-      </div>
-      {context}
+    <article
+      className="profile-wording-card"
+      data-kind={kind}
+      aria-label={title}
+    >
+      {kind === "proposal" || kind === "history" ? (
+        <div className="profile-wording-card__heading">
+          <h4>{title}</h4>
+          <span className="status-badge" data-state={variant.status}>
+            {wordingStatusLabel(variant.status)}
+          </span>
+        </div>
+      ) : null}
       <p className="profile-wording-text">{variant.text}</p>
-      <details>
-        <summary>Source and approval</summary>
-        <p>
-          {variant.provenance?.["authority"] === "imported_authored_baseline"
-            ? "Imported original wording; historical confirmation is unknown."
-            : variant.provenance?.["authority"] === "authored_save"
-              ? "Authored original wording."
-              : "Wording is reviewed independently from factual evidence."}
-        </p>
-        <p>
-          Revision {variant.revision}
-          {variant.approval_id
-            ? " · Exact wording approval recorded"
-            : " · No exact approval recorded"}
-        </p>
-        {variant.source_refs.length ? (
-          <ul>
-            {variant.source_refs.map((source) => (
-              <li key={`${source.source_id}:${source.revision}`}>
-                {source.source_id}, revision {source.revision}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p>No source references recorded.</p>
-        )}
-      </details>
+      {context}
       {!editing && slotLoading ? (
         <p role="status">Checking saved wording recovery…</p>
       ) : null}
@@ -955,7 +934,12 @@ function Variant({
           </Button>
         </div>
       ) : null}
-      <div className="toolbar">
+      <div className="profile-wording-actions">
+        {kind === "current" || kind === "source" ? (
+          <span className="profile-wording-caption">
+            {title} · {wordingStatusLabel(variant.status)}
+          </span>
+        ) : null}
         {variant.status !== "approved" && variant.status !== "stale" ? (
           <>
             <Button
@@ -986,6 +970,7 @@ function Variant({
         <Button
           type="button"
           variant="outline"
+          size="sm"
           disabled={
             pending || editing || blocked || busy || variant.status === "stale"
           }
@@ -996,7 +981,11 @@ function Variant({
             })
           }
         >
-          {variant.status === "pending" ? "Edit draft" : "Propose revision"}
+          {variant.status === "pending"
+            ? "Edit draft"
+            : kind === "current" || kind === "source"
+              ? "Edit wording"
+              : "Propose revision"}
         </Button>
       </div>
       {editing ? (
@@ -1101,7 +1090,7 @@ function Variant({
               ? "Saving updates this draft and retains its earlier revisions."
               : "Saving creates a proposed revision and preserves this exact reviewed wording."}
           </p>
-          <div className="toolbar">
+          <div className="profile-wording-actions">
             <Button
               type="button"
               disabled={
@@ -1157,8 +1146,36 @@ function Variant({
           Undo discarded edit
         </Button>
       ) : null}
-      <details onToggle={(event) => setHistoryOpen(event.currentTarget.open)}>
-        <summary>Earlier revisions</summary>
+      <details
+        className="profile-wording-audit"
+        onToggle={(event) => setHistoryOpen(event.currentTarget.open)}
+      >
+        <summary>Approval and history</summary>
+        <p>
+          {variant.provenance?.["authority"] === "imported_authored_baseline"
+            ? "Imported original wording; historical confirmation is unknown."
+            : variant.provenance?.["authority"] === "authored_save"
+              ? "Authored original wording."
+              : "Wording is reviewed independently from factual evidence."}
+        </p>
+        <p>
+          Revision {variant.revision}
+          {variant.approval_id
+            ? " · Exact wording approval recorded"
+            : " · No exact approval recorded"}
+        </p>
+        {variant.source_refs.length ? (
+          <ul>
+            {variant.source_refs.map((source) => (
+              <li key={`${source.source_id}:${source.revision}`}>
+                {source.source_id}, revision {source.revision}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No source references recorded.</p>
+        )}
+        <h5>Earlier revisions</h5>
         {historyOpen && history.isPending ? <p>Loading revisions…</p> : null}
         {history.data?.revisions.map((item) => (
           <div key={item.revision}>
@@ -1316,13 +1333,13 @@ export function AchievementWordings({
       {library.data && !variants.length ? (
         <p className="muted">Save this achievement to review its wording.</p>
       ) : null}
-      {!maintained.length && authored ? (
-        <p className="muted">
+      {!maintained.length &&
+      authored &&
+      (assignmentsUnavailable || hasSavedAssignment) ? (
+        <p role="status">
           {assignmentsUnavailable
-            ? "Requirement-specific selections are unavailable. The authored source is retained."
-            : hasSavedAssignment
-              ? "Authored source retained while the saved wording assignment needs review."
-              : "Authored baseline. Requirement-specific wording selection has not been recorded."}
+            ? "Requirement-specific selections are unavailable. Saved wording is retained."
+            : "The saved requirement wording needs review. Original wording is retained."}
         </p>
       ) : null}
       {library.data &&

@@ -71,8 +71,7 @@ test("approved wording composes the full baseline and failed model or render ref
         support: "supported",
         spans: [
           {
-            start: 0,
-            end: postingSource.text.length,
+            source_id: postingSource.source_id,
             quote: postingSource.text,
           },
         ],

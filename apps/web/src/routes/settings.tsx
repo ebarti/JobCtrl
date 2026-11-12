@@ -52,7 +52,10 @@ function SettingsLayout() {
   useEffect(() => {
     setVisited((previous) => previous.has(pane) ? previous : new Set([...previous, pane]));
   }, [pane]);
-  const mounted = (name: SettingsPane) => pane === name || visited.has(name);
+  // During an outgoing navigation this layout may render the destination URL
+  // before unmounting. Do not mount Connections (and inspect credentials) then.
+  const settingsActive = pathname === "/settings" || pathname.startsWith("/settings/");
+  const mounted = (name: SettingsPane) => settingsActive && (pane === name || visited.has(name));
 
   return <>
     <PageHead eyebrow="Settings" title="Settings" subtitle="Connections, preferences and workspace controls."

@@ -36,7 +36,7 @@ from jobstreaming import (
 from jobstreaming.batch import jobs_to_dataframe
 
 from jobctrl.features.discovery.remote_search import RemoteSearchConfigurationError as RemoteSearchConfigurationError
-from jobctrl.features.discovery.remote_search import validate_remote_search_scope
+from jobctrl.features.discovery.remote_search import provider_scope, validate_remote_search_scope
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,28 +81,19 @@ class _RemoteScopeAdapter:
         self.capabilities = delegate.capabilities
 
     def scrape(self, scraper_input: SearchRequest, context: Any | None = None) -> Any:
-        required = {SearchFilter.IS_REMOTE}
-        if scraper_input.location:
+        scope = provider_scope(
+            self.site.value, location=scraper_input.location or "",
+            remote_only=scraper_input.is_remote, hours_old=scraper_input.hours_old,
+        )
+        required = {SearchFilter.IS_REMOTE} if scraper_input.is_remote else set()
+        if scope["location"]:
             required.add(SearchFilter.LOCATION)
-        if scraper_input.hours_old:
+        if scope["hours_old"]:
             required.add(SearchFilter.HOURS_OLD)
         if not required.issubset(self.capabilities.filters):
-            raise UnsupportedRemoteSearch("The board cannot apply the selected Remote search filters.")
-
-        # These pinned SDK adapters advertise each filter separately but cannot
-        # apply these combinations together. Inspect the real delegate rather
-        # than guessing from a site label or constructing an extra adapter.
-        from jobstreaming.glassdoor import Glassdoor
-        from jobstreaming.indeed import Indeed
-
-        actual = self._delegate
-        while isinstance(actual, _IntegralTlsTimeoutAdapter):
-            actual = actual._delegate
-        if isinstance(actual, Indeed) and scraper_input.hours_old:
-            raise UnsupportedRemoteSearch("Indeed cannot combine the selected Remote and lookback filters.")
-        if isinstance(actual, Glassdoor) and scraper_input.location:
-            raise UnsupportedRemoteSearch("Glassdoor cannot combine the selected Remote and location filters.")
-        return self._delegate.scrape(scraper_input, context=context)
+            raise UnsupportedRemoteSearch("The board cannot apply the selected search filters.")
+        normalized = scraper_input.model_copy(update={"hours_old": scope["hours_old"]})
+        return self._delegate.scrape(normalized, context=context)
 
     def close(self) -> None:
         close = getattr(self._delegate, "close", None)
@@ -113,8 +104,6 @@ class _RemoteScopeAdapter:
 def _remote_safe_registry(spec: JobStreamingSearchSpec, registry: AdapterRegistry | None) -> AdapterRegistry:
     """Retain unsupported boards as failures instead of broadening a search."""
     normalized = _normalize_tls_adapter_timeouts(registry)
-    if not spec.remote_only:
-        return normalized
     guarded = normalized.copy()
     registered = {site.value for site in normalized.sites}
     for site in spec.sites:
@@ -178,6 +167,9 @@ class _IntegralTlsTimeoutAdapter(Scraper):
             update={"request_timeout": timeout},
         )
         return self._delegate.scrape(normalized, context=context)
+
+    def close(self) -> None:
+        self._delegate.close()
 
 
 def _normalize_tls_adapter_timeouts(

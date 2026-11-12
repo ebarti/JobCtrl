@@ -287,8 +287,7 @@ export async function createScoredFit(
       support: "supported",
       spans: [
         {
-          start: source.text.indexOf(text),
-          end: source.text.indexOf(text) + text.length,
+          source_id: source.source_id,
           quote: text,
         },
       ],

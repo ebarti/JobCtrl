@@ -60,9 +60,9 @@ class ModelGateway:
             raise AppError("model_unavailable", "Select a model for this provider.", 503)
         return {"provider": provider, "model": selected}
 
-    def accounting_capability(self, model: str | None = None, *, selection: dict | None = None) -> dict:
+    def accounting_capability(self, model: str | None = None, *, selection: dict | None = None, settings: dict | None = None) -> dict:
         selected = selection or self.selection(model)
-        quote = self.settings.get("modelPricingQuotes", {}).get(f"{selected['provider']}:{selected['model']}")
+        quote = (settings if settings is not None else self.settings.snapshot()).get("modelPricingQuotes", {}).get(f"{selected['provider']}:{selected['model']}")
         source = "provider_reported" if self.synthetic else "sdk_estimate" if selected["provider"] == "claude" else "configured_pricing_estimate" if quote is not None else None
         return {**selected, "available": source is not None,
                 "costSource": source,
@@ -138,20 +138,57 @@ class ModelGateway:
         return self.receipt(row[0], connection) if row else None
 
     def spend(self) -> dict:
+        day = now()[:10]
         with self.database.connect() as connection:
+            connection.execute("BEGIN")
+            settings = self.settings.snapshot(connection)
+            budget = settings["dailyBudgetUsd"]
+            unlimited = budget <= 0
             rows = connection.execute(
                 "SELECT lane,COUNT(*) calls,COALESCE(SUM(CAST(input_tokens AS REAL)),0) input_tokens,"
                 "COALESCE(SUM(CAST(output_tokens AS REAL)),0) output_tokens,SUM(cost_usd) cost_usd,"
                 "SUM(CASE WHEN cost_source IN ('configured_pricing_estimate','sdk_estimate') THEN 1 ELSE 0 END) estimated_calls,"
-                "SUM(CASE WHEN provider_started IS NOT 0 AND (status IN ('running','uncertain') OR cost_usd IS NULL "
-                "OR input_tokens IS NULL OR output_tokens IS NULL) THEN 1 ELSE 0 END) unresolved "
-                "FROM app_model_calls WHERE created_at>=? GROUP BY lane", (now()[:10],)
+                "SUM(CASE WHEN provider_started IS NOT 0 AND status='uncertain' THEN 1 ELSE 0 END) unresolved,"
+                "SUM(CASE WHEN provider_started IS NOT 0 AND status NOT IN ('running','uncertain') "
+                "AND cost_usd IS NULL THEN 1 ELSE 0 END) unavailable_cost,"
+                "SUM(CASE WHEN provider_started IS NOT 0 AND status NOT IN ('running','uncertain') "
+                "AND (input_tokens IS NULL OR output_tokens IS NULL) THEN 1 ELSE 0 END) unavailable_tokens "
+                "FROM app_model_calls WHERE created_at>=? GROUP BY lane", (day,)
             ).fetchall()
-        complete = not any(row["unresolved"] for row in rows)
-        return {"day": now()[:10], "lanes": [dict(row) for row in rows],
-                "costUsd": sum(row["cost_usd"] or 0 for row in rows),
-                "accountingComplete": complete,
-                "costAuthority": "incomplete" if not complete else "includes_estimates" if any(row["estimated_calls"] for row in rows) else "reported"}
+            running = connection.execute(
+                "SELECT lane,owner_pid,COUNT(*) calls FROM app_model_calls WHERE created_at>=? "
+                "AND status='running' GROUP BY lane,owner_pid", (day,)
+            ).fetchall()
+        lanes = {row["lane"]: {**dict(row), "active": 0} for row in rows}
+        owners = {row["owner_pid"]: _alive(row["owner_pid"]) for row in running}
+        for row in running:
+            lanes[row["lane"]]["active" if owners[row["owner_pid"]] else "unresolved"] += row["calls"]
+        active = sum(row["active"] for row in lanes.values())
+        unresolved = sum(row["unresolved"] for row in lanes.values())
+        missing_cost = sum(row["unavailable_cost"] for row in lanes.values())
+        missing_tokens = sum(row["unavailable_tokens"] for row in lanes.values())
+
+        def status(unavailable):
+            return "unresolved" if unresolved else "pending" if active else "unavailable" if unavailable else "complete"
+
+        cost_status, token_status = status(missing_cost), status(missing_tokens)
+        known_cost = sum(row["cost_usd"] or 0 for row in lanes.values())
+        # Knowledge and admission are separate: unknown history is actionable
+        # only for an enabled policy that requires that missing evidence.
+        monetary_blocked = budget > 0 and (unresolved > 0 or missing_cost > 0)
+        blocked_lanes = sorted(name for name, row in lanes.items()
+                               if settings["laneTokenLimits"].get(name, 0) > 0
+                               and (row["unresolved"] > 0 or row["unavailable_tokens"] > 0))
+        return {"day": day, "lanes": list(lanes.values()), "unlimited": unlimited, "dailyBudgetUsd": budget,
+                "accountingBlocked": monetary_blocked or bool(blocked_lanes),
+                "monetaryAccountingBlocked": monetary_blocked, "tokenAccountingBlockedLanes": blocked_lanes,
+                "costUsd": known_cost if cost_status == "complete" else None, "knownCostUsd": known_cost,
+                "costStatus": cost_status, "tokenStatus": token_status,
+                "activeCalls": active, "unresolvedCalls": unresolved,
+                "unavailableCostCalls": missing_cost, "unavailableTokenCalls": missing_tokens,
+                "accountingComplete": cost_status == "complete" and token_status == "complete",
+                "costAuthority": "incomplete" if cost_status != "complete" else "includes_estimates"
+                if any(row["estimated_calls"] for row in rows) else "reported"}
 
     def lane_status(self) -> dict:
         with self.database.connect() as connection:

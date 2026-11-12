@@ -27,7 +27,8 @@ const stepSchema = z.object({
   result: z.record(z.string(), z.unknown()).nullable(), errorCode: z.string().nullable(), updatedAt: z.string(),
 });
 const runSchema = z.object({
-  runId: z.string(), status: z.string(), recipe: recipeSchema, parentRunId: z.string().nullable(),
+  runId: z.string(), status: z.string(), recipe: z.enum([...recipeSchema.options, "search", "assess"]), parentRunId: z.string().nullable(),
+  cohortFrozen: z.boolean().optional(),
   jobIds: z.array(z.string()), createdAt: z.string(), updatedAt: z.string(), steps: z.array(stepSchema),
 });
 const listSchema = z.object({ runs: z.array(runSchema) });
@@ -54,6 +55,27 @@ export function usePreparationRuns() {
     meta: { suppressGlobalErrorToast: true },
     refetchInterval: (query) => query.state.data?.some((run) => ["pending", "queued", "running"].includes(run.status)) ? 3000 : false,
   });
+}
+
+/** Exact-run read for shell-composed Discovery feedback; absent rows are normal before start and for historical searches. */
+export function useSearchPreparationProgress({ runId, databaseInstanceId, enabled, active }: {
+  runId: string | null; databaseInstanceId: string | undefined; enabled: boolean; active: boolean;
+}) {
+  const tenantId = useTenantId(); const { http } = usePorts();
+  return useQuery({ queryKey: [...preparationKeys.runs(tenantId), "search-progress", databaseInstanceId ?? "", runId ?? ""],
+    enabled: enabled && Boolean(runId && databaseInstanceId), retry: false,
+    queryFn: async () => {
+      const parsed = listSchema.parse(await http.json<unknown>("GET", "/v1/preparation/runs", { expectedDatabaseInstanceId: databaseInstanceId! }));
+      const run = parsed.runs.find((item) => item.runId === runId && item.recipe === "search");
+      if (!run) return null;
+      const discovered = run.steps.some((step) => step.stage === "discover" && ["succeeded", "warning"].includes(step.status));
+      const fits = new Set(run.steps.filter((step) => step.jobId && step.stage === "fit" && step.status === "succeeded").map((step) => step.jobId));
+      const failures = run.steps.filter((step) => step.jobId && step.status === "failed").map((step) => ({ jobId: step.jobId!, stage: step.stage, code: step.errorCode }));
+      return { phase: active ? discovered ? "assessing" as const : "acquiring" as const : null,
+        assessedJobs: run.cohortFrozen === true ? fits.size : null,
+        failedJobs: run.cohortFrozen === true ? new Set(failures.map((failure) => failure.jobId)).size : null,
+        totalJobs: run.cohortFrozen === true ? run.jobIds.length : null, failures };
+    }, refetchInterval: active ? 3000 : false, meta: { suppressGlobalErrorToast: true } });
 }
 
 /** Actions may be queued before Preparation has opened its own checkpoint row. */

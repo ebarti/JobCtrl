@@ -1150,6 +1150,10 @@ export class DemoFeatureHttpAdapter {
         },
         llmSpend: {
           costUsd: 0,
+          knownCostUsd: 0,
+          costStatus: "complete",
+          tokenStatus: "complete",
+          unlimited: this.settings(await this.workspace.snapshot()).dailyBudgetUsd <= 0,
           accountingComplete: true,
           costAuthority: "reported",
         },

@@ -11,6 +11,7 @@ import { Button } from "../../shared/ui/button.js";
 import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
 import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
+import "../../styles/redesign-fit.css";
 import type { HttpPort } from "../../shared/ports/HttpPort.js";
 export { AffectedMatchesPanel } from "./refresh.js";
 export { useRequirementLibrary, useRequirementAssociationActions, useRequirementAssociationHistory,
@@ -130,6 +131,12 @@ function useFitActions(jobId: string) {
   return { assess, correct, correctRequirement };
 }
 
+function fitStatusLabel(value: string): string {
+  const labels: Record<string, string> = { must_have: "Must-have", nice_to_have: "Nice-to-have" };
+  const words = value.replaceAll("_", " ");
+  return labels[value] ?? (words ? words[0]!.toLocaleUpperCase() + words.slice(1) : words);
+}
+
 function CorrectionForm({ score, revision, onSave, pending }: {
   score: number; revision: number; onSave: (body: { expected_revision: number; score: number; rationale: string }) => void; pending: boolean;
 }) {
@@ -137,7 +144,7 @@ function CorrectionForm({ score, revision, onSave, pending }: {
     const parsed = correctionSchema.safeParse(value);
     if (parsed.success) onSave({ expected_revision: revision, ...parsed.data });
   } });
-  return <details><summary>Correct this assessment</summary><form onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
+  return <details className="fit-correction"><summary>Correct this assessment</summary><form onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
     <form.Field name="score">{(field) => <label>Corrected score (1–10)<input type="number" min="1" max="10" step="1" value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
     <form.Field name="rationale">{(field) => <label>Reason for correction<textarea value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
     <Button type="submit" disabled={pending}>Save correction</Button>
@@ -187,20 +194,20 @@ function RequirementCorrection({ assessment, factVersion, sources, achievements,
       eligibility: parsed.data.eligibility, blocker_category: parsed.data.eligibility === "blocked" ? parsed.data.blocker : null,
       warning_category: parsed.data.eligibility === "warning" ? parsed.data.warning : null, profile_id: "default" });
   } });
-  return <details><summary>Correct this requirement assessment</summary>
+  return <details className="fit-correction"><summary>Correct this requirement assessment</summary>
     <p>Choose a determination and cite the exact saved evidence. This records your correction; use Update affected matches afterward to recalculate the score.</p>
     {unavailableReason ? <p>{unavailableReason}</p> : null}
     <form onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
-      <form.Field name="kind">{(field) => <label>Qualification<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}>{["matched", "transferable", "missing", "blocked", "not_assessed"].map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>}</form.Field>
+      <form.Field name="kind">{(field) => <label>Qualification<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}>{["matched", "transferable", "missing", "blocked", "not_assessed"].map((value) => <option key={value} value={value}>{fitStatusLabel(value)}</option>)}</select></label>}</form.Field>
       <form.Field name="strength">{(field) => <label>Matched strength<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}><option value="direct">Direct</option><option value="strong">Strong</option></select></label>}</form.Field>
       <form.Field name="confidence">{(field) => <label>Confidence<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>}</form.Field>
-      <form.Field name="eligibility">{(field) => <label>Eligibility<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value as typeof field.state.value)}>{["unknown", "eligible", "warning", "blocked"].map((value) => <option key={value} value={value}>{value}</option>)}</select></label>}</form.Field>
-      <form.Field name="blocker">{(field) => <label>Blocker category (if blocked)<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}>{["work_authorization", "application_language", "seniority", "explicit_exclusion", "clearance", "citizenship", "qualification"].map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>}</form.Field>
-      <form.Field name="warning">{(field) => <label>Warning category (if warning)<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}>{["compensation_preference", "location_preference", "work_model_preference", "uncertain_constraint", "other"].map((value) => <option key={value} value={value}>{value.replaceAll("_", " ")}</option>)}</select></label>}</form.Field>
+      <form.Field name="eligibility">{(field) => <label>Eligibility<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value as typeof field.state.value)}>{["unknown", "eligible", "warning", "blocked"].map((value) => <option key={value} value={value}>{fitStatusLabel(value)}</option>)}</select></label>}</form.Field>
+      <form.Field name="blocker">{(field) => <label>Blocker category (if blocked)<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}>{["work_authorization", "application_language", "seniority", "explicit_exclusion", "clearance", "citizenship", "qualification"].map((value) => <option key={value} value={value}>{fitStatusLabel(value)}</option>)}</select></label>}</form.Field>
+      <form.Field name="warning">{(field) => <label>Warning category (if warning)<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}>{["compensation_preference", "location_preference", "work_model_preference", "uncertain_constraint", "other"].map((value) => <option key={value} value={value}>{fitStatusLabel(value)}</option>)}</select></label>}</form.Field>
       <form.Field name="rationale">{(field) => <label>Reason<textarea value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
       <form.Field name="retainedRefs">{(field) => <fieldset><legend>Previously recorded evidence</legend>{assessment.evidence_refs.map((ref, index) => <label key={`${ref.source_id}:${index}`}><input type="checkbox" checked={field.state.value.includes(index)} onChange={(event) => field.handleChange(event.currentTarget.checked ? [...field.state.value, index] : field.state.value.filter((item) => item !== index))} /> {ref.source_id}, revision {ref.revision}: {ref.quote}</label>)}</fieldset>}</form.Field>
       <form.Field name="evidence">{(field) => <fieldset><legend>Add exact evidence quotes</legend>
-        {sources.map((source) => <details key={source.source_id}><summary>{source.kind} · {source.source_id} · {source.confirmation}</summary><p>{source.text}</p><label>Quote from this source<textarea value={field.state.value[source.source_id] ?? ""} onChange={(event) => field.handleChange({ ...field.state.value, [source.source_id]: event.currentTarget.value })} /></label></details>)}
+        {sources.map((source) => <details key={source.source_id}><summary>{fitStatusLabel(source.kind)} · {source.source_id} · {fitStatusLabel(source.confirmation)}</summary><p>{source.text}</p><label>Quote from this source<textarea value={field.state.value[source.source_id] ?? ""} onChange={(event) => field.handleChange({ ...field.state.value, [source.source_id]: event.currentTarget.value })} /></label></details>)}
       </fieldset>}</form.Field>
       <form.Field name="achievementIds">{(field) => <fieldset><legend>Supported achievements</legend>{achievements.map((item) => <label key={item.achievement_id}><input type="checkbox" checked={field.state.value.includes(item.achievement_id)} onChange={(event) => field.handleChange(event.currentTarget.checked ? [...field.state.value, item.achievement_id] : field.state.value.filter((id) => id !== item.achievement_id))} /> {item.achievement_id}</label>)}</fieldset>}</form.Field>
       <Button type="submit" disabled={disabled}>Save requirement correction</Button>
@@ -218,26 +225,38 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
   const busy = assess.isPending || correct.isPending || correctRequirement.isPending;
   const runAssessment = () => { if (assessmentAvailability.available) assess.mutate({ profile_id: "default", expected_revision: fit?.score?.revision ?? 0,
     prepare_wording: false, prepare_coverage: defaultMode === "tailored" }); };
-  return <section className="section" aria-labelledby="person-fit-title">
+  return <section className="section person-fit-panel" aria-labelledby="person-fit-title">
     <h3 id="person-fit-title">Person fit</h3>
     <p>This assessment describes your evidence against the role. Missing approved wording does not lower person fit.</p>
     {query.isPending ? <p>Loading person fit…</p> : null}
     {query.error ? <p role="alert">{query.error.message} {fit?.score ? "The last accepted assessment remains below." : ""}</p> : null}
-    {fit && !fit.current && fit.score ? <p role="status">This assessment is out of date: {fit.stale_reasons.join("; ") || "a source changed"}. The prior assessment remains available.</p> : null}
+    {fit && !fit.current && fit.score ? <p role="status">This assessment is out of date: {fit.stale_reasons.map(fitStatusLabel).join("; ") || "a source changed"}. The prior assessment remains available.</p> : null}
     {fit?.score ? <>
-      <p><strong>Score {fit.score.score}/10</strong> · {fit.score.fit_band} · confidence {fit.score.confidence} · eligibility {fit.score.eligibility.status}</p>
-      {fit.score.eligibility.blockers.length || fit.score.eligibility.warnings.length ? <details><summary>Eligibility reasons</summary>
+      <div className="fit-score-summary" aria-label="Saved person-fit score">
+        <div className="fit-score-summary__score"><strong data-typography="page-title"><span>Score </span>{fit.score.score}<span>/10</span></strong></div>
+        <dl className="fit-score-summary__facts">
+          <div><dt>Fit</dt><dd>{fitStatusLabel(fit.score.fit_band)}</dd></div>
+          <div><dt>Confidence</dt><dd>{fitStatusLabel(fit.score.confidence)}</dd></div>
+          <div><dt>Eligibility</dt><dd>{fitStatusLabel(fit.score.eligibility.status)}</dd></div>
+        </dl>
+      </div>
+      {fit.score.eligibility.blockers.length || fit.score.eligibility.warnings.length ? <details className="fit-audit"><summary>Eligibility reasons</summary>
         {[...fit.score.eligibility.blockers, ...fit.score.eligibility.warnings].map((item, index) => <div key={`${item.requirement_id}:${index}`}><p>{item.requirement_id}: {item.rationale}</p>{item.evidence_refs.map((ref, refIndex) => <blockquote key={`${ref.source_id}:${refIndex}`}>{ref.quote}<footer>{ref.source_id}, revision {ref.revision}</footer></blockquote>)}</div>)}
       </details> : null}
-      <details><summary>Assessment source versions</summary><p className="muted">Profile revision {fit.score.source_binding.profile_revision} · requirements revision {fit.score.source_binding.requirements_revision} · posting revision {fit.score.source_binding.posting_revision}</p></details>
-      <ul>{fit.score.assessments.map((assessment) => <li key={assessment.assessment_id}>
-        <strong>{assessment.text}</strong> — {assessment.kind}; {assessment.contribution.awarded_points}/{assessment.contribution.max_points} points.
-        <p>{assessment.rationale}</p>
-        <details><summary>Evidence and provenance</summary>
-          <p>Requirement {assessment.requirement_id}, revision {assessment.requirement_revision}; determination {assessment.determination_id}; {assessment.origin}; confidence {assessment.confidence}.</p>
-          {assessment.evidence_refs.length ? assessment.evidence_refs.map((ref, index) => <blockquote key={`${ref.source_id}:${ref.revision}:${index}`}>{ref.quote}<footer>{ref.source_id}, revision {ref.revision}</footer></blockquote>) : <p>No source evidence recorded.</p>}
-        </details>
-        <RequirementCorrection assessment={assessment} factVersion={fit.score!.source_binding.fact_semantics_version} sources={sources} achievements={achievements} disabled={!assessmentAvailability.available || busy || !fit.current} unavailableReason={assessmentAvailability.available ? null : assessmentAvailability.reason} onSave={(requirementId, body) => correctRequirement.mutate({ requirementId, body })} />
+      <details className="fit-audit"><summary>Assessment source versions</summary><p className="muted">Profile revision {fit.score.source_binding.profile_revision} · requirements revision {fit.score.source_binding.requirements_revision} · posting revision {fit.score.source_binding.posting_revision}</p></details>
+      <ul className="fit-requirements" aria-label="Requirement assessments">{fit.score.assessments.map((assessment, index) => <li key={assessment.assessment_id}>
+        <article className="fit-requirement" aria-label={`Requirement ${index + 1}`}>
+          <div className="fit-requirement__heading"><h4 className="fit-requirement__text">{assessment.text}</h4><span className="fit-requirement__status" data-kind={assessment.kind}>{fitStatusLabel(assessment.kind)}</span></div>
+          <p className="fit-requirement__contribution">{fitStatusLabel(assessment.tier)} · {fitStatusLabel(assessment.scope)} · {assessment.contribution.awarded_points}/{assessment.contribution.max_points} points</p>
+          <details className="fit-requirement__details"><summary>Assessment details</summary>
+            <p className="fit-requirement__rationale">{assessment.rationale}</p>
+            <details className="fit-audit"><summary>Evidence and provenance</summary>
+              <p>Requirement {assessment.requirement_id}, revision {assessment.requirement_revision}; determination {assessment.determination_id}; {fitStatusLabel(assessment.origin)}; confidence {fitStatusLabel(assessment.confidence)}.</p>
+              {assessment.evidence_refs.length ? assessment.evidence_refs.map((ref, refIndex) => <blockquote key={`${ref.source_id}:${ref.revision}:${refIndex}`}>{ref.quote}<footer>{ref.source_id}, revision {ref.revision}</footer></blockquote>) : <p>No source evidence recorded.</p>}
+            </details>
+            <RequirementCorrection assessment={assessment} factVersion={fit.score!.source_binding.fact_semantics_version} sources={sources} achievements={achievements} disabled={!assessmentAvailability.available || busy || !fit.current} unavailableReason={assessmentAvailability.available ? null : assessmentAvailability.reason} onSave={(requirementId, body) => correctRequirement.mutate({ requirementId, body })} />
+          </details>
+        </article>
       </li>)}</ul>
       <CorrectionForm key={fit.score.revision} score={fit.score.score} revision={fit.score.revision} pending={busy} onSave={(body) => correct.mutate(body)} />
     </> : fit ? <p>No person-fit assessment has been recorded yet.</p> : null}
@@ -247,13 +266,16 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
     {!assessmentAvailability.available ? <p>{assessmentAvailability.reason}</p> : null}
     {assess.error || correct.error || correctRequirement.error ? <p role="alert">{(assess.error ?? correct.error ?? correctRequirement.error)?.message} {fit?.score ? "The previously loaded assessment remains available above." : "No assessment is shown."}</p> : null}
     {correctRequirement.isSuccess ? <p role="status">Requirement correction recorded. Use Update affected matches to recalculate this job's score.</p> : null}
-    <h4>Approved wording coverage</h4>
-    <p>This records whether approved wording expresses requirements; it is separate from your person-fit score.</p>
-    {fit?.coverage ? <>
-      <p>Status: {fit.coverage.status}</p>
-      {fit.coverage.wording_gaps.length ? <ul>{fit.coverage.wording_gaps.map((gap) => <li key={gap.requirement_id}>{fit.score?.assessments.find((assessment) => assessment.requirement_id === gap.requirement_id)?.text ?? "Requirement details unavailable"}: {gap.status.replaceAll("_", " ")}{gap.proposal_status ? `; proposal ${gap.proposal_status}` : ""}</li>)}</ul> : <p>No wording gaps recorded.</p>}
-      {fit.coverage.relations.length ? <details><summary>Recorded wording relations</summary><ul>{fit.coverage.relations.map((relation) => <li key={`${relation.requirement_id}:${relation.variant_id}`}>Requirement {relation.requirement_id}: {relation.status}, achievement {relation.achievement_id}, wording {relation.variant_id}{relation.determination_id ? `, determination ${relation.determination_id}` : "; no determination recorded"}</li>)}</ul></details> : null}
-    </> : <p>Wording coverage has not been recorded.</p>}
+    <section className="fit-wording-coverage" aria-labelledby="fit-wording-title">
+      <h4 id="fit-wording-title">Approved wording coverage</h4>
+      <p>This records whether approved wording expresses requirements; it is separate from your person-fit score.</p>
+      {fit?.coverage ? <>
+        <p className="fit-wording-coverage__status">Status: {fitStatusLabel(fit.coverage.status)}</p>
+        {!fit.coverage.relations.length ? <p className="fit-wording-coverage__empty">No current approved wording coverage is recorded for this result. Wording assessment or selection may still be needed.</p> : null}
+        {fit.coverage.wording_gaps.length ? <details className="fit-audit"><summary>Wording gap details ({fit.coverage.wording_gaps.length})</summary><ul>{fit.coverage.wording_gaps.map((gap) => <li key={gap.requirement_id}><strong>{fit.score?.assessments.find((assessment) => assessment.requirement_id === gap.requirement_id)?.text ?? "Requirement details unavailable"}</strong><p>{fitStatusLabel(gap.status)}{gap.proposal_status ? ` · Proposal ${fitStatusLabel(gap.proposal_status)}` : ""}</p></li>)}</ul></details> : fit.coverage.relations.length ? <p>No wording gaps recorded.</p> : null}
+        {fit.coverage.relations.length ? <details className="fit-audit"><summary>Recorded wording relations</summary><ul>{fit.coverage.relations.map((relation) => <li key={`${relation.requirement_id}:${relation.variant_id}`}>Requirement {relation.requirement_id}: {fitStatusLabel(relation.status)}, achievement {relation.achievement_id}, wording {relation.variant_id}{relation.determination_id ? `, determination ${relation.determination_id}` : "; no determination recorded"}</li>)}</ul></details> : null}
+      </> : <p>Wording coverage has not been assessed for this result.</p>}
+    </section>
   </section>;
 }
 

@@ -28,22 +28,27 @@ retries. The run reports build, journey and total elapsed time; the hosted job
 also measures dependency preparation. See the exact scenario and coverage
 ledger in [Python application journeys](developer/qa/python-journeys.md).
 
-Hosted Browser CI schedules that same inventory in two fixed, disjoint
-Playwright shards, `--shard=1/2` and `--shard=2/2`, on separate runners. Each
-invocation keeps one worker, zero retries, the existing case deadlines and the
+Hosted Browser CI schedules that same inventory in three fixed, disjoint
+Playwright shards, `--shard=1/3`, `--shard=2/3` and `--shard=3/3`, on separate
+runners. Each invocation keeps one worker, zero retries, the existing case deadlines and the
 720-second global deadline; the ordinary unsharded local command is unchanged.
 Each shard builds once, owns its application/Temporal workspaces and retains
 separately named evidence. Matrix fail-fast is disabled so a failed shard does
-not cancel its peer. The stable **Browser / UI checks** result passes only when
-both shard jobs succeed; failure, cancellation or a skipped shard cannot
+not cancel its peers. The stable **Browser / UI checks** result passes only when
+all three shard jobs succeed; failure, cancellation or a skipped shard cannot
 qualify the complete inventory. A shard pass alone is partial proof. Record
-both results and their exact candidate before claiming complete hosted coverage.
+all three results and their exact candidate before claiming complete hosted
+coverage.
 
 Hosted Ubuntu transport recovery may prefer only the fixed Ubuntu-listed,
 operator-verified HTTPS candidate after all three completed original mirror
 HTTP probes fail and a bounded candidate GET exits zero with HTTP 200.
 An exit-zero original HTTP 200–399 response or an indeterminate original result
 retains the originals. Incomplete/unknown results cannot authorize fallback.
+If any required original mirror URL is absent, the optional priority rewrite is
+skipped with a sanitized diagnostic and the mirror file stays byte-for-byte
+unchanged. This does not admit fallback; normal verified APT installation must
+still succeed before the actual documentation or browser checks run.
 Original mirrors, suites,
 `Signed-By`, archive keys and signature/hash/freshness verification remain, as
 do setup/test caps and required cases. HTTP reachability does not qualify archive

@@ -2261,6 +2261,18 @@ Cites: `docs/architecture/frontend/patterns.md`;
 
 Status: accepted
 
+Amended 2026-11-12 for the current Python implementation and pinned JobStreaming
+0.0.5: new plans isolate each selected board into its own immutable unit. Request
+adaptation retains authored settings, a run-frozen age reference and conservative
+publication-date admission receipts. Terminal source failures and fulfilled
+bounded units are read from canonical storage when settling a resumed run;
+an exhausted shared job budget must not erase failures or imply upstream
+completion. Existing running units may settle as `budget_exhausted`, while
+unstarted or scoped-out sources do not count as completed. See the
+[Discovery owner](../workers/automation/src/jobctrl/features/discovery/README.md)
+for exact source restrictions and precision rules. The historical migration
+decision below retains its original dependency version.
+
 Decision: replace the `python-jobspy` provider with pinned JobStreaming 0.0.2,
 but keep execution reliability in JobCtrl. For Temporal-backed broad-board
 discovery, JobCtrl persists one immutable query/location/board unit under the

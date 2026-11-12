@@ -118,6 +118,7 @@ function DiscoveryRouteView() {
   );
 
   return <SearchPreferencesWorkspace purpose="search" sourceTable={sourceTable}
+    spendingAction={<Link to="/settings/budgets" search={{ returnTo: "discovery", returnDiscovery: search }}>Review spending setup</Link>}
     connectionAction={<Link to="/settings" search={{ returnTo: "discovery", returnDiscovery: search }}>Review connections</Link>}
     returnAction={search.returnTo === "jobs" ? <Link to="/jobs" search={search.jobsReturn ?? jobsSearchSchema.parse({})}>Back to jobs</Link> : undefined} />;
 }

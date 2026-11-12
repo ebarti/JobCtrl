@@ -34,7 +34,7 @@ function extracted(call: ExternalCall) {
         tier: "must_have",
         weight: 1,
         support: "supported",
-        spans: [{ start: 0, end: source.text.length, quote: source.text }],
+        spans: [{ source_id: source.source_id, quote: source.text }],
       },
     ],
     reason: "Explicit supported requirement from this synthetic posting.",
@@ -131,12 +131,13 @@ test("cancellation survives an actual worker kill and its replacement resumes du
   expect(deniedResult["status"]).toBe("failed");
   expect(deniedResult["errorCode"]).toBe("spend_accounting_unresolved");
   expect(app.external.calls).toHaveLength(callsBeforeRefusal);
-  const health = await json<{ llmSpend: { accountingComplete: boolean } }>(
+  const health = await json<{ llmSpend: { accountingComplete: boolean; costStatus: string; unresolvedCalls: number; costUsd: number | null } }>(
     api,
     "get",
     "/v1/health",
   );
   expect(health.llmSpend.accountingComplete).toBe(false);
+  expect(health.llmSpend).toMatchObject({ costStatus: "unresolved", unresolvedCalls: 1, costUsd: null, accountingBlocked: true });
 
   // Explicitly select the public unlimited-money policy to exercise fresh
   // work on the replacement. Unknown prior accounting remains visible; lane

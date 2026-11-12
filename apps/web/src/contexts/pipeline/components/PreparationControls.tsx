@@ -7,12 +7,13 @@ import { Button } from "../../../shared/ui/button.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { getApiCapabilityAvailability } from "../../../shared/lib/apiCapabilityAvailability.js";
 import { useRuntimeHealth } from "../../runtime/index.js";
-import { recipeSchema, type PreparationRecipe, type PreparationRequest, type PreparationResumeMode, usePreparationCommands, usePreparationExecution, usePreparationRun, usePreparationRuns } from "../client.js";
+import { recipeSchema, type PreparationRecipe, type PreparationRequest, type PreparationResumeMode, type PreparationRun, usePreparationCommands, usePreparationExecution, usePreparationRun, usePreparationRuns } from "../client.js";
 
 const labels: Record<PreparationRecipe, string> = {
   run: "Run Discovery and preparation", discover: "Discover", enrich: "Enrich postings",
   analyze: "Analyze postings", score: "Assess fit", tailor: "Re-tailor resumes", prepare: "Prepare resumes",
 };
+const runLabels: Record<PreparationRun["recipe"], string> = { ...labels, search: "Search and assess fit", assess: "Assess selected jobs" };
 const formSchema = z.object({ recipe: recipeSchema, limit: z.coerce.number().int().min(1).max(1000),
   minFitScore: z.union([z.literal(""), z.coerce.number().int().min(1).max(10)]), force: z.boolean(), override: z.boolean() });
 
@@ -41,7 +42,7 @@ export function PreparationRunDetail({ runId }: { readonly runId: string }) {
   return <section aria-label="Preparation outcomes" className="grid gap-2">
     <PreparationRecoveryNotice recovery={recovery} />
     {run.isError ? <p role="alert">{run.error.message} Showing the last recorded outcomes. <Button type="button" variant="outline" onClick={() => void run.refetch()}>Check again</Button></p> : null}
-    <h3>{labels[run.data.recipe]} · {run.data.status}</h3>
+    <h3>{runLabels[run.data.recipe]} · {run.data.status}</h3>
     {run.data.steps.length ? <ul>{run.data.steps.map((step, index) => <li key={`${step.jobId ?? "run"}:${step.stage}:${index}`}>
       {step.jobId ? `${step.jobId} · ` : ""}{step.stage}: {step.status}{step.errorCode ? ` (${step.errorCode})` : ""}
       {step.result?.score !== undefined ? ` · fit ${String(step.result.score)}` : ""}
@@ -66,7 +67,7 @@ function PreparationRunListContent({ jobIds, commands }: { readonly jobIds?: rea
     {runs.isError ? <p role="alert">{runs.error.message} <Button type="button" variant="outline" onClick={() => void runs.refetch()}>Retry</Button></p> : null}
     {!runs.isLoading && !runs.isError && visible.length === 0 ? <p>No preparation runs recorded.</p> : null}
     {visible.map(run => <article key={run.runId} className="rounded border p-3">
-      <div><strong>{labels[run.recipe]}</strong> · {run.status} · <time dateTime={run.updatedAt}>{new Date(run.updatedAt).toLocaleString()}</time></div>
+      <div><strong>{runLabels[run.recipe]}</strong> · {run.status} · <time dateTime={run.updatedAt}>{new Date(run.updatedAt).toLocaleString()}</time></div>
       <details><summary>Show job and stage outcomes</summary>
         {run.steps.length ? <ul>{run.steps.map((step, index) => <li key={`${step.jobId ?? "run"}:${step.stage}:${index}`}>
           {step.jobId ? `${step.jobId} · ` : ""}{step.stage}: {step.status}{step.errorCode ? ` (${step.errorCode})` : ""}
@@ -160,35 +161,41 @@ export function JobPreparationActions({ jobId, defaultMode = null, initialMode =
   const belowThreshold = jobSteps.some((step) => step.result?.skip === "below_fit_threshold");
   const hasResume = jobSteps.some((step) => step.stage === "compose" && step.result?.resume_id);
   const retryable = current && (incomplete || (current.status === "cancelled" && !hasResume));
-  return <section aria-label="Prepare resume" className="job-preparation-task">
+  const activeAssessment = active?.recipe === "search" || active?.recipe === "assess";
+  const jobAssessmentComplete = activeAssessment && active?.steps.some((step) => step.jobId === jobId && step.stage === "fit" && step.status === "succeeded");
+  const currentAssessment = current?.recipe === "search" || current?.recipe === "assess";
+  const statusRun = active ?? current;
+  const statusSteps = statusRun?.steps.filter((step) => step.jobId === jobId) ?? [];
+  const statusTask = (statusRun?.recipe === "search" || statusRun?.recipe === "assess") ? "Fit assessment" : "Preparation";
+  return <section aria-label={activeAssessment ? "Assess fit" : "Prepare resume"} className="job-preparation-task">
     <div className="job-preparation-task__controls">
-      <label data-typography="label">Resume to prepare<select data-typography="body" aria-label="Resume to prepare" value={mode ?? ""} disabled={busy || Boolean(recovery.record && !recovery.canRetry)} onChange={(event) => {
+      {!activeAssessment ? <label data-typography="label">Resume to prepare<select data-typography="body" aria-label="Resume to prepare" value={mode ?? ""} disabled={busy || Boolean(recovery.record && !recovery.canRetry)} onChange={(event) => {
         const next = event.currentTarget.value === "baseline" ? "baseline" : "tailored";
         setChoice(next);
         onModeChange?.(next);
       }}>
         {mode === null ? <option value="" disabled>Choose a resume</option> : null}
         <option value="tailored">Tailored resume</option><option value="baseline">Full baseline</option>
-      </select></label>
+      </select></label> : null}
       <Button type="button" disabled={busy || blockedByDraft || profileVersion === null || mode === null || (mode === "tailored" && !tailoring.available)
         || !ready || !recovery.permits("preparation.run")} onClick={() => {
         if (!mode) return;
         submit.mutate({ action: "preparation.run", body: { recipe: "prepare", job_ids: [jobId], scope: "selected", limit: 1, resume_mode: mode, allow_below_threshold: allowBelow } }, {
           onSuccess: (receipt) => { setStartedRunId(receipt.runId); cancel.reset(); },
         });
-      }}>{submit.isPending ? "Starting preparation…" : busy ? "Preparing resume…" : recovery.record?.operation === "preparation.run" ? "Retry same preparation" : localBaseline ? "Prepare resume locally" : "Prepare resume"}</Button>
-      {active || waiting ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => { const runId = active?.runId ?? startedRunId; if (runId) cancel.mutate(runId); }}>{active && active.jobIds.length > 1 ? `Stop preparation for ${active.jobIds.length} jobs` : "Request stop"}</Button> : null}
-      {current && retryable && ["failed", "partial", "cancelled"].includes(current.status) ? <Button type="button" variant="outline" disabled={busy || blockedByDraft || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: current.runId, job_ids: [jobId] } }, { onSuccess: (receipt) => { setStartedRunId(receipt.runId); cancel.reset(); } })}>Continue unfinished preparation</Button> : null}
+      }}>{activeAssessment ? jobAssessmentComplete ? "Fit assessed for this job" : "Assessing fit…" : submit.isPending ? "Starting preparation…" : busy ? "Preparing resume…" : recovery.record?.operation === "preparation.run" ? "Retry same preparation" : localBaseline ? "Prepare resume locally" : "Prepare resume"}</Button>
+      {active || waiting ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => { const runId = active?.runId ?? startedRunId; if (runId) cancel.mutate(runId); }}>{active && active.jobIds.length > 1 ? `Stop ${activeAssessment ? "fit assessment" : "preparation"} for ${active.jobIds.length} jobs` : "Request stop"}</Button> : null}
+      {current && retryable && ["failed", "partial", "cancelled"].includes(current.status) ? <Button type="button" variant="outline" disabled={busy || blockedByDraft || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: current.runId, job_ids: [jobId] } }, { onSuccess: (receipt) => { setStartedRunId(receipt.runId); cancel.reset(); } })}>{currentAssessment ? "Continue unfinished fit assessment" : "Continue unfinished preparation"}</Button> : null}
     </div>
     {profileVersion === null ? <p role="status">Save your profile before preparing a resume. {renderProfileSetup?.(mode) ?? <Link to="/profile">Open My profile</Link>}</p> : null}
     {blockedByDraft ? <p role="status">Save your unsaved resume edits before preparing another version. <Button type="button" variant="link" onClick={() => onReviewReady?.()}>Review unsaved edits</Button></p> : null}
     {mode === "tailored" && !tailoring.available ? <p role="status">{tailoring.reason}</p> : null}
     {!ready ? <p role="status">{runtime.isPending ? "Checking preparation readiness…" : runtime.error ? "Preparation readiness could not be checked." : "Preparation is unavailable while the worker reconnects."} <Link to="/settings">Review connections</Link></p> : null}
     {localBaseline ? <p role="status">{baselineCapability.reason}</p> : null}
-    <p className="job-preparation-task__scope" data-typography="metadata">{mode === "baseline" ? "Copy the complete saved profile and render it for review. No model calls are needed." : "Assess requirements and fit, compose approved wording, review coherence and render using your saved model and spending limits."} You review and accept the result.</p>
-    {busy ? <p role="status">{waiting ? `Preparation ${execution.error ? "status unavailable" : execution.data?.status ?? "queued"}.` : current ? `Preparation ${current.status}${jobSteps.find((step) => step.status === "running") ? ` · ${jobSteps.find((step) => step.status === "running")?.stage.replaceAll("_", " ")}` : ""}.` : "Starting preparation."}</p> : current ? <p role="status">Preparation {current.status === "succeeded" ? hasResume ? "ready for review" : "complete" : current.status}.{incomplete ? ` ${incomplete.errorCode?.replaceAll("_", " ") ?? "A step needs attention"}.` : ""}</p> : execution.data ? <p role="status">Preparation {execution.data.status}{execution.data.errorCode ? ` · ${execution.data.errorCode.replaceAll("_", " ")}` : ""}.</p> : null}
+    <p className="job-preparation-task__scope" data-typography="metadata">{activeAssessment ? "Assess requirements and fit using your saved model and spending limits. No resume is generated by this task." : <>{mode === "baseline" ? "Copy the complete saved profile and render it for review. No model calls are needed." : "Assess requirements and fit, compose approved wording, review coherence and render using your saved model and spending limits."} You review and accept the result.</>}</p>
+    {busy ? <p role="status">{jobAssessmentComplete ? "This job’s fit assessment is complete. Other jobs in this run are still being assessed." : waiting ? `${statusTask} ${execution.error ? "status unavailable" : execution.data?.status ?? "queued"}.` : statusRun ? `${statusTask} ${statusRun.status}${statusSteps.find((step) => step.status === "running") ? ` · ${statusSteps.find((step) => step.status === "running")?.stage.replaceAll("_", " ")}` : ""}.` : "Starting preparation."}</p> : current ? <p role="status">{statusTask} {current.status === "succeeded" ? hasResume ? "ready for review" : "complete" : current.status}.{incomplete ? ` ${incomplete.errorCode?.replaceAll("_", " ") ?? "A step needs attention"}.` : ""}</p> : execution.data ? <p role="status">Preparation {execution.data.status}{execution.data.errorCode ? ` · ${execution.data.errorCode.replaceAll("_", " ")}` : ""}.</p> : null}
     {belowThreshold ? <p role="status">This job is below your saved fit threshold. Choose the explicit exception below to prepare it.</p> : null}
-    {(cancel.isSuccess || execution.data?.cancellationRequested) && busy ? <p role="status">Stop requested. Preparation remains active until it settles.</p> : null}
+    {(cancel.isSuccess || execution.data?.cancellationRequested) && busy ? <p role="status">Stop requested. {activeAssessment ? "Fit assessment" : "Preparation"} remains active until it settles.</p> : null}
     {submit.error || cancel.error ? <p role="alert">{(submit.error ?? cancel.error)?.message} Previously accepted resumes remain available.</p> : null}
     <PreparationRecoveryNotice recovery={recovery} />
     <details className="job-preparation-inspection"><summary>Preparation options and history</summary>

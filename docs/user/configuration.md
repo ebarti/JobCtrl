@@ -416,23 +416,36 @@ token cost for an in-flight call. The limit is not a reservation or strict
 in-flight cap. `GET /v1/health` and `jobctrl doctor` report the global USD total
 and each lane's observed tokens, configured threshold, and status.
 
-While a provider call is in progress, spend may be shown as pending because its
-usage has not yet settled. If accounting still shows as unresolved after active
-calls finish, a provider observation or its database commit needs inspection.
-The local digest still shows its other sections and marks the budget incomplete
-without guessing the spend or remaining amount.
-When both the global USD budget and the current lane's token limit are `0`,
-unresolved past accounting does not block new model calls: those limits are
-disabled. Spend reporting still shows incomplete totals, and the retained
-receipts are preserved. A positive global budget or current-lane token limit
-still requires resolved accounting before another model call. JobCtrl never
-presents unknown usage as a complete zero or automatically repeats an ambiguous
-ledger write. If a usage report
-contains only some token counts, the known values are retained for inspection
-and the missing values stay unknown. `jobctrl doctor`
-reports the condition. Preserve the private `.jobctrl.db.llm-spend-pending`
-receipts in the workspace and compare them with the ledger and provider records;
-there is no automatic reconciliation command for an uncertain commit.
+While a provider call is in progress, usage is pending until the call settles.
+A completed call can report token usage without a dollar price, as can happen
+with a subscription provider. This is **cost unavailable**, not an interrupted
+call or a reconciliation task. With the daily dollar limit disabled, the header
+shows **LLM · No daily limit** and Jobs does not show a spending attention item
+solely because the price is unavailable. A finite dollar limit still requires
+monetary evidence before further calls. Token availability is tracked separately:
+a known dollar receipt remains valid even when its token counts are unavailable.
+
+Past model usage can remain unknown after cancellation or interruption. This
+knowledge state is separate from whether a saved limit blocks new work. With no
+daily dollar limit and no affected finite token lane, the header shows running
+work or **LLM · No daily limit**; unknown history is informational rather than a
+reconciliation task. **Settings → Budgets → Today's model usage** retains the
+unknown total, recorded subtotal, running-call count and unknown-call count.
+The original receipts are preserved. No cancellation cause is inferred from a
+receipt that lacks an exact action link.
+
+**Daily limit needs cost tracking** means unknown historical cost prevents the
+configured dollar limit from being enforced. **Token limit needs usage tracking**
+means unknown tokens prevent an affected lane's finite limit from being enforced;
+other lanes remain available when their policies allow work. Both retain the
+existing admission refusal. Changing a pricing quote does not recover past
+missing usage. A limit can be explicitly changed in its owning settings, but
+JobCtrl never changes it automatically or reports unknown usage as zero.
+Running work remains passive progress, and interrupted actions retain their
+separate canonical execution/recovery status. There is no automatic
+reconciliation action for missing final usage. Provider records may be useful
+for inspection, but account-wide totals do not establish an individual call's
+consumption.
 
 ## Provider sessions
 

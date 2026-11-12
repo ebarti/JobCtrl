@@ -46,11 +46,233 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current source inventory is **60 journeys in 25 spec files**: the earlier
-57 plus three direct-Jobs search journeys. They exercise saved launch and live
+The current source inventory is **77 journeys in 29 spec files**: the earlier
+57 plus three direct-Jobs search journeys, five provider-isolation/recovery
+journeys, one native accounting-setup journey and two accounting-classification
+journeys, plus five initial-assessment/recovery journeys, two exact-quote binding
+journeys, one accounting-actionability journey and one Jobs deletion/SSE journey.
+The direct-Jobs cases exercise saved launch and live
 counts across navigation/reload/tabs, lost-acknowledgement recovery and exact-run
 stop, and simultaneous two-tab admission. Historical complete-suite results
 below retain their original 57-case scope; they do not qualify the new inventory.
+
+### Five-job QA follow-up — 12 November 2026
+
+The skill-group heading is now the existing label field itself, with the
+accessible name **Skill group title**. The duplicate Label field is removed.
+The real Profile journey verifies keyboard focus, Tab order, successful autosave,
+unchanged group identity/items after reload, and individual skill/group creation
+and removal. Desktop and mobile images were inspected; the shared heading
+typography and constrained input fit without overflow.
+
+Requirements extraction now asks the external model for an exact source ID and
+verbatim quote. The owner derives canonical offsets only when that quote occurs
+exactly once in the frozen source. This removes model character-count arithmetic
+while preserving strict source binding, the numeric canonical/manual API,
+complete-catalog matching, raw model receipt/cache equality and publication
+fences. Non-verbatim, foreign, repeated, overlapping and old numeric selections
+refuse without replacing accepted requirements. The versioned model schema
+prevents old extraction output from becoming new authority.
+
+Accounting reads separately report current policy blockers and incomplete
+historical usage. Unknown receipts and null totals remain inspectable; they do
+not create an accounting action item when no enabled monetary or affected-lane
+token policy needs those values. Actual finite-policy admission still refuses
+before external dispatch. This makes no claim about the cause of legacy
+uncertainty and does not change canonical workflow recovery or receipt status.
+
+| Focused run | Observed result | Boundary |
+| --- | --- | --- |
+| `e2e-pOoJX8` | 2/2 passed; 58.393 s total | Real Profile editing plus all 104 rendered workspace views; keyboard/autosave/reload identity and 1440/390 skill-heading geometry. |
+| `e2e-smJWGP` | 1/1 passed; 17.568 s total | Genuine stale Fit, then hide/unhide, delete/restore and reviewed permanent deletion. Actual browser `JobUpdated` frames and fresh Digest HTTP responses update counts without document reload. |
+| `e2e-Za4RIF` | 4/4 passed; 84.465 s total | Public cancellation, actual worker kill, continued uncapped work, unrelated finite lane, and opposing finite monetary/affected-token refusals with accepted artifacts retained. |
+| `e2e-g1COJa` | 13/13 passed; 49.452 s total | Exact Unicode quote binding, cache reuse after catalog refusal, malformed/ambiguous selection preservation, existing catalog invariants, and ordinary Start search through three saved fit scores. |
+
+All four runs used zero retries and retained unchanged dependency locks and web
+build outputs during their execution. The final Requirements run used Python
+tree `c8e72d78c39ba1e6f4e2c0ed354164b523e5637d2cd215fc141756aae4cff64a`
+and web bundle `13150ebf6a162dd792db753da859fdbe6dfa9294a07a7788822305cd55a74e68`.
+A subsequent Requirements README clarification changed only documentation, not
+tested Python bytes. TypeScript, frontend boundaries, scoped Python lint and
+diff checks passed. Independent review found no actionable defect in the
+skill-heading, accounting-actionability or exact-quote production patches.
+
+The earlier live tab's stale attention count was not reproduced: the normal
+deletion subscription already existed and the real lifecycle proof passed.
+No speculative production invalidation change is claimed. The failed sandbox
+loopback preflight was an invocation failure, not an application result.
+These focused runs do not claim one complete 77-case execution or successful
+live provider semantics. The separately authorized five-job operational pass
+and exact-head hosted qualification are recorded in issue #1472. No release,
+deployment or user acceptance is implied by source verification.
+
+### Hosted capacity follow-up for 77 journeys — 12 November 2026
+
+[CI run 43296217614](https://github.com/ebarti/JobCtrl/actions/runs/43296217614)
+on `a5f923ebe6f983c91deac6bc84a02e4a95d5478d` did not qualify the complete
+inventory. Shard 1 reached the unchanged 720-second global ceiling after
+42 passes, leaving three Optional cases unrun: compensation evidence,
+interview preparation and reduced-composition manual Jobs. Its report has
+zero individual assertion failures and two global suite/teardown timeout
+errors. Shard 2 passed all 32 cases. The combined outcome is **74 passed,
+3 unrun**, not 77/77. Both shards retained the frozen Python tree
+`82e0be6d9cf02995667f44a2797b7970f52c14943fafc4879d3ac6255902eccc`
+and web bundle `13150ebf6a162dd792db753da859fdbe6dfa9294a07a7788822305cd55a74e68`.
+Dependency locks and built web bytes remained unchanged during execution.
+
+The preceding green [CI run 43269824441](https://github.com/ebarti/JobCtrl/actions/runs/43269824441)
+on `9069353d45ebf93330adf7341219610a9024bf03` had only 73 cases. The downloaded
+JSON reports record these suite elapsed times, including fixture setup and
+teardown:
+
+| Candidate / inventory | Shard 1 | Shard 2 |
+| --- | --- | --- |
+| `9069353d` / 73 | 43/43 passed; 687.907 s | 30/30 passed; 558.566 s |
+| `a5f923eb` / 77 | 42 passed, 3 unrun; 720.003 s | 32/32 passed; 660.072 s |
+
+The 40 completed cases shared by shard 1 in both runs consumed 655.530 s
+before and 658.519 s after, measured from successive case start timestamps;
+their median wall-time ratio was 1.004. The new Jobs deletion/SSE and accounting
+actionability cases added 12.426 s and 35.441 s, respectively. Their combined
+47.867 s exceeded the prior shard's 32.093 s remaining budget. This localizes
+the observed failure to cumulative shard capacity; it does not establish a
+general application performance regression or a transient infrastructure fault.
+The unchanged file-level grouping keeps the eight-case Optional file together,
+producing a 45/32 case split as the inventory grows.
+
+The scheduling repair uses standard Playwright `--shard=1/3`, `--shard=2/3`
+and `--shard=3/3` on three independent runners. Native JSON listing measured
+**26 cases / 11 files**, **36 cases / 11 files**, and **15 cases / 7 files**.
+The union equals the complete **77 cases / 29 files**, with zero overlap,
+missing cases or extras. No case, application behavior or fixture changed.
+One worker, zero retries, all existing case/fixture/action/assertion deadlines,
+the 720-second global ceiling, the 14-minute journey step and the 20-minute job
+limit remain unchanged. Matrix fail-fast remains disabled; the stable
+**Browser / UI checks** aggregate requires all three shards to succeed.
+Evidence names now use `python-application-journeys-shard-N-of-3-<run_attempt>`.
+
+This is scheduling and partition-inventory proof. It is not an executed
+three-shard pass: hosted qualification of the repaired candidate remains
+pending in the [PR checks](https://github.com/ebarti/JobCtrl/pull/1470/checks).
+
+### Populated Fit presentation follow-up — 12 November 2026
+
+The first completed live result exposed dense, unspaced requirement explanations
+and repeated empty wording rows. The presentation now separates the saved score,
+literal qualification outcomes, full requirement text and contribution metadata.
+Named native disclosures retain rationale, exact evidence, source revisions,
+determination IDs and correction controls. Empty current coverage describes only
+the current result; it does not infer that wording has never been assessed.
+An already completed job is identified separately while its wider assessment
+run remains active, retaining the same busy guard and whole-run stop scope.
+
+Two existing journeys were extended; the inventory remains 77. The final focused
+run `e2e-jnJYH6` passed 2/2 with zero retries or skips in 21.638 seconds. It compares
+full requirement and rationale text with canonical saved API data, exercises
+gap/evidence/correction disclosures without changing the score, and holds a
+second job's qualification while inspecting the completed first job. Desktop
+and mobile result, audit and correction screenshots were inspected. Dependency
+locks and the built web bundle remained unchanged during execution.
+
+Independent review found and corrected the empty-coverage history inference,
+then cleared the production behavior and screenshots. A subsequent copy-only
+polish calls the remaining cohort "other jobs in this run"; it changes no guard,
+payload or action. Complete candidate qualification is recorded in the
+[PR checks](https://github.com/ebarti/JobCtrl/pull/1470/checks) and issue #1472.
+
+### Final QA corrections — 12 November 2026
+
+This follow-up to the Original redesign addresses the reported disabled search,
+duplicated Jobs filters and overcomplicated achievement cards. Valid Remote and
+posting-age preferences now reach isolated board requests; source restrictions
+and failures are recorded per source without disabling compatible acquisition.
+Jobs uses column-owned criteria with one active-filter summary. Achievements
+lead with saved/current wording and Edit wording, with factual editing, coaching,
+ordering, removal and audit history available through named secondary controls.
+
+The new [provider journeys](../../../apps/web/e2e/journeys/discovery-provider-scopes.spec.ts)
+run the installed JobStreaming 0.0.5 request/parser/checkpoint implementation
+against an owned loopback transport. They retain real Temporal, Python HTTP,
+repositories, SQLite receipts and worker processes. The ATS cases drive the
+public extension pairing, claim, task, DNS and result protocol; they do not
+replace the registered adapter or claim execution by an actual Chrome extension.
+
+| Added journey | Observed boundary |
+| --- | --- |
+| Remote posting age and isolated failures | Indeed retains Remote while its incompatible acquisition age parameter is omitted. Local admission honors the exact saved 73-hour cutoff and recorded date precision. Old, unknown, ambiguous and future dates are excluded with receipts. ZipRecruiter's actual missing-auth refusal and Glassdoor's unsupported scope remain attributed to their boards in both selected orders. All-failed differs from an empty completed source plus a failed source. |
+| Committed cursor recovery and cancellation | Wait for the actual persisted SDK cursor and three explicit acknowledgements, including one accepted and two filtered receipts, then crash the worker. The replacement resumes that cursor under the same run and cutoff reference, preserves unique accepted jobs and refuses jobs delivered after settled cancellation. |
+| Board failure after full capacity | A prior board failure survives worker loss after Indeed fills the shared new-job limit. Recovery makes no additional provider request and retains a partial result. |
+| Completed ATS plus failed board | An actual registered ATS completes through the public extension protocol and fills capacity; another acquisition remains interrupted. After worker loss, canonical completed/budget-exhausted units and the failed board produce partial rather than failed. |
+| Failed ATS plus completed board | A registered ATS records `request_failed` before Indeed fills capacity. Recovery retains the exact source ID/code, accepted job and partial result, making no additional external call. |
+
+The existing Jobs journey additionally exercises column bounds/availability,
+hidden-column access, simultaneous canonical and literal predicates, atomic
+clear, saved views, exact timestamp preservation, return selection/scroll and
+mobile filter geometry. The Profile journey exercises compact desktop/mobile
+cards, factual editing, wording proposals, the immediate reload/recovery race,
+exact approvals, history and full-width textarea geometry. The offline demo
+retains actual editing and its accepted PDF flow through the renamed controls.
+
+Observed source runs, with **one worker and zero retries** throughout:
+
+| Run | Result | Build / journeys / total (ms) | Scope |
+| --- | --- | --- | --- |
+| `e2e-QM8ccy` | 14 passed / 3 failed | 9,211 / 262,484 / 273,073 | Initial 17 affected cases, including the 26-surface/four-width matrix and 104 captures. Failures were SDK recovery observation timing, a viewport changed before a retained-scroll assertion, and old demo control names. |
+| `e2e-0BaV1j` | 3/3 passed | 8,513 / 67,808 / 77,601 | Jobs, Profile and offline demo after viewport/name repairs and the inspected wording textarea CSS repair. |
+| `e2e-SEp88O` | 3 passed / 3 failed | 7,802 / 109,006 / 118,163 | Remote-age/failure isolation, capacity recovery and generic Discovery passed. Cursor recovery crashed before the checkpoint commit; the two new ATS journeys incorrectly read raw source arrays from an aggregate telemetry response. |
+| `e2e-fzI11x` | 3/3 passed | 7,581 / 125,357 / 134,217 | Corrected committed-cursor/cancellation and both registered-source restart journeys. |
+
+There are **19 distinct affected journeys with passing observations** across
+these runs. This does not claim a single full 65-case pass. No skipped, flaky or
+retried cases occurred. The failed attempts remain failures in this record.
+The ordinary 90-second case, 150-second demo and 720-second global limits remain.
+The explicit post-crash observation now permits 45 seconds, matching the existing
+terminal observer and allowing the real 30-second heartbeat expiry; no production
+timeout changed. The corrected cursor test waits for committed checkpoint state
+through a bounded, read-only observer restricted to its owned synthetic workspace.
+It does not infer acknowledgement from the next outbound request. ATS barriers
+use the existing public aggregate telemetry and exact source-registry fields.
+
+Image inspection found an actual inherited CSS defect after the initial passing
+Profile assertions: a legacy textarea grid area pushed the wording editor into
+half its container. The owning Profile style now resets that grid placement.
+The final 1440/390 captures and geometry assertions passed. Filter screenshots
+disable transition animations so they show the settled dialog. Public guide
+images contain only owned synthetic state; private local-QA data is excluded.
+
+| Final recorded boundary | SHA-256 |
+| --- | --- |
+| Python package, `e2e-fzI11x` | `c80730f1d6ca07560e7de5a388d791d592ad6f28a43955141e7233fda260efbe` |
+| Runtime capability policy | `7d360eeba42582a39895f98b5596eaf26621be4b8061fc3067918cd33dafa8fd` |
+| Web build, all three final focused runs | `c994af31aa43f1b6df517a28e9d605119fab85ab9a8734161066dc4dec1c7de3` |
+
+The final two provider runs have identical Python code; only the feature README
+changed their package hashes (`e2e-SEp88O` was
+`8976e8d0c732fc8b8daaf7d36b0d66db2da221153cf4e39f167eec072ca60fca`).
+Locks and built assets remained unchanged within each run. The runner was macOS
+arm64, 12 CPUs, Node 26.13.0. Web type checking and boundary lint, Python Ruff and
+whitespace checks passed. Independent review closed the canonical failure/
+fulfilled-unit recovery defects and the browser GET/header serialization repair.
+Independent process/listener readback found no remaining owned-run process,
+recorded initial worker or API listener across all four runs: 58 recorded
+worker/API process IDs and 31 API ports were checked. Five failed synthetic
+workspaces remain for diagnosis; successful workspaces were removed. The local
+interactive QA app is separately owned and remains running.
+The documentation build resolved 16,175 references across 476 emitted files.
+The first rendered-docs attempt lost its preview connection after a concurrent
+documentation rebuild replaced that preview's output. That attempt is invalid
+as complete qualification; the final check is run against a fresh preview after
+the build finishes, with no concurrent output changes.
+The subsequent complete rendered run reported two failures: the public homepage
+copy of the Jobs image was stale, and the normal-flow check still required the
+retired Search for jobs control label. The public image now matches the refreshed
+synthetic source image; the check requires both Start search and Search
+preferences. All other interaction, theme, contrast, image and navigation checks
+remain unchanged.
+These checks do not establish live Indeed availability, successful live
+Glassdoor/ZipRecruiter authentication, semantic model accuracy, participant
+usability, installed-release qualification or deployment. Hosted whole-head
+qualification remains a separate delivery gate.
 
 ### Direct Jobs search and inline progress — 11 November 2026
 
@@ -156,6 +378,7 @@ cannot qualify all 57, and earlier failures remain part of the evidence.
 | [Whole-product surfaces](../../../apps/web/e2e/journeys/redesign-surfaces.spec.ts) | Load 26 retained surfaces at 1440 × 1000, 1860 × 1227, 2943 × 1227 and 390 × 844: 104 settled captures within one journey. Check mounted navigation, headings, meaningful loaded/explicit-empty content and page overflow, plus real saved-material search/clear/state, control geometry and Plate/PDF access. This does not judge visual craft: earlier passing inventory checks still exposed inner Profile and Materials control defects during image inspection. |
 | [Requirement associations](../../../apps/web/e2e/journeys/requirement-associations.spec.ts) | Create/revise/remove/restore many-to-many user intent through the real library/Profile flow. Keep exact requirement/source/optional-wording pins, stale history, achievement-based grouping and selected/filter/return context. Manual links never create assessment, coverage, score or model work. |
 | [Search preferences](../../../apps/web/e2e/journeys/search-preferences.spec.ts) | Enter adds/focuses independent role inputs; save/reload canonical targets and source/limit settings; make no lookup while typing. Explicit controlled Photon results bind exact row/place identity, duplicate display labels remain independent, edits clear stale bindings, and invalid responses remain unverified. Deliberate search retains its saved Profile-version fence. |
+| [Search assessment and recovery](../../../apps/web/e2e/journeys/search-assessment.spec.ts) | Ordinary search continues from canonical acquisition into initial person fit with separate source/assessment outcomes. Explicit saved-ID assessment performs no new acquisition. Reject foreign evidence, preserve accepted scores/manual refresh, retain failed jobs across actual worker replacement, seal cancellation without inventing model usage, and assess jobs retained by failed sources. |
 | [Settings workspace](../../../apps/web/e2e/journeys/settings-workspace.spec.ts) | Save a budget before model setup, retain another pane's invalid draft, distinguish configured/unverified readiness and probe providers only on explicit request. Exercise real revision conflicts, uncertain acknowledgements and credential leave/discard protection without changing unrelated saved policy. |
 | [Maintained-assignment race](../../../apps/web/e2e/journeys/wording-assignment-integrity.spec.ts) | Hold the external grouped determination for a manual Fit refresh, change an unrelated maintained assignment through its public write, and require the admitted whole-Profile fingerprint to refuse stale publication. Preserve accepted score/assignment state and the original bounded operation rather than absorbing the concurrent change. |
 | [Composition freshness](../../../apps/web/e2e/journeys/wording-assignment-integrity.spec.ts) | Read job-relevant maintained-wording freshness, including missing-to-present changes; unrelated requirement assignments do not stale composition. Relevant changes preserve draft/accepted pointers and actual accepted PDF bytes. Baseline follows Profile freshness without borrowing Fit authority, and reads dispatch no model or preparation work. |
@@ -787,3 +1010,188 @@ merge. This preparation snapshot does not infer either result from earlier runs.
 A controlled HTTP boundary cannot prove those outcomes. Record the exact
 commands, candidate, runner, timings and
 unverified gaps without inferring readiness from test deletion or a green build.
+
+### Native Discovery accounting setup
+
+`discovery-accounting.spec.ts` runs a fresh owned application with the ordinary
+native model preflight and isolated HOME. A real worker action with a finite cap
+and missing quote refuses before model execution or source acquisition. The UI
+keeps Start search actionable, explains the refusal, opens contextual Budgets,
+saves an explicitly synthetic exact quote, and returns to the same Jobs filters.
+Assertions retain profile, provider, monetary cap and the single failed action;
+no model or source request is launched after saving. Browser credential, provider
+and setup-status routes are forbidden by a transport sentinel. This proves
+admission and recovery UX, not real provider pricing, authentication or model
+execution. Ordinary externally-accounted Discovery remains separately exercised.
+
+Focused verification on 12 November 2026 passed the native accounting setup
+(1.0 seconds) and existing Settings draft/navigation journey (3.2 seconds),
+20.432 seconds total with zero retries. The ordinary saved Jobs search also
+passed (2.1 seconds) in the preceding focused run. This does not claim a new
+complete 66-case run or real provider execution.
+
+### Compact multi-query source-failure feedback
+
+Jobs groups repeated source failures for presentation by recorded source family,
+board set/source identity, error code and exact message. It reports affected
+query/location combinations rather than inferring unique authored-query counts
+from opaque unit IDs. Search details retains every recorded failure, raw board
+identity and available source/family/unit provenance. Partial or failed status,
+canonical job counts, receipts and accepted jobs are unchanged.
+
+The existing pinned-SDK provider-scope journey now runs two literal queries over
+two locations. Eight recorded board failures render as two actionable notices,
+four combinations each. It opens all eight detailed receipts, verifies their
+IDs/codes/messages, closes and reloads the page, and reads back the unchanged
+canonical failure list. Its settled 1440×1000 capture shows the table in the
+first viewport. No live source request, private workspace or internal API mock
+participates.
+
+Focused run `e2e-9sFZDr` passed **1/1** on 12 November 2026: 3.2 seconds for the
+case, 8.529 seconds for the runner phase and 17.364 seconds total, including a
+7.491-second web build. Retries, skipped, unexpected and flaky results were zero;
+web build and dependency locks stayed unchanged. The 151-file web bundle SHA-256
+is `589ed43206fe9516cfc0d50f8bc36a656af3d7a86bd2a13a0f0be093292bae56`.
+Frontend type and boundary checks passed with zero boundary violations.
+
+The first focused attempt, `e2e-C44Jqm`, exposed a test-request scope mistake:
+plain queries legitimately included an ATS source registered earlier in the
+same case and produced a ninth independent failure. The corrected request uses
+the case's explicit broad-board scope; exact receipt-count assertions remain.
+The initial sandbox-only attempt stopped before any journey because loopback
+listeners were denied. These attempts are retained as setup history, not passing
+runtime observations. This focused result does not claim a new complete-suite,
+hosted, release or deployment qualification.
+
+### Terminal search feedback lifecycle
+
+Last-search acknowledgement is browser presentation state, fenced by tenant,
+workspace, database incarnation, run and an opaque digest of the exact terminal
+action outcome. The canonical status, counts and failures remain in Search
+details. Current saved board membership takes precedence over an active registry
+entry when classifying historical remedies. Disabled or deselected sources keep
+their old errors in details; unknown current reads remain unknown. Active work,
+status uncertainty and unresolved admission recovery cannot be dismissed.
+
+The SDK acquisition/recovery suite explicitly uses the reduced
+`profile,jobs,discovery` composition; the ordinary saved-search journey owns full
+initial-assessment proof. The extended existing provider-scope case verifies
+deselection, dismiss, reload, Search preferences navigation and return, all eight
+retained failures, restored display, a new undismissible active run, and its new
+visible terminal outcome. Run `e2e-Q2nhdt` passed **1/1** on 12 November 2026:
+3.8 seconds for the case, 8.171 seconds for the runner phase and 16.955 seconds
+total. Retries, skipped, unexpected, flaky and browser-console failures were
+zero; dependency locks and the 151-file web bundle remained unchanged. The web
+SHA-256 was `03b9b25380f25163ca9c7e8b7cd9cfa0e1701404880010416e1980122b48b74f`.
+The dismissed desktop capture was inspected with Show result and Search details
+accessible above the table. Frontend type and boundary checks passed.
+
+The final source-only and lifecycle checks also passed in `e2e-ebJ54I`: the SDK
+case took 4.1 seconds and Companies took 3.5 seconds. A terminal result whose
+canonical `preparationAvailable` is false explicitly says initial assessment is
+unavailable; an old result without that flag does not invent an assessment
+count or a missing-row error. The 151-file web SHA-256 was
+`e77620cb4b16d59b7acd58c36f857d07a5432c0f7d230f7e84caa5cedfeffed1`.
+That three-case invocation was not fully passing: its separate selected-job
+assessment case passed active/terminal recipe labels and restored resume action,
+then expected a full run ID where the history intentionally abbreviates it.
+The history assertion was corrected to the actual retained caption and job-stage
+outcome for the subsequent focused assessment proof. No production history or
+console allowance changed.
+
+The earlier `e2e-UFMrwe` attempt exposed an unrelated reduced-composition Profile
+preview/templates dependency: entering that route produced genuine 503/404
+console errors when Resumes was absent. The lifecycle proof now navigates through
+the supported Discovery preferences route, retaining strict console assertions.
+This does not claim the optional Profile route defect is repaired, nor a new
+complete-suite or hosted qualification.
+
+### Unlimited monetary accounting classification
+
+`model-accounting.spec.ts` completes two real source-bound query-plan actions
+through the worker and controlled external model with known tokens but no dollar
+receipt. Unlimited mode accepts repeated work, retains accepted provenance,
+shows no reconciliation task, and keeps aggregate dollars null. Restoring a
+finite monetary cap refuses another action before external dispatch and preserves
+the accepted plan. The opposing case supplies reported cost but no token counts:
+monetary completeness remains intact, while enabling a token-lane limit refuses
+further work. The actual worker-kill recovery journey independently asserts
+`costStatus=unresolved`, a retained unresolved call and null monetary total.
+No receipt, accepted artifact, monetary gate or token gate is bypassed.
+
+The focused accounting run on 12 November passed actual worker-kill recovery
+(33.2 seconds) and both accounting cases, with zero retries. Final UI barriers
+wait for the actual Digest response and a settled Start search action; the two
+accounting cases then passed in 1.8 and 0.705 seconds (19.467 seconds total).
+The current inventory count is not a claim of a new complete 68-case run.
+
+### Initial person fit after ordinary search
+
+The complete application's existing `discovery.search` action now invokes
+Preparation's fit-only search recipe under the same run identity. It freezes
+only newly committed job IDs, runs enrichment, role analysis, Requirements and
+Fit, and performs no wording preparation or resume generation. Source outcomes
+and assessment outcomes remain independent. Even all-source failure after
+committed jobs retains and assesses that exact cohort. The explicit selected-ID
+`assess` recipe recovers already saved jobs without another acquisition; it
+retains Fit's manual-refresh fence for previously accepted qualification.
+
+The five actual application journeys in `search-assessment.spec.ts` passed
+**5/5** in `e2e-gZGyMg` on 12 November 2026: 81.973 seconds for the runner phase
+and 91.042 seconds total, including a 7.720-second web build. They cover foreign
+evidence refusal without a fabricated score, explicit saved-job recovery and
+accepted-score preservation, cancellation after an actual worker kill with
+preparation sealed and monetary usage still unresolved, immutable failed-job
+outcomes across worker replacement while a later frozen job finishes, and
+assessment of jobs retained by failed acquisition. The Python source SHA-256
+was `bd1abbb101d458d4ae8c3138f990c5cab4c481987edf03fc73bec56c17b6074e` and
+the source-candidate digest was
+`c55424668e6eaf89193a9223ac2604c1c19a23724cf7144d64e025465f316561`.
+There were zero retries; dependency locks and the 151-file web bundle remained
+unchanged. The runner was macOS arm64, Node 26.13.0, with 12 reported CPUs.
+
+The combined UI run `e2e-3A36VR` passed its five relevant search cases: ordinary
+Jobs search assessed three new jobs as 10/10, 1/10 and 10/10; the unrelated saved
+job remained unassessed. During a held model call after acquisition completed,
+the real UI showed **Assessing saved jobs**, **0 of 3 jobs assessed · 0 failed**,
+disabled Start search and no dismiss action. It later showed 3 of 3 assessed,
+the actual fit values and restored launch/dismiss controls. Screenshots were
+inspected. The partial assessment case showed its fit-specific heading and
+failed count; preference reads/saves retained zero model work, lost admission
+was reconciled, cancellation remained exact and two tabs admitted one run.
+
+That combined six-case invocation was not fully passing: the separate Companies
+fixture removed Requirements, Fit and Resumes while its Job Detail assertions
+still used their public reads, producing real 404 console errors. Its source-only
+composition was corrected to retain those read owners while removing only
+Preparation; no console allowance or production masking was added. The initial
+saved-score refresh proof also exposed an incorrect harness expectation: the
+actual `fit_refresh_required` refusal correctly prevented another qualification.
+The test now verifies that fence and unchanged accepted score. Neither attempt
+is recorded as passing. These focused results do not establish a new whole-suite,
+hosted, installed-provider, release or deployment qualification.
+
+The final explicit saved-job recovery/UI case passed **1/1** in `e2e-cJf22K`:
+1.8 seconds for the case, 7.017 seconds for the runner phase and 17.021 seconds
+total, including an 8.436-second build. While Fit was held, Job Detail showed
+**Assess fit**, a disabled **Assessing fit…** action, the factual assessment
+stage and no resume selector. On completion it restored **Resume to prepare**
+and **Prepare resume**, with the recorded assessment in job/stage history.
+The accepted score, manual-refresh refusal, absent new acquisition and absent
+wording/resume work remained verified. A native held-state screenshot was
+retained. The final 151-file web SHA-256 was
+`6dd6eabdd722441908800c7ea19de80411441a10d99924597c4ae5b9a68d181c`;
+Python source SHA-256 was
+`58d1aa1340bfb2859a7ce2b534e78fe67ecebd809a954e2040f37831350b2163`.
+Retries were zero, and web build and dependency locks remained unchanged.
+
+The prior three-case `e2e-ebJ54I` invocation passed the SDK lifecycle and corrected
+source-only Companies cases, including the explicit unavailable-assessment
+notice, but failed the new recovery UI assertion because it expected a full run
+ID that the history view does not render. The corrected assertion verifies the
+actual recipe caption and exact job/stage/score row, while the public run read
+retains durable identity. That attempt remains partial proof, separate from the
+final passing recovery case. All Python code bytes remained identical to the
+five-case recovery run; only Discovery's owning README changed the source-tree
+hash. The listed inventory is now 73 journeys in 29 spec files, without a new
+complete-suite claim.

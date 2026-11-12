@@ -155,11 +155,23 @@ Experience, Skills, Education and Personal details are peer navigation sections,
 not collapsed content under an Overview. Changes retain each entry's stable
 identity and the normal autosave/conflict boundary. Experience leads with the
 role inventory, followed by **Professional summary** and compact secondary tools.
+In **Skills**, edit a group title directly in its heading. Title edits use the
+same autosave, **Save changes**, validation and undo behavior as individual
+skills; adding or removing skills and groups remains nearby.
 Role summaries remain
 editable even when empty or when the role has no achievements. Remove a role or
 achievement deliberately; **Restore removed experience** restores the requested
 original identity into the current Profile and retains associated wording and
 source history. Restore the parent role before its removed achievement.
+
+Each achievement leads with its saved resume wording and linked requirement
+tags. **Edit wording** starts a proposed revision; it preserves the earlier
+approved text until you review the replacement. **Edit facts** opens the
+underlying achievement record: use it to correct what happened, your ownership,
+scope or results. Changing that record can make dependent wording need review;
+it is a different operation from improving its phrasing. **Achievement options**
+keeps coaching, ordering and removal together. Exact source references, approvals
+and earlier text remain available under **Approval and history**.
 
 The [complete synthetic Experience capture](/assets/screenshots/original-profile-wording.png)
 shows the role editor, canonical requirement tags, maintained current wording,
@@ -295,9 +307,9 @@ Bullets and short paragraphs stay together when they fit on one page.
 
 On `/profile`, edits to names, address parts, email, phone, executive profile,
 experience titles, companies, locations, dates, summaries and bullets, education,
-and individual skills update the same draft shown by **Profile data**. Each
-field is bound to its saved entry identity, including fields sharing a display
-line; separators inside names or skills are preserved. Edits follow the normal
+skill group titles and individual skills update the same draft shown by
+**Profile data**. Each field is bound to its saved entry identity, including
+fields sharing a display line; separators inside names or skills are preserved. Edits follow the normal
 validation, undo, and autosave path. Temporarily clearing a required field does
 not prevent further editing or undo; incomplete data still cannot be saved.
 Conflicting boxed edits or a mismatched preview are preserved and reported.

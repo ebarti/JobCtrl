@@ -72,18 +72,34 @@ class QualifiedMeaning(Value):
     scope: Scope
 
 
-class ExtractedRequirement(QualifiedMeaning):
+class RequirementFields(QualifiedMeaning):
     local_id: StrictStr = Field(min_length=1, max_length=120)
     text: StrictStr = Field(min_length=1, max_length=2500)
     tier: Literal["must_have", "nice_to_have"]
     weight: float = Field(ge=0, le=1)
     support: Literal["supported", "unsupported", "uncertain"]
+
+
+class ExtractedRequirement(RequirementFields):
     spans: list[Span] = Field(min_length=1, max_length=8)
+
+
+class SelectedRequirement(RequirementFields):
+    spans: list[Citation] = Field(min_length=1, max_length=8)
 
 
 class Extraction(Value):
     status: Literal["complete", "uncertain"]
     requirements: list[ExtractedRequirement] = Field(max_length=100)
+    reason: StrictStr = Field(min_length=1, max_length=2000)
+    citations: list[Citation] = Field(min_length=1, max_length=8)
+
+
+class ExtractionSelection(Value):
+    """Model-authored source choices; canonical offsets belong to the application."""
+
+    status: Literal["complete", "uncertain"]
+    requirements: list[SelectedRequirement] = Field(max_length=100)
     reason: StrictStr = Field(min_length=1, max_length=2000)
     citations: list[Citation] = Field(min_length=1, max_length=8)
 
@@ -162,6 +178,28 @@ def validate_extraction(value: Extraction, *, source_id: str, text: str) -> None
                 raise RequirementError("source_span_invalid")
 
 
+def bind_extraction(value: ExtractionSelection, *, source_id: str, text: str) -> Extraction:
+    """Locate exact unique model-selected quotes without interpreting their meaning."""
+    sources = {source_id: text}
+    requirements = []
+    for row in value.requirements:
+        spans = []
+        for selection in row.spans:
+            validate_citations([selection], sources, {source_id})
+            start = text.find(selection.quote)
+            if text.find(selection.quote, start + 1) != -1:
+                raise RequirementError("source_quote_ambiguous")
+            spans.append(Span(start=start, end=start + len(selection.quote), quote=selection.quote))
+        requirements.append(ExtractedRequirement(**row.model_dump(exclude={"spans"}), spans=spans))
+    bound = Extraction(**value.model_dump(exclude={"requirements"}), requirements=requirements)
+    validate_extraction(bound, source_id=source_id, text=text)
+    return bound
+
+
+def validate_extraction_selection(value: ExtractionSelection, *, source_id: str, text: str) -> None:
+    bind_extraction(value, source_id=source_id, text=text)
+
+
 def validate_comparison(value: Comparison, *, candidates: list[dict], sources: dict[str, str], incoming: str) -> None:
     expected = {(row["requirement_id"], row["revision"]) for row in candidates}
     actual = [(row.requirement_id, row.requirement_revision) for row in value.decisions]
@@ -221,7 +259,10 @@ leadership versus participation, AND/OR alternatives and exceptions. Do not gene
 qualifier, invent a skill or turn an employer benefit into a candidate qualification. Scope is
 resume for capabilities/responsibilities; eligibility, logistics and employer_condition are
 separate. Tier/weight describe this occurrence, not reusable semantic identity. Use a separate
-local_id per distinct requirement and exact character offsets with contiguous verbatim quotes.
+local_id per distinct requirement. For each supporting span select the supplied source_id and
+one exact contiguous verbatim quote that occurs exactly once in that source. Include enough
+surrounding source text to disambiguate repeated phrases. Do not count characters or return
+numeric offsets; the application derives the range from your exact unique selection.
 Support must be your source-grounded judgment. If uncertain, report uncertain. An empty complete
 inventory requires a source-grounded reason; do not fabricate requirements. Cite the saved source.
 Return only the requested strict JSON schema. No tools, external facts or lexical matching."""

@@ -13,6 +13,24 @@ job must remain usable without Discovery or Companies. New admissions and
 source checkpoints must respect run ownership, limits, cancellation, retry and
 provenance; a duplicate retry must not invent a second job.
 
+In the complete application, composition binds the existing `discovery.search`
+action to Preparation's `search` recipe. Acquisition and per-job initial
+assessment share the public run identity. The source owner can finish acquisition
+while the action remains active through enrichment, role analysis, requirements
+and Fit. Its frozen cohort contains only newly committed job IDs; it never scans
+unrelated pending jobs or automatically reassesses prior scores. Coverage,
+wording and resume stages are excluded. Preparation's explicit `assess` recipe
+uses the same prerequisites for selected saved IDs without acquisition.
+Standalone Discovery retains its acquisition-only action and reports that
+preparation is unavailable. Source and assessment failures remain separate
+recorded outcomes; failed replacement work preserves accepted feature artifacts.
+All-source failure after accepted new jobs does not abandon their initial
+assessment: Preparation consumes the exact committed acquisition outcome and
+reports composite partial status while retaining failed acquisition authority.
+Terminal failed/blocked job stages are immutable on same-run worker replay;
+explicit retries get a new admitted identity. Action finalization seals
+interrupted preparation state transactionally without touching model accounting.
+
 ## Detail Enrichment
 
 Job capture and refresh retain the selected posting snapshot, source identity,

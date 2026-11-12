@@ -209,7 +209,7 @@ test("demo tour retains local exact wording approval, durable edits and a real a
     await expect(proposal).toHaveCount(0);
     await expect(
       page
-        .getByRole("article", { name: "Authored wording", exact: true })
+        .getByRole("article", { name: "Saved wording", exact: true })
         .first(),
     ).toBeVisible();
 
@@ -932,10 +932,10 @@ test("demo tour retains local exact wording approval, durable edits and a real a
   });
   await otherTab.goto("/profile");
   const otherWording = otherTab
-    .getByRole("article", { name: "Authored wording", exact: true })
+    .getByRole("article", { name: "Saved wording", exact: true })
     .first();
   await otherWording
-    .getByRole("button", { name: "Propose revision", exact: true })
+    .getByRole("button", { name: "Edit wording", exact: true })
     .click();
   const resetWording = editedWording + " awaiting the owned reset";
   await otherWording

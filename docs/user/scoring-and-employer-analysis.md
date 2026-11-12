@@ -71,6 +71,19 @@ wording coverage** answers whether exact approved text expresses a supported
 requirement. A missing or unapproved expression remains a wording gap and does
 not lower factual fit. Approving a better expression creates no new capability.
 
+Job Detail leads with the saved score, fit band, confidence and eligibility.
+Each requirement keeps its full source text, recorded outcome and point
+contribution visible. Open **Assessment details** for its complete rationale,
+**Evidence and provenance**, and **Correct this requirement assessment**. Source
+versions and score corrections remain available beside the result.
+
+When current approved-wording coverage is not recorded, the panel shows one
+empty state. **Wording gap details** retains every requirement's exact status
+and proposal state; **Recorded wording relations** retains the saved identities
+when relations exist. This presentation does not change qualification or the
+saved score. During a multi-job assessment, a completed job is identified
+separately while assessment of the selected jobs remains active.
+
 Saving facts, reviewing sources, editing requirements or approving wording does
 not launch a reassessment or regenerate a resume. Choose **Update affected
 matches** on Profile, Evidence Map or beside Person fit in Job Detail, or select
@@ -212,8 +225,18 @@ case-folding; clients do not guess or re-normalize display text.
 
 ## What You Can See And Control
 
-Scoring runs inside Discover preparation. Review it on the current product
-surfaces rather than looking for a separate scoring page:
+Scoring runs inside Discover preparation. The ordinary **Start search** action
+keeps its durable search identity open
+through initial assessment of its newly saved jobs. It runs enrichment, role
+analysis, Requirements and Fit, with no wording preparation or resume generation.
+Source completion and source counts do not stand in for fit completion. An
+assessment failure is a per-job outcome; earlier accepted records remain.
+The explicit `assess` preparation recipe applies those same prerequisites and
+person-fit work to selected saved Job IDs without another search. Existing scores
+made stale by Profile or catalog edits still require the manual affected-matches
+decision; search never expands into that refresh.
+
+Review the recorded results on the current product surfaces:
 
 - `/jobs` exposes fit-score filters, sorting, bands, and stage state.
 - `/jobs/:jobId` shows the employer analysis, score breakdown, confidence,

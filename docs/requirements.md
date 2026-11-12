@@ -57,6 +57,16 @@ from other tabs or clients; exact same-key retries retain their original run.
 An unknown status blocks another launch. Stops refer to the exact run, and
 navigation, ordinary saves and status reads launch no work.
 
+Owner correction, 12 November 2026: valid Remote and posting-age preferences
+must not disable the whole search because one board cannot accept their combined
+request parameters. Adapt each board's acquisition request while preserving the
+saved criteria and enforcing the original cutoff against recorded publication
+dates. Unverifiable dates and unsupported source scopes remain explicit. A
+failed board or registered source must not cancel compatible sources, and its
+safe failure identity must survive worker recovery and exhaustion of the shared
+job budget. The terminal result distinguishes completed, partial and failed
+acquisition without treating an unstarted source as successful.
+
 | ID | Added | Requirement | For whom | Why | Related docs |
 | --- | --- | --- | --- | --- | --- |
 | BR-011 | 2026-05-22 | Discovery must prioritize the user's configured target roles, locations, seniority, tracks, and work models. | Job seekers. | Focus results on the user's active search instead of broad generic scraping. | [local API](local-ts-api.md) |

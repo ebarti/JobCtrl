@@ -376,7 +376,7 @@ test("Original redesign renders all twenty-six primary workspace surfaces at nor
       }
       if (route.name === "profile-skills")
         await expect(
-          page.getByRole("textbox", { name: "Label", exact: true }),
+          page.getByRole("textbox", { name: "Skill group title", exact: true }),
         ).toHaveValue("Engineering");
       if (route.name === "profile-education")
         await expect(

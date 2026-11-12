@@ -86,9 +86,18 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
             "temporal": temporal_metadata(),
         })
 
+    def settings_response(saved):
+        provider = saved["defaultProvider"]
+        model = saved["providerModels"].get(provider)
+        accounting = runtime.model.accounting_capability(
+            selection={"provider": provider, "model": model}, settings=saved,
+        ) if model else {"provider": provider, "model": None, "available": False,
+                         "costSource": None, "pricingQuote": None, "reason": "model_unavailable"}
+        return JSONResponse({**saved, "modelAccounting": accounting})
+
     async def settings(request):
         if request.method in {"GET", "HEAD"}:
-            return JSONResponse(runtime.settings.snapshot())
+            return settings_response(runtime.settings.snapshot())
         value = await json_object(request)
         expected = value.pop("expectedRevision", None)
         if type(expected) is not int:
@@ -115,7 +124,7 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
                     supported = {row["reasoningEffort"] for row in selected.get("supportedReasoningEfforts", [])}
                     if efforts[model] not in supported:
                         raise AppError("model_effort_unsupported", "The selected reasoning effort is unavailable for this model.", 409)
-        return JSONResponse(runtime.settings.update(value, expected_revision=expected))
+        return settings_response(runtime.settings.update(value, expected_revision=expected))
 
     async def submit(request):
         receipt = await application.submit(request.path_params["action"], await json_object(request),

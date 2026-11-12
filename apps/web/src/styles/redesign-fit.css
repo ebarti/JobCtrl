@@ -1,0 +1,159 @@
+.person-fit-panel {
+  display: grid;
+  min-width: 0;
+  gap: 18px;
+}
+.person-fit-panel > :is(h3, p),
+.fit-wording-coverage > :is(h4, p) {
+  margin: 0;
+}
+.person-fit-panel p {
+  line-height: 1.6;
+}
+.fit-score-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px 28px;
+  padding-block: 16px;
+  border-block: 1px solid var(--border);
+}
+.fit-score-summary__score {
+  display: grid;
+  gap: 3px;
+}
+.fit-score-summary__score > span,
+.fit-score-summary__facts dt,
+.fit-requirement__contribution,
+.fit-wording-coverage__status {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.fit-score-summary__score strong span {
+  font-size: 16px;
+  font-weight: 400;
+}
+.fit-score-summary__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin: 0;
+}
+.fit-score-summary__facts > div {
+  display: grid;
+  gap: 5px;
+}
+.fit-score-summary__facts dd {
+  margin: 0;
+  font-weight: 600;
+}
+.fit-requirements {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.fit-requirements > li + li {
+  border-top: 1px solid var(--border);
+}
+.fit-requirement {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  padding-block: 20px;
+}
+.fit-requirement__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: start;
+  gap: 8px 16px;
+}
+.fit-requirement__text {
+  flex: 1 1 320px;
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.fit-requirement__status {
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.fit-requirement__contribution {
+  margin: 0;
+}
+.person-fit-panel summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.fit-requirement__details > :not(summary),
+.fit-audit > :not(summary),
+.fit-correction > :not(summary) {
+  margin-block: 12px 0;
+}
+.fit-requirement__rationale,
+.person-fit-panel blockquote,
+.person-fit-panel .fit-audit p,
+.person-fit-panel .fit-audit li {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.person-fit-panel blockquote {
+  margin-inline: 0;
+  padding-left: 14px;
+  border-left: 2px solid var(--border);
+  line-height: 1.6;
+}
+.person-fit-panel blockquote footer {
+  margin-top: 6px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.fit-correction form,
+.fit-correction label {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+.fit-correction form {
+  gap: 14px;
+}
+.fit-correction fieldset {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+}
+.fit-correction label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: baseline;
+}
+.fit-correction :is(input:not([type="checkbox"]), textarea, select) {
+  width: 100%;
+  min-width: 0;
+}
+.fit-correction textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+.fit-correction button {
+  justify-self: start;
+}
+.fit-wording-coverage {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.fit-wording-coverage .fit-audit li + li {
+  margin-top: 14px;
+}
