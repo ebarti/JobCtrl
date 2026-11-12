@@ -16,6 +16,7 @@ import { Empty } from "../../shared/ui/empty.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 
 import { useSearchReadiness } from "./useSearchReadiness.js";
+import { renderSearchFeedback } from "./SearchFeedbackComposition.js";
 import "./search-preferences.css";
 
 /** The shared, connected task reached from both Preferences and Search for jobs. */
@@ -48,7 +49,7 @@ export function SearchPreferencesWorkspace({ sourceTable, returnAction, connecti
   return <div className="search-preferences-workspace">
     <PageHead eyebrow={purpose === "search" ? "Jobs" : "My profile"} title={purpose === "search" ? "Search for jobs" : "Search preferences"} subtitle="The work you want, and where to look for it." actions={<>{returnAction}<span className="search-preferences-autosave"><IconCheck aria-hidden="true" />Changes save automatically</span></>} />
     <div className="search-preferences-launch" ref={searchRef}>
-        <DiscoveryRunsPanel compact workspaceIdentity={runtime.data?.databaseInstanceId} profileVersion={preferences.profileVersion} disabledReason={disabledReason} accountingSetupReason={accountingSetupReason} spendingAction={spendingAction ?? <Link to="/settings/budgets" search={{ returnTo: "preferences" }}>Review spending setup</Link>} readiness={<div className="search-launch-helper">
+        <DiscoveryRunsPanel compact renderFeedback={renderSearchFeedback} workspaceIdentity={runtime.data?.databaseInstanceId} profileVersion={preferences.profileVersion} disabledReason={disabledReason} accountingSetupReason={accountingSetupReason} spendingAction={spendingAction ?? <Link to="/settings/budgets" search={{ returnTo: "preferences" }}>Review spending setup</Link>} readiness={<div className="search-launch-helper">
           <p>{currentPlan ? "Uses your current saved search plan." : preferences.needsModel ? "Preparing additional search queries may use your model and spending budget. Connection and spending limits are checked when you start." : preferences.hasTargets ? "Uses your exact saved role titles." : "Add the criteria for your next search."}</p>
           {needsConnectionReview ? connectionAction ?? <Link to="/settings" search={{ returnTo: "preferences" }}>Review connections</Link> : null}
           {runtime.error ? <Button type="button" size="sm" variant="ghost" onClick={() => { void runtime.refetch(); }}>Retry connection check</Button> : null}
@@ -70,7 +71,7 @@ export function SearchPreferencesWorkspace({ sourceTable, returnAction, connecti
     <details className="search-context-tools" onToggle={(event) => { if (event.currentTarget.open) setToolsMounted(true); }}>
       <summary>Search plans, schedules and source behavior</summary>
       <p>Choose a tool to inspect or change. The Start search action above uses your saved Search preferences; independent targets and schedules have their own controls.</p>
-      {toolsMounted ? <div className="search-context-tools-content"><DiscoveryTargetPlan defaultOpen={false} /><TargetSearchSettingsPanel defaultOpen={false} /><DiscoveryExplicitTargets defaultOpen={false} /><details className="search-one-off search-tool-disclosure"><summary>One-off search with temporary criteria</summary><div><p>Use literal queries and locations for one run, including before you save a profile. Empty overrides use Discovery's independently saved explicit targets.</p><DiscoveryRunsPanel /></div></details><DiscoveryRuntimeSettingsPanel defaultOpen={false} includeSearchSettings={false} /><DiscoveryAutomationSettingsPanel defaultOpen={false} /></div> : null}
+      {toolsMounted ? <div className="search-context-tools-content"><DiscoveryTargetPlan defaultOpen={false} /><TargetSearchSettingsPanel defaultOpen={false} /><DiscoveryExplicitTargets defaultOpen={false} /><details className="search-one-off search-tool-disclosure"><summary>One-off search with temporary criteria</summary><div><p>Use literal queries and locations for one run, including before you save a profile. Empty overrides use Discovery's independently saved explicit targets.</p><DiscoveryRunsPanel renderFeedback={renderSearchFeedback} /></div></details><DiscoveryRuntimeSettingsPanel defaultOpen={false} includeSearchSettings={false} /><DiscoveryAutomationSettingsPanel defaultOpen={false} /></div> : null}
     </details>
     {preferences.pending ? <Alert><AlertDescription>New preference edits are waiting to save. The last saved criteria remain in effect until those changes are confirmed.</AlertDescription></Alert> : null}
   </div>;

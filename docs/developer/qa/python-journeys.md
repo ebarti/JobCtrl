@@ -46,9 +46,10 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current source inventory is **66 journeys in 27 spec files**: the earlier
+The current source inventory is **73 journeys in 29 spec files**: the earlier
 57 plus three direct-Jobs search journeys, five provider-isolation/recovery
-journeys and one native accounting-setup journey. The direct-Jobs cases exercise saved launch and live
+journeys, one native accounting-setup journey and two accounting-classification
+journeys, plus five initial-assessment/recovery journeys. The direct-Jobs cases exercise saved launch and live
 counts across navigation/reload/tabs, lost-acknowledgement recovery and exact-run
 stop, and simultaneous two-tab admission. Historical complete-suite results
 below retain their original 57-case scope; they do not qualify the new inventory.
@@ -251,6 +252,7 @@ cannot qualify all 57, and earlier failures remain part of the evidence.
 | [Whole-product surfaces](../../../apps/web/e2e/journeys/redesign-surfaces.spec.ts) | Load 26 retained surfaces at 1440 × 1000, 1860 × 1227, 2943 × 1227 and 390 × 844: 104 settled captures within one journey. Check mounted navigation, headings, meaningful loaded/explicit-empty content and page overflow, plus real saved-material search/clear/state, control geometry and Plate/PDF access. This does not judge visual craft: earlier passing inventory checks still exposed inner Profile and Materials control defects during image inspection. |
 | [Requirement associations](../../../apps/web/e2e/journeys/requirement-associations.spec.ts) | Create/revise/remove/restore many-to-many user intent through the real library/Profile flow. Keep exact requirement/source/optional-wording pins, stale history, achievement-based grouping and selected/filter/return context. Manual links never create assessment, coverage, score or model work. |
 | [Search preferences](../../../apps/web/e2e/journeys/search-preferences.spec.ts) | Enter adds/focuses independent role inputs; save/reload canonical targets and source/limit settings; make no lookup while typing. Explicit controlled Photon results bind exact row/place identity, duplicate display labels remain independent, edits clear stale bindings, and invalid responses remain unverified. Deliberate search retains its saved Profile-version fence. |
+| [Search assessment and recovery](../../../apps/web/e2e/journeys/search-assessment.spec.ts) | Ordinary search continues from canonical acquisition into initial person fit with separate source/assessment outcomes. Explicit saved-ID assessment performs no new acquisition. Reject foreign evidence, preserve accepted scores/manual refresh, retain failed jobs across actual worker replacement, seal cancellation without inventing model usage, and assess jobs retained by failed sources. |
 | [Settings workspace](../../../apps/web/e2e/journeys/settings-workspace.spec.ts) | Save a budget before model setup, retain another pane's invalid draft, distinguish configured/unverified readiness and probe providers only on explicit request. Exercise real revision conflicts, uncertain acknowledgements and credential leave/discard protection without changing unrelated saved policy. |
 | [Maintained-assignment race](../../../apps/web/e2e/journeys/wording-assignment-integrity.spec.ts) | Hold the external grouped determination for a manual Fit refresh, change an unrelated maintained assignment through its public write, and require the admitted whole-Profile fingerprint to refuse stale publication. Preserve accepted score/assignment state and the original bounded operation rather than absorbing the concurrent change. |
 | [Composition freshness](../../../apps/web/e2e/journeys/wording-assignment-integrity.spec.ts) | Read job-relevant maintained-wording freshness, including missing-to-present changes; unrelated requirement assignments do not stale composition. Relevant changes preserve draft/accepted pointers and actual accepted PDF bytes. Baseline follows Profile freshness without borrowing Fit authority, and reads dispatch no model or preparation work. |
@@ -934,3 +936,136 @@ The initial sandbox-only attempt stopped before any journey because loopback
 listeners were denied. These attempts are retained as setup history, not passing
 runtime observations. This focused result does not claim a new complete-suite,
 hosted, release or deployment qualification.
+
+### Terminal search feedback lifecycle
+
+Last-search acknowledgement is browser presentation state, fenced by tenant,
+workspace, database incarnation, run and an opaque digest of the exact terminal
+action outcome. The canonical status, counts and failures remain in Search
+details. Current saved board membership takes precedence over an active registry
+entry when classifying historical remedies. Disabled or deselected sources keep
+their old errors in details; unknown current reads remain unknown. Active work,
+status uncertainty and unresolved admission recovery cannot be dismissed.
+
+The SDK acquisition/recovery suite explicitly uses the reduced
+`profile,jobs,discovery` composition; the ordinary saved-search journey owns full
+initial-assessment proof. The extended existing provider-scope case verifies
+deselection, dismiss, reload, Search preferences navigation and return, all eight
+retained failures, restored display, a new undismissible active run, and its new
+visible terminal outcome. Run `e2e-Q2nhdt` passed **1/1** on 12 November 2026:
+3.8 seconds for the case, 8.171 seconds for the runner phase and 16.955 seconds
+total. Retries, skipped, unexpected, flaky and browser-console failures were
+zero; dependency locks and the 151-file web bundle remained unchanged. The web
+SHA-256 was `03b9b25380f25163ca9c7e8b7cd9cfa0e1701404880010416e1980122b48b74f`.
+The dismissed desktop capture was inspected with Show result and Search details
+accessible above the table. Frontend type and boundary checks passed.
+
+The final source-only and lifecycle checks also passed in `e2e-ebJ54I`: the SDK
+case took 4.1 seconds and Companies took 3.5 seconds. A terminal result whose
+canonical `preparationAvailable` is false explicitly says initial assessment is
+unavailable; an old result without that flag does not invent an assessment
+count or a missing-row error. The 151-file web SHA-256 was
+`e77620cb4b16d59b7acd58c36f857d07a5432c0f7d230f7e84caa5cedfeffed1`.
+That three-case invocation was not fully passing: its separate selected-job
+assessment case passed active/terminal recipe labels and restored resume action,
+then expected a full run ID where the history intentionally abbreviates it.
+The history assertion was corrected to the actual retained caption and job-stage
+outcome for the subsequent focused assessment proof. No production history or
+console allowance changed.
+
+The earlier `e2e-UFMrwe` attempt exposed an unrelated reduced-composition Profile
+preview/templates dependency: entering that route produced genuine 503/404
+console errors when Resumes was absent. The lifecycle proof now navigates through
+the supported Discovery preferences route, retaining strict console assertions.
+This does not claim the optional Profile route defect is repaired, nor a new
+complete-suite or hosted qualification.
+
+### Unlimited monetary accounting classification
+
+`model-accounting.spec.ts` completes two real source-bound query-plan actions
+through the worker and controlled external model with known tokens but no dollar
+receipt. Unlimited mode accepts repeated work, retains accepted provenance,
+shows no reconciliation task, and keeps aggregate dollars null. Restoring a
+finite monetary cap refuses another action before external dispatch and preserves
+the accepted plan. The opposing case supplies reported cost but no token counts:
+monetary completeness remains intact, while enabling a token-lane limit refuses
+further work. The actual worker-kill recovery journey independently asserts
+`costStatus=unresolved`, a retained unresolved call and null monetary total.
+No receipt, accepted artifact, monetary gate or token gate is bypassed.
+
+The focused accounting run on 12 November passed actual worker-kill recovery
+(33.2 seconds) and both accounting cases, with zero retries. Final UI barriers
+wait for the actual Digest response and a settled Start search action; the two
+accounting cases then passed in 1.8 and 0.705 seconds (19.467 seconds total).
+The current inventory count is not a claim of a new complete 68-case run.
+
+### Initial person fit after ordinary search
+
+The complete application's existing `discovery.search` action now invokes
+Preparation's fit-only search recipe under the same run identity. It freezes
+only newly committed job IDs, runs enrichment, role analysis, Requirements and
+Fit, and performs no wording preparation or resume generation. Source outcomes
+and assessment outcomes remain independent. Even all-source failure after
+committed jobs retains and assesses that exact cohort. The explicit selected-ID
+`assess` recipe recovers already saved jobs without another acquisition; it
+retains Fit's manual-refresh fence for previously accepted qualification.
+
+The five actual application journeys in `search-assessment.spec.ts` passed
+**5/5** in `e2e-gZGyMg` on 12 November 2026: 81.973 seconds for the runner phase
+and 91.042 seconds total, including a 7.720-second web build. They cover foreign
+evidence refusal without a fabricated score, explicit saved-job recovery and
+accepted-score preservation, cancellation after an actual worker kill with
+preparation sealed and monetary usage still unresolved, immutable failed-job
+outcomes across worker replacement while a later frozen job finishes, and
+assessment of jobs retained by failed acquisition. The Python source SHA-256
+was `bd1abbb101d458d4ae8c3138f990c5cab4c481987edf03fc73bec56c17b6074e` and
+the source-candidate digest was
+`c55424668e6eaf89193a9223ac2604c1c19a23724cf7144d64e025465f316561`.
+There were zero retries; dependency locks and the 151-file web bundle remained
+unchanged. The runner was macOS arm64, Node 26.13.0, with 12 reported CPUs.
+
+The combined UI run `e2e-3A36VR` passed its five relevant search cases: ordinary
+Jobs search assessed three new jobs as 10/10, 1/10 and 10/10; the unrelated saved
+job remained unassessed. During a held model call after acquisition completed,
+the real UI showed **Assessing saved jobs**, **0 of 3 jobs assessed · 0 failed**,
+disabled Start search and no dismiss action. It later showed 3 of 3 assessed,
+the actual fit values and restored launch/dismiss controls. Screenshots were
+inspected. The partial assessment case showed its fit-specific heading and
+failed count; preference reads/saves retained zero model work, lost admission
+was reconciled, cancellation remained exact and two tabs admitted one run.
+
+That combined six-case invocation was not fully passing: the separate Companies
+fixture removed Requirements, Fit and Resumes while its Job Detail assertions
+still used their public reads, producing real 404 console errors. Its source-only
+composition was corrected to retain those read owners while removing only
+Preparation; no console allowance or production masking was added. The initial
+saved-score refresh proof also exposed an incorrect harness expectation: the
+actual `fit_refresh_required` refusal correctly prevented another qualification.
+The test now verifies that fence and unchanged accepted score. Neither attempt
+is recorded as passing. These focused results do not establish a new whole-suite,
+hosted, installed-provider, release or deployment qualification.
+
+The final explicit saved-job recovery/UI case passed **1/1** in `e2e-cJf22K`:
+1.8 seconds for the case, 7.017 seconds for the runner phase and 17.021 seconds
+total, including an 8.436-second build. While Fit was held, Job Detail showed
+**Assess fit**, a disabled **Assessing fit…** action, the factual assessment
+stage and no resume selector. On completion it restored **Resume to prepare**
+and **Prepare resume**, with the recorded assessment in job/stage history.
+The accepted score, manual-refresh refusal, absent new acquisition and absent
+wording/resume work remained verified. A native held-state screenshot was
+retained. The final 151-file web SHA-256 was
+`6dd6eabdd722441908800c7ea19de80411441a10d99924597c4ae5b9a68d181c`;
+Python source SHA-256 was
+`58d1aa1340bfb2859a7ce2b534e78fe67ecebd809a954e2040f37831350b2163`.
+Retries were zero, and web build and dependency locks remained unchanged.
+
+The prior three-case `e2e-ebJ54I` invocation passed the SDK lifecycle and corrected
+source-only Companies cases, including the explicit unavailable-assessment
+notice, but failed the new recovery UI assertion because it expected a full run
+ID that the history view does not render. The corrected assertion verifies the
+actual recipe caption and exact job/stage/score row, while the public run read
+retains durable identity. That attempt remains partial proof, separate from the
+final passing recovery case. All Python code bytes remained identical to the
+five-case recovery run; only Discovery's owning README changed the source-tree
+hash. The listed inventory is now 73 journeys in 29 spec files, without a new
+complete-suite claim.

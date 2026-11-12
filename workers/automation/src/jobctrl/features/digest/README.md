@@ -25,3 +25,11 @@ in one transaction. Missing optional company summaries do not block the rest
 of the digest. The CLI's `--min-fit-score` supplies the same read-only override;
 `--acknowledge` reads a digest first, acknowledges its `generatedAt`, and returns
 both the digest and acknowledgement.
+
+Monetary availability is independent of token completeness and operation
+settlement. The budget DTO carries `costStatus`, `tokenStatus`, nullable
+`estimatedUsd` and explicitly partial `knownUsd`. A settled call with no reported
+cost does not create attention when `dailyBudgetUsd=0`; it retains null cost.
+A positive monetary cap with unavailable cost remains actionable. Running calls
+are pending, while interrupted/unsettled calls remain unresolved under either
+policy. Missing tokens alone do not invalidate known monetary totals.

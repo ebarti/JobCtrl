@@ -29,10 +29,17 @@ export function ConnectionStatusPill() {
         : workerUnhealthy ? "Worker unavailable"
           : lostForLong ? "Offline" : demo && status === "open" ? "Demo mode" : STATUS_LABEL[status];
   const spend = healthUnavailable || demo ? undefined : health.data?.llmSpend;
+  const costStatus = spend?.costStatus ?? (spend?.accountingComplete ? "complete" : "unresolved");
+  const spendLabel = !spend ? null
+    : costStatus === "unresolved" ? "Model call needs reconciliation"
+      : costStatus === "pending" ? `LLM running${spend.unlimited ? " · No daily limit" : ""}`
+        : spend.unlimited ? "LLM · No daily limit"
+          : costStatus === "unavailable" || spend.costUsd === null ? "LLM cost unavailable"
+            : `LLM $${spend.costUsd.toFixed(2)}${spend.costAuthority === "includes_estimates" ? " (includes estimates)" : ""}`;
   return <div className="connection-pill-group">
     <span className="connection-pill" data-status={databaseProblem || workspaceChanged || healthUnavailable || workerUnhealthy || lostForLong ? "lost" : status} aria-live="polite" data-typography="status">{label}</span>
-    {spend ? <span className="connection-spend" data-status={spend.accountingComplete ? "ok" : "incomplete"} aria-live="polite" data-typography="metadata">
-      {spend.accountingComplete ? `LLM $${spend.costUsd.toFixed(2)}${spend.costAuthority === "includes_estimates" ? " (includes estimates)" : ""}` : "LLM spend pending or unresolved"}
+    {spend ? <span className="connection-spend" data-status={costStatus === "unresolved" || (costStatus === "unavailable" && !spend.unlimited) ? "incomplete" : costStatus === "pending" ? "pending" : "ok"} aria-live="polite" data-typography="metadata">
+      {spendLabel}
     </span> : null}
     {databaseProblem ? <div className="connection-banner" data-state="error" role="alert">{databaseProblem.message}</div>
       : workspaceChanged ? <div className="connection-banner" data-state="error" role="alert">The workspace database changed. Stop JobCtrl, inspect the workspace, restart JobCtrl, and reload this page.</div>

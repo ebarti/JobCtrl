@@ -14,9 +14,13 @@ const healthSchema = z.object({
   temporal: z.object({ namespace: z.string().min(1), uiBaseUrl: z.string().url().nullable() }).optional(),
   worker: z.object({ status: z.enum(["healthy", "unavailable"]), healthy: z.boolean() }).passthrough(),
   llmSpend: z.object({
-    costUsd: z.number(),
+    costUsd: z.number().nullable(),
     accountingComplete: z.boolean(),
     costAuthority: z.enum(["reported", "includes_estimates", "incomplete"]),
+    costStatus: z.enum(["complete", "unavailable", "pending", "unresolved"]).optional(),
+    tokenStatus: z.enum(["complete", "unavailable", "pending", "unresolved"]).optional(),
+    knownCostUsd: z.number().nonnegative().optional(),
+    unlimited: z.boolean().optional(),
   }).passthrough(),
 }).passthrough();
 

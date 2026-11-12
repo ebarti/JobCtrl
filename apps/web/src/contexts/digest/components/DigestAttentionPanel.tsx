@@ -22,10 +22,13 @@ function attentionItems(digest: Digest): readonly AttentionItem[] {
   addCount("followUpsDue", digest.followUpsDue.count, "follow-up due", "follow-ups due");
   addCount("staleScores", digest.staleScores.count, "fit assessment to update", "fit assessments to update");
   addCount("blockedSources", digest.blockedSources.count, "search source needs attention", "search sources need attention");
-  if (digest.budget.status !== "ok") {
+  // In-flight work is progress, not an instruction to reconcile a lost call.
+  if (digest.budget.status !== "ok" && digest.budget.costStatus !== "pending") {
     items.push({
       key: "budget",
-      label: digest.budget.status === "over_budget" ? "Daily budget reached" : "Spending needs reconciliation",
+      label: digest.budget.status === "over_budget" ? "Daily budget reached"
+        : digest.budget.costStatus === "unavailable" ? "Daily limit needs cost tracking"
+          : "Model call needs reconciliation",
       href: digest.deepLinks.budget,
     });
   }

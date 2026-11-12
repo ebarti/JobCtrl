@@ -1317,6 +1317,10 @@ test("contact research requires confirmation and distinguishes invalid output fr
   ).toHaveLength(beforeProtected);
 });
 
+test.describe("independent Discovery and Companies", () => {
+// Remove orchestration while retaining the recorded-data owners used by Job Detail.
+test.use({ features: "profile,jobs,requirements,fit,resumes,discovery,companies" });
+
 test("Discovery ingests a controlled provider page and Companies retains a sourced briefing on failed refresh", async ({
   app,
   api,
@@ -1451,6 +1455,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
   });
   await completed(api, search.runId);
   await expect(page.locator(".discovery-runs-panel").getByRole("region", { name: "Job search progress", exact: true })).toContainText("Search completed");
+  await expect(page.locator(".discovery-runs-panel").getByRole("region", { name: "Job search progress", exact: true })).toContainText("Initial fit assessment is unavailable in this application.");
   const sourceRegistry = await json<{
     sources: { sourceId: string; recommendedState: string }[];
   }>(api, "get", "/v1/discovery/sources");
@@ -1579,6 +1584,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
   await expect(
     page.getByText("The company says it builds workflow tools."),
   ).toBeVisible();
+});
 });
 
 test("compensation evidence cites the posting and an explicit manual report and survives a failed refresh", async ({

@@ -13,17 +13,20 @@ from jobctrl.app.contracts import ActionContext
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 from jobctrl.app.preparation_ports import PreparationCheckpoints, PreparationSettings, RunReader
 
-RECIPES = {"run", "discover", "enrich", "analyze", "score", "tailor", "prepare"}
+RECIPES = {"run", "discover", "search", "assess", "enrich", "analyze", "score", "tailor", "prepare"}
 STAGES = {
     "run": ("enrich", "role_analysis", "requirements", "fit", "compose", "review", "render"),
     "discover": ("enrich", "role_analysis", "requirements", "fit", "compose", "review", "render"),
+    "search": ("enrich", "role_analysis", "requirements", "fit"),
+    "assess": ("enrich", "role_analysis", "requirements", "fit"),
     "enrich": ("enrich",),
     "analyze": ("role_analysis", "requirements"),
     "score": ("requirements", "fit"),
     "tailor": ("requirements", "fit", "compose", "review", "render"),
     "prepare": ("requirements", "fit", "compose", "review", "render"),
 }
-DISCOVERY_KEYS = {"queries", "locations", "boards", "newJobLimit", "resultsPerSite", "hoursOld"}
+DISCOVERY_RECIPES = {"run", "discover", "search"}
+DISCOVERY_KEYS = {"queries", "locations", "boards", "newJobLimit", "resultsPerSite", "hoursOld", "expectedProfileVersion"}
 TERMINAL_STEPS = {"succeeded", "skipped", "warning"}
 
 
@@ -51,9 +54,12 @@ def _validate(raw: dict) -> dict:
     scope = raw.get("scope", "selected" if ids else "pending")
     if not isinstance(scope, str) or scope not in {"selected", "pending"} or scope == "selected" and not ids or scope == "pending" and ids:
         raise AppError("invalid_job_selection", "Select jobs or choose pending work.")
+    if recipe == "assess" and scope != "selected":
+        raise AppError("explicit_job_selection_required", "Select the saved jobs to assess.")
     limit = raw.get("limit", max(100, len(ids)))
-    if type(limit) is not int or not 1 <= limit <= 1000:
-        raise AppError("invalid_preparation_limit", "Use a limit from 1 to 1,000.")
+    maximum = 10000 if recipe == "search" else 1000
+    if type(limit) is not int or not 1 <= limit <= maximum:
+        raise AppError("invalid_preparation_limit", f"Use a limit from 1 to {maximum:,}.")
     if scope == "selected" and len(ids) > limit:
         raise AppError("invalid_preparation_limit", "The limit cannot exclude selected jobs.")
     force, override = raw.get("force", False), raw.get("allow_below_threshold", False)
@@ -66,7 +72,7 @@ def _validate(raw: dict) -> dict:
     if minimum is not None and (type(minimum) is not int or not 1 <= minimum <= 10):
         raise AppError("invalid_fit_threshold", "Use a fit threshold from 1 to 10.")
     discovery = raw.get("discovery", {})
-    if not isinstance(discovery, dict) or set(discovery) - DISCOVERY_KEYS or discovery and recipe not in {"run", "discover"}:
+    if not isinstance(discovery, dict) or set(discovery) - DISCOVERY_KEYS or discovery and recipe not in DISCOVERY_RECIPES:
         raise AppError("invalid_discovery_options", "Choose supported Discovery options.")
     return {"recipe": recipe, "job_ids": ids, "scope": scope, "limit": limit, "force": force,
             "min_fit_score": minimum, "allow_below_threshold": override, "discovery": discovery,
@@ -117,7 +123,7 @@ class PreparationService:
     @staticmethod
     def _describe_run(run):
         stages = [{"stage": stage, "scope": "job"} for stage in STAGES[run["recipe"]]]
-        if run["recipe"] in {"run", "discover"}:
+        if run["recipe"] in DISCOVERY_RECIPES:
             stages.insert(0, {"stage": "discover", "scope": "run"})
         return {**run, "stagePlan": stages, "jobConcurrency": 1}
 
@@ -128,7 +134,13 @@ class PreparationService:
         saved = self.checkpoints.targets(run_id)
         if saved is not None:
             return saved
-        if request["scope"] == "selected":
+        if request["recipe"] == "search" and request["scope"] != "selected":
+            # Initial search assessment owns only its newly committed jobs.
+            # Existing scores becoming stale never admits an implicit refresh.
+            ids = list(dict.fromkeys((discovery_result or {}).get("newJobIds") or []))
+            if len(ids) > request["limit"]:
+                raise AppError("search_assessment_limit_exceeded", "The saved search cohort exceeds its assessment limit.", 409)
+        elif request["scope"] == "selected":
             ids = list(dict.fromkeys([*request["job_ids"], *((discovery_result or {}).get("newJobIds") or [])]))[:request["limit"]]
         else:
             ids = list((discovery_result or {}).get("newJobIds") or [])
@@ -167,7 +179,7 @@ class PreparationService:
             return {"skip": "full_baseline_needs_no_job_assessment"}
         if stage == "enrich":
             posting = self.jobs.snapshot(job_id)
-            if request["recipe"] in {"run", "discover"} and not posting.get("needs_enrichment", True):
+            if request["recipe"] in {"run", "discover", "search", "assess"} and not posting.get("needs_enrichment", True):
                 return {"skip": "accepted_detail_current", "revision": posting["revision"]}
             return {"expected_revision": posting["revision"]}
         if stage == "role_analysis":
@@ -197,9 +209,10 @@ class PreparationService:
                 if requirements.get("stale") or requirements["revision"] != expected_requirements:
                     raise ConflictError("The requirement snapshot changed before fit assessment.")
             current = self.fit.get_job_fit(job_id, include_coverage=False)
+            prepare_expression = request["recipe"] not in {"search", "assess"} and request["resume_mode"] != "baseline"
             return {"expected_revision": current["score"]["revision"] if current["score"] else 0,
-                    "force": request["force"] and request["recipe"] != "tailor", "prepare_wording": request["resume_mode"] != "baseline",
-                    "prepare_coverage": request["resume_mode"] != "baseline"}
+                    "force": request["force"] and request["recipe"] != "tailor", "prepare_wording": prepare_expression,
+                    "prepare_coverage": prepare_expression}
         if stage == "compose":
             if not baseline_only:
                 fit = self.fit.get_job_fit(job_id, include_coverage=False)
@@ -339,6 +352,12 @@ class PreparationService:
                 if step and step["status"] in TERMINAL_STEPS:
                     previous[stage] = step
                     continue
+                if step and step["status"] in {"failed", "blocked"}:
+                    # An activity replay resumes interrupted work. A completed
+                    # failure needs a new, explicitly admitted retry identity.
+                    previous[stage] = step
+                    blocked = True
+                    continue
                 if blocked:
                     self.checkpoints.finish_step(context.run_id, job_id, stage, "blocked", error_code="upstream_stage_failed")
                     continue
@@ -407,7 +426,7 @@ class PreparationService:
         failed = False
         try:
             discovered = None
-            if request["recipe"] in {"run", "discover"}:
+            if request["recipe"] in DISCOVERY_RECIPES:
                 if self.discovery is None:
                     raise AppError("discovery_unavailable", "Enable Discovery before starting this recipe.", 409)
                 prior = self.checkpoints.step(context.run_id, "", "discover")
@@ -416,12 +435,16 @@ class PreparationService:
                     failed = prior["status"] == "warning"
                 else:
                     inputs = self.checkpoints.start_step(context.run_id, "", "discover", request["discovery"])
-                    child = ActionContext(_operation(context.run_id, "", "discover"), context.request_id,
+                    discovery_id = context.run_id if request["recipe"] == "search" else _operation(context.run_id, "", "discover")
+                    child = ActionContext(discovery_id, context.request_id,
                                           lambda: self._work_cancelled(context), context.heartbeat)
                     try:
                         result = await self.discovery.search(child, inputs)
-                        discovered = {"discoveryRunId": result.get("runId"), "newJobIds": result.get("newJobIds", []), "jobIds": result.get("jobIds", []),
-                                      "newJobs": result.get("newJobs", 0), "failureCount": len(result.get("failures", []))}
+                        if request["recipe"] == "search" and result.get("status") == "failed" and not result.get("newJobIds"):
+                            raise AppError("discovery_sources_failed", "The selected sources did not complete.", 502)
+                        discovered = result if request["recipe"] == "search" else {
+                            "discoveryRunId": result.get("runId"), "newJobIds": result.get("newJobIds", []), "jobIds": result.get("jobIds", []),
+                            "newJobs": result.get("newJobs", 0), "failureCount": len(result.get("failures", []))}
                         state = "warning" if result.get("failures") else "succeeded"
                         self.checkpoints.finish_step(context.run_id, "", "discover", state, result=discovered)
                         failed = state == "warning"
@@ -429,8 +452,20 @@ class PreparationService:
                         if self._user_cancelled(context):
                             self.checkpoints.finish_step(context.run_id, "", "discover", "cancelled", error_code="action_cancelled")
                             raise asyncio.CancelledError() from None
-                        self.checkpoints.finish_step(context.run_id, "", "discover", "failed", error_code=_error_code(error))
-                        raise
+                        outcome = self.discovery.search_outcome(discovery_id) if (
+                            request["recipe"] == "search" and getattr(error, "code", None) == "discovery_sources_failed"
+                        ) else None
+                        if outcome and outcome["status"] == "failed" and outcome.get("newJobIds"):
+                            # Failed acquisition can still have committed jobs.
+                            # Preserve its canonical failure and assess only that
+                            # retained cohort, without another provider attempt.
+                            discovered = outcome
+                            self.checkpoints.finish_step(context.run_id, "", "discover", "warning", result=outcome,
+                                                         error_code=_error_code(error))
+                            failed = True
+                        else:
+                            self.checkpoints.finish_step(context.run_id, "", "discover", "failed", error_code=_error_code(error))
+                            raise
             targets = self._target_ids(context.run_id, request, discovered)
             for job_id in targets:
                 if await self._run_job(context, job_id, request):
@@ -448,6 +483,27 @@ class PreparationService:
             if run["status"] == "running":
                 self.checkpoints.set_status(context.run_id, "failed")
             raise
+
+
+    async def search(self, context, payload):
+        """Acquire and initially assess under the public search action identity."""
+        try:
+            # Discovery's authored new-job limit already bounds this cohort to
+            # 10,000. Do not silently impose the manual selection default of 100.
+            run = await self.run(context, {"recipe": "search", "scope": "pending", "discovery": payload, "limit": 10000})
+        except AppError as error:
+            if error.code != "preparation_partial":
+                raise
+            run = self.get_run(context.run_id)
+        discovered = self.checkpoints.step(context.run_id, "", "discover")["result"]
+        failures = [{"jobId": step["jobId"], "stage": step["stage"], "code": step["errorCode"]}
+                    for step in run["steps"] if step["jobId"] and step["status"] == "failed"]
+        assessed = sum(step["stage"] == "fit" and step["status"] == "succeeded" for step in run["steps"])
+        preparation = {"status": "partial" if failures else "succeeded", "assessedJobs": assessed,
+                       "failedJobs": len({failure["jobId"] for failure in failures}), "failures": failures}
+        status = "partial" if run["status"] == "partial" else discovered["status"]
+        return {**discovered, "ok": status == "completed", "status": status, "acquisitionStatus": discovered["status"],
+                "preparationAvailable": True, "preparation": preparation}
 
 
     async def retry(self, context, payload):
@@ -480,6 +536,6 @@ class PreparationService:
         raw = {key: original[key] for key in ("recipe", "job_ids", "scope", "discovery", "limit", "force", "min_fit_score", "allow_below_threshold")}
         raw["resume_mode"] = original["resume_mode"]
         raw.update(recipe=recipe, job_ids=selected, scope="selected" if selected else "pending")
-        if recipe not in {"run", "discover"}:
+        if recipe not in DISCOVERY_RECIPES:
             raw["discovery"] = {}
         return await self.run(context, raw, parent=payload["run_id"])

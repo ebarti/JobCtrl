@@ -76,6 +76,28 @@ class PreparationStore:
             conn.execute("UPDATE preparation_runs SET status=?,updated_at=? WHERE run_id=?", (status, now(), run_id))
             self._event(conn, run_id, status)
 
+    def finalize_run(self, run_id, status, error_code, connection):
+        """Seal interrupted preparation in the action owner's transaction."""
+        if status not in {"failed", "cancelled"}:
+            return
+        changed = connection.execute(
+            "UPDATE preparation_runs SET status=?,updated_at=? WHERE run_id=? AND status='running'",
+            (status, now(), run_id),
+        ).rowcount
+        if not changed:
+            return
+        steps = connection.execute(
+            "SELECT job_id,stage FROM preparation_steps WHERE run_id=? AND status IN ('pending','running')", (run_id,),
+        ).fetchall()
+        for step in steps:
+            connection.execute(
+                "UPDATE preparation_steps SET status=?,error_code=?,updated_at=? WHERE run_id=? AND job_id=? AND stage=?",
+                (status, error_code, now(), run_id, step["job_id"], step["stage"]),
+            )
+            self._event(connection, run_id, status, job_id=step["job_id"] or None, stage=step["stage"])
+        connection.execute("DELETE FROM preparation_job_claims WHERE run_id=?", (run_id,))
+        self._event(connection, run_id, status)
+
 
     def step(self, run_id, job_id, stage):
         with self.database.connect() as conn:

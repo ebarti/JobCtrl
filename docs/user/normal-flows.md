@@ -127,6 +127,13 @@ table context. A pending save or known blocker is explained beside the launch.
 Merely opening or saving preferences launches nothing.
 Discovery has no dry-run mode.
 
+Search remains active while newly saved jobs receive source-bound initial
+person-fit assessment. The resulting Jobs table can sort and filter recorded
+fit. A failed assessment stays visible for its job and does not prevent other
+jobs from being assessed; source failures remain separate. Search does not
+generate resumes or prepare Profile wording. Existing saved jobs can be selected
+for the explicit `assess` preparation recipe without acquiring more jobs.
+
 Progress, results, partial failures, stop requests and same-request recovery
 stay beside the Jobs table and survive navigation or reload. Queued is not completed; a stop request is not settled
 cancellation. When an acknowledgement is uncertain, reconcile the retained
@@ -346,7 +353,7 @@ the owned runtime and resume forward with `jobctrl update`. See
 | `run [stages]` | Submit an explicit preparation recipe. The default `discover` recipe discovers and prepares new/pending work through the canonical worker; it does not implicitly submit applications. |
 | `legacy-evidence list` / `recover` / `decide` | Read retained originals/current cells; `recover --payload FILE` inventories a Profile recovery bundle or explicitly unavailable authority, and `decide --payload FILE` records the exact source/version-bound human decision. Neither command restores a database or overwrites current source text. |
 | `source-proposals from-history` / `list` / `reset CANDIDATE_ID` | Explicitly propose sources from saved canonical posting/application URLs, read retained evidence and review history, or reset one rejected coordinate. Review and promotion use the existing Source locator; see [Discovery](discovery.md#propose-sources-from-saved-posting-history). |
-| `discover` / `enrich` / `analyze` / `score` / `tailor` / `prepare` | Submit the corresponding durable recipe. Preparation commands accept explicit `--job-id` selection, `--force` and `--wait`; inspect `--help` for each command's supported selectors. |
+| `discover` / `assess` / `enrich` / `analyze` / `score` / `tailor` / `prepare` | Submit the corresponding durable recipe. `assess` requires explicit `--job-id` selection and runs enrichment, role context, requirements and person fit without Discovery, wording or resume work. Preparation commands accept `--force` and `--wait`; inspect `--help` for each command's supported selectors. |
 | `job <JobId-or-saved-url>` | Read one saved job or explicitly request `--prepare`, `--score`, `--tailor` or a current approved `--apply`. It does not import a new URL or create submission approval. |
 | `apply` | Inspect with `--review-only` or `--recover`; rehearse with `--dry-run`; execute an exact current payload/approval or an approved batch. `--control` records an explicit version-fenced control decision. Standing polling consumes only eligible current approvals and never grants generic submit authority. |
 | `retry RUN_ID` | Retry a recorded preparation outcome, optionally restricted by `--job-id`, while preserving its durable identity and accepted artifacts; it does not invent a new application approval. |
@@ -368,8 +375,14 @@ matches use the last review time and the configured high-fit threshold, which
 outcomes and the seven-day threshold. Reading the digest does not advance its
 review time; `--acknowledge` records it with a review event. Pending or
 unresolved model usage leaves the other digest sections available and marks
-the budget incomplete, with unknown spend and remaining amounts. Other failed
-refreshes or reads fail instead of reporting zero counts.
+the budget incomplete, with unknown spend and remaining amounts. A completed
+call whose provider reports tokens but no dollar amount instead has unavailable
+monetary cost. With the daily monetary cap explicitly disabled, this does not
+create a reconciliation task; the header shows **No daily limit**. It does not
+mean the call was free. Restoring a finite cap requires complete applicable
+monetary evidence before further calls. Known monetary receipts remain valid
+when token counts are unavailable; token limits are checked independently.
+Other failed refreshes or reads fail instead of reporting zero counts.
 
 
 ## Semantic Determination Authority

@@ -8,12 +8,13 @@ import { Field, FieldLabel } from "../../../shared/ui/field.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
 import { useDiscoverySearchController } from "../hooks/useDiscoverySearchController.js";
 import { DiscoverySearchSetup } from "./DiscoverySearchSetup.js";
-import { DiscoverySearchFeedback } from "./DiscoverySearchFeedback.js";
+import { DiscoverySearchFeedback, type DiscoverySearchFeedbackRenderer } from "./DiscoverySearchFeedback.js";
 
-export function DiscoveryRunsPanel({ compact = false, disabledReason, readiness, profileVersion, workspaceIdentity, accountingSetupReason, spendingAction }: {
+export function DiscoveryRunsPanel({ compact = false, disabledReason, readiness, profileVersion, workspaceIdentity, accountingSetupReason, spendingAction, renderFeedback }: {
   readonly compact?: boolean;
   readonly accountingSetupReason?: string | undefined;
   readonly spendingAction?: ReactNode;
+  readonly renderFeedback?: DiscoverySearchFeedbackRenderer;
   readonly disabledReason?: string | undefined;
   readonly readiness?: ReactNode;
   readonly profileVersion?: number | null | undefined;
@@ -48,7 +49,7 @@ export function DiscoveryRunsPanel({ compact = false, disabledReason, readiness,
       <form.Subscribe selector={(state) => state.errors}>{(errors) => errors.length ? <p role="alert">{errors.join(" ")}</p> : null}</form.Subscribe>
       <div className="search-launch-action"><Button type="submit" disabled={!controller.canStart}>{controller.isPending ? "Queueing search…" : recovery.record && recovery.canRetry ? "Retry the same request" : compact ? "Start search" : "Run discovery"}</Button>{compact ? readiness : null}</div>
     </form>
-    <DiscoverySearchFeedback controller={controller} spendingAction={spendingAction} />
+    {renderFeedback ? renderFeedback(controller, (progress) => <DiscoverySearchFeedback controller={controller} spendingAction={spendingAction} assessmentProgress={progress} />) : <DiscoverySearchFeedback controller={controller} spendingAction={spendingAction} />}
     <DiscoverySearchSetup open={setupOpen} onOpenChange={setSetupOpen} reason={accountingSetupReason} action={spendingAction} />
     <details className="search-run-history"><summary>Recent searches{controller.history.length ? ` (${controller.history.length})` : ""}</summary>
       {!controller.history.length && !controller.historyError ? <p>{controller.historyLoading ? "Loading searches…" : "No searches have been started yet."}</p> : null}

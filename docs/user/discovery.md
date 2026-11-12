@@ -95,9 +95,9 @@ and recorded message appear once with the number of affected query/location
 combinations.
 **Search details** retains every recorded failure and its query-unit identity;
 different boards, codes or messages remain separate notices.
-A search is partial when a source completes or the new-job limit ends
+Source acquisition is partial when a source completes or the new-job limit ends
 acquisition, and another source fails. If no source completes or fulfils bounded
-work, it is failed. Accepted jobs remain available in
+work, acquisition is failed. Accepted jobs remain available in
 either case. A result limit bounds fetched observations, including those later
 excluded by the local date check; there are no extra requests to fill the limit.
 The limit is not a promise of that many suitable or newly admitted jobs.
@@ -128,6 +128,19 @@ Canonical counts and newly saved jobs update as work proceeds. Progress is
 restored after navigation or reload, and another tab detects the active search
 before offering another launch. An unavailable status check stays explicit and
 blocks another launch until reconciled.
+Finished feedback is labeled **Last search result**. **Dismiss result** hides
+that exact terminal outcome in this browser and workspace across navigation and
+reload. **Show last search result** and **Search details** keep its recorded
+status, counts and failures available. New searches and changed outcomes appear
+again. Acquisition, ongoing assessment and unresolved request recovery remain
+visible until the outer search action settles.
+
+Historical source remedies use the current saved board selection and source
+registry for context. A deselected or disabled source's old setup error stays in
+Search details with its current-disabled status, without a primary instruction
+to configure that source. An unavailable current-source read remains unknown.
+Dismissal changes presentation only; canonical outcomes and accepted jobs stay
+recorded.
 Discovery has no dry-run mode; the CLI rejects Discover with
 `--dry-run` before admission.
 
@@ -139,10 +152,44 @@ disclosure preserves its draft and starts no search or model work.
 
 The task invokes the existing `discovery.search` action with a retained
 idempotency key and database identity. Queued means Temporal accepted the request,
-not that acquisition completed. Progress distinguishes observed jobs, new jobs,
-partial failures and unknown totals. Accepted captures flow through the canonical
-Jobs writer. Initial preparation remains in the existing preparation owner;
-no view or ordinary save invents completed model work.
+not that acquisition or person-fit assessment completed. The complete application
+keeps that one action active while the preparation owner enriches each newly
+saved job, records role context, extracts its requirements and assesses person
+fit. Search does not prepare wording or generate resumes. Source counts remain
+acquisition counts; source failures and per-job assessment failures are reported
+separately. A job whose assessment fails stays saved with its explicit outcome,
+and other jobs continue. A completed source alone cannot complete the overall
+search or enable a second launch during assessment.
+The Jobs progress changes to **Assessing saved jobs** while that work runs and
+shows recorded assessed, failed and cohort counts when available. Selected job
+details identify an active `search` or `assess` recipe as **Assessing fit**, with
+its current stage; this task generates no resume. The ordinary **Prepare resume**
+action is available again after assessment settles. If the preparation owner is
+absent, the completed result explicitly says initial fit assessment is
+unavailable rather than implying that saved jobs were assessed.
+If every source eventually fails after saving jobs, those retained new jobs
+still receive initial assessment. The overall search reports a partial outcome,
+while its acquisition status and source failures remain failed and inspectable.
+
+The cohort contains only jobs newly saved by this search. Existing accepted
+scores are not reassessed because a Profile or catalog changed; use the explicit
+affected-matches operation for that decision. Reads and preference saves start
+no assessment. In a reduced application with Discovery but no preparation owner,
+the action is acquisition-only and reports `preparationAvailable: false`;
+acquisition success does not establish a person-fit result.
+
+For already saved jobs that need initial assessment, deliberately submit
+`preparation.run` with `recipe: "assess"`, `scope: "selected"` and the exact
+`job_ids` (up to 1,000), or use `jobctrl assess --job-id JOB_ID --wait` with a
+repeated `--job-id` for the reviewed selection. This runs the same enrichment,
+role-context, requirements and Fit owners without another Discovery search,
+wording preparation or resume generation. The receipt's run ID joins
+`GET /v1/preparation/runs/{run_id}` for every stage outcome. A failed refresh
+preserves earlier accepted posting, requirements and score records.
+Recorded failed job stages also survive same-run worker recovery. A worker
+restart does not silently retry them; use an explicit preparation retry. A
+cancelled or failed action seals interrupted preparation status without altering
+completed stages or inventing a receipt for uncertain model usage.
 
 If a start reply is uncertain, choose **Check previous search** or **Retry the
 same request** with the same inputs. A missing row is an observation at read

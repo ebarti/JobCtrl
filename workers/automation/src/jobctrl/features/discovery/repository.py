@@ -864,6 +864,11 @@ class DiscoveryRepository:
             row = conn.execute("SELECT request_json FROM discovery_runs WHERE run_id=?", (run_id,)).fetchone()
             return json.loads(row[0]) if row else None
 
+    def run_outcome(self, run_id):
+        with self.database.connect() as conn:
+            row = conn.execute("SELECT result_json FROM discovery_runs WHERE run_id=?", (run_id,)).fetchone()
+            return json.loads(row[0]) if row and row[0] else None
+
     def unit(self, run_id, unit_id):
         with self.database.connect() as conn:
             row = conn.execute(

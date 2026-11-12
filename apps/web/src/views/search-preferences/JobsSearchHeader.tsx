@@ -6,6 +6,7 @@ import { useMountedFeatures, useRuntimeHealth } from "../../contexts/runtime/ind
 import { Button } from "../../shared/ui/button.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 import { useSearchReadiness } from "./useSearchReadiness.js";
+import { renderSearchFeedback } from "./SearchFeedbackComposition.js";
 
 /** Jobs launches saved criteria; editing remains a separate, contextual action. */
 type JobsSearchHeaderProps = {
@@ -29,7 +30,7 @@ function ConnectedJobsSearchHeader({ preferencesAction, connectionAction, spendi
     preferencesLoading: preferences.loading, settingsLoading: settings.loading,
     preferencesError: preferences.error, settingsError: settings.error,
   });
-  return <SavedDiscoverySearch workspaceIdentity={runtime.data?.databaseInstanceId} profileVersion={preferences.state.profileVersion} disabledReason={readiness.disabledReason} accountingSetupReason={readiness.accountingSetupReason} spendingAction={spendingAction}>
+  return <SavedDiscoverySearch workspaceIdentity={runtime.data?.databaseInstanceId} profileVersion={preferences.state.profileVersion} disabledReason={readiness.disabledReason} accountingSetupReason={readiness.accountingSetupReason} spendingAction={spendingAction} renderFeedback={renderSearchFeedback}>
     {({ action, feedback }) => <>
       <PageHead title="Jobs" subtitle="Compare saved opportunities and choose your next step."
         actions={<>{preferencesAction}{action}</>} />

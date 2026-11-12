@@ -96,6 +96,26 @@ quarantine, feedback, target plans and run/cancel routes live under
 `jobIds` and `newJobIds` for the preparation owner. `schedule_definition()`
 publishes an explicit `discovery.search` schedule to the foundation worker.
 
+The complete application composes that existing action with Preparation's
+fit-only `search` recipe, using the same public run ID for source progress,
+checkpointed job stages and cancellation. Only newly committed `newJobIds` enter
+initial assessment; prior accepted scores are never implicitly refreshed.
+The action stays active through enrichment, role analysis, Requirements and Fit,
+with no wording coverage, authoring or resume generation. Its result adds
+`preparationAvailable: true` and `preparation` with `status`, `assessedJobs`,
+`failedJobs` and per-job `{jobId, stage, code}` failures. Existing `failures`
+contains source failures only. Either kind makes the overall result `partial`.
+The composite's `ok` is true only on complete success; `acquisitionStatus` retains
+the independent source status. `search_outcome(run_id)` returns that exact
+committed acquisition outcome for application recovery, including failed sources
+that already saved jobs. Preparation assesses only those recorded new IDs and
+does not repeat acquisition to recover them. Source failure with no new jobs
+remains failed. Its action finalizer seals interrupted preparation, and worker
+replay preserves failed job stages until an explicit retry.
+Standalone Discovery remains acquisition-only and reports
+`preparationAvailable: false`. The separate explicit `assess` preparation recipe
+recovers selected saved jobs without another acquisition.
+
 Search registers a constant workspace admission scope. The foundation's write
 transaction admits one active search across tabs, CLI and schedules, before
 planning or acquisition. It includes pending, dispatch-failed, queued and running

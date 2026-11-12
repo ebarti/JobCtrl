@@ -8,6 +8,8 @@ export { DiscoveryProductControls } from "./components/DiscoveryProductControls.
 export { DiscoverySourceHealthPanel } from "./components/DiscoverySourceHealthPanel.js";
 export { DiscoveryRunsPanel } from "./components/DiscoveryRunsPanel.js";
 export { SavedDiscoverySearch } from "./components/SavedDiscoverySearch.js";
+export type { DiscoverySearchController } from "./hooks/useDiscoverySearchController.js";
+export type { DiscoveryAssessmentProgress, DiscoverySearchFeedbackRenderer } from "./components/DiscoverySearchFeedback.js";
 export { DiscoverySearchSettings, clearDiscoverySearchSettingsDraftsForSession, useSavedDiscoverySearchSettingsState, type DiscoverySearchSettingsState } from "./components/DiscoverySearchSettings.js";
 export { DiscoveryExplicitTargets } from "./components/DiscoveryExplicitTargets.js";
 export { DiscoveryTargetPlan } from "./components/DiscoveryTargetPlan.js";

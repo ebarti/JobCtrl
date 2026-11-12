@@ -33,7 +33,7 @@ interface DigestRow {
 
 function formatMoney(value: number | null): string {
   if (value === null) {
-    return "unlimited";
+    return "Unavailable";
   }
   return value.toLocaleString(undefined, {
     currency: "USD",
@@ -48,11 +48,17 @@ function digestRows(digest: Digest): readonly DigestRow[] {
     .slice(0, 2)
     .map((source) => source.displayName ?? source.sourceId)
     .join(", ");
-  const budgetDetail = digest.budget.status === "incomplete"
-    ? "LLM spend pending or unresolved"
-    : digest.budget.unlimited
-    ? `${formatMoney(digest.budget.estimatedUsd)} spent`
-    : `${formatMoney(digest.budget.remainingUsd)} remaining of ${formatMoney(digest.budget.dailyBudgetUsd)}`;
+  const budget = digest.budget;
+  const costStatus = budget.costStatus ?? (budget.status === "incomplete" ? "unresolved" : "complete");
+  const budgetDetail = costStatus === "unresolved"
+    ? "A model call has not settled. Check its receipt before retrying."
+    : costStatus === "pending"
+      ? `Model work is running.${budget.unlimited ? " No daily limit." : ""}`
+      : costStatus === "unavailable"
+        ? budget.unlimited ? "No daily limit. Dollar usage is unavailable." : "Dollar usage is unavailable, so the daily limit cannot be verified."
+        : budget.unlimited
+          ? `${formatMoney(budget.estimatedUsd)} recorded · No daily limit`
+          : `${formatMoney(budget.remainingUsd)} remaining of ${formatMoney(budget.dailyBudgetUsd)}`;
 
   return [
     {
@@ -118,11 +124,15 @@ function digestRows(digest: Digest): readonly DigestRow[] {
     {
       key: "budget",
       label: "Budget",
-      value: digest.budget.status === "incomplete" ? "unknown" : digest.budget.status === "over_budget" ? "over" : "ok",
+      value: costStatus === "pending" ? "In progress"
+        : costStatus === "unresolved" ? "Needs reconciliation"
+          : budget.status === "over_budget" ? "Limit reached"
+            : budget.unlimited ? "No daily limit"
+              : costStatus === "unavailable" ? "Cost unavailable" : "Within limit",
       detail: budgetDetail,
       href: digest.deepLinks.budget,
       actionLabel: "Open",
-      tone: digest.budget.status === "ok" ? "ok" : "warn",
+      tone: costStatus === "pending" ? undefined : budget.status === "ok" ? "ok" : "warn",
     },
   ];
 }

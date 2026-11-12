@@ -90,11 +90,16 @@ class DigestService:
             unavailable.append("reviewNeededMaterials")
         spending = self.model.spend()
         budget = self.settings.snapshot()["dailyBudgetUsd"]
-        complete = spending["accountingComplete"]
-        amount = spending["costUsd"] if complete else None
-        budget_data = {"status": "incomplete" if not complete else "over_budget" if budget > 0 and amount >= budget else "ok",
-                       "estimatedUsd": amount, "dailyBudgetUsd": float(budget),
-                       "remainingUsd": max(0.0, budget - amount) if complete and budget > 0 else None, "unlimited": budget <= 0}
+        cost_status = spending["costStatus"]
+        amount = spending["costUsd"]
+        needs_attention = cost_status in {"pending", "unresolved"} or (budget > 0 and cost_status == "unavailable")
+        budget_data = {"status": "incomplete" if needs_attention else "over_budget"
+                       if budget > 0 and amount is not None and amount >= budget else "ok",
+                       "estimatedUsd": amount, "knownUsd": spending["knownCostUsd"],
+                       "costStatus": cost_status, "tokenStatus": spending["tokenStatus"],
+                       "dailyBudgetUsd": float(budget),
+                       "remainingUsd": max(0.0, budget - amount) if amount is not None and budget > 0 else None,
+                       "unlimited": budget <= 0}
         result = {"ok": True, "generatedAt": now.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
                   "since": since, "highFitThreshold": threshold, "newMatches": new_matches, "blockedSources": blocked_sources,
                   "reviewNeededMaterials": {"count": materials}, "staleScores": {"count": stale},

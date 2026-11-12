@@ -1,5 +1,6 @@
 import { test, expect, json, completed, terminal } from "../harness/fixtures.js";
-import { baseline, createBaseline, createPosting, type Profile } from "./core-data.js";
+import { baseline, createBaseline, createPosting, type Library, type Profile } from "./core-data.js";
+import { servePostingAssessment } from "./search-assessment-data.js";
 
 type LocationBinding = {
   rowIndex: number;
@@ -467,11 +468,12 @@ async function savedSearch(api: Parameters<typeof createBaseline>[0]) {
 
 function searchPosting(id: string) {
   return { job_key: id, url: `https://example.com/jobs/${id}`, title: `Synthetic ${id} Engineer`,
-    company: "Synthetic Hiring Company", description: "Maintain durable workflows.", location: "Madrid" };
+    company: "Synthetic Hiring Company", description: `Maintain durable ${id} workflow recovery.`, location: "Madrid" };
 }
 
 test("Jobs starts saved searches directly, preserves live progress across navigation and tabs, and displays canonical completion", async ({ api, app, page }, testInfo) => {
   const profile = await savedSearch(api);
+  const library = await json<Library>(api, "get", "/v1/profile/wording");
   await createPosting(api, "previously-saved");
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto("/jobs");
@@ -521,15 +523,39 @@ test("Jobs starts saved searches directly, preserves live progress across naviga
   } finally { await peer.close(); }
   expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/action-runs?action=discovery.search")).runs.map((row) => row.runId)).toEqual([runId]);
   next.respond({ jobs: [searchPosting("Systems")], cursor: null, complete: true });
-  await completed(api, runId);
+  await servePostingAssessment(app, library, searchPosting("Platform"), { beforeFirstModel: async () => {
+    const acquired = await json<{ runs: { runId: string; status: string }[] }>(api, "get", "/v1/discovery/runs");
+    expect(acquired.runs.find((run) => run.runId === runId)?.status).toBe("completed");
+    expect((await json<{ status: string }>(api, "get", `/v1/action-runs/${runId}`)).status).toBe("running");
+    await expect(progress.getByRole("heading", { name: "Assessing saved jobs", exact: true })).toBeVisible();
+    await expect(progress).toContainText("0 of 3 jobs assessed · 0 failed");
+    await expect(progress.getByRole("progressbar")).toBeVisible();
+    await expect(progress.getByRole("button", { name: "Dismiss last search result", exact: true })).toHaveCount(0);
+    await expect(start).toBeDisabled();
+    await testInfo.attach("jobs-search-assessing-desktop", { contentType: "image/png", body: await page.screenshot() });
+  } });
+  await servePostingAssessment(app, library, searchPosting("Infrastructure"), { kind: "missing" });
+  await servePostingAssessment(app, library, searchPosting("Systems"));
+  const settled = await completed(api, runId);
+  expect(settled["result"]).toMatchObject({ status: "completed", preparationAvailable: true, preparation: { status: "succeeded", assessedJobs: 3, failedJobs: 0, failures: [] } });
   await expect(progress).toContainText("Search completed");
   await expect(progress).toContainText("3 new jobs");
+  await expect(progress).toContainText("3 of 3 jobs assessed · 0 failed");
   await expect(progress.getByRole("progressbar")).toHaveCount(0);
   await expect(start).toBeEnabled();
   await expect(page.getByRole("link", { name: "Synthetic Systems Engineer", exact: true })).toBeVisible();
   await start.evaluate(async (element) => { await Promise.all(element.getAnimations().map((animation) => animation.finished.catch(() => undefined))); });
   await testInfo.attach("jobs-search-completed-desktop", { contentType: "image/png", body: await page.screenshot() });
-  expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(0);
+  const ranked = await json<{ rows: { job: { title: string }; scalars: { fit_score: number | null } }[] }>(api, "get", "/v1/jobs/query?sort=fit_score&direction=desc");
+  expect(ranked.rows.filter((row) => row.scalars.fit_score !== null).map((row) => row.scalars.fit_score)).toEqual([10, 10, 1]);
+  for (const [title, score] of [["Platform", 10], ["Infrastructure", 1], ["Systems", 10]] as const) {
+    const row = page.getByRole("row").filter({ has: page.getByRole("link", { name: `Synthetic ${title} Engineer`, exact: true }) });
+    await expect(row.getByText(`${score}/10`, { exact: true })).toBeVisible();
+  }
+  const operations = app.external.calls.filter((call) => call.path === "/model").map((call) => call.body["operation"]);
+  expect(operations.filter((operation) => operation === "fit.qualification")).toHaveLength(3);
+  expect(operations.some((operation) => String(operation).startsWith("fit.coverage") || String(operation).startsWith("profile.wording") || String(operation).startsWith("resumes."))).toBe(false);
+  expect((await json<{ runs: unknown[] }>(api, "get", "/v1/action-runs?action=fit.refresh")).runs).toEqual([]);
 });
 
 test("Jobs reconciles a lost search acknowledgement without duplicate work and stops the exact active search", async ({ api, app, page, allowRequestFailure }) => {

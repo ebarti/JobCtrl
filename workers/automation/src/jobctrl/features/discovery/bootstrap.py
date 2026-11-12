@@ -171,7 +171,7 @@ def build_feature(runtime, *, jobs, profile=None, browser_port=None, **ports):
         return JSONResponse(await service.search(ActionContext(run_id=str(uuid4()), request_id=str(uuid4())), body))
 
     async def search_action(context, payload):
-        return await service.search(context, payload)
+        return {**await service.search(context, payload), "preparationAvailable": False}
 
     async def history_action(context, payload):
         return await service.propose_sources_from_history(payload.get("job_id") or payload.get("jobId"))

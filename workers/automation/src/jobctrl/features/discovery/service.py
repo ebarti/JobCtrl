@@ -361,6 +361,10 @@ class DiscoveryService:
             proposals, operation_id=operation_id, input_fingerprint=request_hash
         )
 
+    def search_outcome(self, run_id):
+        """Read this exact acquisition's committed outcome, including failure."""
+        return self.repository.run_outcome(run_id)
+
     async def search(self, context, payload):
         run_id = context.run_id
         saved = self.repository.run_request(run_id)

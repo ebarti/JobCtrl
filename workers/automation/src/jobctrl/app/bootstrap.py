@@ -101,6 +101,14 @@ def create_application(workspace: Path | str, *, enabled_features: Collection[st
         add(build_feature(runtime, profile=need("profile"), jobs=need("jobs"), requirements=need("requirements"),
                           fit=need("fit"), resumes=need("resumes"), discovery=services.get("discovery"),
                           companies=services.get("companies"), compensation=services.get("compensation")))
+        # The ordinary search is an application journey across public owners.
+        # Discovery remains independently removable and acquisition-only on its
+        # own; the complete product retains its existing public search identity.
+        preparation_finalizer = features[-1].action_finalizers["preparation.run"]
+        for feature in features:
+            if feature.name == "discovery":
+                feature.actions["discovery.search"] = services["preparation"].search
+                feature.action_finalizers["discovery.search"] = preparation_finalizer
     if "jobs" in services:
         jobs = services["jobs"]
         if "fit" in services:

@@ -3,7 +3,7 @@ export { pipelineKeys } from "./queryKeys.js";
 export { JobActions, type JobActionsProps } from "./components/JobActions.js";
 export { StageTriggerPanel } from "./components/StageTriggerPanel.js";
 export { PipelineBulkActions, PreparationRunDetail, PreparationRunList } from "./components/PreparationControls.js";
-export { preparationInvalidation, preparationKeys, usePreparationCommands, usePreparationRun, usePreparationRuns } from "./client.js";
+export { preparationInvalidation, preparationKeys, usePreparationCommands, usePreparationRun, usePreparationRuns, useSearchPreparationProgress } from "./client.js";
 export { pipelineTelemetryEvents, usePipelineTelemetry } from "./telemetry.js";
 export type { PreparationRecipe, PreparationRequest, PreparationResumeMode, PreparationRun } from "./client.js";
 export { StageBadge, type StageBadgeProps } from "./components/StageBadge.js";

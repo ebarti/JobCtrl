@@ -27,6 +27,16 @@ there is no Fastify business authority or TypeScript/Python JSON-RPC hop.
 | `GET /v1/activity` or `/v1/events` | Newest-first `{events,nextCursor,hasMore}`; optional `before` event ID and bounded `limit`. |
 | `GET /v1/activity/{eventId}` | One committed event envelope or 404. |
 
+The health `llmSpend` read model separates `costStatus` and `tokenStatus`, each
+`complete`, `unavailable`, `pending` or `unresolved`. A settled native call can
+have unavailable monetary cost and complete token usage. `costUsd` is nullable
+unless the complete monetary total is known; `knownCostUsd` is only the recorded
+subtotal. `costAuthority` describes monetary evidence, while
+`accountingComplete` requires both dimensions complete. `activeCalls`,
+`unresolvedCalls`, `unavailableCostCalls` and `unavailableTokenCalls` retain the
+distinction; `unlimited` reflects the current zero-dollar-cap setting. These are
+read-only classifications and do not change receipt or admission policy.
+
 Feature-owned routes cover Profile, Jobs, Requirements, Fit, Resumes and the
 retained optional capabilities. Their owners validate input and publish exact
 DTOs. Missing optional features remove their routes; unknown API paths return an
@@ -93,6 +103,19 @@ records `budget_exhausted`, without asserting upstream provider completion.
 If every selected unit fails, the run is `failed`. Per-board request adaptation preserves saved search settings;
 see the [Discovery reference](../workers/automation/src/jobctrl/features/discovery/README.md)
 for cutoff, checkpoint and restart behavior.
+
+In the complete product, the same `discovery.search` identity stays active
+through Preparation's initial fit-only `search` recipe. Source status remains
+independent: the composite result exposes `acquisitionStatus` and its own
+`status`, with `ok: false` for a partial outcome. If acquisition failed after
+committing new jobs, those exact retained jobs are still assessed and the
+composite is partial; the canonical source run remains failed. The separate
+`preparation` summary and explicit selected-job `assess` recipe are defined in
+[Operations and events](api/operations-and-events.md#starting-work).
+Cancelled/failed action terminalization seals interrupted preparation in the
+same transaction, including recovery without re-entering the feature handler.
+It never settles model accounting. Completed failed/blocked stages retain their
+original outcome on same-run replay; an explicit new retry admits further work.
 
 ## Action and error semantics
 

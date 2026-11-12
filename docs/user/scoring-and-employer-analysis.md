@@ -212,8 +212,18 @@ case-folding; clients do not guess or re-normalize display text.
 
 ## What You Can See And Control
 
-Scoring runs inside Discover preparation. Review it on the current product
-surfaces rather than looking for a separate scoring page:
+Scoring runs inside Discover preparation. The ordinary **Start search** action
+keeps its durable search identity open
+through initial assessment of its newly saved jobs. It runs enrichment, role
+analysis, Requirements and Fit, with no wording preparation or resume generation.
+Source completion and source counts do not stand in for fit completion. An
+assessment failure is a per-job outcome; earlier accepted records remain.
+The explicit `assess` preparation recipe applies those same prerequisites and
+person-fit work to selected saved Job IDs without another search. Existing scores
+made stale by Profile or catalog edits still require the manual affected-matches
+decision; search never expands into that refresh.
+
+Review the recorded results on the current product surfaces:
 
 - `/jobs` exposes fit-score filters, sorting, bands, and stage state.
 - `/jobs/:jobId` shows the employer analysis, score breakdown, confidence,

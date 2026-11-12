@@ -3,7 +3,9 @@ import { test, expect, json, completed, terminal, action, type ApplicationStack 
 import { baseline, createBaseline } from "./core-data.js";
 import type { APIRequestContext } from "@playwright/test";
 
-test.use({ discoveryTransport: "jobstreaming" });
+// These are actual acquisition/recovery journeys. Full initial assessment is
+// exercised by the ordinary saved-search journey with Preparation installed.
+test.use({ discoveryTransport: "jobstreaming", features: "profile,jobs,discovery" });
 
 type SearchResult = { status: string; newJobs: number; observedJobs: number; jobIds: string[]; failures: { boards: string[]; code: string; message: string; sourceFamily?: string; unitId?: string; sourceId?: string }[] };
 
@@ -155,6 +157,43 @@ test("Remote posting-age search uses the pinned SDK, isolates auth and unsupport
   expect((await table.boundingBox())!.y).toBeLessThan(1000);
   await testInfo.attach("multi-query-source-failures-compact-desktop", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
   await page.setViewportSize(viewport);
+
+  // Current selection qualifies old remedies without rewriting the result.
+  // Registry entries stay active when a board is simply deselected.
+  await settings(api, ["indeed"]);
+  await expect(notices).toHaveCount(0);
+  await expect(progress.getByText("Recorded failures from sources no longer enabled are retained in Search details.", { exact: true })).toBeVisible();
+  await expect(progress).toContainText("Last search result");
+  await progress.getByRole("button", { name: "Dismiss last search result", exact: true }).click();
+  await expect(progress.getByRole("button", { name: "Show last search result", exact: true })).toBeVisible();
+  await expect(progress.getByRole("heading")).toHaveCount(0);
+  await page.reload();
+  await expect(progress.getByRole("button", { name: "Show last search result", exact: true })).toBeVisible();
+  await expect(progress.getByRole("heading")).toHaveCount(0);
+  await page.getByRole("link", { name: "Search preferences", exact: true }).click();
+  await page.getByRole("link", { name: "Back to jobs", exact: true }).click();
+  await expect(progress.getByRole("button", { name: "Show last search result", exact: true })).toBeVisible();
+  await progress.getByText("Search details", { exact: true }).click();
+  await expect(recorded).toHaveCount(8);
+  await expect(recorded.first()).toContainText("Currently not selected or disabled");
+  await expect(progress).toContainText("4 new jobs · 4 observed");
+  await progress.getByText("Search details", { exact: true }).click();
+  await progress.getByRole("button", { name: "Show last search result", exact: true }).click();
+  await expect(progress.getByRole("heading")).toContainText("Search completed · some sources unavailable");
+  await expect(notices).toHaveCount(0);
+  await progress.getByRole("button", { name: "Dismiss last search result", exact: true }).click();
+  await testInfo.attach("terminal-search-dismissed-desktop", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
+  expect((await json<{ runs: { runId: string; failures: SearchResult["failures"] }[] }>(api, "get", "/v1/discovery/runs")).runs.find((run) => run.runId === multi.runId)?.failures).toEqual(multiResult.failures);
+
+  const following = await action(api, "discovery.search", scopedBody);
+  const followingProvider = await indeedRequest(app);
+  await expect(progress.getByRole("progressbar")).toBeVisible();
+  await expect(progress.getByRole("button", { name: "Dismiss last search result", exact: true })).toHaveCount(0);
+  await expect(progress.getByRole("button", { name: "Request stop", exact: true })).toBeVisible();
+  followingProvider.respond(pageOf([]));
+  expect(await runResult(api, following.runId)).toMatchObject({ status: "completed", newJobs: 0, observedJobs: 0 });
+  await expect(progress.getByRole("heading")).toHaveText("Search completed");
+  await expect(progress.getByRole("button", { name: "Dismiss last search result", exact: true })).toBeVisible();
 });
 
 test("pinned SDK Discovery retains its run and acknowledged cursor across worker restart, and cancellation preserves accepted jobs", async ({ api, app, page }, testInfo) => {
