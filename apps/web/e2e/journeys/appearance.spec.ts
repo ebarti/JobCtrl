@@ -61,10 +61,20 @@ test("all ten appearance palettes and font schemes persist while the actual Plat
       exact: true,
     });
     await expect(document).toContainText(profile.profile.personal.full_name);
-    return document.evaluate(async (element) => {
+    // Font loading can outlive a Plate remount. Wait without retaining a DOM
+    // handle, then resolve and measure the current editor in one browser task.
+    await page.evaluate(async () => {
       await window.document.fonts.ready;
+    });
+    await expect(document).toBeVisible();
+    return document.evaluateAll((elements) => {
+      const element = elements[0];
+      if (elements.length !== 1 || !element?.isConnected)
+        throw new Error("Expected one connected baseline resume editor.");
       const style = getComputedStyle(element);
       const box = element.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0)
+        throw new Error("The current baseline resume editor has no layout.");
       return {
         width: box.width,
         height: box.height,
