@@ -8,7 +8,7 @@ import threading
 
 from jobctrl.app.errors import AppError
 from jobctrl.features.discovery.domain import fingerprint
-from jobctrl.features.discovery.remote_search import validate_remote_search_scope
+from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
 
 
 class DiscoveryExecutionAdapter:
@@ -30,6 +30,9 @@ class DiscoveryExecutionAdapter:
             signal.set()
 
     async def run_board_unit(self, context, lease, unit, settings, previous):
+        # Validate unsupported scope per board before touching its provider.
+        for site in unit["sites"]:
+            provider_scope(site, location=unit["location"], remote_only=unit["remote_only"], hours_old=unit["hours_old"])
         if self.http_provider is not None:
             return await self._http_unit(context, lease, unit, settings, previous)
         return await self._stream_unit(context, lease, unit, settings, self._signals[(lease["run_id"], lease["epoch"])])
@@ -87,6 +90,11 @@ class DiscoveryExecutionAdapter:
         validate_remote_search_scope(
             spec.sites, location=spec.location, remote_only=spec.remote_only, hours_old=spec.hours_old
         )
+        if not settings.get("_criteriaAsOf") and any(
+            provider_scope(site, location=spec.location, remote_only=spec.remote_only, hours_old=spec.hours_old)["localAgeCheck"]
+            for site in spec.sites
+        ):
+            raise AppError("discovery_criteria_reference_missing", "Restart this older search to bind its posting-age reference.", 409)
         directory = self.workspace / "discovery-checkpoints" / fingerprint(lease["run_id"])
         if (
             (self.workspace / "discovery-checkpoints").is_symlink()
@@ -106,8 +114,11 @@ class DiscoveryExecutionAdapter:
         self.repository.save_unit(lease, unit, status="running")
 
         def consume():
+            from jobctrl.features.discovery.adapters.synthetic_jobstreaming import controlled_registry
+
             gateway = JobStreamingGateway()
-            with gateway.open_stream(spec, checkpoint_store=store, cancel_event=stop) as stream:
+            registry = controlled_registry(self.workspace)
+            with gateway.open_stream(spec, checkpoint_store=store, cancel_event=stop, registry=registry) as stream:
                 completed = False
                 for event in stream:
                     self.repository.heartbeat(lease)
@@ -147,10 +158,18 @@ class DiscoveryExecutionAdapter:
                                 "jobKey": event.job_key,
                             },
                         }
+                        scope = provider_scope(event.site.value, location=spec.location, remote_only=spec.remote_only, hours_old=spec.hours_old)
+                        age = None
+                        if scope["localAgeCheck"]:
+                            if not settings.get("_criteriaAsOf"):
+                                raise AppError("discovery_criteria_reference_missing", "Restart this older search to bind its posting-age reference.", 409)
+                            age = posting_age_evidence(event.site.value, event.job.date_posted, hours_old=spec.hours_old, reference=settings["_criteriaAsOf"])
+                            posting["provenance"]["postingAge"] = age
+                            posting["provenance"]["providerHoursOld"] = scope["hours_old"]
                         # Preserve targeted LinkedIn detail fetch only when exact
                         # identity needs content; never merge title/company alone.
-                        if not posting["description"] and self._needs_detail(posting):
-                            detail = gateway.fetch_detail_for_job_event(event)
+                        if (age is None or age["accepted"]) and not posting["description"] and self._needs_detail(posting):
+                            detail = gateway.fetch_detail_for_job_event(event, registry=registry)
                             if detail is not None:
                                 detail_row = gateway.frame_for_job_event(event, spec, job=detail).iloc[0].to_dict()
                                 posting["description"] = str(detail_row.get("description") or "")
@@ -162,6 +181,7 @@ class DiscoveryExecutionAdapter:
                             posting,
                             "jobstreaming:"
                             + fingerprint([lease["run_id"], unit["unit_id"], event.site.value, event.job_key]),
+                            forced_exclusion=age is not None and not age["accepted"],
                         )
                         if outcome["outcome"] == "budget_exhausted":
                             self.repository.save_unit(lease, unit, status="budget_exhausted")
@@ -176,10 +196,15 @@ class DiscoveryExecutionAdapter:
                                 "The provider checkpoint requires explicit reset.",
                                 409,
                             )
-                        if not event.retryable:
-                            raise AppError(
-                                "discovery_provider_failed", "A search provider failed without a retryable result.", 502
-                            )
+                        # The SDK emits ErrorEvent after its bounded retries are
+                        # exhausted. Persist/ack this board's failure, then allow
+                        # the owner to continue the other independently keyed units.
+                        stream.ack(event)
+                        message = "The source could not complete its search; review its connection before retrying."
+                        if event.code.value == "authentication_configuration":
+                            credential = {"indeed": "JOBSTREAMING_INDEED_API_KEY", "zip_recruiter": "JOBSTREAMING_ZIPRECRUITER_AUTHORIZATION"}.get(event.site.value)
+                            message = f"Configure {credential} in the worker environment, then restart the worker and retry; or deselect this board." if credential else "Configure this source's provider credentials or deselect the board."
+                        raise AppError("discovery_provider_" + event.code.value, message, 502)
                     elif isinstance(event, SearchCompleteEvent):
                         completed = event.completed
                     # Jobs/filtered receipts committed before provider ack.
@@ -187,8 +212,19 @@ class DiscoveryExecutionAdapter:
                 if not completed:
                     raise AppError("discovery_provider_incomplete", "The provider search has not completed.", 502)
                 self.repository.save_unit(lease, unit, status="completed")
+                for site in spec.sites:
+                    self.repository.source_result(lease, "jobstreaming:" + site, "completed")
 
-        await asyncio.to_thread(consume)
+        try:
+            await asyncio.to_thread(consume)
+        except Exception as error:
+            from jobstreaming.exception import JobStreamingError, StreamCancelledError
+
+            if isinstance(error, StreamCancelledError) or context.cancelled():
+                raise AppError("action_cancelled", "Discovery was cancelled.", 409) from None
+            if isinstance(error, JobStreamingError):
+                raise AppError("discovery_provider_" + error.code.value, "A search provider could not complete its request.", 502) from None
+            raise
 
     def _needs_detail(self, posting):
         return any(
@@ -218,7 +254,7 @@ class DiscoveryExecutionAdapter:
             )
         ]
         if settings.get("queries") and not queries:
-            return
+            return False
         session = configured_session(
             source, settings, policy=ATS_API_POLICY if source.get("kind") == "ats_api" else ENRICHMENT_CRAWL_POLICY
         )
@@ -235,10 +271,12 @@ class DiscoveryExecutionAdapter:
             variants = [{**settings, "queries": queries}]
         if len(variants) > 1000:
             raise AppError("discovery_search_unit_limit", "The source exceeds the bounded search-unit limit.")
+        completed = False
         for variant in variants:
             if not self.repository.budget_remaining(lease, settings["newJobLimit"]):
-                return
-            await self._registered_source_unit(context, lease, source, variant, session)
+                return completed
+            completed = await self._registered_source_unit(context, lease, source, variant, session) or completed
+        return completed
 
     async def _registered_source_unit(self, context, lease, source, settings, session):
         from jobctrl.features.discovery.adapters.registered import acquire_registered_source
@@ -250,8 +288,8 @@ class DiscoveryExecutionAdapter:
             "source_family": "ats_api" if source.get("kind") == "ats_api" else "smart_extract",
         }
         previous = self.repository.unit(lease["run_id"], unit["unit_id"])
-        if previous and previous["status"] == "completed":
-            return
+        if previous and previous["status"] in {"completed", "budget_exhausted"}:
+            return True
         self.repository.save_unit(lease, unit, status="running")
         postings = await acquire_registered_source(
             source,
@@ -295,6 +333,7 @@ class DiscoveryExecutionAdapter:
             outcome = self._admit(context, lease, unit, settings, posting, key)
             if outcome["outcome"] == "budget_exhausted":
                 self.repository.save_unit(lease, unit, status="budget_exhausted")
-                return
+                return True
         self.repository.save_unit(lease, unit, status="completed")
         self.repository.source_result(lease, source["sourceId"], "completed")
+        return True

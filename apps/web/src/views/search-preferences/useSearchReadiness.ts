@@ -34,9 +34,6 @@ export function useSearchReadiness({ preferences, settings, runtime, preferences
   else if (!settings.boards.length && employerSources === 0) disabledReason = "Select a job board or enable an employer source before searching.";
   else if (preferences.locationIssue) disabledReason = preferences.locationIssue;
   else if (settings.boards.length && preferences.hasTargets && !preferences.hasSearchLocation) disabledReason = "Add a location, or select Remote for a location-free target, before searching the selected boards.";
-  else if (preferences.hasRemote && settings.boards.includes("indeed") && settings.hoursOld > 0) disabledReason = "Indeed cannot combine Remote with a posting-age cutoff. Remove Indeed or set Posting age to 0 hours for this search.";
-  else if (preferences.hasRemoteWithLocation && settings.boards.includes("glassdoor")) disabledReason = "Glassdoor cannot combine Remote with a selected location. Remove Glassdoor or use a location-free Remote target.";
-  else if (preferences.hasRemote && settings.hoursOld > 0 && settings.hoursOld % 24 !== 0 && settings.boards.some((board) => ["glassdoor", "zip_recruiter"].includes(board))) disabledReason = "Glassdoor and ZipRecruiter need whole-day posting ages for Remote searches. Use a multiple of 24 hours or remove those boards.";
   else if (preferences.needsModel && targetPlan.isPending) disabledReason = "Checking the saved search plan…";
   else if (needsFreshModelPlan && application.isPending) disabledReason = "Checking the saved model configuration for your search queries…";
   else if (needsFreshModelPlan && application.error) disabledReason = "The saved model configuration could not be checked. Review connections before starting this search.";

@@ -720,6 +720,7 @@ class DiscoveryRepository:
                         "newJobs": r["new_jobs"],
                         "observedJobs": r["observed_jobs"],
                         "failureCode": r["failure_code"],
+                        "failures": (json.loads(r["result_json"]) if r["result_json"] else {}).get("failures", []),
                         "createdAt": r["created_at"],
                         "updatedAt": r["updated_at"],
                     }
@@ -810,6 +811,48 @@ class DiscoveryRepository:
                 aggregate_id=lease["run_id"],
             )
         return status
+
+    def finalize_bounded_units(self, lease, limit):
+        """Recover fulfilled work across every source family before settlement.
+
+        Reaching the shared admission limit ends unfinished acquisition, but
+        does not establish provider completion. Preserve failed source state.
+        """
+        with self.database.transaction() as conn:
+            run = self.guard_run(conn, lease)
+            if run["new_jobs"] >= limit:
+                failed_sources = {
+                    row[0] for row in conn.execute(
+                        "SELECT source_id FROM discovery_source_runs WHERE run_id=? AND status='failed'", (lease["run_id"],)
+                    )
+                }
+                for row in conn.execute(
+                    "SELECT unit_id,data_json FROM discovery_units WHERE run_id=? AND status='running'", (lease["run_id"],)
+                ).fetchall():
+                    data = json.loads(row["data_json"])
+                    sources = {data["source_id"]} if data.get("source_id") else {"jobstreaming:" + board for board in data.get("sites", [])}
+                    if sources.intersection(failed_sources):
+                        continue
+                    conn.execute(
+                        "UPDATE discovery_units SET status='budget_exhausted',updated_at=? WHERE run_id=? AND unit_id=?",
+                        (now(), lease["run_id"], row["unit_id"]),
+                    )
+                conn.execute(
+                    "UPDATE discovery_source_runs SET status='budget_exhausted',updated_at=? WHERE run_id=? AND status='running'",
+                    (now(), lease["run_id"]),
+                )
+            fulfilled = conn.execute(
+                "SELECT COUNT(*) FROM discovery_units WHERE run_id=? AND status IN ('completed','budget_exhausted')",
+                (lease["run_id"],),
+            ).fetchone()[0]
+            failures = [
+                {"sourceId": row["source_id"], "code": row["error_code"] or "discovery_source_failed"}
+                for row in conn.execute(
+                    "SELECT source_id,error_code FROM discovery_source_runs WHERE run_id=? AND status='failed' ORDER BY source_id",
+                    (lease["run_id"],),
+                )
+            ]
+            return {"fulfilledUnitCount": fulfilled, "failures": failures}
 
     def budget_remaining(self, lease, limit):
         with self.database.connect() as conn:

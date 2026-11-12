@@ -25,12 +25,40 @@ escape hatch.
 - Profile target plans, explicit Discovery query controls and one-run overrides
   are distinct authorities. Model suggestions do not change Profile preferences.
   Unknown or invalid refreshes preserve the previous accepted plan.
+- New runs isolate each selected board into a stable query/location/board unit;
+  each owns its provider checkpoint and outcome. Terminal board failures are
+  reused on same-run worker recovery; a new explicit run is required to retry
+  them after the SDK exhausts its bounded attempts. Auth/unsupported-scope failures
+  never label healthy boards failed or cancel their work. Older persisted runs
+  retain their original unit identities; a missing age reference refuses an
+  adapted request before network work and requires a new explicitly started run.
+- Final settlement reads fulfilled units and failed source IDs/codes from
+  canonical storage, including registered ATS/careers sources. Recovery cannot
+  forget a failure when another source has already filled the shared budget.
+  At that limit, existing running units become `budget_exhausted`; failed units
+  remain failed and unstarted/scoped-out sources do not count as completed.
+  A completed empty source still constitutes completed acquisition. `partial`
+  requires both fulfilled bounded work and a failed source; all-source failure
+  remains `failed`, independently of how many jobs were accepted.
+- Provider request normalization retains authored criteria in the run. Indeed
+  Remote removes only the conflicting acquisition age parameter. Whole-day
+  providers round acquisition hours up. Before intake, the exact local cutoff
+  uses persisted run time and provider date metadata: Indeed dates have UTC-day
+  precision, while other date-only providers retain a conservative 38-hour lower
+  margin for discarded timezone/relative-day precision. Unknown, future or
+  cutoff-overlapping dates become filtered receipts with reason/provenance.
+  Glassdoor Remote+location is a board-local unsupported scope because returned
+  location text cannot establish eligibility. No lexical inference or extra
+  acquisition compensates for exclusions.
 - The actual pinned JobStreaming explicit-ack gateway is retained. Accepted or
   filtered receipts commit before provider acknowledgement. Provider cursor
   fingerprint/schema errors fail explicitly. Epoch-fenced admissions prevent an
   abandoned activity from writing after a retry or cancellation.
 - Workday CXS, Greenhouse, Lever and Ashby public adapters are retained, with
-  configured request policy. Public careers/Smart Extract acquisition uses
+  configured request policy. Live-browser ATS transport retains that policy
+  admission while Chrome owns identity/session headers; GET sends no body and
+  JSON bodies are serialized only for POST. The broker still rejects forbidden
+  headers, unsafe URLs, invalid bodies and stale/cancelled leases. Public careers/Smart Extract acquisition uses
   source-bound posting selection and qualification. Search templates fan out
   authored query/location rows under a shared per-source request budget.
 - Packaged Workday and careers sources remain available in the fresh registry.
@@ -86,3 +114,11 @@ boundary while exercising real public HTTP actions, application logic, Jobs
 admission, SQLite receipts and cancellation fences. It does not replace internal
 dispatch, domain decisions or repositories. Integrated Temporal restart/browser
 acceptance remains in the root E2E journey suite.
+
+`JOBCTRL_JOBSTREAMING_PROVIDER_ENDPOINT` separately confines the real installed
+SDK's Indeed transport to the authenticated owned loopback boundary. The
+restricted registry also exercises ZipRecruiter's real missing-auth refusal;
+unknown boards cannot create a production adapter. Only addresses and synthetic
+auth are configured: parsing, request filters, stream delivery, checkpointing,
+limits and cancellation remain the installed SDK. The generic HTTP provider
+protocol is not evidence of pinned-SDK behavior.

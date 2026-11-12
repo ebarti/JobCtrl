@@ -6,10 +6,15 @@ import "./discovery-search-feedback.css";
 
 const STATUS_LABELS: Readonly<Record<string, string>> = {
   queueing: "Queueing search…", pending: "Search pending", queued: "Search queued", running: "Searching for jobs",
-  start_failed: "Search could not be queued", completed: "Search completed", partial: "Search completed with some source failures",
+  start_failed: "Search could not be queued", completed: "Search completed", partial: "Search completed · some sources unavailable",
   failed: "Search failed", "cancel-requested": "Stop requested", cancelled: "Search cancelled",
   "status-unavailable": "Search status unavailable", checking: "Checking search status…", unconfirmed: "Search request needs confirmation",
 };
+
+const BOARD_LABELS: Readonly<Record<string, string>> = { indeed: "Indeed", linkedin: "LinkedIn", glassdoor: "Glassdoor", zip_recruiter: "ZipRecruiter", google: "Google Jobs", bayt: "Bayt", bdjobs: "Bdjobs", naukri: "Naukri" };
+function sourceLabel(failure: DiscoverySearchController["sourceFailures"][number]) {
+  return failure.boards?.map((board) => BOARD_LABELS[board] ?? "Job board").join(", ") ?? "Employer source";
+}
 
 /** Shared factual feedback for the Jobs header and the independent run panel. */
 export function DiscoverySearchFeedback({ controller }: { readonly controller: DiscoverySearchController }) {
@@ -24,6 +29,7 @@ export function DiscoverySearchFeedback({ controller }: { readonly controller: D
     </div>
     {status === "idle" && !controller.blockedReason ? <p>Uses your saved Search preferences. Saving preferences does not start a search.</p> : null}
     {status === "partial" ? <p>Some sources did not finish. Jobs already saved by the search remain available.</p> : null}
+    {controller.sourceFailures.length > 0 ? <ul aria-label="Search source failures">{controller.sourceFailures.map((failure, index) => <li key={`${failure.sourceId ?? failure.boards?.join(",") ?? "source"}:${index}`}><strong>{sourceLabel(failure)}</strong>: {failure.message ?? failure.code}</li>)}</ul> : null}
     {status === "failed" ? <p>The search did not complete. Any jobs already saved remain available.</p> : null}
     {status === "cancel-requested" ? <p>The stop request was received. The search remains active until it settles.</p> : null}
     {status === "status-unavailable" ? <p role="alert">Current search status could not be checked. Any counts shown are the last recorded values; another search remains blocked.</p> : null}

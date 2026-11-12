@@ -70,17 +70,22 @@ async def acquire_registered_source(
                 with session.guard(url) as decision:
                     if not decision.allowed:
                         raise AppError("source_budget_exhausted", "The source request budget is exhausted.", 409)
+                    # Chrome owns its identity/session headers. Keep source
+                    # politeness admission above, but serialize only the API
+                    # content headers and a body when the method permits it.
+                    request = {
+                        "mode": "http_request", "url": url,
+                        "method": options.get("method", "GET"),
+                        "headers": {"Accept": "application/json"},
+                    }
+                    if options.get("json_body") is not None:
+                        if request["method"] != "POST":
+                            raise AppError("invalid_ats_request", "Only a POST ATS request can contain JSON.")
+                        request["body"] = json.dumps(options["json_body"])
+                        request["headers"]["Content-Type"] = "application/json"
                     response = asyncio.run_coroutine_threadsafe(
                         browser_port.fetch_public(
-                            {
-                                "mode": "http_request",
-                                "url": url,
-                                "method": options.get("method", "GET"),
-                                "body": json.dumps(options["json_body"])
-                                if options.get("json_body") is not None
-                                else None,
-                                "headers": {**decision.request_headers, "Content-Type": "application/json"},
-                            },
+                            request,
                             context,
                             source["sourceId"],
                         ),

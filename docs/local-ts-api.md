@@ -83,6 +83,17 @@ retries return their original run before this check. A lost acknowledgement
 retains its key until exact reconciliation. The Jobs launch pins both the saved
 Profile revision and the database incarnation used to read its preferences.
 
+`GET /v1/discovery/runs` includes the canonical run's `failures` list alongside
+its counts and status. Board failures identify `sourceFamily`, `unitId`, `boards`,
+`code` and a safe actionable `message`; registered-source failures retain their
+`sourceId` and code. The action result carries the same recorded failures.
+`partial` means at least one source unit completed or reached the new-job limit
+while another failed. A completed source may return no jobs. Reaching the limit
+records `budget_exhausted`, without asserting upstream provider completion.
+If every selected unit fails, the run is `failed`. Per-board request adaptation preserves saved search settings;
+see the [Discovery reference](../workers/automation/src/jobctrl/features/discovery/README.md)
+for cutoff, checkpoint and restart behavior.
+
 ## Action and error semantics
 
 Synchronous operations return 200/201. A durable command returns, for example:

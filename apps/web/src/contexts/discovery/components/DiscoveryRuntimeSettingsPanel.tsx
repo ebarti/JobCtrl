@@ -68,7 +68,7 @@ const RUNTIME_SETTING_HELP = {
   hoursOld: {
     title: "Posting lookback hours",
     description:
-      "Limit broad-board discovery to postings no older than this many hours when the provider supports age filtering. Use 0 for no cutoff. The next Discover run uses the new window.",
+      "Set the posting-age cutoff in hours. When a board needs a broader request, JobCtrl keeps only dates confirmed inside this window; uncertain dates are excluded. Use 0 for no cutoff. Source failures do not stop compatible boards.",
     href: `${DISCOVERY_GUIDE_URL}#runtime-setting-posting-lookback-hours`,
   },
   maxParallelFamilies: {

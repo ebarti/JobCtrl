@@ -22,11 +22,12 @@ const SearchActionSchema = z.object({
 }).passthrough();
 const ActionPageSchema = z.object({ runs: z.array(SearchActionSchema) });
 const StartReceiptSchema = z.object({ runId: z.string().min(1), workflowId: z.string().min(1), status: z.enum([...ACTIVE, ...TERMINAL]) });
+const SourceFailureSchema = z.object({ boards: z.array(z.string()).optional(), sourceId: z.string().optional(), code: z.string(), message: z.string().optional() });
 const RunListSchema = z.object({ ok: z.literal(true), runs: z.array(z.object({
   runId: z.string().min(1), status: z.string(), newJobs: z.number().int().nonnegative(),
-  observedJobs: z.number().int().nonnegative(), failureCode: z.string().nullable(), createdAt: z.string(), updatedAt: z.string(),
+  failures: z.array(SourceFailureSchema).optional(), observedJobs: z.number().int().nonnegative(), failureCode: z.string().nullable(), createdAt: z.string(), updatedAt: z.string(),
 }).passthrough()) });
-const ResultSchema = z.object({ status: z.string().optional(), newJobs: z.number().int().nonnegative().optional(), observedJobs: z.number().int().nonnegative().optional() }).passthrough();
+const ResultSchema = z.object({ failures: z.array(SourceFailureSchema).optional(), status: z.string().optional(), newJobs: z.number().int().nonnegative().optional(), observedJobs: z.number().int().nonnegative().optional() }).passthrough();
 const ScopeBusySchema = z.object({ error: z.object({ code: z.literal("action_scope_busy") }) });
 export type DiscoverySearchPayload = { queries?: string[]; locations?: { location: string; remote: boolean }[]; expectedProfileVersion?: number };
 type SearchAction = z.infer<typeof SearchActionSchema>;
@@ -207,7 +208,7 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
     : recovery.record ? recovery.canRetry ? "unconfirmed" : "checking" : actions.isPending ? "checking" : "idle";
 
   return {
-    action, counts, status, statusUnavailable, countsStale: Boolean(runs.error || statusUnavailable),
+    action, counts, status, sourceFailures: result.success ? result.data.failures ?? recorded?.failures ?? [] : recorded?.failures ?? [], statusUnavailable, countsStale: Boolean(runs.error || statusUnavailable),
     blockedReason, canStart: !blockedReason && !start.isPending, isPending: Boolean(memory?.busy || start.isPending),
     pendingBody: pending?.body, uncertain: Boolean(pending?.uncertain && !ownAction), recovery,
     hasUnconfirmedRequest: Boolean(recovery.record && !ownAction && (pending?.uncertain || recovery.statusError)),

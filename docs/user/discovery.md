@@ -65,9 +65,25 @@ preferences. The displayed effective summary names the inputs used.
 Search may make model-backed query preparation only after the explicit launch
 admits that work. Preference saves, reads, navigation and connection remedies
 start no query preparation, match refresh, scoring or resume generation.
-Provider-specific board/remote/age constraints can refuse an incompatible search
-unit while compatible units continue. A result limit is a request bound, not a
-promise of that many suitable or newly admitted jobs.
+Remote and posting age remain valid search preferences. Each board runs with
+its own supported request and checkpoint. Indeed Remote requests retain Remote
+and apply the age cutoff locally using the provider's reported publication date;
+Glassdoor and ZipRecruiter whole-day requests are rounded up for acquisition,
+then locally checked against the exact authored cutoff. Missing dates, ambiguous
+cutoff dates and future dates are excluded rather than invented. Date-only
+metadata can therefore reduce results, especially for short windows. The cutoff
+reference is frozen for the run and retained after worker restart.
+
+Glassdoor cannot verify a location together with Remote, so that board reports
+an unsupported scope while compatible boards continue. This does not infer
+remote-work eligibility from a location label. Missing credentials and other
+provider failures are also recorded per board, with source-specific remedies in
+the progress strip. A search is partial when a source completes or the new-job limit ends
+acquisition, and another source fails. If no source completes or fulfils bounded
+work, it is failed. Accepted jobs remain available in
+either case. A result limit bounds fetched observations, including those later
+excluded by the local date check; there are no extra requests to fill the limit.
+The limit is not a promise of that many suitable or newly admitted jobs.
 
 The primary launch also binds the saved `expectedProfileVersion`. Queued or
 replayed planning refuses a changed Profile instead of silently absorbing new

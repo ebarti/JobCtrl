@@ -310,6 +310,7 @@ export async function applicationStack(
   temporalAddress,
   {
     features,
+    discoveryTransport = "http",
     preflight = false,
     pythonExecutable = process.env.JOBCTRL_E2E_PYTHON ?? python,
     staticDir = process.env.JOBCTRL_E2E_STATIC_DIR ??
@@ -352,6 +353,10 @@ export async function applicationStack(
     JOBCTRL_E2E_DNS_URL: `${external.url}/dns`,
     JOBCTRL_POSTING_PROVIDER_ENDPOINT: `${external.url}/posting-page`,
   };
+  if (discoveryTransport === "jobstreaming") {
+    delete env.JOBCTRL_DISCOVERY_PROVIDER_ENDPOINT;
+    env.JOBCTRL_JOBSTREAMING_PROVIDER_ENDPOINT = `${external.url}/jobstreaming`;
+  }
   if (features !== undefined) env.JOBCTRL_FEATURES = features;
   if (
     process.env.JOBCTRL_E2E_INSTALLED !== "1" &&
@@ -553,6 +558,34 @@ export async function applicationStack(
             ),
           );
         return { ...result, images };
+      },
+      async discoveryCheckpoint(runId) {
+        // Read actual committed SDK checkpoints/receipts; never seed domain
+        // state or infer an acknowledgement from the next outbound request.
+        const inspected = await execFile(pythonExecutable, ["-c", `
+import hashlib, json, os, pathlib, sqlite3, sys
+root = pathlib.Path(sys.argv[1])
+owner = json.loads((root / ".jobctrl-e2e-owned.json").read_text())
+assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
+run_id = sys.argv[2]
+key = hashlib.sha256(json.dumps(run_id, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+directory = root / "discovery-checkpoints" / key
+assert not directory.is_symlink() and not directory.parent.is_symlink()
+adapters = []
+for path in directory.glob("*.sqlite3"):
+    assert not path.is_symlink() and path.resolve().is_relative_to(root.resolve())
+    with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
+        conn.execute("PRAGMA query_only=ON")
+        for site, state, emitted, completed in conn.execute("SELECT site,state_json,emitted_count,completed FROM jobstreaming_adapter_checkpoint"):
+            adapters.append({"site": site, "state": json.loads(state), "emittedCount": emitted, "completed": bool(completed)})
+path = root / "jobctrl.db"
+assert not path.is_symlink()
+with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
+    conn.execute("PRAGMA query_only=ON")
+    receipts = dict(conn.execute("SELECT outcome,COUNT(*) FROM discovery_intake_receipts WHERE run_id=? GROUP BY outcome", (run_id,)))
+print(json.dumps({"adapters": adapters, "receipts": receipts}))
+`, workspace, runId], { env, timeout: 5000, maxBuffer: 100_000 });
+        return JSON.parse(inspected.stdout);
       },
       async restartWorker() {
         const previous = worker;

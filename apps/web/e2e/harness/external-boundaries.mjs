@@ -72,7 +72,7 @@ export async function externalBoundaries(token) {
         body: body ? JSON.parse(body) : null,
         headers: Object.fromEntries(
           Object.entries(request.headers).filter(
-            ([key]) => key !== "authorization" && key !== "x-jobctrl-e2e-token",
+            ([key]) => key !== "authorization" && key !== "x-jobctrl-e2e-token" && key !== "indeed-api-key",
           ),
         ),
       };
