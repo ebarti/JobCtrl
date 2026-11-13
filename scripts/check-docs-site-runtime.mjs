@@ -209,8 +209,8 @@ const EXPLANATION_CONTRACTS = [
       "#profile-edits-and-explicit-refresh",
     ],
     tokens: [
-      "source-bound model determination",
-      "Failed, invalid or stale determinations do not replace the last accepted score",
+      "All rows pass schema, evidence and immutable gateway-receipt validation",
+      "Invalid, stale, refused or cancelled work preserves accepted assessments and scores",
       "document gap and does not reduce factual fit",
       "requirement-fit-v2-scoped",
     ],
@@ -1788,7 +1788,7 @@ try {
       (label) => (label.textContent ?? "").replace(/\s+/g, " ").trim(),
     );
     const requiredLabels = [
-      "Send the accepted requirements to the scorer.",
+      "Reuse current assessments and assess the missing set together.",
       "Classify the returned evidence.",
       "Apply evidence credit and requirement priority.",
       "Assign the display band.",

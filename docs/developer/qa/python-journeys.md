@@ -46,9 +46,15 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current source inventory is **77 journeys in 29 spec files**: the earlier
-57 plus three direct-Jobs search journeys, five provider-isolation/recovery
-journeys, one native accounting-setup journey and two accounting-classification
+The current configured inventory is **91 journeys in 31 spec files**:
+**90 Chromium cases in 30 files**, plus **one demo case in one file**. The
+configured all-project listing retains the complete 77-case/29-file parent and
+adds 14 cases in two files for batched qualification and exact-result reuse;
+no parent case is removed.
+
+The 77-case parent comprised the earlier 57 plus three direct-Jobs search
+journeys, five provider-isolation/recovery journeys, one native accounting-setup
+journey and two accounting-classification
 journeys, plus five initial-assessment/recovery journeys, two exact-quote binding
 journeys, one accounting-actionability journey and one Jobs deletion/SSE journey.
 The direct-Jobs cases exercise saved launch and live
@@ -76,16 +82,55 @@ Forced actions retain distinct durable refresh identity. Gateway schema success
 alone is not owner acceptance. No lexical fallback, chunks, truncation or
 rewritten model response establishes authority.
 
+The actual source run `e2e-Rvc4sO` passed all **12 focused Fit cases** with zero
+retries, skips or flaky cases. These cover cold, mixed and all-current reuse;
+six complete-partition/citation refusals; in-flight Profile and requirement
+changes; public-action cancellation; configured two-item/two-call manual work
+limits and exact replay; and checkpoint retention across actual worker
+replacement. Its frozen Python tree was
+`25f589f9477d3f857e93dda40ffe2c084966bee3073db33ea1188212d03b6c7e`.
+The combined invocation was **nonpassing**: its two exact-reuse cases failed,
+so the 12 passing Fit cases are partial proof, not a 14-case or complete-suite
+pass. That earlier snapshot included a since-retracted optional Jobs synthesis
+guard outside the exercised Fit paths; it does not qualify the exact final
+candidate.
+
+The subsequent source run `e2e-aZHNKB` passed **39/39 affected journeys**: the
+two new Requirements/role-analysis reuse cases and 37 existing journeys covering
+Requirements, manual affected-match refresh, search, worker recovery and
+tailoring. The reuse cases exercise exact body and destination bindings,
+changed body/catalog/model/effort, and explicit force actions. The other
+journeys retain complete-catalog validation and refusals, fixed manual scope and
+work allowances, queued/in-flight source fences, cancellation, actual worker
+replacement, no automatic reassessment, and accepted-PDF preservation. The run
+used one worker, zero retries, zero skips and zero flaky cases, with a clean
+browser console. Build and dependency locks remained unchanged.
+
+Its frozen Python tree
+`c1c4c0270bf9c2929942e6be27f83c14b0e1318a46fe9a72f81a1475aba0c6e5`
+matches the final production source and the live pre-guard source. The source
+candidate fingerprint was
+`e4e2ac635c7c05587bc935553fbdfb9c27b0e4356e47d4857e121067ccaa23ce`;
+the web bundle was
+`f201a831b79682e521c8aacf8ba3e36fe06216a9cfe8f1e5a62b401ce19168f1`.
+The wrapper measured **258.498 seconds** for journeys, **267.876 seconds** total
+and **7.940 seconds** for the build. This qualifies the named source paths on
+that snapshot, not all 91 cases or the exact final published candidate. Check
+[PR #1475's checks](https://github.com/ebarti/JobCtrl/pull/1475/checks) for
+whole-91-case qualification of the reviewed head; only completed successful
+required checks for that exact head establish the hosted result.
+
 The preceding authorized five-job observation took **91 minutes 59 seconds**
 and recorded **62 qualification calls and 40 qualification reuses**. These are
 aggregate operational observations, not a synthetic replay corpus or a general
 performance guarantee. No job or Profile identity belongs in the public record.
-At this documentation update, the changed candidate's actual journey results
-and repeat five-job timing have not yet been supplied. Record their exact
-candidate, model/effort, command, receipt/call counts, preservation checks and
-elapsed boundaries separately before claiming improvement or complete
-qualification. Source behavior and a smaller planned call count alone prove no
-new end-to-end timing, provider quality, release or deployment result.
+[Issue #1473](https://github.com/ebarti/JobCtrl/issues/1473) owns the aggregate
+repeat five-job provider results and before/after timing. Check its terminal
+operational evidence, including exact candidate, model/effort, command,
+receipt/call counts, preservation checks and elapsed boundaries, before
+concluding improvement. This ledger adds no post-change operational timing or
+provider-pass claim. Source behavior and a smaller planned call count alone
+prove no new end-to-end timing, provider quality, release or deployment result.
 
 ### Five-job QA follow-up — 12 November 2026
 
