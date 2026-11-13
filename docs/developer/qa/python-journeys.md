@@ -104,12 +104,43 @@ nonpassing invocation is retained above. Dependency locks and built web bytes
 remained unchanged during the recorded runs. Independent process readback found
 no remaining run-owned processes.
 
-This is cumulative affected source proof. **There is no complete 100-case
-final-candidate pass in this record. All three hosted shards and their aggregate
-remain pending** for the exact reviewed head. Installed predecessor-upgrade
+At first publication, this was cumulative affected source proof: **there was no
+complete 100-case final-candidate pass**, and all three hosted shards and their
+aggregate were pending. Installed predecessor-upgrade
 mode was not exercised because no installed payload was available. The source
 predecessor journey does not establish installed-upgrade, live workspace
 rollout, real-provider semantic quality, release or deployment proof.
+
+#### Initial hosted run and readiness repair
+
+The initial [PR #1478 run](https://github.com/ebarti/JobCtrl/actions/runs/43513681075)
+tested commit `53545c79024bf8a00c4e06321112a3a85e6179a8`. All 100 listed cases
+were attempted exactly once: **96 passed and 4 failed**, with no skipped, flaky,
+retried, duplicate or unrun cases. JSON and JUnit agree. All ten non-Browser jobs
+passed; the three Browser shards and their aggregate failed. Dependency locks,
+frozen Python source and built web bytes did not change during execution.
+
+The readiness case first exposed an outdated strict response assertion. Correcting
+that assertion then exposed a real client decoder omission: the no-Profile
+response included `contract_version`, while its strict decoder rejected it. The
+repair explicitly validates the current generation in both pending-readiness
+variants and preserves strict no-Profile validation. Legacy operation metadata
+is decoded and displayed as history without offering an incompatible retry.
+The other hosted failures were obsolete wording/tour assertions and one remaining
+old-generation empty response at the controlled external model boundary.
+
+The focused repair run `e2e-vcs6Z0` passed **5/5 real application journeys**, with
+zero retries: both failed manual-refresh scenarios, first Profile setup, the
+predecessor upgrade with operation-history/no-retry checks, and the full demo
+tour including accepted PDF and no product-network calls. Build time was
+**8.017 seconds**, journeys **69.426 seconds** and total **79.342 seconds**.
+Source candidate `88fd506862bd9e7f5223775295b6e11be3ccfcdc848771bc1a06bb857b0022ed`
+and Python tree `1684ec6a7e061e4a93226af41c50f71f3278180043801fbc98e4b174a0683f83`
+were unchanged; the repaired web bundle was
+`533b937fd0eee13e888c2fed0d8e36197f106747db0d29c135f1c8cc47d5de72`.
+These five passes do not replace full hosted qualification of the repair head.
+The [current PR checks](https://github.com/ebarti/JobCtrl/pull/1478/checks) are the
+authoritative later result; earlier failures remain retained in this ledger.
 
 ### Historical 93-journey inventory
 

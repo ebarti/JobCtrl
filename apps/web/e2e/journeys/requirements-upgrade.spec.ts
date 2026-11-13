@@ -21,7 +21,7 @@ function legacyQualification(call: ExternalCall, achievementId: string, sourceId
   })) };
 }
 
-test("a real predecessor upgrade preserves history and accepted bytes, starts an empty generation and rejects old durable replay without automatic calls", async ({ api, app }, testInfo) => {
+test("a real predecessor upgrade preserves history and accepted bytes, starts an empty generation and rejects old durable replay without automatic calls", async ({ api, app, page }, testInfo) => {
   const { language_entries: _newDefault, ...oldResume } = baseline.resume;
   const { profile, library } = await createBaseline(api, { ...baseline, resume: oldResume });
   const posting = await captureReusePosting(api, "legacy-upgrade", "Implement and maintain durable workflow recovery.");
@@ -87,6 +87,19 @@ test("a real predecessor upgrade preserves history and accepted bytes, starts an
   expect(historicFit).toMatchObject({ current: false, stale_reasons: ["contract_changed"], selection: { ready_for_materials: false }, score: oldFit.score });
   expect(await json(api, "get", `/v1/jobs/${posting.job_id}/fit/history`)).toEqual(oldHistory);
   expect(await json(api, "get", `/v1/action-runs/${oldRun.runId}`)).toEqual(oldAction);
+  const historicOperation = await json(api, "get", `/v1/fit/refresh/operations/${oldRun.runId}`);
+  expect(historicOperation).toMatchObject({ contract_version: null, current: false, stale_reasons: ["contract_changed"], operation_id: oldRun.runId, status: "completed" });
+  expect((await json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending")).latest_operation).toEqual(historicOperation);
+  await page.goto(`/jobs/${posting.job_id}`);
+  await page.locator("summary").filter({ hasText: /^Update affected matches$/ }).click();
+  const historyPanel = page.getByRole("region", { name: "Affected matches", exact: true });
+  await expect(historyPanel).toContainText("Historical update: the requirements contract changed. Its recorded results remain available for inspection; this update cannot be resumed under the current contract.");
+  await expect(historyPanel.getByRole("alert")).toHaveCount(0);
+  await expect(historyPanel.getByRole("button", { name: "Retry previous update", exact: true })).toHaveCount(0);
+  await expect(historyPanel.getByRole("button", { name: "Request cancellation", exact: true })).toHaveCount(0);
+  await historyPanel.locator("summary").filter({ hasText: /^Run details$/ }).click();
+  await expect(historyPanel.getByRole("link", { name: "View full run", exact: true })).toHaveAttribute("href", `/runs/${oldRun.runId}`);
+  expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/action-runs?action=fit.refresh")).runs.map((row) => row.runId)).toEqual([oldRun.runId]);
   const digest = await json(api, "get", "/v1/digest");
   expect(digest).toMatchObject({ newMatches: { count: 0, highFitCount: 0 }, staleScores: { count: 1 } });
   expect(await json(api, "get", "/v1/jobs/query?minFitScore=1")).toMatchObject({ total: 0, rows: [] });

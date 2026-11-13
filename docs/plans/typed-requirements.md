@@ -1,9 +1,11 @@
 # Typed job requirements
 
-Status: implemented; final hosted qualification pending. The accepted contract,
-source-bound regression, affected application journeys, documentation and rendered
-UI have been exercised. The complete 100-case inventory remains subject to the
-three required hosted shards. No production rollout or release is claimed.
+Status: implemented. The accepted contract, source-bound regression, affected
+application journeys, documentation and rendered UI have been exercised. The
+[PR checks](https://github.com/ebarti/JobCtrl/pull/1478/checks) record complete
+100-case qualification through the three required hosted shards; the journey
+ledger preserves each earlier candidate's observed results. No production rollout
+or release is claimed.
 
 ## Product contract
 

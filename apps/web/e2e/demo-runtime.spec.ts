@@ -408,7 +408,10 @@ test("demo tour retains local exact wording approval, durable edits and a real a
       "The real update action is unavailable in this demo.",
     );
     await expect(previous).toBeDisabled();
-    await expect(walkthrough).toContainText("entire saved catalog");
+    await expect(walkthrough).toContainText("the complete incoming batch and the entire active catalog");
+    await expect(walkthrough).toContainText("The reusable catalog contains Skills and Professional Experience.");
+    await expect(walkthrough).toContainText("Direct education/language demands never enter the catalog or request achievement wording.");
+    await expect(walkthrough).toContainText("Skills and experience cannot establish language proficiency.");
     await expect(walkthrough).toContainText("Posting 1:");
     await expect(walkthrough).toContainText("Posting 2:");
     await expect(walkthrough).toContainText(
@@ -494,7 +497,7 @@ test("demo tour retains local exact wording approval, durable edits and a real a
       .getByRole("button", { name: "Fact or source edit", exact: true })
       .click();
     await expect(walkthrough.getByRole("status")).toContainText(
-      "previously marked missing or never linked",
+      "an earlier unknown or missing match",
     );
     await expect(walkthrough).toContainText(
       "does not itself run a model or regenerate a resume",
@@ -545,7 +548,7 @@ test("demo tour retains local exact wording approval, durable edits and a real a
     await next.focus();
     await page.keyboard.press("Enter");
     await expect(walkthrough).toContainText("Reuse wording with your approval");
-    await expect(walkthrough).toContainText("one grouped proposal");
+    await expect(walkthrough).toContainText("prepare a grouped proposal only for an actual unsupported wording need with factual achievement support");
     await expect(walkthrough).toContainText(
       "Led recovery for 12 production incidents; created response runbooks used by 3 teams.",
     );

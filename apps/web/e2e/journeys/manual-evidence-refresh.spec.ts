@@ -75,9 +75,13 @@ test("Profile manually updates the previously missing match, reuses unaffected a
   const ownershipId = seed.requirements.requirements[1]!.requirement_id;
   const recoveryAchievement = seed.library.roles[0]!.achievements[0]!;
   const ownershipAchievement = seed.library.roles[0]!.achievements[1]!;
-  const savedRequirements = (await json<{ score: { assessments: { text: string; rationale: string }[] } }>(
+  const savedFit = await json<{ score: { assessments: { text: string; rationale: string }[] }; coverage: { wording_gaps: { requirement_id: string; status: string }[] } }>(
     api, "get", `/v1/jobs/${seed.posting.job_id}/fit`,
-  )).score.assessments;
+  );
+  const savedRequirements = savedFit.score.assessments;
+  expect(savedFit.coverage.wording_gaps.map(({ requirement_id, status }) => ({ requirement_id, status }))).toEqual([
+    { requirement_id: recoveryId, status: "current_wording_not_selected" },
+  ]);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(`/jobs/${seed.posting.job_id}`);
   const fitPanel = page.getByRole("region", { name: "Person fit", exact: true });
@@ -88,11 +92,10 @@ test("Profile manually updates the previously missing match, reuses unaffected a
   for (const [index, assessment] of savedRequirements.entries())
     await expect(requirementRows.nth(index).getByRole("heading")).toHaveText(assessment.text);
   const unassessedWording = fitPanel.getByText(
-    "No current approved wording coverage is recorded for this result. Wording assessment or selection may still be needed.",
+    "No approved achievement-wording coverage has been recorded for this result. This does not establish a wording gap.",
     { exact: true },
   );
-  await expect(unassessedWording).toHaveCount(1);
-  await expect(unassessedWording).toBeVisible();
+  await expect(unassessedWording).toHaveCount(0);
   await expect(fitPanel.getByText("Current wording not selected", { exact: true })).toBeHidden();
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
@@ -109,11 +112,10 @@ test("Profile manually updates the previously missing match, reuses unaffected a
   await expect(coveragePanel.getByText(savedRequirements[0]!.text, { exact: true })).toBeVisible();
   await gapDetails.click();
   const requirement = requirementRows.first();
-  await requirement.locator("summary").filter({ hasText: /^Assessment details$/ }).click();
+  await requirement.locator("summary").filter({ hasText: /^Evidence and assessment details$/ }).click();
   await expect(requirement.locator(".fit-requirement__rationale")).toHaveText(
     savedRequirements[0]!.rationale,
   );
-  await requirement.locator("summary").filter({ hasText: /^Evidence and provenance$/ }).click();
   await expect(requirement).toContainText(recoveryAchievement.source_refs[0]!.source_id);
   await expect(requirement).toContainText(seed.fit.score.assessments[0]!.determination_id);
   await testInfo.attach("person-fit-result-expanded", {
@@ -572,12 +574,7 @@ test("a saved change while a manual refresh is queued refuses before any selecto
     )
     .toBe("queued");
   await saveRoleSummary(api, "Synthetic Newer Queued Change");
-  held.reply({
-    status: "complete",
-    requirements: [],
-    reason: "Explicit empty inventory for this controlled external boundary.",
-    citations: citeSources(held, [modelSources(held)[0]!.source_id]),
-  });
+  held.reply(typedExtraction(held, {}));
   await completed(api, blocker.runId);
   expect(await terminal(api, queued.runId)).toMatchObject({
     status: "failed",
