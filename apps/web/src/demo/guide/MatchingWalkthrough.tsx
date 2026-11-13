@@ -18,7 +18,7 @@ type UpdateExample = "completed" | "stopped" | "partial";
 type WordingExample = "approval" | "deferral";
 type DemoDestination = "job" | "profile" | "evidence";
 
-const STEPS = ["Catalog", "Profile", "Update", "Wording"] as const;
+const STEPS = ["Categories", "Profile", "Update", "Wording"] as const;
 
 /** A fixed teaching example: no workspace writes, provider calls or invented receipts. */
 export function MatchingWalkthrough({ jobId, onNavigate }: {
@@ -71,23 +71,28 @@ export function MatchingWalkthrough({ jobId, onNavigate }: {
         <div aria-live="polite" aria-atomic="true">
           <p className="muted" data-typography="metadata">Step {step + 1} of {STEPS.length}</p>
           <h3 id="matching-example-step" data-typography="component-title">
-            {step === 0 ? "One catalog, separate posting sources" : step === 1 ? "Saved changes wait for review" : step === 2 ? "Choose when to update" : "Reuse wording with your approval"}
+            {step === 0 ? "Reusable meanings and job-local demands" : step === 1 ? "Saved changes wait for review" : step === 2 ? "Choose when to update" : "Reuse wording with your approval"}
           </h3>
         </div>
 
         {step === 0 ? <>
-          <p data-typography="body">After extraction, one model comparison considers all incoming requirements against the entire saved catalog, including each definition, scope and qualifiers.</p>
+          <p data-typography="body">The reusable catalog contains Skills and Professional Experience. One source-bound comparison considers the complete incoming batch and the entire active catalog, using each category, name and definition.</p>
           <div className="grid gap-2 border border-border bg-muted/40 p-3">
             <p data-typography="label">Example qualified meaning</p>
             <p data-typography="strong-body">Lead incident recovery for production services</p>
-            <p data-typography="body">Scope: production services · Responsibility: lead</p>
+            <p data-typography="body">Category: Professional Experience · Name: Production incident leadership</p>
             <div className="grid gap-1" data-typography="body">
               <p><strong>Posting 1:</strong> “Lead incident recovery for production services.”</p>
               <p><strong>Posting 2:</strong> “Lead production incident recovery.”</p>
             </div>
             <p data-typography="body">Illustrative mapping: if the comparison confirms the same full meaning, both postings can link here while keeping separate source occurrences.</p>
           </div>
-          <p data-typography="body">Different scope or responsibility may mean a distinct requirement. An uncertain or refused comparison stays unresolved; it does not publish a partial decision.</p>
+          <p data-typography="body">Different capabilities remain separate. Ordinary facets of one competence can reuse its meaning when the model confirms equivalence. An uncertain or refused comparison stays unresolved and preserves accepted results.</p>
+          <div className="grid gap-2 border border-border p-3" data-typography="body">
+            <p><strong>Education:</strong> “Engineering degree or equivalent professional experience” stays with this job. The recorded route can use Education or the explicitly offered experience alternative without asserting a degree.</p>
+            <p><strong>Languages:</strong> “English at professional working proficiency” uses a structured Language / Proficiency entry. Skills and experience cannot establish language proficiency.</p>
+            <p>Direct education/language demands never enter the catalog or request achievement wording. Non-English postings are identified before extraction and skipped without a zero score.</p>
+          </div>
           <div><Button variant="ghost" size="sm" className="h-auto whitespace-normal px-0 text-left" nativeButton={false}
             render={<Link to="/jobs/$jobId" params={{ jobId }} onClick={() => navigate("job")} role="link" />}>
             Open demo job <IconArrowRight aria-hidden="true" size={15} />
@@ -103,7 +108,7 @@ export function MatchingWalkthrough({ jobId, onNavigate }: {
           <div className="grid gap-2 border border-border bg-muted/40 p-3" role="status">
             {edit === "fact" ? <>
               <p data-typography="label">Example: pending review</p>
-              <p data-typography="body">A new saved fact can affect a requirement previously marked missing or never linked. The earlier assessment remains available and can be out of date until an explicit update.</p>
+              <p data-typography="body">A new saved fact, Education record or Language / Proficiency entry can affect an earlier unknown or missing match. The accepted assessment remains available until an explicit update. Each category uses its permitted source sections.</p>
             </> : <>
               <p data-typography="label">Example: wording coverage needs review</p>
               <p data-typography="body">Changing approved wording does not change person qualification or its score. Current exact coverage links are reused; new coverage waits for an explicit update.</p>
@@ -117,7 +122,7 @@ export function MatchingWalkthrough({ jobId, onNavigate }: {
         </> : null}
 
         {step === 2 ? <>
-          <p data-typography="body">In the local app, Update affected matches reviews the saved catalog and reassesses only selected affected requirements. Current links can be reused; selected job scores and wording coverage are separate outcomes.</p>
+          <p data-typography="body">In the local app, Update affected matches reviews the saved catalog and selected jobs’ education/language demands, then qualifies only the affected items. Current assessments are reused; person fit and wording coverage remain separate outcomes.</p>
           <p data-typography="body">Choose an example outcome. These controls do not start an update.</p>
           <div role="group" aria-label="Choose an example update outcome" className="flex flex-wrap gap-2">
             <Button type="button" size="sm" variant={update === "completed" ? "default" : "outline"} aria-pressed={update === "completed"} onClick={() => setUpdate("completed")}>Show completed example</Button>
@@ -130,11 +135,11 @@ export function MatchingWalkthrough({ jobId, onNavigate }: {
               : update === "partial" ? <><p data-typography="label">Example: partial result</p><p data-typography="body">The factual stage published, but later wording preparation failed. The recorded result shows that boundary and keeps existing accepted artifacts.</p><p data-typography="body">In the local app, Retry failed wording explicitly retries selected eligible failures without rerunning factual assessments or updating scores. Approval remains separate.</p></>
               : <p data-typography="body">Select an outcome to see what remains available.</p>}
           </div>
-          <p data-typography="body">The local action has work limits, cancellation and recorded status; this illustration does not submit it.</p>
+          <p data-typography="body">Each distinct requirement or direct demand counts once: direct support 1, strong 0.85, transferable 0.6, missing/blocked 0. The average maps to 1–10; no demands means no score. Earlier scoring contracts remain historical until a manual refresh. The local action has limits, cancellation and recorded status; this illustration does not submit it.</p>
         </> : null}
 
         {step === 3 ? <>
-          <p data-typography="body">A current exact approved-wording link can be reused without a new model call. Several expression gaps for one achievement can instead produce one grouped proposal.</p>
+          <p data-typography="body">A Skill supported by structured Profile Skills needs no achievement rewrite. Education and languages never request wording. For achievement-backed support, reuse current exact approved wording; prepare a grouped proposal only for an actual unsupported wording need with factual achievement support.</p>
           <div className="grid gap-2 border border-border bg-muted/40 p-3">
             <p data-typography="label">One synthetic achievement · saved facts</p>
             <p data-typography="body">Led recovery for 12 production incidents; created response runbooks used by 3 teams.</p>
@@ -152,7 +157,7 @@ export function MatchingWalkthrough({ jobId, onNavigate }: {
                   <span className="border border-border px-2 py-1" data-typography="label">R1 · Lead production incident recovery</span>
                   <span className="border border-border px-2 py-1" data-typography="label">R2 · Create response runbooks used by multiple teams</span>
                 </div>
-                <p data-typography="body">Both claims come from the example achievement.</p>
+                <p data-typography="body">Only an actual uncovered need for R2 would justify this proposal; already-covered R1 is not rewritten for style. Both claims must come from the example achievement.</p>
               </div>
             </div>
           </div>
@@ -162,7 +167,7 @@ export function MatchingWalkthrough({ jobId, onNavigate }: {
             <Button type="button" size="sm" variant={wording === "deferral" ? "default" : "outline"} aria-pressed={wording === "deferral"} onClick={() => setWording("deferral")}>Show deferral example</Button>
           </div>
           <div className="grid gap-2 border border-border bg-muted/40 p-3" role="status">
-            {wording === "approval" ? <><p data-typography="label">Example: approval outcome</p><p data-typography="body">If approved in the local app, that expression can be reused where its recorded coverage applies. This example did not save an approval.</p></>
+            {wording === "approval" ? <><p data-typography="label">Example: approval outcome</p><p data-typography="body">If approved in the local app, that expression can be reused where its recorded coverage applies. Tailoring retains every baseline section, including Languages, and changes only approved achievement wording. This example did not save an approval.</p></>
               : wording === "deferral" ? <><p data-typography="label">Example: deferral outcome</p><p data-typography="body">A deferred decision remains recorded rather than being regenerated for every posting. This example did not change the Profile.</p></>
               : <p data-typography="body">Select a decision to see the example outcome.</p>}
           </div>

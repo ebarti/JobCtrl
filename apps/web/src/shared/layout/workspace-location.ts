@@ -4,15 +4,17 @@ const profileSections: Record<string, string> = {
   experience: "Experience",
   skills: "Skills",
   education: "Education",
+  languages: "Languages",
   personal: "Personal details",
   resume: "Resume",
 };
 
-type ProfileSection = "experience" | "skills" | "education" | "personal" | "resume";
+type ProfileSection = "experience" | "skills" | "education" | "languages" | "personal" | "resume";
 const legacyProfileAnchors: Record<string, ProfileSection> = {
   "profile-personal": "personal", "profile-eeo": "personal",
   "profile-baseline": "experience", "profile-experience": "experience",
   "profile-education": "education", "profile-skills": "skills",
+  "profile-languages": "languages",
   "profile-resume-editor": "resume",
 };
 

@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 
 LayoutBox = dict[str, Any]
 RESUME_PAGE_VIEWPORT = {"width": 794, "height": 1123}
-RESUME_SECTIONS = ("summary", "experience", "education", "skills")
+RESUME_SECTIONS = ("summary", "experience", "education", "skills", "languages")
 GEIST_FONT_RESOURCES = (
     (
         "geist-latin-ext-wght-normal.woff2",
@@ -528,6 +528,10 @@ def build_resume_html(
         for section in requested:
             if section in RESUME_SECTIONS and section not in hidden and section not in order:
                 order.append(section)
+        # Saved four-section templates remain valid. New factual sections are
+        # appended during rendering without rewriting the saved presentation.
+        if document.get("languages") and "languages" not in order:
+            order.append("languages")
         return order or [section for section in RESUME_SECTIONS if section not in hidden]
 
     personal = document.get("personal", {})
@@ -679,11 +683,26 @@ def build_resume_html(
         section.extend(["</ul>", "</section>"])
         return section
 
+    def render_languages() -> list[str]:
+        if not document.get("languages"):
+            return []
+        section = ['<section class="resume-section">',
+                   section_title("languages", document.get("section_labels", {}).get("languages", "Languages")),
+                   '<ul class="resume-skills-list">']
+        for entry in document["languages"]:
+            identity = str(entry["id"])
+            language = target(f"language:{identity}:language", str(entry.get("language", "")), tag="span")
+            proficiency = target(f"language:{identity}:proficiency", str(entry.get("proficiency", "")), tag="span")
+            section.append(f'<li>{language}{(" — " + proficiency) if proficiency else ""}</li>')
+        section.extend(["</ul>", "</section>"])
+        return section
+
     section_renderers = {
         "summary": render_summary,
         "experience": render_experience,
         "education": render_education,
         "skills": render_skills,
+        "languages": render_languages,
     }
     for section_name in resolved_section_order():
         body.extend(section_renderers[section_name]())

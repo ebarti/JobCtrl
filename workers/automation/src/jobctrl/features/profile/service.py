@@ -87,7 +87,7 @@ def validate_profile(value: dict) -> dict:
     result = deepcopy(value)
     resume = result["resume"]
     achievement_ids = set()
-    for section in ("experience_entries", "education_entries", "skill_categories"):
+    for section in ("experience_entries", "education_entries", "skill_categories", "language_entries"):
         items = resume.get(section, [])
         if not isinstance(items, list):
             raise AppError("invalid_profile", f"{section} must be a list.")
@@ -98,6 +98,11 @@ def validate_profile(value: dict) -> dict:
             if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"] or item["id"] in seen:
                 raise AppError("invalid_profile", "Every Profile entry requires a distinct stable ID.")
             seen.add(item["id"])
+            if section == "language_entries" and any(not isinstance(item.get(key, ""), str) for key in ("language", "proficiency")):
+                raise AppError("invalid_profile", "Language and proficiency must contain authored text.")
+            if section == "language_entries":
+                item.setdefault("language", "")
+                item.setdefault("proficiency", "")
             if section == "experience_entries":
                 if any(not isinstance(item.get(key), str) or not item[key].strip() for key in ("title", "company")):
                     raise AppError("invalid_profile", "Experience requires a title and company.")

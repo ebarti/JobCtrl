@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from .coverage import variant_fingerprint
 from .current_wording import assignment_view
-from .sources import achievements, fact_fingerprint
+from .contract import current_contract
+from .sources import achievements, qualification_fingerprint, wording_eligible
 
 
 def valid_requirement_bindings(value):
@@ -24,7 +25,6 @@ def pending_wording_failures(read, snapshot):
     profile = snapshot["profile"]
     profile_id = profile["profile_id"]
     facts = {row["source_id"]: row for row in snapshot["facts"]}
-    source_hash = fact_fingerprint(profile, snapshot["facts"])
     inventory = achievements(profile)
     catalog = {row["requirement_id"]: row for row in snapshot["catalog"]["requirements"]}
     current = {}
@@ -41,7 +41,7 @@ def pending_wording_failures(read, snapshot):
         brief = proposal.get("brief", {})
         metadata = brief.get("origin_metadata", {})
         owner = brief.get("achievement_id")
-        if (not isinstance(metadata, dict) or metadata.get("owner") != "fit" or owner not in inventory
+        if (not current_contract(metadata) or metadata.get("owner") != "fit" or owner not in inventory
                 or not metadata.get("requirements")
                 or not metadata.get("gap_requirement_ids") and metadata.get("authoring_action") != "propose_consolidation"):
             continue
@@ -57,7 +57,8 @@ def pending_wording_failures(read, snapshot):
             requirement = catalog.get(row["requirement_id"])
             assessment = snapshot["prior_assessments"].get(row["requirement_id"])
             if (requirement is None or str(requirement["revision"]) != str(row["requirement_revision"])
-                    or assessment is None or assessment["source_fingerprint"] != source_hash
+                    or assessment is None or not wording_eligible(assessment)
+                    or assessment["source_fingerprint"] != qualification_fingerprint(profile, requirement, snapshot["facts"])
                     or assessment["kind"] not in {"matched", "transferable"}
                     or owner not in assessment["achievement_ids"]
                     or assessment["determination_id"] != row.get("qualification_determination_id")):

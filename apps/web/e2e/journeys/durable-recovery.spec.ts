@@ -10,7 +10,7 @@ import {
   type ExternalCall,
 } from "../harness/fixtures.js";
 import { acceptBaseline, createBaseline, createPosting } from "./core-data.js";
-import { catalogMatching } from "./requirements-data.js";
+import { catalogMatching, typedExtraction } from "./requirements-data.js";
 
 type Source = { source_id: string; text: string };
 type Requirements = {
@@ -22,24 +22,7 @@ const citations = (values: Source[]) =>
   values.map((source) => ({ source_id: source.source_id, quote: source.text }));
 function extracted(call: ExternalCall) {
   const source = sources(call)[0]!;
-  return {
-    status: "complete",
-    requirements: [
-      {
-        local_id: "recovery",
-        text: source.text,
-        definition: "Implement durable workflow recovery",
-        qualifiers: [],
-        scope: "resume",
-        tier: "must_have",
-        weight: 1,
-        support: "supported",
-        spans: [{ source_id: source.source_id, quote: source.text }],
-      },
-    ],
-    reason: "Explicit supported requirement from this synthetic posting.",
-    citations: citations([source]),
-  };
+  return typedExtraction(call, { requirements: [{ localId: "recovery", text: source.text, definition: "Implement durable workflow recovery" }] });
 }
 
 test("cancellation survives an actual worker kill and its replacement resumes durable work without losing accepted artifacts", async ({

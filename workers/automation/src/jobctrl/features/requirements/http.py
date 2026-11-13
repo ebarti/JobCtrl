@@ -42,7 +42,7 @@ class RebuildRequest(RequestValue):
 
 
 def raise_application_error(failure: RequirementError):
-    if failure.code in {"catalog_changed", "cancelled", "stale_catalog_revision", "retrieval_index_stale"}:
+    if failure.code in {"catalog_changed", "cancelled", "stale_catalog_revision", "retrieval_index_stale", "requirements_contract_changed"}:
         status = 409
     elif failure.code in {"model_provenance_missing", "requirements_catalog_unavailable", "catalog_snapshot_invalid"}:
         status = 503

@@ -69,11 +69,18 @@ export function useSearchPreparationProgress({ runId, databaseInstanceId, enable
       const run = parsed.runs.find((item) => item.runId === runId && item.recipe === "search");
       if (!run) return null;
       const discovered = run.steps.some((step) => step.stage === "discover" && ["succeeded", "warning"].includes(step.status));
-      const fits = new Set(run.steps.filter((step) => step.jobId && step.stage === "fit" && step.status === "succeeded").map((step) => step.jobId));
+      const fits = new Set(run.steps.filter((step) => step.jobId && step.stage === "fit" && step.status === "succeeded" && typeof step.result?.score === "number").map((step) => step.jobId));
+      const skipped = run.steps.flatMap((step) => {
+        if (!step.jobId || step.stage !== "fit") return [];
+        if (step.status === "skipped" && step.result?.skip === "unsupported_posting_language") return [{ jobId: step.jobId, reason: "unsupported_posting_language" }];
+        if (step.status === "succeeded" && step.result?.score === null) return [{ jobId: step.jobId, reason: "no_extractable_requirements" }];
+        return [];
+      });
       const failures = run.steps.filter((step) => step.jobId && step.status === "failed").map((step) => ({ jobId: step.jobId!, stage: step.stage, code: step.errorCode }));
       return { phase: active ? discovered ? "assessing" as const : "acquiring" as const : null,
         assessedJobs: run.cohortFrozen === true ? fits.size : null,
         failedJobs: run.cohortFrozen === true ? new Set(failures.map((failure) => failure.jobId)).size : null,
+        skippedJobs: run.cohortFrozen === true ? skipped.length : null, skipped,
         totalJobs: run.cohortFrozen === true ? run.jobIds.length : null, failures };
     }, refetchInterval: active ? 3000 : false, meta: { suppressGlobalErrorToast: true } });
 }

@@ -11,7 +11,8 @@ from .current_wording import ASSIGNMENT_PINS, assignment_reasons, assignment_vie
 from .current_wording_authority import validate_selection
 from .qualification import now
 from .serialization import encoded
-from .sources import achievements, dto, fact_fingerprint, fingerprint
+from .contract import CONTRACT_VERSION, current_contract, require_contract
+from .sources import achievements, dto, qualification_fingerprint, fingerprint, wording_eligible
 
 
 SCHEMA = """
@@ -48,6 +49,14 @@ class CurrentWordingStorage:
         required.update(row["requirement_id"] for row in heads if row["state"] == "active"
                         and (row["variant_id"], str(row["variant_revision"])) in prior)
         for ident in required - {request["requirement_id"]}:
+            requirement = read.requirement(ident)
+            if not current_contract(requirement):
+                continue
+            assessment = read.latest_assessment(profile["profile_id"], ident, requirement["revision"],
+                source_fingerprint=qualification_fingerprint(profile, requirement))
+            if assessment is not None and (not wording_eligible(assessment)
+                    or request["achievement_id"] not in assessment["achievement_ids"]):
+                continue
             mapped = next((row for row in (heads if resulting_heads is None else resulting_heads)
                            if row["state"] == "active" and row["requirement_id"] == ident
                            and row["achievement_id"] == request["achievement_id"]), None)
@@ -100,7 +109,7 @@ class CurrentWordingStorage:
                 and previous["selection_provenance"] == selection_provenance):
             return previous
         created = now()
-        record = {**{key: pins[key] for key in ASSIGNMENT_PINS},
+        record = {"contract_version": CONTRACT_VERSION, **{key: pins[key] for key in ASSIGNMENT_PINS},
             "assignment_id": previous["assignment_id"] if previous else "fit-wording-" + fingerprint({key: pins[key]
                 for key in ("profile_id", "achievement_id", "requirement_id")}),
             "revision": previous["revision"] + 1 if previous else 1, "state": "active",
@@ -114,10 +123,11 @@ class CurrentWordingStorage:
         return record
 
     def set_current_wording(self, request):
+        request = {**request, "contract_version": CONTRACT_VERSION}
         with self._database.transaction() as connection:
             with self.read_snapshot(connection) as read:
                 profile = dto(read.profile_snapshot(request["profile_id"]))
-                heads = read.current_wording_heads(request["profile_id"], [request["achievement_id"]])
+                heads = [row for row in read.current_wording_heads(request["profile_id"], [request["achievement_id"]]) if current_contract(row)]
                 previous = next((row for row in heads if row["requirement_id"] == request["requirement_id"]), None)
                 replay_fingerprint = fingerprint({"operation": "set", "request": request})
                 if (previous is not None and previous["revision"] == request["expected_revision"] + 1
@@ -141,6 +151,7 @@ class CurrentWordingStorage:
                                 requirements_snapshot, selection_provenance, connection=None, achievement_ids=None,
                                 *, cancelled=lambda: False):
         """Replace a complete selected achievement group, never discard unknown support."""
+        assignments = [{**row, "contract_version": CONTRACT_VERSION} for row in assignments]
         profile = dto(profile_snapshot)
         selected_ids = set(achievement_ids if achievement_ids is not None else [row["achievement_id"] for row in assignments])
         pairs = {(row["achievement_id"], row["requirement_id"]) for row in assignments}
@@ -167,7 +178,7 @@ class CurrentWordingStorage:
                 self._assert_refresh_inputs(conn, operation_state)
             self._assert_sources(conn, profile_snapshot, requirements_snapshot, full_profile=True)
             with self.read_snapshot(conn) as read:
-                heads = read.current_wording_heads(profile["profile_id"], selected_ids)
+                heads = [row for row in read.current_wording_heads(profile["profile_id"], selected_ids) if current_contract(row)]
                 previous = {(row["achievement_id"], row["requirement_id"]): row for row in heads}
                 exact_replay = False
                 if read.current_wordings_fingerprint(profile["profile_id"], selected_ids) != expected_assignments_fingerprint:
@@ -191,10 +202,10 @@ class CurrentWordingStorage:
                         continue
                     requirement = read.requirement(row["requirement_id"])
                     assessment = read.latest_assessment(profile["profile_id"], row["requirement_id"], requirement["revision"],
-                                                        source_fingerprint=fact_fingerprint(profile))
-                    if (assessment is None or assessment["source_fingerprint"] != fact_fingerprint(profile)
+                                                        source_fingerprint=qualification_fingerprint(profile, requirement))
+                    if (assessment is None or assessment["source_fingerprint"] != qualification_fingerprint(profile, requirement)
                             or str(assessment["requirement_revision"]) != str(requirement["revision"])
-                            or row["achievement_id"] in assessment["achievement_ids"]):
+                            or wording_eligible(assessment) and row["achievement_id"] in assessment["achievement_ids"]):
                         raise ConflictError("The complete maintained wording group must retain every supported requirement.")
                 accepted = [self._activate_current_wording(conn, row, previous.get((row["achievement_id"], row["requirement_id"])),
                             profile, selection_provenance) for row in assignments]
@@ -215,6 +226,7 @@ class CurrentWordingStorage:
             if row is None:
                 raise NotFoundError("The maintained wording assignment does not exist.")
             previous = json.loads(row[0])
+            require_contract(previous)
             with self.read_snapshot(connection) as read:
                 try:
                     profile = dto(read.profile_snapshot(request["profile_id"]))

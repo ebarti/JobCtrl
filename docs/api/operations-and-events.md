@@ -33,6 +33,12 @@ Requirements and Fit without acquisition, wording or resume work. The receipt's
 run joins `GET /v1/preparation/runs/{run_id}` for the frozen cohort and stage
 outcomes. This initial-assessment recipe cannot bypass Fit's manual-refresh fence
 for previously accepted qualification. Failed work preserves accepted artifacts.
+The `requirements-v2` operation stamp includes the generation, frozen catalog
+and the selected jobs' direct Education/Languages demands. An operation from an
+incompatible generation cannot resume or replay under the new writer. Ordinary
+reads, Profile saves and wording decisions admit no refresh. A non-English
+posting's accepted language-gate outcome stops preparation before Fit and
+creates no zero-score substitute.
 Same-run worker replay retains terminal failed/blocked stages; only an explicit
 new preparation retry can reattempt them. The registered preparation finalizer
 seals interrupted run/step status when the action is cancelled or fails,

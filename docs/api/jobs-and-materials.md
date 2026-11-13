@@ -17,6 +17,87 @@ declares the catalog and job requirement routes; `features/fit/http.py`
 declares job fit, assessment, corrections and coverage. These declarations
 still need composed application and E2E verification.
 
+## Typed Job Requirements
+
+`GET /v1/jobs/{job_id}/requirements` exposes the accepted job snapshot.
+`POST` on the same route requests an explicit revision-fenced refresh with
+`expected_posting_revision`, `expected_revision` and optional `force`.
+New snapshots carry `contract_version: requirements-v2` and contain:
+
+| Field | Meaning |
+| --- | --- |
+| `status` | `complete` or `unsupported_language` |
+| `language` | Source-bound `classification: english\|non_english\|uncertain`, `reason` and `evidence_refs` |
+| `quotes` | Exact `evidence_id`, `source_id`, `quote`, `start` and `end` references into the frozen posting |
+| `requirements` | Reusable Skills/Professional Experience occurrences and their canonical binding |
+| `education` | Direct job-local Education demands |
+| `languages` | Direct job-local Languages demands |
+| `unresolved` | Retained source ambiguities |
+| `extraction_provenance` | Recorded extraction/model authority and source bindings |
+
+A reusable occurrence retains its original `category`, `name`, `definition`,
+`basis`, `rationale`, `source_note`, `evidence_refs` and `spans`, alongside its
+canonical IDs/revisions and nested
+`canonical: {contract_version, category, name, definition}`. Its original
+meaning is not replaced by the catalog label. The active catalog categories
+are `skill` and `professional_experience`; canonical rows have no generated
+scope, qualifier, tier or importance-weight fields. Qualifications and meaningful
+alternatives remain in the source-bound definition and occurrence evidence.
+
+Education demands retain `qualification`, `subjects`, `alternative` and
+`source_note`; Languages demands retain `language`, `proficiency` and
+`source_note`. Both retain exact source metadata/spans and a job-local
+`requirement_id` with `revision: 1`. They do not appear in `GET /v1/requirements`,
+the Fit requirement library or achievement-wording authoring. Their identities
+cannot authorize another job's qualification.
+
+A source-bound English-language decision runs before extraction. An accepted
+`unsupported_language` result has empty demand arrays and retains its language
+evidence; preparation skips Fit and creates no score. Uncertainty, invalid output,
+provider refusal and stale sources cannot publish an invented empty fit result.
+Personal traits, certifications/licenses, job conditions and detailed tenure
+analysis are outside this contract. Structured certification work is tracked in
+[#1476](https://github.com/ebarti/JobCtrl/issues/1476).
+
+Current catalog reads return only `requirements-v2` meanings. Missing versions
+are legacy. Retained detail/history reads preserve accepted old fields and include
+`contract_changed` in `stale_reasons` where applicable; they are not
+silently promoted. Incompatible refresh/resume/replay is refused before new
+publication. Historical ordering and accepted artifact bytes remain available.
+See [generation and rollout](../architecture/scoring.md#generation-history-and-rollout).
+
+## Typed Fit Results
+
+New Fit JSON carries `contract_version: requirements-v2`. Its `formula_version`
+and `policy_version` are `requirement-fit-v3-equal`. The score summary records
+`qualification_coverage`, `assessed_count`, `supported_count` and `blocker_count`.
+The retained `weighted_fit` compatibility field is the same equal-item average;
+it does not restore posting weights. An empty assessed set has `assessed_count: 0`
+and null `qualification_coverage`, `score`, `computed_score`, `fit_band` and
+`confidence`. With job conditions excluded, the compatibility `eligibility`
+value is neutral `unknown`, with empty eligibility blockers/warnings.
+
+Assessments retain `category`, `name`, `definition`, `text`, exact `evidence_refs`
+and `achievement_ids`. `evidence_route` is `education`, `equivalent_experience`
+or null; `wording_support` is `section`, `achievement` or `none`.
+Coverage's `section_support` rows record `{requirement_id, assessment_id,
+category, evidence_refs}` and prevent a supported section from becoming a false
+achievement-wording gap. Direct Education/Languages demands remain outside the
+reusable coverage/library/authoring inventory. Their qualification still
+contributes an equal item to the job score.
+
+Legacy Fit reads return `current: false` with `contract_changed` in
+`stale_reasons`. Incompatible Fit operations refuse with HTTP 409
+`contract_changed`; incompatible generic durable-action replay uses
+`action_contract_changed`. For an accepted unsupported-language posting, a
+read retains any prior score with `unsupported_posting_language` staleness, and
+a new assessment refuses with that code rather than publishing a replacement.
+The existing public routes remain. Reusable requirement correction accepts
+optional `wording_support` and `evidence_route`; the canonical correction route
+cannot correct a direct job-local demand. Exact adapters and the
+[Fit reference](../../workers/automation/src/jobctrl/features/fit/README.md)
+remain authoritative for validation and error envelopes.
+
 ## Requirements Library And Associations
 
 The redesign candidate composes three public owners: Requirements supplies
@@ -24,6 +105,8 @@ canonical meanings/history, Profile supplies facts and exact wording, and Fit
 supplies recorded assessments, coverage and unassessed user associations. This
 is a source contract; the [redesign ledger](../plans/2026-11-11-original-app-redesign.md)
 records integrated verification separately.
+The active library contains Skills/Professional Experience only. Direct
+Education/Languages demands remain in their job snapshot and Fit result.
 
 | Route | Contract |
 | --- | --- |
@@ -96,6 +179,11 @@ Unrelated requirement assignments do not stale that composition.
 Baseline mode skips Fit/Requirements currentness while still checking Profile
 freshness. A stale result offers explicit preparation; it does not regenerate,
 hide accepted bytes or invent a fresh assessment.
+New-generation currentness rejects legacy requirement/Fit authority for new
+composition while retaining historical accepted artifacts. Tailoring preserves
+all baseline sections, including Language / Proficiency, and changes only
+approved achievement wording. Each eligible canonical requirement receives one
+composition policy point; that coefficient is never posting metadata.
 
 ## Apply Review and Outcomes
 

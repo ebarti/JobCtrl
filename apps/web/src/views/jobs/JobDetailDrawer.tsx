@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { PersonFitPanel, useJobFit } from "../../contexts/fit/index.js";
 import { PostingAvailabilityPanel, RoleAnalysisPanel, useJob, useJobActions } from "../../contexts/jobs/index.js";
 import { useProfileQuery, useProfileSources, useWordingLibrary } from "../../contexts/profile/index.js";
-import { RequirementsPanel } from "../../contexts/requirements/index.js";
+import { RequirementsPanel, useJobRequirements } from "../../contexts/requirements/index.js";
 import { ResumePanel, useResumeDraftStatus, useResumes } from "../../contexts/resumes/index.js";
 import { useApplicationSettings } from "../../contexts/settings/index.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
@@ -48,6 +48,7 @@ export function JobDetailDrawer({ jobId, onClose, returnLabel = "Back to jobs", 
   const wording = useWordingLibrary();
   const settings = useApplicationSettings();
   const fit = useJobFit(jobId);
+  const requirements = useJobRequirements(jobId);
   const resumes = useResumes(jobId);
   const resumeDirty = useResumeDraftStatus(jobId);
   const { refresh } = useJobActions(jobId);
@@ -81,7 +82,7 @@ export function JobDetailDrawer({ jobId, onClose, returnLabel = "Back to jobs", 
         <h1 data-typography="page-title" tabIndex={-1} ref={headingRef}>{posting.title}</h1><p data-typography="body" className="job-workspace-header__company">{[posting.company, posting.location].filter(Boolean).join(" · ") || "Employer and location not recorded"}</p>
         <dl className="job-workspace-state">
           <div><dt data-typography="metadata">Availability</dt><dd data-typography="strong-body">{posting.active_state && posting.active_state !== "unknown" ? posting.active_state : "Unverified"}</dd></div>
-          <div><dt data-typography="metadata">Person fit</dt><dd data-typography="strong-body">{fit.data?.score ? `${fit.data.score.score}/10${fit.data.current ? "" : " · stale"}${fit.error ? " · last saved" : ""}` : fit.error ? "Unavailable" : fit.isPending ? "Loading…" : "Not assessed"}</dd></div>
+          <div><dt data-typography="metadata">Person fit</dt><dd data-typography="strong-body">{requirements.data?.status === "unsupported_language" ? "Skipped · non-English posting" : fit.data?.score ? fit.data.score.score === null ? "No score · no eligible demands" : `${fit.data.score.score}/10${fit.data.current ? "" : fit.data.stale_reasons.includes("contract_changed") ? " · historical" : " · stale"}${fit.error ? " · last saved" : ""}` : fit.error ? "Unavailable" : fit.isPending ? "Loading…" : "Not assessed"}</dd></div>
           <div><dt data-typography="metadata">Latest resume</dt><dd data-typography="strong-body">{resumeState}</dd></div>
         </dl>
         {preparationControls?.({ defaultMode: settings.data?.resumeMode ?? null, profileVersion: profile.error ? null : profile.data?.profileVersion ?? null, blockedByDraft: resumeDirty, onReviewReady: openResume })}
@@ -93,7 +94,7 @@ export function JobDetailDrawer({ jobId, onClose, returnLabel = "Back to jobs", 
       <Tabs value={tab} onValueChange={(value) => { const next = visibleTabs.find((item) => item.id === value); if (next) selectTab(next.id); }} className="job-workspace-tabs">
         <TabsList aria-label="Job workspace" className="job-workspace-tabs__list">{visibleTabs.map((item) => <TabsTrigger key={item.id} value={item.id}>{item.label}</TabsTrigger>)}</TabsList>
         <TabsContent value="fit" forceMount>
-          <PersonFitPanel jobId={jobId} sources={sources.data?.sources ?? []} achievements={wording.data?.roles.flatMap((role) => role.achievements) ?? []} defaultMode={settings.data?.resumeMode ?? null} managedPreparation={Boolean(preparationControls)} />
+          <PersonFitPanel jobId={jobId} sources={sources.data?.sources ?? []} achievements={wording.data?.roles.flatMap((role) => role.achievements) ?? []} defaultMode={settings.data?.resumeMode ?? null} managedPreparation={Boolean(preparationControls)} requirementsStatus={requirements.data?.status} />
           {overview.map(renderSection)}
           <details className="job-workspace-inspection"><summary>Posting, availability and requirement details</summary>
             <JobDescription text={posting.description} />

@@ -9,6 +9,7 @@ from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 
 from .qualification import now
 from .serialization import encoded
+from .contract import CONTRACT_VERSION, require_contract
 from .sources import FrozenFitProfileSnapshot, approved_fingerprint, dto, fact_fingerprint
 
 
@@ -39,7 +40,8 @@ class RefreshStorage:
     def completed_refresh(self, profile_id, connection=None):
         def load(conn):
             row = conn.execute(
-                "SELECT state_json FROM fit_refresh_operations WHERE profile_id=? AND status='completed' ORDER BY rowid DESC LIMIT 1", (profile_id,),
+                "SELECT state_json FROM fit_refresh_operations WHERE profile_id=? AND status='completed'"
+                " AND json_extract(state_json,'$.contract_version')=? ORDER BY rowid DESC LIMIT 1", (profile_id, CONTRACT_VERSION),
             ).fetchone()
             return json.loads(row[0]) if row else None
         return self._read(load, connection)
@@ -60,6 +62,7 @@ class RefreshStorage:
         state = self.refresh_operation(operation_id, connection)
         if state is None:
             raise NotFoundError("The manual Fit refresh was not found.")
+        require_contract(state)
         if state["status"] != "running":
             raise AppError(state.get("failure_code") or "fit_refresh_terminal", "This manual Fit refresh is already terminal.", 409)
         if datetime.now(timezone.utc) >= datetime.fromisoformat(state["deadline_at"]):
@@ -67,6 +70,7 @@ class RefreshStorage:
         return state
 
     def _assert_refresh_inputs(self, connection, state):
+        require_contract(state)
         snapshot = FrozenFitProfileSnapshot(state["snapshot"]["profile"], state["snapshot"]["guidance"])
         self._assert_profile(connection, snapshot, full_profile=True)
         self.requirements.assert_current_catalog(state["snapshot"]["catalog"], connection=connection)
@@ -93,9 +97,11 @@ class RefreshStorage:
                 raise ConflictError("A catalog qualification changed during the manual refresh.")
 
     def start_refresh(self, state):
+        require_contract(state)
         with self._database.transaction() as connection:
             previous = self.refresh_operation(state["operation_id"], connection)
             if previous is not None:
+                require_contract(previous)
                 if previous["input_fingerprint"] != state["input_fingerprint"]:
                     raise ConflictError("This manual Fit refresh belongs to different input.")
                 return previous
@@ -213,6 +219,7 @@ class RefreshStorage:
         return self._read(load, connection)
 
     def publish_wording_group_decision(self, record, profile_snapshot, requirements_snapshot, assessments, *, cancelled=lambda: False):
+        require_contract(record)
         with self._database.transaction() as connection:
             self._check_cancelled(cancelled)
             self._assert_sources(connection, profile_snapshot, requirements_snapshot, full_profile=True)
@@ -220,6 +227,7 @@ class RefreshStorage:
                 self._assert_assessment(connection, assessment)
             previous = self.wording_group_decision(record["group_key"], connection)
             if previous is not None:
+                require_contract(previous)
                 return previous
             connection.execute("INSERT INTO fit_wording_group_decisions VALUES(?,?)", (record["group_key"], encoded(record)))
             return record

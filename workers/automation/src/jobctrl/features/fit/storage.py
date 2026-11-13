@@ -12,6 +12,7 @@ from .serialization import encoded
 from .refresh_storage import RefreshStorage
 from .association_storage import AssociationStorage
 from .current_wording_storage import CurrentWordingStorage
+from .contract import CONTRACT_VERSION, current_contract, require_contract
 
 
 class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
@@ -59,6 +60,7 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
             self.requirements.assert_current(requirements_snapshot, connection=connection)
 
     def _assert_assessment(self, connection, assessment, *, expected_id=None):
+        require_contract(assessment)
         latest = self.latest_assessment(
             assessment["profile_id"], assessment["requirement_id"], assessment["requirement_revision"],
             source_fingerprint=assessment["source_fingerprint"], connection=connection,
@@ -132,7 +134,7 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
             for record in qualifications:
                 self._assert_assessment(connection, record)
             source_binding = candidate["source_binding"]
-            same_binding = previous is not None and all(
+            same_binding = current_contract(previous) and all(
                 previous["source_binding"].get(key) == source_binding[key] for key in (
                     "profile_id", "source_fingerprint", "requirements_revision", "posting_revision",
                     "posting_hash", "assessment_ids", "requirements",
@@ -146,6 +148,7 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
                 self._event(connection, "FitAssessed", {"jobId": accepted["job_id"], "revision": accepted["revision"],
                             "profileId": source_binding["profile_id"]}, accepted["job_id"])
             self.save_operation(connection, operation_id, input_fingerprint, {
+                "contract_version": CONTRACT_VERSION,
                 "job_id": accepted["job_id"], "score": accepted, "current": True, "stale_reasons": [], "coverage": None,
                 "coverage_failure_code": "coverage_preparation_interrupted",
             })
@@ -161,6 +164,7 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
             self._event(connection, "FitCorrected", {"jobId": corrected["job_id"], "revision": corrected["revision"],
                         "correctionId": anchor["correction_id"]}, corrected["job_id"])
             self.save_operation(connection, operation_id, input_fingerprint, {
+                "contract_version": CONTRACT_VERSION,
                 "job_id": corrected["job_id"], "score": corrected, "current": False, "stale_reasons": [], "coverage": None,
             })
             return corrected
@@ -213,8 +217,9 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
                           connection=None) -> dict | None:
         def load(conn):
             query = """SELECT assessment_json FROM fit_assessments
-                       WHERE profile_id=? AND requirement_id=? AND requirement_revision=?"""
-            values = [profile_id, requirement_id, str(requirement_revision)]
+                       WHERE profile_id=? AND requirement_id=? AND requirement_revision=?
+                       AND json_extract(assessment_json,'$.contract_version')=?"""
+            values = [profile_id, requirement_id, str(requirement_revision), CONTRACT_VERSION]
             if source_fingerprint is not None:
                 query += " AND source_fingerprint=?"
                 values.append(source_fingerprint)
@@ -230,6 +235,7 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
         return self._read(load, connection)
 
     def save_assessment(self, conn, record: dict, sources: list[dict]) -> dict:
+        require_contract(record)
         previous = self.assessment(record["assessment_id"], conn)
         if previous is not None:
             if encoded(previous) != encoded(record):
@@ -261,6 +267,7 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
         return self._read(load, connection)
 
     def save_coverage(self, conn, relation: dict) -> None:
+        require_contract(relation)
         row = conn.execute("SELECT relation_json FROM fit_coverage_relations WHERE relation_id=?",
                            (relation["relation_id"],)).fetchone()
         if row:
@@ -302,6 +309,7 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
         return self._read(load, connection)
 
     def save_wording_request(self, conn, binding: dict) -> None:
+        require_contract(binding)
         if "requirements" in binding:
             if not binding["requirements"]:
                 raise ConflictError("A grouped wording request requires its exact requirement bindings.")
@@ -328,6 +336,7 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
         return self._read(load, connection)
 
     def save_score(self, conn, score: dict, *, expected_revision: int) -> None:
+        require_contract(score)
         current = self.latest_score(score["job_id"], conn)
         revision = current["revision"] if current else 0
         if revision != expected_revision or score["revision"] != expected_revision + 1:
@@ -389,7 +398,8 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
             " row_number() OVER (PARTITION BY a.profile_id,a.requirement_id,a.requirement_revision,a.source_fingerprint"
             " ORDER BY a.rowid DESC) position FROM fit_assessments a JOIN wanted w"
             " ON a.profile_id=w.profile_id AND a.requirement_id=w.requirement_id"
-            " AND a.requirement_revision=w.requirement_revision AND a.source_fingerprint=w.source_fingerprint)"
+            " AND a.requirement_revision=w.requirement_revision AND a.source_fingerprint=w.source_fingerprint"
+            " WHERE json_extract(a.assessment_json,'$.contract_version')='requirements-v2')"
             " SELECT * FROM ranked WHERE position=1", (encoded(bindings),),
         )
         return {(row["profile_id"], row["requirement_id"], row["requirement_revision"], row["source_fingerprint"]):
@@ -414,14 +424,17 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
             row = conn.execute("SELECT * FROM fit_operation_receipts WHERE operation_id=?", (operation_id,)).fetchone()
             if row is None:
                 return None
+            result = json.loads(row["result_json"])
+            require_contract(result)
             if row["input_fingerprint"] != input_fingerprint:
                 raise ConflictError("This durable Fit operation belongs to different input.")
-            return json.loads(row["result_json"])
+            return result
         return self._read(load, connection)
 
     def save_operation(self, conn, operation_id, input_fingerprint, result):
         if operation_id is None:
             return
+        require_contract(result)
         previous = self.operation(operation_id, input_fingerprint, conn)
         if previous is not None:
             return
@@ -446,6 +459,10 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
             connection.execute(f"DELETE FROM {table} WHERE job_id=?", (job_id,))
         connection.execute(
             "DELETE FROM fit_refresh_operations WHERE EXISTS(SELECT 1 FROM json_each(state_json,'$.job_ids') WHERE value=?)", (job_id,),
+        )
+        connection.execute(
+            "DELETE FROM fit_assessments WHERE json_extract(assessment_json,'$.job_id')=?"
+            " AND json_extract(assessment_json,'$.category') IN ('education','language')", (job_id,),
         )
 
 

@@ -4,11 +4,12 @@ description: "See how JobCtrl scores job fit from versioned profile evidence, re
 
 # Scoring
 
-Fit compares Requirements' canonical, evidence-linked qualified meanings with
-a versioned Candidate Profile. It produces an applicant-side fit score,
-confidence, blockers, gaps, and requirement-level evidence for your own triage.
-Requirements owns reusable meanings and posting occurrences; Fit owns how those
-requirements and saved candidate evidence become a fit decision. Discovery's
+Fit compares typed, evidence-linked posting demands with a versioned Candidate
+Profile. It produces an applicant-side fit score, confidence, blockers, gaps,
+and requirement-level evidence for your own triage.
+Requirements owns reusable Skills/Professional Experience meanings, direct
+Education/Languages demands and posting occurrences; Fit owns how those demands
+and saved candidate evidence become a fit decision. Discovery's
 employer analysis supplies separate role and company context.
 For a shorter conceptual introduction, read
 [Evidence-based Job Fit Scoring](../guides/evidence-based-job-fit-scoring.md).
@@ -37,13 +38,32 @@ availability and work ownership are still checked.
 
 ## Shared requirement meanings
 
-The Requirements owner preserves each posting's requirement text, priority and
-source evidence while linking it to a reusable qualified meaning. After
-extraction, one model request receives every incoming requirement and the
-entire current catalog, including definitions, scopes and qualifiers. That
-request decides whether each meaning already exists, is genuinely new or is
+The reusable catalog contains **Skills** and **Professional Experience**.
+Requirements preserves each occurrence's extracted meaning, source excerpts and
+source-bound notes while linking it to a reusable qualified meaning.
+**Education** and **Languages** stay direct job-local demands with their own
+posting and source revisions; they never enter catalog matching or achievement
+wording generation. Personal traits, certifications and licenses, job conditions
+and detailed years-of-experience analysis are excluded from this iteration.
+Structured certification support is tracked in
+[#1476](https://github.com/ebarti/JobCtrl/issues/1476).
+
+Before extraction, a source-bound model decision identifies non-English
+postings. They are skipped rather than translated or assigned zero fit. An
+invalid or unavailable language decision leaves the accepted state unchanged.
+If an older accepted score exists, a new unsupported-language outcome retains
+that history with a visible language-refresh status; it does not produce a
+replacement or make that score current.
+
+After extraction, one model request receives the complete incoming
+Skills/Professional Experience batch and the entire active catalog, including
+categories, names and definitions. That request decides whether each meaning
+already exists, is genuinely new or is
 uncertain. Paraphrases within the same posting can share one canonical meaning
-without dropping their individual occurrences.
+without dropping their individual occurrences. Ordinary facets of one
+competence may reuse a meaning; materially different capabilities stay distinct.
+Notes and meaningful alternatives remain source-bound, with no generated
+importance weights or mandatory labels.
 
 Catalog matching does not use retrieval subsets or a separate novelty judge.
 If the complete input is too large, the provider refuses it, or a decision is
@@ -64,7 +84,7 @@ result reuse.
 
 In the Original source candidate, **Jobs → Requirements** opens the independent
 canonical library; achievement tags in **My profile → Experience** open the same
-meaning. Inspect definition, scope, qualifiers, linked achievements, exact
+meaning. Inspect category, name, definition, linked achievements, exact
 wording and posting history. Your explicit associations remain **unassessed** and
 cannot change fit or coverage. Current maintained wording, proposed revisions
 and earlier approval history are separate; a new maintained expression requires
@@ -76,8 +96,9 @@ See [Requirements Library](requirements-library.md) and the
 
 **Person fit** answers what your saved factual evidence supports. **Approved
 wording coverage** answers whether exact approved text expresses a supported
-requirement. A missing or unapproved expression remains a wording gap and does
-not lower factual fit. Approving a better expression creates no new capability.
+requirement. A missing or unapproved expression does not lower factual fit. A
+supported section-backed match does not create an achievement-wording gap.
+Approving a better expression creates no new capability.
 
 Job Detail leads with the saved score, fit band, confidence and eligibility.
 Each requirement keeps its full source text, recorded outcome and point
@@ -85,8 +106,8 @@ contribution visible. Open **Assessment details** for its complete rationale,
 **Evidence and provenance**, and **Correct this requirement assessment**. Source
 versions and score corrections remain available beside the result.
 
-When current approved-wording coverage is not recorded, the panel shows one
-empty state. **Wording gap details** retains every requirement's exact status
+When current approved-wording coverage is not recorded, the panel keeps that
+state explicit. **Wording gap details** retains every requirement's exact status
 and proposal state; **Recorded wording relations** retains the saved identities
 when relations exist. This presentation does not change qualification or the
 saved score. During a multi-job assessment, a completed job is identified
@@ -98,7 +119,8 @@ matches** on Profile, Evidence Map or beside Person fit in Job Detail, or select
 scored jobs in Jobs and open **Update affected matches for selected jobs**. The
 action uses saved inputs and a fixed complete catalog. It reuses current
 assessments, reviews affected factual support, reuses exact wording relations
-and groups remaining expression work by achievement. Proposals require your
+and groups actual supported expression needs by achievement. It does not
+rewrite already covered content for stylistic variation. Proposals require your
 approval; accepted documents keep their recorded content. The
 [Profile update guide](candidate-profile.md#update-affected-matches) owns
 selection, work limits, the monetary-cost caveat, partial results and explicit
@@ -110,103 +132,91 @@ JobCtrl does not ask a model for one opaque number and save it. The model
 classifies the evidence for each posting requirement; versioned, deterministic
 code turns those classifications into the persisted 1–10 score.
 
-Each saved job retains its own requirement occurrences, priorities and score.
-Jobs that reference the same qualified requirement reuse a current person
-assessment against the same saved facts. Similar text alone does not establish
-that shared identity. Exact approved wording coverage is reused as recorded.
+Each saved job retains its occurrences, direct demands and score. Jobs that
+reference the same canonical requirement may reuse a current person assessment
+against the same saved facts. Similar text alone does not establish shared
+identity. Direct Education/Languages assessments remain bound to their own job
+and posting revision.
 
-Before requesting new qualification, Fit checks every requirement for current
-accepted support. It sends the entire remaining set in one model request, with
-the complete saved factual evidence supplied once. Each requirement still has
-its own result, citations and assessment identity. A missing, duplicate,
-foreign or invalid result refuses the batch without replacing accepted
-assessments or scores. An all-current set needs no qualification call. This
-changes the amount of repeated work, not evidence standards, model effort or
-the score calculation.
+Before requesting qualification, Fit checks all four categories for current
+accepted support and sends the entire missing set in one model request, with
+the complete permitted factual inventory supplied once. Each item keeps its
+own citations and assessment identity. A missing, duplicate, foreign or invalid
+result refuses the batch without replacing accepted assessments or scores. An
+all-current set needs no qualification call.
 
-A job with no prior score can receive its first assessment during the
-preparation you explicitly started, even if shared assessments were recorded
-before your latest saved Profile changes. It checks only that job's fixed
-requirement set and preserves earlier assessment history and other jobs' scores.
-A previously scored job still needs **Update affected matches** when saved
-changes require new qualification. Saving a Profile starts neither action.
+Evidence stays within the category's permitted sources:
 
-With accepted qualified requirements, the calculation works like
-this:
+| Posting demand | Permitted Profile evidence |
+| --- | --- |
+| Skills | Structured Skills, factual roles and achievements |
+| Professional Experience | Factual roles and achievements |
+| Education | Education records; professional experience only if the posting explicitly offers that alternative |
+| Languages | Structured Language / Proficiency records only |
 
-1. **Reuse current assessments and assess the missing set together.** The
-   model receives each missing canonical requirement's exact ID, revision,
-   meaning and scope alongside the saved factual sources. It returns one
-   source-bound decision for every requested requirement. Each job retains its
-   own occurrence text, evidence, weight from 0 to 1 and must-have or nice-to-have
-   tier for the calculation.
-2. **Classify the returned evidence.** A matched or transferable row must carry
-   at least one supplied Candidate Profile evidence ID. Strict determination
-   validation rejects foreign requirement/evidence IDs and unsupported quotes.
-   Scoring joins each requirement to its recorded scope in the accepted job
-   interpretation, retaining the determination ID with its contribution.
-   It does not infer scope from wording. Inspect the evidence links, and treat
-   any **Unavailable evidence** label as a reason to correct or re-score.
-3. **Apply evidence credit and requirement priority.** The current
-   `requirement-fit-v2-scoped` formula uses these values for requirements whose
-   recorded scope is **resume** (candidate capabilities):
+An accepted equivalent-experience route records that route without claiming a
+degree. A language named in a Skills group or achievement does not prove
+proficiency. The model judges degree equivalence, language proficiency and
+support; code checks the source categories, identities, revisions and citations.
 
-   | Evidence classification | Credit |
-   | --- | ---: |
-   | Direct match | 100% |
-   | Strong match | 85% |
-   | Transferable evidence | 60% |
-   | Missing, blocked, or not assessed | 0% |
+A job with no prior score can receive its first assessment during explicitly
+started preparation, including current qualification when earlier shared
+assessments predate saved Profile changes. It resolves only that job's fixed
+requirements and direct demands and preserves other jobs' scores and history.
+A previously scored job needs **Update affected matches** when saved changes
+require new qualification. Saving a Profile starts neither action.
 
-   Eligibility, logistics and employer conditions remain assessed and visible,
-   with zero contribution to both the numerator and denominator. Their unmet
-   or unconfirmed status does not lower capability fit. Eligibility warnings
-   and hard blockers still control downstream readiness separately.
+The current formula is **`requirement-fit-v3-equal`**. Each distinct canonical
+Skills/Professional Experience requirement and each distinct job-local
+Education/Languages demand counts as one item. Repeated occurrences of one
+canonical meaning do not increase its points. A meaningful alternatives group
+counts as one demand.
 
-   A must-have capability requirement counts **1.25×** its saved weight; a nice-to-have
-   counts **1.0×**. JobCtrl then calculates weighted coverage and maps it to the
-   1–10 scale:
+| Evidence classification | Credit |
+| --- | ---: |
+| Direct match | 1.00 |
+| Strong match | 0.85 |
+| Transferable evidence | 0.60 |
+| Missing or blocked | 0.00 |
 
-   ```text
-   adjusted weight = requirement weight × tier multiplier
-   coverage = sum(adjusted weight × evidence credit) / sum(adjusted weight)
-   score = 1 + round(9 × coverage)
-   ```
+For `N > 0` accepted assessed items:
 
-   Each row's adjusted weight and awarded points are rounded to four decimal
-   places before JobCtrl totals them.
+```text
+qualification coverage = sum(evidence credits) / N
+score = clamp(1 + floor(9 × qualification coverage + 0.5), 1, 10)
+```
 
-   Rounding is to the nearest whole number, with halves rounded up, and the
-   result is limited to 1–10. If a capability requirement is classified as blocked, the
-   final score is capped at 4 after the weighted calculation.
-4. **Assign the display band.** Scores 9–10 are **Excellent**, 7–8 **Strong**,
-   5–6 **Plausible**, 3–4 **Stretch**, and 1–2 **Poor**.
+Rounding is to the nearest whole number, with halves rounded up. For `N = 0`,
+there is no calculated score. There are no posting importance weights,
+must-have multipliers, blocker caps or invented source priorities. Source notes
+explain the demand and do not alter arithmetic. Invalid or incomplete
+qualification cannot produce a replacement score.
 
-Missing or foreign scope bindings, an unrecorded interpretation source, or a
-posting with no weighted capability requirements cannot create a replacement
-score. Failed refreshes preserve the accepted score. Historical `requirement-fit-v1`
-reports keep their original calculation until an explicit successful rescore;
-that earlier formula included every requirement and capped any blocked row.
+For example, a direct Skills match, transferable Professional Experience,
+supported Education and missing Languages demand give:
 
-For example, suppose a must-have with weight `1.0` is a direct match and a
-nice-to-have with weight `0.5` has transferable evidence:
+| Assessed item | Credit |
+| --- | ---: |
+| Skills, direct | 1.00 |
+| Professional Experience, transferable | 0.60 |
+| Education, direct | 1.00 |
+| Languages, missing | 0.00 |
 
-| Requirement | Adjusted weight | Credit | Awarded points |
-| --- | ---: | ---: | ---: |
-| Must-have, direct match | 1.25 | 100% | 1.25 |
-| Nice-to-have, transferable | 0.50 | 60% | 0.30 |
+Coverage is `2.60 / 4 = 0.65`, so the score is
+`1 + floor(9 × 0.65 + 0.5) = 7`: **Strong**. Scores 9–10 are **Excellent**,
+7–8 **Strong**, 5–6 **Plausible**, 3–4 **Stretch**, and 1–2 **Poor**.
+Job Detail retains each item's outcome, supporting sources and contribution,
+plus the formula version, assessed count and qualification coverage.
+An unavailable source remains unavailable rather than becoming proof of a match.
 
-Coverage is `1.55 / 1.75 = 0.886`, so the score is
-`1 + round(9 × 0.886) = 9`: **Excellent**. The Job Detail requirement report
-shows the persisted assessment, evidence links, and contribution for every
-row. Resolved profile evidence is the support you can audit; an unavailable
-reference is not proof of a match.
-
-Job Detail also shows the saved weighted coverage beside the score, including
-the recorded blocking requirements and the formula's cap when applicable. This
-context remains visible while the detail sections are collapsed. It appears
-only for the matching job and score version; a manual correction keeps its own
-explanation instead of being attributed to the earlier requirement report.
+Historical results retain their original formula and evidence. The
+`requirements-v2` generation starts with an empty active catalog and never
+promotes an old meaning merely because its fields resemble the new contract.
+Older accepted scores and resumes remain available with a contract-change
+refresh status; they do not establish current ranking or composition readiness.
+Only a successful explicit refresh publishes replacement accepted pointers.
+Failure, cancellation or incompatible operation replay cannot replace that
+accepted history. See the [upgrade boundary](data-and-safety.md#typed-requirements-upgrade).
 
 ### When Requirement Rows Are Unavailable
 
@@ -221,10 +231,9 @@ publishes a current requirement-led score.
 
 - **Confidence is a review signal, not a points adjustment.** Low confidence
   tells you to inspect the evidence; it does not automatically lower the score.
-- **Eligibility is recorded separately from soft fit.** A blocked requirement
-  caps requirement-led scoring at 4, while hard eligibility blockers can also
-  prevent downstream tailoring. Warnings and eligibility are not added as a
-  generic points penalty.
+- **Eligibility is recorded separately from fit.** A blocked assessed item
+  receives zero credit without capping the score. Downstream safety and
+  eligibility gates remain separate from the arithmetic.
 - **Compensation preferences never block tailoring.** A posted salary below
   your preferred range remains visible as an auditable warning, including the
   parsed amount and source, while the job continues through materials.
@@ -233,7 +242,7 @@ publishes a current requirement-led score.
   call the model or recalculate the score. A below-threshold decision is shown
   on Tailor and Apply as `skipped` with `MIN_SCORE` and the exact
   score/threshold pair; it is not pending work or a generation failure.
-- **A correction is not a hidden weight change.** Your correction creates a new
+- **A correction retains its own authority.** Your correction creates a new
   reviewed score version and a calibration anchor. An explicit re-score runs
   the current policy again against the current canonical inputs.
 
@@ -359,21 +368,20 @@ completed but wording preparation did not, the result reports that boundary.
   paraphrase is not source evidence.
 - **The Candidate Profile owns candidate claims.** Scoring receives an immutable
   profile snapshot; neither analysis nor scoring can add experience or skills.
-- **Discovery supplies the canonical requirement reading.** It records role
-  framing, requirements, priorities, keywords, posting evidence, canonicalization
-  policy and generation identity. Scoring and Tailoring consume that accepted record;
-  its perspective and recovery rules stay in
-  [Discovery](discovery.md#employer-analysis-perspectives).
+- **Requirements owns typed posting demands.** It records reusable
+  Skills/Professional Experience meanings, job-local Education/Languages demands,
+  occurrences and generation identity. Discovery supplies separate role and
+  employer analysis; [its perspectives](discovery.md#employer-analysis-perspectives)
+  do not create source importance weights or candidate facts.
 - **Scoring owns the decision record.** Versioned `job_scores` rows hold the
   resolved score, criteria snapshot, requirement-fit evidence, and non-sensitive
   trace. `scoring_policies` owns rubric/policy versions and calibration anchors;
   stale markers record when an older score awaits deliberate adoption of a
   newer policy.
-- **Tailoring owns requirement use, not requirement existence.** The accepted
-  analysis and requirement-fit report retain every employer requirement.
-  Tailoring classifies whether each one is resume-coverable or context-only;
-  logistics, eligibility, and employer conditions remain available to fit and
-  Apply Review without becoming resume-coverage failures.
+- **Resumes owns document composition.** It consumes current recorded canonical
+  coverage for approved achievement wording. Direct Education/Languages demands
+  do not enter wording generation, and current section-backed support creates
+  no achievement-wording gap. Other baseline sections remain intact.
 - **Operations owns display projections.** Jobs reads expose persisted analysis
   and score evidence. They do not call a model or recompute a score on request.
 - **Explicit feedback remains history until an owning policy says otherwise.**
@@ -392,8 +400,8 @@ not for an employer ranking people.
    record and its captured content.
 2. **Order work.** A bounded scoring pool uses recency and stable IDs. Vocabulary
    overlap does not decide which jobs are scored.
-3. **Consume the accepted employer analysis.** Discovery preparation supplies
-   the evidence-linked requirement reading; scoring does not create a parallel
+3. **Consume accepted typed demands.** Requirements supplies reusable meanings,
+   job-local demands and exact posting evidence. Fit does not create a parallel
    interpretation of the posting.
 4. **Resolve fit.** The scorer combines that analysis, the profile snapshot,
    user guidance, and current policy into structured fit evidence and a policy-
@@ -436,7 +444,11 @@ not for an employer ranking people.
 
 ## Semantic Determination Authority
 
-Scoring work limits use recency and stable IDs. The model supplies typed blockers with spans and requirement verdicts bound to canonical IDs; code resolves only weights, caps and bands. Posting constraints, seniority, geography and requirement scope come from the accepted job interpretation. No prose reclassification or lexical retrieval decides eligibility.
+Scoring work limits use recency and stable IDs. The model supplies source-bound
+verdicts for exact canonical or job-local demand IDs, using only the permitted
+Profile sections. Code validates structure and resolves equal-item credits,
+rounding and bands. No prose reclassification or lexical retrieval decides
+support, degree equivalence, language proficiency or eligibility.
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 

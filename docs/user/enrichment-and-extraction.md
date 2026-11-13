@@ -62,6 +62,15 @@ cannot use a result from different inputs. [Scoring](scoring-and-employer-analys
 explains how canonical requirement identity then permits reuse of current
 person assessments.
 
+Before typed requirement extraction, a source-bound model decision checks the
+posting language. The `requirements-v2` path accepts English postings and skips
+non-English postings without translation, Fit scoring or a zero-score substitute.
+An uncertain, unavailable or invalid decision records a blocked attempt and
+preserves accepted content, requirements, scores and materials. This gate does
+not erase the captured posting or infer language from a keyword list. See
+[typed requirements and evidence](scoring-and-employer-analysis.md#shared-requirement-meanings)
+for reusable Skills/Professional Experience and direct Education/Languages.
+
 An explicit enrichment retry from the web app or CLI keeps the last accepted
 description, application URL and attempt history while reopening extraction.
 It clears the failed stage's error and execution fields. The attempt counter
@@ -411,9 +420,10 @@ Several records participate, but they do not own the same fact:
 - **Enrichment owns posting detail:** fetch attempts, full description,
   application URL, content snapshots, extraction provenance, confidence, and
   active-state verification.
-- **Scoring owns interpretation:** employer requirements, fit evidence, and
-  scores are derived later from the accepted posting snapshot; they are not
-  enrichment facts.
+- **Requirements owns typed demands:** reusable Skills/Professional Experience
+  meanings and direct Education/Languages demands come from the accepted posting
+  snapshot. Fit owns their evidence assessments and score. These are later
+  decisions, not enrichment facts.
 - **Operations owns the read projection:** list/detail pages read projection
   rows. A `GET` does not fetch the posting again or repair missing enrichment.
 

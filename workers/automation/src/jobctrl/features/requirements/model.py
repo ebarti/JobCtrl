@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from jobctrl.app.errors import AppError
 
-from .domain import RequirementError, fingerprint
+from .domain import CONTRACT_VERSION, RequirementError, fingerprint
 
 
 class RequirementModelAdapter:
@@ -27,7 +27,8 @@ class RequirementModelAdapter:
             instructions=instruction,
             sources=sources,
             response_schema=schema.model_json_schema(),
-            context={**context, **({"entity_id": entity_id} if entity_id is not None else {})},
+            context={**context, "contract_version": CONTRACT_VERSION,
+                     **({"entity_id": entity_id} if entity_id is not None else {})},
             prompt_version=prompt_version,
             lane="requirements",
             model=model_spec,
@@ -69,6 +70,7 @@ class RequirementModelAdapter:
                     "receipt_id", "provider", "model", "lane", "prompt_version", "input_fingerprint", "created_at",
                 )}
                 provenance["accepted_result_fingerprint"] = fingerprint(parsed.model_dump())
+                provenance["contract_version"] = CONTRACT_VERSION
                 if budget is not None:
                     budget.reused += 1
                 posting = publication_posting or context.get("posting")
@@ -101,6 +103,7 @@ class RequirementModelAdapter:
             raise RequirementError("model_provenance_missing")
         provenance["receipt_id"] = receipt_id
         provenance["accepted_result_fingerprint"] = fingerprint(parsed.model_dump())
+        provenance["contract_version"] = CONTRACT_VERSION
         if provenance.get("input_fingerprint") != input_fingerprint:
             raise RequirementError("model_cache_binding_invalid")
         posting = publication_posting or context.get("posting")
@@ -122,7 +125,7 @@ class RequirementModelAdapter:
             raise RequirementError("model_source_context_missing")
         # This owner binding describes reuse; it never rewrites the shared
         # immutable provider response or claims a call was made for this job.
-        return {**provenance, "source_binding": {"version": 1, "semantic_source": source_binding,
+        return {**provenance, "source_binding": {"version": 2, "contract_version": CONTRACT_VERSION, "semantic_source": source_binding,
                                                "destination_posting": posting}}
 
     @staticmethod
@@ -148,7 +151,8 @@ class RequirementModelAdapter:
         except (KeyError, TypeError, ValueError):
             raise RequirementError("model_cache_binding_invalid") from None
         if (
-            provenance.get("input_fingerprint") != input_fingerprint
+            provenance.get("contract_version") != CONTRACT_VERSION
+            or provenance.get("input_fingerprint") != input_fingerprint
             or provenance.get("accepted_result_fingerprint") != fingerprint(parsed.model_dump())
             or not isinstance(provenance.get("receipt_id"), str) or not provenance["receipt_id"]
         ):

@@ -5,7 +5,7 @@ from __future__ import annotations
 from jobctrl.app.contracts import Feature, Runtime
 from jobctrl.app.errors import AppError
 
-from .domain import RequirementError
+from .domain import CONTRACT_VERSION, RequirementError
 from .http import CorrectionRequest, RefreshRequest, RevisionRequest, raise_application_error, routes
 from .model import RequirementModelAdapter
 from .repository import SqliteRequirementStore
@@ -72,4 +72,7 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
     return Feature(
         name="requirements", service=service, routes=routes(service),
         actions={"requirements.refresh": refresh, "requirements.revise": revise, "requirements.correct_binding": correct_binding},
+        action_versions={name: CONTRACT_VERSION for name in (
+            "requirements.refresh", "requirements.revise", "requirements.correct_binding",
+        )},
     )

@@ -15,7 +15,8 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   api,
   app,
 }, testInfo) => {
-  const { library } = await createBaseline(api);
+  const languages = [{ id: "english", language: "English", proficiency: "Professional working proficiency" }, { id: "catalan", language: "Catalan", proficiency: "Native proficiency" }];
+  const { library } = await createBaseline(api, { ...baseline, resume: { ...baseline.resume, language_entries: languages } });
   const posting = await createPosting(api);
   await page.goto(`/jobs/${posting.job_id}`);
   await page
@@ -57,6 +58,7 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   ).toHaveAttribute("aria-selected", "true");
   const copied = current(resume!);
   expect(copied.mode).toBe("baseline_copy");
+  expect(copied.document.languages).toEqual(languages);
   expect(copied.review.status).toBe("not_applicable");
   expect(copied.document.experience.map((role) => role.id)).toEqual(
     baseline.resume.experience_entries.map((role) => role.id),
@@ -121,6 +123,19 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   const inspected = await app.inspectPdf(bytes);
   expect(inspected.pages).toBeGreaterThanOrEqual(1);
   expect(inspected.text).toContain(baseline.personal.full_name);
+  for (const language of languages) {
+    expect(inspected.text).toContain(language.language);
+    expect(inspected.text).toContain(language.proficiency);
+  }
+  for (const format of ["txt", "html", "docx"] as const) {
+    const exported = await api.get(`/v1/resumes/${resume!.resume_id}/export?format=${format}&accepted=true`);
+    expect(exported.status(), await exported.text()).toBe(200);
+    const text = format === "docx" ? await app.inspectDocx(await exported.body()) : await exported.text();
+    for (const language of languages) {
+      expect(text).toContain(language.language);
+      expect(text).toContain(language.proficiency);
+    }
+  }
   for (const role of baseline.resume.experience_entries) {
     expect(inspected.text).toContain(role.company);
     expect(inspected.text).toContain(role.title);
@@ -161,6 +176,7 @@ test("approved baseline copy preserves every role, requires exact edit approval 
     name: "Resume editor",
     exact: true,
   });
+  for (const language of languages) await expect(editor).toContainText(language.proficiency);
   await editor
     .getByText(baseline.resume.experience_entries[0]!.bullets[0]!, {
       exact: true,
@@ -174,6 +190,7 @@ test("approved baseline copy preserves every role, requires exact edit approval 
     })
     .toBe(editedText);
   expect(current(resume!).mechanical.status).toBe("invalid");
+  expect(current(resume!).document.languages).toEqual(languages);
   expect(resume!.accepted_revision_id).toBe(copied.revision_id);
   const refused = await api.post(`/v1/resumes/${resume!.resume_id}/accept`, {
     data: { expected_version: resume!.version, override_review: false },

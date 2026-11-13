@@ -46,12 +46,81 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **93 journeys in 31 spec files**:
-**92 Chromium cases in 30 files**, plus **one demo case in one file**. The
-configured all-project listing retains the complete 77-case/29-file parent and
-adds 14 cases in two files for batched qualification and exact-result reuse,
+The current configured inventory is **100 journeys in 33 project-file groups**:
+**99 Chromium cases in 32 spec files**, plus **one demo case in one file**.
+The all-project JSON listing has no inventory errors. Seven cases in two new
+files cover typed requirements and the predecessor-generation upgrade. Listing
+these scenarios is not evidence that the complete current candidate passed.
+
+### Typed requirements generation and cumulative source proof — 13 November 2026
+
+The [typed-requirements contract](../../plans/typed-requirements.md) adds six
+[typed-demand journeys](../../../apps/web/e2e/journeys/typed-requirements.spec.ts)
+and one [predecessor-upgrade journey](../../../apps/web/e2e/journeys/requirements-upgrade.spec.ts).
+The affected cohort contains **23 distinct scenarios**:
+
+| Scenario owner | Count | Exercised boundary |
+| --- | ---: | --- |
+| [Requirements](../../../apps/web/e2e/journeys/requirements.spec.ts) | 12 | Complete-catalog matching, source-bound quotes, strict refusals and accepted-state preservation |
+| [Exact-result reuse](../../../apps/web/e2e/journeys/requirements-reuse.spec.ts) | 2 | Exact semantic-input reuse with destination publication/source fences |
+| [Typed requirements](../../../apps/web/e2e/journeys/typed-requirements.spec.ts) | 6 | Four-category qualification, permitted evidence and explicit education alternatives; manually selected direct-demand refresh; correction support routes; non-English transition/skip; empty-demand no-score behavior |
+| [Predecessor upgrade](../../../apps/web/e2e/journeys/requirements-upgrade.spec.ts) | 1 | Actual predecessor public writes, stopped-writer upgrade, retained history/accepted bytes, empty active generation, no automatic calls and incompatible durable-replay refusal |
+| [Profile workspace](../../../apps/web/e2e/journeys/profile-workspace.spec.ts) | 1 | Peer sections, authored Language / Proficiency, autosave and Plate/export retention |
+| [Baseline copy](../../../apps/web/e2e/journeys/baseline-copy.spec.ts) | 1 | Complete baseline and historical PDF bytes with zero resume model calls |
+
+These **23 scenarios passed cumulatively across different source snapshots**,
+not in one complete final-candidate run. The raw run outcomes retain failed
+attempts and overlap:
+
+| Portable run ID | Observed result | Build / journeys / total | Qualification boundary |
+| --- | --- | --- | --- |
+| `e2e-j9JpHS` | 19 passed; 3 setup failures | 7.656 s / 135.760 s / 145.273 s | Earlier snapshot; a nonpassing 22-case invocation, not 22/22 |
+| `e2e-8wJcsH` | 1 passed; 2 setup failures | 8.263 s / 82.034 s / 92.179 s | Adds the typed cross-section source-fence negative case; invocation remains nonpassing |
+| `e2e-AVaCEx` | 3 passed; 1 accessible-label selector failure | 7.942 s / 68.304 s / 78.105 s | Current production source: Profile/Languages, predecessor upgrade and English-to-non-English history/ranking/keyword behavior passed; correction-form lookup failed |
+| `e2e-RFp02d` | 1 passed | 7.514 s / 8.353 s / 17.734 s | Current production source: repaired correction-form selector passed |
+
+Deduplicating scenarios gives the cumulative 23: the first run contributes 19,
+the second adds one source-fence case, the third adds Profile and upgrade, and
+the last adds correction UI. The third run's English-language transition is an
+overlap with the first. Raw passing counts must not be added as independent
+coverage.
+
+Earlier run identities remain separate:
+
+| Run | Source candidate digest | Frozen Python tree | Web bundle |
+| --- | --- | --- | --- |
+| `e2e-j9JpHS` | `ec61743ccd3e700dd094d52a4374f410abd31ac1c27aea249f7323baf40e8691` | `79c384758ed6cb3ae4ae7e70f4052e81c309b8e78a36ecad691ea1f71e5ac528` | `313ba60235df89f4ff0df832fe9a674340db31bef2e34fc36eae21ce26d2ef14` |
+| `e2e-8wJcsH` | `467b5ffc79ed4fbc148069a194ccf8a12d32ef72d593ec47206a3b49bd7f7523` | `34e49f46517484439c39272022fcdccdb7e2b7c80963b36d068a5290c837f0b8` | `23d49c88de71860a41b1e4ec6f236accafc5de9e7d7571be50c913fa257c1dcc` |
+
+The two final runs share production source digest
+`88fd506862bd9e7f5223775295b6e11be3ccfcdc848771bc1a06bb857b0022ed`,
+frozen Python tree
+`1684ec6a7e061e4a93226af41c50f71f3278180043801fbc98e4b174a0683f83`
+and web bundle
+`2bf6b2a70e3a7d408744cd817cbf35514414fe2346fa29b18ace7e027f560652`.
+They establish **four passing scenarios against those final production
+identities**, including a successful focused correction rerun; the earlier
+nonpassing invocation is retained above. Dependency locks and built web bytes
+remained unchanged during the recorded runs. Independent process readback found
+no remaining run-owned processes.
+
+This is cumulative affected source proof. **There is no complete 100-case
+final-candidate pass in this record. All three hosted shards and their aggregate
+remain pending** for the exact reviewed head. Installed predecessor-upgrade
+mode was not exercised because no installed payload was available. The source
+predecessor journey does not establish installed-upgrade, live workspace
+rollout, real-provider semantic quality, release or deployment proof.
+
+### Historical 93-journey inventory
+
+The preceding configured inventory was **93 journeys in 31 spec files**:
+**92 Chromium cases in 30 files**, plus **one demo case in one file**. Its
+all-project listing retained the complete 77-case/29-file parent and added
+14 cases in two files for batched qualification and exact-result reuse,
 plus two initial-assessment admission cases in the existing Fit batching file.
-No parent case is removed.
+No parent case was removed at that inventory. The original observations and
+candidate-specific proof below remain historical; they do not qualify the
+current 100-case candidate.
 
 The 77-case parent comprised the earlier 57 plus three direct-Jobs search
 journeys, five provider-isolation/recovery journeys, one native accounting-setup
@@ -972,8 +1041,8 @@ The 99-file, 10,597,612-byte web candidate SHA-256 is
 `0b172f2c478f9d690e77aa43a3485b4e977abad3547d8460027a75ca84a1d282`.
 The JobCtrl, HTTPX, Pydantic, Temporal and Playwright imports came from inside
 the payload; no checkout import or source-resource fallback participated.
-Preparation, source equality and import-origin receipts are recorded under
-`/private/tmp/jobctrl-transform-1428/installed-application-_ajwp183/`.
+Preparation, source equality and import-origin receipts are retained in evidence
+bundle `installed-application-_ajwp183`.
 Its component-lock runtime archives were verified before extraction: CPython
 `7e162bf77f6c2ecd7602960162c1b867eb61ac348863546e66db632b5731a5ea`
 and Temporal `ed0357cd77aef432021556c36c3b68bfbe38b86677dd7db86575abd312dc56c7`.

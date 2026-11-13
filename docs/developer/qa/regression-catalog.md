@@ -11,7 +11,7 @@ unit, component, snapshot, Fastify/RPC and isolated fixture commands are retired
 | --- | --- |
 | Sources and approvals | Exact canonical IDs, source revisions, text/payload hashes and explicit user authority survive round trips; a stale save or approval cannot replace newer accepted work |
 | Meaning and fit | Only source-bound model decisions or explicit user corrections determine meaning/support; factual person fit never falls because wording is missing |
-| Resume composition | Every baseline role and achievement is retained; exactly one current approved variant per achievement; stable weighted distinct coverage then complementary depth; no implicit brevity penalty |
+| Resume composition | Every baseline section, role and achievement is retained, including Language / Proficiency; exactly one current approved variant per achievement; one point per eligible canonical requirement then complementary depth and stable ties; no implicit brevity penalty |
 | Accepted artifacts | Failed model/render/publication/refresh/cancellation preserves the accepted pointer and exact bytes; a failed candidate stays separate |
 | Durable work | Actual Temporal acceptance, committed state/events, cancellation and real worker replacement keep one run identity and recover honestly |
 | Submission | Exact reviewed payload, final revalidation, durable at-most-once intent, trusted receipt or explicit uncertainty; restart/reset cannot duplicate the send |
@@ -41,6 +41,19 @@ of search-index freshness. Validate a complete decision partition and exact
 catalog revisions before publication. Oversize, uncertainty and provider refusal
 preserve accepted state without chunking or a separate novelty judge.
 
+The `requirements-v2` language gate is a source-bound model decision before
+extraction. Non-English postings skip extraction/Fit without translation or a
+zero score. The reusable catalog holds Skills/Professional Experience only;
+Education/Languages are direct job-local demands. Require one missing-set
+qualification batch across all categories and permitted evidence per category.
+Education may use professional experience only for the posting's explicit
+alternative and must record the route without claiming a degree. Language
+proficiency uses structured Language / Proficiency sources only. Reject
+cross-section evidence. Inspect original occurrence meaning/evidence alongside
+its canonical binding. Equal-item arithmetic uses distinct canonical meanings
+and direct demands, with no source weights, must-have multiplier or blocker cap;
+duplicates and alternatives cannot multiply points and an empty set has no score.
+
 Profile owns facts, attachments, confirmations, authored baseline and wording
 approval. Requirements owns qualified meanings and source occurrences. Fit
 owns factual support and exact approved-wording coverage relations. Resumes
@@ -62,6 +75,9 @@ previously missing/unlinked requirements. Only selected requirements require
 new qualification; unaffected receipts retain their original semantic authority.
 Exact current approved-wording bindings are direct reuse. Group actual wording
 gaps by achievement and retain rejection/defer decisions across equivalent jobs.
+Current section-backed matches are not achievement expression gaps. Require an
+actual unsupported wording need and factual achievement support before a
+proposal; existing approved expressions are reused without stylistic rewrites.
 Saves, approval and the refresh's own writes never recursively admit work.
 Race distinct action keys for the same profile, edits while queued/running,
 catalog additions, cancellation and real worker replacement. Input snapshots,
@@ -81,6 +97,19 @@ zero resume model calls. Advisory coherence is one review; explicit user overrid
 records failed/findings/timeout honestly without bypassing mechanical approval,
 source or PDF integrity. Inspect the exact selected variant IDs, requirement
 coverage manifest, rendered text and accepted file digest together.
+Exercise Language / Proficiency editing through Profile and Plate and inspect
+text/PDF/DOCX/locale export retention with both current and older four-section
+templates. An empty default creates no factual revision or content deletion.
+
+For the generation boundary, use predecessor and candidate public application
+entrypoints in owned synthetic state. Stop old writers and back up first. Keep
+SQL schema strings byte-identical, legacy accepted rows and job ordering
+unchanged, and accepted resume bytes intact. The active catalog starts empty;
+old fields cannot promote meanings or establish current ranking/composition
+readiness. Incompatible operation resumption/replay is refused. A failed
+refresh keeps accepted pointers. After new writes, rollback restores the
+pre-upgrade backup with compatible workflow state. This proof does not establish
+a live rollout.
 
 ## Temporal fault injection
 

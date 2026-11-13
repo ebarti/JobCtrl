@@ -77,7 +77,7 @@ has one defining page; other pages summarize it briefly and link to that owner.
   coverage, policy, corrections, and ranking; it consumes the employer analysis
   owned by Discovery.
 - [`user/requirements-library.md`](user/requirements-library.md): canonical
-  meanings, linked achievements, exact wording coverage, unassessed user links
+  Skills/Professional Experience meanings, linked achievements, exact wording coverage, unassessed user links
   and source/revision history in the redesign candidate.
 - [`user/company-briefings.md`](user/company-briefings.md): optional public-source company context, explicit identity links, bounded CLI refresh and shared job/interview/digest reads.
 - [`user/materials-and-tailoring.md`](user/materials-and-tailoring.md): generated
@@ -208,6 +208,10 @@ These documents remain in the repository but are not separate site sections:
   The active [Original app redesign](plans/2026-11-11-original-app-redesign.md)
   maps whole-product outcomes, retained independent capabilities and pending
   candidate verification across the application, demo and documentation.
+  The active [Typed job requirements](plans/typed-requirements.md) plan defines
+  the `requirements-v2` generation, direct Education/Languages demands,
+  equal-item Fit and pending upgrade/product proof. Source work does not
+  establish a live rollout.
   The active [sensitive-artifact retention and cleanup
   proposal](plans/sensitive-artifact-retention.md) defines the unshipped local
   inventory, preservation, preview, containment, and recovery contract tracked

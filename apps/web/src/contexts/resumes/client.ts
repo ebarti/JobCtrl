@@ -8,8 +8,9 @@ import { useTenantId } from "../../shared/providers/TenantProvider.js";
 const bullet = z.object({ id: z.string(), text: z.string() }).passthrough();
 const role = z.object({ id: z.string(), title: z.string(), company: z.string(), location: z.string(), date_range: z.string(), summary: z.string(), bullets: z.array(bullet) }).passthrough();
 const education = z.object({ id: z.string(), degree: z.string(), institution: z.string(), location: z.string(), date: z.string(), details: z.string() }).passthrough();
+const language = z.object({ id: z.string(), language: z.string(), proficiency: z.string() }).passthrough();
 const documentSchema = z.object({ personal: z.object({ full_name: z.string(), address: z.string(), contact_items: z.array(z.unknown()) }).passthrough(),
-  summary: z.string(), experience: z.array(role), education: z.array(education), skills: z.array(z.unknown()) }).passthrough();
+  summary: z.string(), experience: z.array(role), education: z.array(education), skills: z.array(z.unknown()), languages: z.array(language).optional() }).passthrough();
 const review = z.object({ status: z.enum(["pending", "running", "pass", "findings", "timeout", "failed", "not_applicable"]),
   findings: z.array(z.object({ detail: z.string() }).passthrough()), failure_code: z.string().nullable().optional() }).passthrough();
 const revision = z.object({

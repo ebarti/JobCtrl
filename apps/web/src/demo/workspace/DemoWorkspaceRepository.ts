@@ -1080,6 +1080,7 @@ function workspaceUpgrade(
 }
 
 const REFRESHABLE_DEMO_SEED_VERSIONS = new Set([
+  "2026-11-06.1",
   "2026-07-11.1",
   "2026-07-12.1",
   "2026-07-12.2",

@@ -37,6 +37,7 @@ class Application:
         self.actions = {}
         self.action_scopes = {}
         self.action_finalizers = {}
+        self.action_versions = {}
         for feature in features:
             for name, handler in feature.actions.items():
                 if name in self.actions or not name.startswith(feature.name + "."):
@@ -50,6 +51,10 @@ class Application:
                 if name not in feature.actions or not callable(finalizer):
                     raise ValueError(f"Invalid action finalizer: {name}")
                 self.action_finalizers[name] = finalizer
+            for name, version in feature.action_versions.items():
+                if name not in feature.actions or not isinstance(version, str) or not version.strip():
+                    raise ValueError(f"Invalid action contract version: {name}")
+                self.action_versions[name] = version
         self._temporal = None
         self._temporal_lock = asyncio.Lock()
 
@@ -81,7 +86,11 @@ class Application:
     def _create_run(self, action: str, payload: dict, *, idempotency_key: str | None = None,
                     request_id: str | None = None, run_id: str | None = None, workflow_id: str | None = None):
         encoded = self._require_action(action, payload)
-        digest = hashlib.sha256(encode({"action": action, "payload": payload}).encode()).hexdigest()
+        identity = {"action": action, "payload": payload}
+        version = self.action_versions.get(action)
+        if version is not None:
+            identity["contract_version"] = version
+        digest = hashlib.sha256(encode(identity).encode()).hexdigest()
         if idempotency_key is not None and (not idempotency_key.strip() or len(idempotency_key) > 200):
             raise AppError("invalid_idempotency_key", "Use a nonempty idempotency key of at most 200 characters.")
         run_id = run_id or str(uuid.uuid4())
@@ -93,6 +102,8 @@ class Application:
             ).fetchone()
             if existing:
                 if existing["input_hash"] != digest or existing["action"] != action:
+                    if version is not None and existing["action"] == action and existing["payload_json"] == encoded:
+                        raise AppError("action_contract_changed", "This action belongs to an earlier processing contract. Start a new action; the earlier result remains in history.", 409)
                     raise ConflictError("This action identity already belongs to different input.")
                 return self._run_payload(existing)
             scope = self.action_scopes.get(action)

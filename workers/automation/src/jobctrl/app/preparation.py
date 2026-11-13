@@ -177,6 +177,12 @@ class PreparationService:
         baseline_only = request["resume_mode"] == "baseline" and request["recipe"] in {"prepare", "tailor"}
         if baseline_only and stage in {"requirements", "fit"}:
             return {"skip": "full_baseline_needs_no_job_assessment"}
+        extraction = prior.get("requirements", {}).get("result") or {}
+        if stage in {"fit", "compose", "review", "render"} and extraction.get("status") == "unsupported_language":
+            requirements = self.requirements.get_job_requirements(job_id)
+            if requirements.get("stale") or requirements["revision"] != extraction["revision"]:
+                raise ConflictError("The requirement snapshot changed after language classification.")
+            return {"skip": "unsupported_posting_language", "requirements_revision": requirements["revision"]}
         if stage == "enrich":
             posting = self.jobs.snapshot(job_id)
             if request["recipe"] in {"run", "discover", "search", "assess"} and not posting.get("needs_enrichment", True):
@@ -222,8 +228,8 @@ class PreparationService:
                 expected_fit = (prior.get("fit", {}).get("result") or {}).get("revision")
                 if expected_fit is not None and score["revision"] != expected_fit:
                     raise ConflictError("Person fit changed before resume preparation.")
-                if score["eligibility"]["status"] == "blocked":
-                    raise AppError("eligibility_blocked", "Resolve the recorded eligibility blocker first.", 409)
+                if score["score"] is None:
+                    return {"skip": "no_extractable_requirements"}
                 if score["score"] < request["min_fit_score"] and not request["allow_below_threshold"]:
                     return {"skip": "below_fit_threshold", "score": score["score"], "threshold": request["min_fit_score"]}
             documents = self.resumes.list(job_id)
@@ -291,7 +297,8 @@ class PreparationService:
                                                    cancelled=cancelled, heartbeat=context.heartbeat)
             if value.get("stale"):
                 raise ConflictError("The accepted requirement snapshot is stale.")
-            return {"revision": value["revision"], "postingRevision": value["posting_revision"]}
+            return {"revision": value["revision"], "postingRevision": value["posting_revision"],
+                    "status": value.get("status", "complete")}
         if stage == "fit":
             value = await self.fit.assess_job(job_id, **inputs, operation_id=op, cancelled=cancelled)
             summary = {"revision": value["score"]["revision"], "score": value["score"]["score"],
@@ -398,9 +405,12 @@ class PreparationService:
 
     async def run(self, context, raw, *, parent=None):
         request = _validate(raw)
+        request["contract_version"] = "requirements-v2"
         # The action keeps the configured mode and threshold throughout replay.
         frozen = self.checkpoints.request(context.run_id)
         if frozen is not None:
+            if frozen.get("contract_version") != request["contract_version"]:
+                raise AppError("action_contract_changed", "Start a new preparation run for the revised matching contract. The earlier run remains in history.", 409)
             if any(frozen[k] != value for k, value in request.items()
                    if k != "min_fit_score" or value is not None):
                 raise ConflictError("The preparation identity belongs to different input.")
@@ -411,6 +421,8 @@ class PreparationService:
                 parent_request = self.checkpoints.request(parent)
                 if parent_request is None:
                     raise NotFoundError("The prior preparation run does not exist.")
+                if parent_request.get("contract_version") != request["contract_version"]:
+                    raise AppError("action_contract_changed", "Start a new preparation run for the revised matching contract. The earlier run remains in history.", 409)
                 request["resume_mode"] = parent_request["resume_mode"]
             else:
                 # An explicit task choice is already part of the durable action
@@ -498,9 +510,17 @@ class PreparationService:
         discovered = self.checkpoints.step(context.run_id, "", "discover")["result"]
         failures = [{"jobId": step["jobId"], "stage": step["stage"], "code": step["errorCode"]}
                     for step in run["steps"] if step["jobId"] and step["status"] == "failed"]
-        assessed = sum(step["stage"] == "fit" and step["status"] == "succeeded" for step in run["steps"])
+        assessed = sum(step["stage"] == "fit" and step["status"] == "succeeded"
+                       and type((step.get("result") or {}).get("score")) in {int, float} for step in run["steps"])
+        skipped = [{"jobId": step["jobId"], "reason": "unsupported_posting_language"}
+                   for step in run["steps"] if step["stage"] == "fit" and step["status"] == "skipped"
+                   and (step.get("result") or {}).get("skip") == "unsupported_posting_language"]
+        skipped.extend({"jobId": step["jobId"], "reason": "no_extractable_requirements"}
+                       for step in run["steps"] if step["stage"] == "fit" and step["status"] == "succeeded"
+                       and (step.get("result") or {}).get("score") is None)
         preparation = {"status": "partial" if failures else "succeeded", "assessedJobs": assessed,
-                       "failedJobs": len({failure["jobId"] for failure in failures}), "failures": failures}
+                       "failedJobs": len({failure["jobId"] for failure in failures}), "failures": failures,
+                       "skippedJobs": len(skipped), "skipped": skipped}
         status = "partial" if run["status"] == "partial" else discovered["status"]
         return {**discovered, "ok": status == "completed", "status": status, "acquisitionStatus": discovered["status"],
                 "preparationAvailable": True, "preparation": preparation}

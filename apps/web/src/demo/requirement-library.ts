@@ -1,4 +1,5 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
+import { ProfileSchema } from "@jobctrl/contracts";
 import { z } from "zod";
 
 import { stableDemoStringify } from "./digest.js";
@@ -17,8 +18,9 @@ export interface DemoCanonicalRequirement {
   requirement_id: string;
   revision: number;
   definition: string;
-  scope: "resume" | "eligibility" | "logistics" | "employer_condition";
-  qualifiers: { dimension: string; value: string }[];
+  contract_version: "requirements-v2";
+  category: "skill" | "professional_experience";
+  name: string;
   provenance: Data;
   created_at: string;
 }
@@ -51,49 +53,18 @@ export interface DemoRequirementAssociations {
   requests: Record<string, string>;
 }
 
-const meanings: Omit<DemoCanonicalRequirement, "created_at" | "provenance">[] =
-  [
-    {
-      requirement_id: "requirement-platform",
-      revision: 1,
-      definition: "Guide reliable platform delivery.",
-      scope: "resume",
-      qualifiers: [
-        { dimension: "responsibility", value: "guide" },
-        { dimension: "domain", value: "platform delivery" },
-      ],
-    },
-    {
-      requirement_id: "requirement-incident-response",
-      revision: 1,
-      definition: "Coordinate incident response with the engineering team.",
-      scope: "resume",
-      qualifiers: [
-        { dimension: "responsibility", value: "coordinate" },
-        { dimension: "scope", value: "engineering incident response" },
-      ],
-    },
-    {
-      requirement_id: "requirement-regulated-domain",
-      revision: 1,
-      definition: "Lead in a regulated domain.",
-      scope: "resume",
-      qualifiers: [
-        { dimension: "responsibility", value: "lead" },
-        { dimension: "domain", value: "regulated industry" },
-      ],
-    },
-    {
-      requirement_id: "requirement-systems",
-      revision: 1,
-      definition: "Lead systems delivery.",
-      scope: "resume",
-      qualifiers: [
-        { dimension: "responsibility", value: "lead" },
-        { dimension: "domain", value: "systems delivery" },
-      ],
-    },
-  ];
+const meanings: Omit<DemoCanonicalRequirement, "created_at" | "provenance">[] = [
+  { requirement_id: "requirement:v2:demo:platform", revision: 1, contract_version: "requirements-v2", category: "professional_experience",
+    name: "Platform delivery leadership", definition: "Guide reliable platform delivery." },
+  { requirement_id: "requirement:v2:demo:incident-response", revision: 1, contract_version: "requirements-v2", category: "skill",
+    name: "Incident coordination", definition: "Coordinate incident response with the engineering team." },
+  { requirement_id: "requirement:v2:demo:release-coordination", revision: 1, contract_version: "requirements-v2", category: "skill",
+    name: "Release coordination", definition: "Use release coordination to make delivery plans clear." },
+  { requirement_id: "requirement:v2:demo:regulated-domain", revision: 1, contract_version: "requirements-v2", category: "professional_experience",
+    name: "Regulated-domain leadership", definition: "Lead in a regulated domain." },
+  { requirement_id: "requirement:v2:demo:systems", revision: 1, contract_version: "requirements-v2", category: "professional_experience",
+    name: "Systems delivery leadership", definition: "Lead systems delivery." },
+];
 
 /** Authored source examples, explicitly distinct from model-assessed evidence. */
 export function demoCanonicalRequirements(
@@ -119,22 +90,22 @@ export function demoRequirementAssociations(
   const examples = [
     [
       "demo:association:platform-delivery",
-      "requirement-platform",
+      "requirement:v2:demo:platform",
       DEMO_PLATFORM_ACHIEVEMENT,
     ],
     [
       "demo:association:platform-incident",
-      "requirement-incident-response",
+      "requirement:v2:demo:incident-response",
       DEMO_PLATFORM_ACHIEVEMENT,
     ],
     [
       "demo:association:incident-practice",
-      "requirement-incident-response",
+      "requirement:v2:demo:incident-response",
       DEMO_INCIDENT_ACHIEVEMENT,
     ],
     [
       "demo:association:systems-delivery",
-      "requirement-systems",
+      "requirement:v2:demo:systems",
       DEMO_DELIVERY_ACHIEVEMENT,
     ],
   ];
@@ -222,7 +193,12 @@ export function demoAssociationView(
 export function demoRequirementLibrary(snapshot: DemoWorkspaceSnapshot) {
   const library = demoWordingLibrary(snapshot);
   const associations = demoRequirementAssociations(snapshot).rows;
+  const signature = snapshot.state.features?.fitProfileSourceSignature;
+  const assessedProfile = ProfileSchema.parse(signature ? JSON.parse(signature) : snapshot.state.readModel.profile.config.profile);
+  const skills = assessedProfile.resume.skill_categories.find((item) => item.id === "demo:skills:delivery");
+  const current = !snapshot.state.features?.profileSourcesChanged && signature === stableDemoStringify(snapshot.state.readModel.profile.config.profile);
   return {
+    contract_version: "requirements-v2",
     profile_id: "default",
     readiness: "ready",
     profile_revision: library.profileVersion,
@@ -231,7 +207,16 @@ export function demoRequirementLibrary(snapshot: DemoWorkspaceSnapshot) {
     catalog_revision: 1,
     requirements: demoCanonicalRequirements(snapshot).map((requirement) => ({
       ...requirement,
-      assessment: null,
+      assessment: requirement.requirement_id === "requirement:v2:demo:release-coordination" && skills ? {
+        contract_version: "requirements-v2", assessment_id: "demo:assessment:v2:release-section", requirement_id: requirement.requirement_id,
+        requirement_revision: requirement.revision, name: requirement.name, category: requirement.category, definition: requirement.definition,
+        kind: "matched", confidence: "high", achievement_ids: [], wording_support: "section",
+        rationale: "Authored illustration: release coordination is supported from the saved structured Skills section. Achievement wording is not required.",
+        origin: "bundled_synthetic_example", determination_id: "demo:bundled-synthetic:v2:release-section",
+        evidence_refs: [{ source_id: `demo:profile-section:skill_categories:${skills.id}`, revision: 1, quote: JSON.stringify(skills) }],
+        provenance: { kind: "bundled_synthetic_example", synthetic: true, model_called: false }, current,
+        stale_reasons: current ? [] : ["profile_facts_changed"],
+      } : null,
       coverage: [],
       current_wordings: [],
       wording_assignments: [],

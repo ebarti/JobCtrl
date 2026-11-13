@@ -76,7 +76,8 @@ function valueFor(row: ComposedJobRow, id: string, data: ComposedJobsResponse | 
   if (id === "fit_score") {
     const unavailable = moduleLabel(data, "fit");
     if (unavailable) return unavailable;
-    return typeof scalar === "number" ? `${scalar}/10${row.fit && !row.fit.current ? " · stale" : ""}` : "Not assessed";
+    return typeof scalar === "number" ? `${scalar}/10${row.fit && !row.fit.current ? row.fit.stale_reasons?.includes("contract_changed") ? " · historical" : " · stale" : ""}`
+      : row.fit?.score?.score === null ? "No score · no eligible demands" : "Not assessed";
   }
   if (id === "eligibility") return moduleLabel(data, "fit") ?? row.fit?.score?.eligibility.status ?? "Unknown";
   if (id.startsWith("compensation_")) {

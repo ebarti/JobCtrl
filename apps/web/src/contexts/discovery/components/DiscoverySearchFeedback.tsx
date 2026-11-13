@@ -10,6 +10,8 @@ import "./discovery-search-feedback.css";
 export interface DiscoveryAssessmentProgress {
   phase: "acquiring" | "assessing" | null;
   assessedJobs: number | null; failedJobs: number | null; totalJobs: number | null;
+  skippedJobs: number | null;
+  skipped: readonly { jobId: string; reason: string }[];
   failures: readonly { jobId: string; stage: string; code: string | null }[];
   unavailable: boolean;
 }
@@ -48,6 +50,10 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
   const accountingFailure = status === "failed" && action?.errorCode === "cost_accounting_unavailable";
   const assessedJobs = controller.assessment?.assessedJobs ?? assessmentProgress?.assessedJobs ?? null;
   const failedJobs = controller.assessment?.failedJobs ?? assessmentProgress?.failedJobs ?? null;
+  const skippedJobs = controller.assessment?.skippedJobs ?? assessmentProgress?.skippedJobs ?? null;
+  const skipped = controller.assessment?.skipped ?? assessmentProgress?.skipped ?? [];
+  const unsupportedLanguages = skipped.filter((item) => item.reason === "unsupported_posting_language").length;
+  const noRequirements = skipped.filter((item) => item.reason === "no_extractable_requirements").length;
   const assessmentFailures = controller.assessment?.failures ?? assessmentProgress?.failures ?? [];
   const label = accountingFailure ? "Search stopped for missing cost tracking"
     : active && assessmentProgress?.phase === "assessing" ? "Assessing saved jobs"
@@ -66,7 +72,9 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
       <div className="discovery-search-status-row" role="status"><h2>{label}</h2>{counts ? <p className="discovery-search-counts">{controller.countsStale ? <span>Last recorded:</span> : null}<span>{counts.newJobs} new jobs</span><span>{counts.observedJobs} observed</span></p> : null}</div>
       {active ? <Progress value={null} aria-label="Job search progress" className="discovery-search-progress" /> : null}
     </div>
-    {assessedJobs !== null ? <p>{assessmentProgress?.unavailable && !controller.assessment ? "Last recorded: " : ""}{assessmentProgress?.totalJobs != null ? `${assessedJobs} of ${assessmentProgress.totalJobs} jobs assessed` : `${assessedJobs} jobs assessed`}{failedJobs !== null ? ` · ${failedJobs} failed` : ""}</p> : null}
+    {assessedJobs !== null ? <p>{assessmentProgress?.unavailable && !controller.assessment ? "Last recorded: " : ""}{assessmentProgress?.totalJobs != null ? `${assessedJobs} of ${assessmentProgress.totalJobs} jobs assessed` : `${assessedJobs} jobs assessed`}{failedJobs !== null ? ` · ${failedJobs} failed` : ""}{skippedJobs !== null && skippedJobs > 0 ? ` · ${skippedJobs} skipped` : ""}</p> : null}
+    {unsupportedLanguages > 0 ? <p>{unsupportedLanguages} {unsupportedLanguages === 1 ? "posting was" : "postings were"} skipped because only English postings are supported. No fit score was calculated.</p> : null}
+    {noRequirements > 0 ? <p>{noRequirements} {noRequirements === 1 ? "posting had" : "postings had"} no in-scope requirements to assess. No fit score was calculated.</p> : null}
     {sourceOnly ? <p>Initial fit assessment is unavailable in this application.</p> : null}
     {assessmentProgress?.unavailable && !controller.assessment ? <p role="alert">Fit assessment progress could not be checked. Recorded search status remains visible.</p> : null}
     {status === "idle" && !controller.blockedReason ? <p>Uses your saved Search preferences. Saving preferences does not start a search.</p> : null}
@@ -94,7 +102,7 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
       {action || controller.sourceFailures.length ? <details className="discovery-search-details"><summary>Search details</summary>
         {action ? <p>Run {action.runId}{action.errorCode ? ` · ${action.errorCode}` : ""}</p> : null}
         {feedback.dismissed ? <p>{label}{counts ? ` · ${counts.newJobs} new jobs · ${counts.observedJobs} observed` : ""}</p> : null}
-        {feedback.dismissed && assessedJobs !== null ? <p>{assessedJobs} jobs assessed{failedJobs !== null ? ` · ${failedJobs} failed` : ""}</p> : null}
+        {feedback.dismissed && assessedJobs !== null ? <p>{assessedJobs} jobs assessed{failedJobs !== null ? ` · ${failedJobs} failed` : ""}{skippedJobs !== null && skippedJobs > 0 ? ` · ${skippedJobs} skipped` : ""}</p> : null}
         {feedback.dismissed && sourceOnly ? <p>Initial fit assessment is unavailable in this application.</p> : null}
         {controller.sourceFailures.length ? <ol aria-label="Recorded source failures">{controller.sourceFailures.map((failure, index) => <li key={`${failure.unitId ?? failure.sourceId ?? "source"}:${index}`}>
           {feedback.terminal ? <p>{feedback.sourceState(failure) === "disabled" ? "Currently not selected or disabled" : feedback.sourceState(failure) === "enabled" ? "Currently enabled" : "Current source selection unknown"}</p> : null}
@@ -102,6 +110,7 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
           <p>Code: {failure.code}{failure.boards ? ` · Boards: ${failure.boards.join(", ")}` : ""}{failure.sourceFamily ? ` · Family: ${failure.sourceFamily}` : ""}{failure.sourceId ? ` · Source: ${failure.sourceId}` : ""}{failure.unitId ? ` · Search unit: ${failure.unitId}` : ""}</p>
         </li>)}</ol> : null}
         {assessmentFailures.length ? <ol aria-label="Recorded fit assessment failures">{assessmentFailures.map((failure, index) => <li key={`${failure.jobId}:${failure.stage}:${index}`}><p>Job: {failure.jobId} · Stage: {failure.stage} · Code: {failure.code ?? "Not recorded"}</p></li>)}</ol> : null}
+        {skipped.length ? <ol aria-label="Skipped fit assessments">{skipped.map((item) => <li key={item.jobId}>Job: {item.jobId} · {item.reason === "unsupported_posting_language" ? "English postings only" : item.reason === "no_extractable_requirements" ? "No in-scope requirements" : "Skipped"}</li>)}</ol> : null}
       </details> : null}
     </div>
     {feedback.error ? <p role="alert">{feedback.error}</p> : null}

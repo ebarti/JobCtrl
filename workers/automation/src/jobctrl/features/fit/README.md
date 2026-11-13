@@ -1,279 +1,204 @@
 # Fit capability inventory
 
-Fit owns person qualification, source-bound evidence support, eligibility,
-deterministic scores and corrections, and the relation between a qualified
-requirement and an exact approved wording variant. Profile owns factual sources,
-wording text and every wording approval. Requirements owns canonical meanings
-and job occurrences. Resumes owns selection and document acceptance.
-Only recorded authored facts/baseline and explicitly confirmed evidence enter
-qualification. Pending, review-required, rejected and deferred sources remain
-available for Profile inspection without becoming factual authority.
+Fit owns person qualification, source-bound support, deterministic scores and
+corrections, and the relation between a reusable requirement and exact approved
+achievement wording. Profile owns facts, Language / Proficiency records, baseline
+sections and wording approval. Requirements owns typed meanings, job occurrences
+and direct job demands. Resumes owns selection and document acceptance.
 
-| Capability | Canonical target entry point | Retention and boundary |
+## Typed authority and retained history
+
+New accepted Fit documents carry `contract_version: requirements-v2`. Assessments,
+score/source bindings, coverage relations and snapshots, wording requests and
+assignments, associations and manual-operation state retain that generation.
+Missing or different versions are historical authority. Reads retain the original
+rows and artifacts, report `current: false` and `stale_reasons: ["contract_changed"]`,
+and never promote them by adapting their shape. Old operation identities cannot
+replay or resume; feature receipts return `contract_changed`, and the application
+also fences durable action generations before returning a cached action result.
+No SQL schema string changes or automatic model calls accompany this change.
+
+The reusable catalog contains only `skill` and `professional_experience`.
+`education` and `language` are direct, job-local demands. Their namespaced IDs
+remain tied to the job/posting and their assessments never enter the reusable
+library, wording coverage or authoring. Each direct alternatives group is one
+assessment item. Deleting a job removes its direct assessment records together
+with its score/operation records; reusable person/requirement authority remains.
+
+`unique_requirements` consumes Requirements' public `snapshot_items` adapter,
+which joins reusable occurrences to exact canonical category, name and definition.
+The original source-bound extraction, source note and occurrence IDs remain
+inspectable. Repeated occurrences of a canonical meaning count once. Source notes
+are retained for explanation and do not affect score arithmetic. Unsupported
+posting languages receive no replacement score. A prior score remains historical
+with `unsupported_posting_language`; an explicit assessment is refused before
+qualification work.
+
+## One complete qualification batch
+
+`FitService.assess_job` and `Qualification.resolve_many` inspect the entire fixed
+job item set, reuse exact current authority, then submit every pending category
+together in one `fit.qualification-batch` determination, prompt
+`fit-qualification-batch-v2`, in the existing `scoring` lane. The complete Profile
+source inventory is supplied once. Each item has its own `requirement:<id>` source,
+category, revision and permitted evidence IDs. There are no chunks, truncated
+inventories, lexical judgments, per-item semantic retries or result replay cache.
+An all-current set makes zero qualification calls.
+
+The strict response remains `{ requirements: QualificationDecision[] }`. It must
+contain every requested ID/revision exactly once. Decisions retain `kind`,
+`strength`, confidence, rationale, exact citations, supported achievement IDs and
+model-supplied keyword labels. They also record `evidence_route` and
+`wording_support`. Only recorded authored or explicitly confirmed Profile sources
+can prove candidate facts. Review-required, pending, rejected and deferred sources
+remain available for inspection without becoming qualification authority.
+
+| Demand | Permitted factual sources | Recorded route |
 | --- | --- | --- |
-| Requirement-level person qualification | `FitService.assess_job` / `Qualification.resolve_many` / `fit.assess` | Reuse current authority first; one strict source-bound batch covers the entire missing requirement set against complete factual sources. Never inferred from a resume or word overlap. |
-| Reuse across jobs | `Qualification.resolve_many` | Keyed by Profile ID, canonical requirement ID/revision and the complete factual source/achievement fingerprint. A new job occurrence changes priorities without repeating qualification; an all-current set makes zero qualification calls. |
-| Factual edits | `fit.refresh` / `fit.catalog-impact` | Manual, fixed-input operation. One complete-catalog decision selects affected requirements, including previously missing support. Unchanged support retains original semantic authority with current-source revalidation. Saves and approval never start it. |
-| Capability score | `domain.calculate_score` | Retains `requirement-fit-v2-scoped`: direct 1, strong .85, transferable .6, must-have multiplier 1.25, four-decimal contributions, half-up 1–10 mapping and capability-blocker cap 4. Eligibility/logistics/employer conditions contribute no points. |
-| Confidence and eligibility | `get_job_fit` | Persisted model verdicts and cited reasons remain separate from points. Compensation/location/work-model preferences are warning categories. Unknowns remain unknown. |
-| Live minimum-fit selection | `minimum_fit_score`, `get_job_fit.selection` | Reads the shared versioned setting without recomputing a score. A score must be current and unblocked to be ready. |
-| User score correction and calibration history | `correct_score` / `fit.correct` | Adds a new immutable score version and correction anchor while retaining the computed score, source report and stale state. One correction does not silently change arithmetic or qualification. |
-| User qualification correction | `correct_requirement` | Requires the exact assessment, factual Profile version, canonical requirement revision and literal current evidence. Invalidates only scores/relations that used the superseded assessment. |
-| Approved expression coverage | `refresh_coverage`, `coverage_for` | Separate strict model decisions join canonical requirement revision, accepted qualification, achievement, exact variant revision, approval and source versions. Unsupported facts never receive positive coverage. |
-| Grounded wording preparation | Achievement-group coverage / Profile public `request_authoring` | Reuse exact current relations first. Consider an achievement's relevant requirement set together, then request one coherent supported proposal only for meaningful expression gaps. Origin excludes the job; rejected/deferred requests remain retained. Only Profile's explicit user action can approve. |
-| Baseline/off composition | `assess_job(prepare_coverage=False)` | Person qualification may run; no wording-coverage or authoring call runs. `prepare_wording=False` alone suppresses proposals while still preparing exact coverage. |
-| Evidence reverse links | `evidence_map` | Public source/requirement/score/determination IDs, exact source excerpts, recorded qualification gaps, exact variant/source relations and current/stale usage. Absent coverage stays `not_recorded`; only complete recorded noncoverage or no approved variant establishes a wording gap. |
-| Independent requirement library | `requirement_library` | The complete canonical catalog, latest recorded assessment with actual achievement IDs, historical exact wording relations and separate user associations. No job traversal, semantic inference or model work. |
-| User requirement associations | `create_association`, `set_association_state`, `association_history` | Revision-bound user intent, always unassessed. Soft removal and restoration preserve original pins and immutable history; they never write qualification, coverage, score or approval. |
-| Maintained wording assignments | `set_current_wording`, `publish_current_wordings` | One exact current wording per Profile/achievement/canonical-requirement pair, with immutable assignment revisions. A wording can serve several requirements; multiple maintained wordings require a complete source-bound grouped exception. |
-| Keyword filters | `keywords` | Latest accepted model-supplied labels, NFKC/whitespace normalization and casefold lookup keys; normalization never decides support. |
-| Jobs and Digest composition | `query_summaries`, `summary_for_jobs`, `digest_summary` | Bounded bulk score/assessment queries and public Requirements binding reads share the caller's snapshot. Stored high-fit values and stale state remain distinct. Cutoffs compare UTC instants at millisecond precision, including equal cutoffs. |
-| Durable restart | `fit_operation_receipts`, `fit_refresh_operations` | Fixed scope, input versions, call reservations, checkpoints and limits survive restart. Exact retries reuse committed work. An interrupted external call stays explicit instead of silently spending a new allowance. Factual publication and failed expression preparation are reported separately. |
-| Permanent Job deletion | `delete_job_data` | Removes job score versions, correction anchors and operation results in the Jobs transaction; reusable person/requirement intelligence remains independent of jobs. |
+| Skills | Structured Profile Skills and factual roles/achievements | `wording_support: section` or `achievement` |
+| Professional Experience | Factual roles/achievements | `wording_support: section` or `achievement` |
+| Education | Education records | `evidence_route: education` |
+| Explicit education equivalence | Factual roles/achievements only when the demand explicitly offers equivalent experience | `evidence_route: equivalent_experience`; no degree assertion |
+| Languages | Structured Language / Proficiency records only | Direct section support; no achievement IDs |
 
-`bootstrap.build_feature` is used by the sole Python application. HTTP, CLI and
-durable execution call the same service. The feature reads no sibling private
-tables. Every canonical mutation and its bounded invalidation event commit in
-one SQLite transaction. Bootstrap constructs the SQLite adapter and injects the
-feature-owned `FitStorePort`; application code handles no SQL or transactions.
-Typed read sessions hide connection details and share a caller's transaction
-when supplied. Atomic publication methods own the final source, cancellation and
-assessment/version checks together with the record, operation receipt and event.
-Inference never holds the writer lock.
+Structural validation enforces all cited IDs and their source ownership, exact
+verbatim spans, education alternatives, route/source compatibility and achievement
+ownership. A source in Skills never proves language proficiency. Requirements and
+user scoring guidance cannot supply candidate facts. Models decide meaning and
+support within those permitted sources; structural guards never infer semantics.
 
-The old opaque dimension-score compatibility path is superseded by the accepted
-qualified requirement catalog. Missing or incoherent weighted requirements
-cannot create a replacement score; there is no lexical or legacy fallback.
-Old scoring modules are outside this target composition and their final removal
-belongs to the coordinated runtime cutover.
+Personal traits, certifications/licenses, job conditions and detailed years of
+experience are outside this iteration. The retained compatibility fields are
+strictly `eligibility: unknown`, `blocker_category: null` and
+`warning_category: null`. They cannot adjudicate authorization, citizenship,
+clearance, compensation, location or work model. A `blocked` qualification kind
+records a cited factual mismatch for a typed demand and contributes zero credit.
 
-## Batched qualification authority
+The accepted raw batch is reread through its immutable gateway receipt and
+checked for exact result, operation, prompt, provider/model, lane and input
+provenance. Every row validates before atomic publication. Rows have independent
+assessment IDs and `provenance.qualification_result_fingerprint`; they share the
+batch receipt and `provenance.accepted_result_fingerprint`. The shared fingerprint
+is never presented as the individual row fingerprint. Source fingerprints include
+the category's permitted factual inventory and scoring guidance. Language-only
+edits therefore cannot invalidate unrelated Skills or Experience authority.
 
-`Qualification.resolve_many` reads current authorities for the full job
-requirement set before inference. For a job with no prior score, its explicitly
-started first assessment with `force: false` may batch requirements without
-current authority even when older shared qualifications exist under prior saved
-inputs. The service derives this permission from score history; it is not a
-caller-supplied bypass. This work is limited to that job's fixed requirement
-set. Publication rechecks score revision zero and compares both current-source
-and captured historical assessment heads in the same transaction. It retains
-all history and rewrites no other job's score. Force cannot replace prior
-qualification authority.
-A previously scored job needing changed qualification still returns
-`fit_refresh_required`. Existing current assessments remain reusable under the
-same source keys and retain their original provenance.
+Publication rechecks Profile/guidance, posting/Requirements, captured assessment
+heads and cancellation. Inference holds no writer lock. A job without score
+history may resolve its fixed missing items during explicit initial assessment;
+publication fences score revision zero and both current and historical heads.
+A previously scored job with changed inputs requires manual refresh. Force never
+bypasses accepted authority or refresh admission.
 
-All missing requirements enter one `fit.qualification-batch` determination,
-prompt `fit-qualification-batch-v1`, in the existing `scoring` lane. The request
-supplies the complete factual inventory once and namespaces each requirement as
-`requirement:<id>`. The strict wire is `{ requirements: QualificationDecision[] }`.
-It must contain each requested ID and exact revision once, with no missing,
-duplicate or foreign row. A row's requirement citations must bind its own
-meaning. No requirement source can prove candidate facts or stand in for a
-different requirement. There are no chunks, truncation, semantic retries,
-lexical fallback or new raw-result cache.
+## Equal scores and user corrections
 
-The raw batch is re-read through its immutable gateway receipt ID and checked
-for exact value, operation, prompt and provider/model/lane/input provenance.
-All row schemas and source/evidence bindings validate before
-`FitStore.publish_assessments` publishes the complete new set atomically under
-Profile, guidance, posting, Requirements, expected-assessment-head and
-cancellation guards. Each row has its own assessment identity, canonical
-revision and `provenance.qualification_result_fingerprint`. Rows share the
-batch determination/receipt ID and `provenance.accepted_result_fingerprint` of
-the raw batch. The shared raw fingerprint must not be described as the row's
-result fingerprint. Score publication retains its separate final guards.
+`domain.calculate_score` persists `requirement-fit-v3-equal`. Every distinct
+canonical requirement and every distinct direct demand contributes one item.
+Credits are direct = 1, strong = .85, transferable = .6, missing/blocked/
+not-assessed = 0. For N > 0:
 
-Manual refresh uses the same batch wire only after its complete-catalog impact
-decision and within its frozen selected scope. It prepares selected requirements
-without completed checkpoints in one batch, checkpoints the complete map before
-individual rows, and reserves one model call for that batch. Existing affected-
-item limits, deadlines, failure/partial-result reporting and explicit admission
-remain. Saves, reads and wording approval start no work. Batching changes neither
-provider/model/effort policy nor qualification semantics or score arithmetic.
+`score = clamp(1 + floor(9 * sum(credits) / N + .5), 1, 10)`
 
-## Public HTTP and events
+N = 0 produces no score: `score`, `computed_score`, `fit_band` and confidence are
+null. Summary retains `assessed_count`, `supported_count`,
+`qualification_coverage` and typed factual `blocker_count`. `weighted_fit` is a
+compatibility alias for the same equal average. Contributions are
+`{ max_points: 1, awarded_points: credit }`. There is no must-have multiplier,
+source priority, tier/scope weight or blocker cap. Eligibility's compatibility
+object remains unknown with empty blocker/warning lists.
 
-`GET /v1/jobs/{job_id}/fit`, `/fit/history`, and `/fit/coverage` are read-only.
-`POST /v1/jobs/{job_id}/fit/assess` requires `expected_revision` and accepts
-`profile_id`, `force`, `prepare_coverage`, and `prepare_wording`.
-`POST /v1/jobs/{job_id}/fit/correct` requires the exact revision, score and
-rationale. `POST /v1/jobs/{job_id}/fit/coverage/refresh` explicitly prepares
-coverage/proposals. `POST /v1/fit/requirements/{id}/correct` records a human
-qualification correction. `POST /v1/fit/summaries` reads at most 1,000 selected
-jobs in one request. `/v1/fit/evidence-map`, `/v1/scoring/keywords`, and
-`/v1/scoring/policy` retain the audit and policy surfaces.
+Score corrections add immutable score versions and correction anchors while
+retaining the computed score and original report. A correction does not repair
+stale sources or change qualification. Reusable requirement corrections bind the
+exact assessment, Profile source version, canonical revision and literal permitted
+evidence. Direct demands do not use the canonical correction endpoint. Old
+contract scores cannot be corrected into new authority. No-score records cannot
+receive a numerical correction.
 
-`GET /v1/fit/requirement-library?profile_id=default` returns `catalog_revision`,
-Profile/factual/wording revisions and `requirements`. Each entry contains the
-current canonical meaning, a nullable recorded `assessment` (including
-`achievement_ids`, citations and determination), exact `coverage` rows and
-separate `associations`. `current_wordings` contains active maintained assignment
-heads, including visibly stale ones; `wording_assignments` also retains removed
-heads for recovery. Coverage receipt freshness is not a maintained selection.
-Currentness is determined from recorded canonical
-revisions, factual-source fingerprints, assessment IDs and exact approved
-variant fingerprints. Historical coverage remains labeled stale; a source
-reference or manual association cannot stand in for achievement support. Before
-Profile creation, the catalog remains readable with
-`readiness: "profile_required"` and null Profile versions; absent assessment is
-not a negative qualification judgment.
+Minimum-fit readiness reads the live versioned setting without recomputing any
+score. It requires a current numerical score. Legacy-contract and unsupported-
+language scores are excluded from active Digest match sets and keyword labels;
+their original values remain in history and the stale-job inventory.
 
-User associations have separate persistence and explicit endpoints:
+## Approved wording and section support
 
-- `POST /v1/fit/associations` requires a client-generated `association_id`,
-  `profile_id`, `expected_profile_revision`, `requirement_id`,
-  `requirement_revision`, `achievement_id`, `achievement_source_refs`, and
-  optional `wording`. Wording binds `variant_id`, `variant_revision`,
-  `exact_text` and `source_refs`. The entire creation is fenced against the
-  current public Profile and Requirements snapshots in one write transaction.
-  A repeated identity with the exact original request returns its current
-  saved record; changing the request under that identity conflicts. Only one
-  active association per Profile/achievement/canonical-requirement pair is
-  allowed, independently of its optional wording pin.
-- `POST /v1/fit/associations/{id}/revisions` takes the creation fields plus
-  `expected_revision`. It retains the pair and association identity while
-  explicitly revising the requirement/source pins or optional wording. The
-  current Profile and all new exact pins are checked again before publication;
-  the previous association remains immutable history.
-- `POST /v1/fit/associations/{id}/state` requires `profile_id`,
-  `expected_revision` and `state: "active" | "removed"`. A change adds an
-  immutable association revision. Restore retains original requirement,
-  achievement-source and wording pins; it cannot adopt newer inputs, even if
-  this leaves the restored link stale.
-- `GET /v1/fit/associations/{id}/history` returns retained revisions, including
-  removal/restoration, with `current_revision`, `total`, `limit`, `offset`
-  and `rows`. History pages default to 50 and allow at most 200 records.
+Qualification is independent of wording and document selection. A supported
+Skills/Experience item with `wording_support: section` appears in coverage's
+`section_support` with exact assessment/evidence IDs. It creates no achievement
+wording gap, makes no wording/authoring call, and supplies no achievement-selection
+objective. Direct Education/Language demands are absent from coverage altogether.
 
-Every association records `origin: "user"` and
-`assessment_status: "unassessed"`, independently of its active/removed state
-and current/stale bindings. An optional wording association does not approve
-that wording or assert expression coverage. These writes emit only
-`FitAssociationUpdated` with invalidation IDs/revisions. They do not change a
-Profile version, qualification, coverage relation, score, approval or accepted
-resume, and never admit model work. A user must deliberately run the existing
-affected-matches operation to reassess saved factual inputs; a manual link
-itself is not semantic evidence.
+For achievement-backed reusable support, `Coverage.refresh` reuses exact current
+relations and maintained assignments first. It considers an achievement's complete
+currently supported reusable set and approved variants together in one grouped
+expression decision. Already covered requirements and stylistic variation cannot
+justify new wording. One exact approved wording can serve several requirements;
+multiple maintained variants require a recorded source-bound exception. Profile
+alone proposes text, and only an explicit user action approves it.
 
-Maintained wording is a different record with `assignment_id`, monotonic
-`revision`, Profile/achievement/requirement IDs, exact requirement and variant
-revisions, `approval_id`, positive coverage `relation_id`, source pins and
-`selection_provenance`. The unique pair excludes requirement revision so a
-meaning correction cannot create a second simultaneous head. The current
-assignment and every earlier revision remain inspectable.
+Relations bind canonical revision, accepted qualification, achievement, exact
+variant revision/text fingerprint, approval and source versions. Revalidation
+follows literal recorded ancestry and retains original semantic authority.
+Historical authoring intent cannot force achievement wording for an item now
+supported by a section. Consolidation preserves every current achievement wording
+objective; accepted section support remains separate.
 
-- `POST /v1/fit/current-wordings` requires `profile_id`,
-  `expected_profile_revision`, `expected_revision` (zero before the first
-  assignment), `achievement_id`, `requirement_id`, `requirement_revision`,
-  `variant_id`, `variant_revision`, `approval_id` and `relation_id`. Only a
-  current exact approved variant and its current positive coverage receipt can
-  be selected. Exact no-ops are allowed. A manual change must result in one
-  distinct exact wording for that achievement; otherwise
-  `fit_wording_consolidation_required` directs the user to **Update affected
-  matches**. A partial activation of an approved replacement across its
-  intended/prior requirement set is also refused.
-- `POST /v1/fit/current-wordings/{id}/state` takes `profile_id`,
-  `expected_revision`, and `state: "active" | "removed"`. Removal preserves
-  history. Restoration checks the original exact positive bindings and the
-  same single-wording guard; it cannot restore stale authority.
-- `GET /v1/fit/current-wordings/{id}/history` returns bounded immutable
-  assignment revisions, with the same pagination and freshness fields as
-  association history. Replaying an exact successful set/revise/state request
-  is accepted only when the stored request fingerprint and immediately next
-  revision still agree; intervening writes conflict.
+Pending, rejected, deferred, failed and uncertain requests are retained and
+deduplicated across equivalent jobs. An explicit retry targets the exact failed
+proposal, current grouped sources and approved inventory. Old-contract authoring
+metadata cannot be resurrected. A failed model/coverage/authoring refresh retains
+the last accepted qualification, wording assignments and artifact bytes.
+`prepare_coverage=False` runs no expression work; `prepare_wording=False` permits
+coverage assessment while suppressing authoring proposals.
 
-Grouped publication joins its persisted group determination, full supported
-requirement inventory, exact approved-wording inventory and recorded selected
-pairs. Multiple wordings require the persisted consolidation exception. It
-atomically fences and replaces the complete achievement group, refuses dropping
-still-supported or unresolved prior mappings, and retains assignment history.
-Literal qualification revalidation may update a mapping's coverage receipt ID
-only by following its recorded positive `revalidated_from` ancestry with the
-same semantic qualification, meaning and exact variant/approval fingerprints.
-The original selection authority and revision lineage remain recorded. This
-reuses authority without another model selection or a lexical fallback.
-Publication updates a running manual refresh's accepted mapping fingerprint
-in the same transaction, preventing its own commit from looking like an
-unrelated writer while still rejecting concurrent user selections.
+## Manual bounded refresh
 
-These assignment writes emit `FitCurrentWordingUpdated`; they grant no wording
-approval and do not alter historical coverage or accepted resume bytes. No
-old approved variant is globally deleted or relabeled as unapproved. Consumers
-join maintained selections and separately fence their mapping fingerprint;
-historical document acceptance keeps its recorded selection and source rules.
+`fit.refresh` is manually admitted with an exact pending-input fingerprint,
+selected saved jobs and persisted call/item/wording/deadline limits. The operation
+freezes the complete active reusable catalog, the selected jobs' direct demands,
+Profile sources and guidance, prior assessment/source heads, approved wording and
+maintained assignments. Unselected jobs' direct demands never expand its scope.
 
-Post-edit qualification for a previously scored job through older
-assessment/coverage commands returns `fit_refresh_required`. A job with no prior
-score may resolve its fixed requirement set during explicit initial preparation;
-shared assessment history alone does not require a catalog-wide refresh.
-Manual refresh uses:
+One complete source-bound impact determination selects affected items, including
+previously unsupported meanings that new facts may support. Exact unaffected
+source bindings require no semantic call. Unchanged judgments retain their
+original receipt, with an explicit revalidation lineage when sources change.
+Every pending selected item enters one qualification batch; the complete map is
+checkpointed before individual rows. Publication updates only selected job scores.
 
-- `GET /v1/fit/refresh/pending?profile_id=default`: returns HTTP 200 with
-  `readiness: "ready"`, a saved-input stamp, recorded pending reasons,
-  available/stale scored-job IDs and latest operation when Profile exists.
-  Before Profile creation it returns only
-  `{ "profile_id": "default", "readiness": "profile_required" }` (using the
-  requested Profile ID), also with HTTP 200. This state supplies no input stamp,
-  counts or invented currentness; callers show Profile setup and cannot start
-  new refresh work. Only absence at the public Profile snapshot boundary gets
-  this readiness result; catalog, job and other source failures remain errors.
-  Existing operation/status reads remain available independently, and refresh
-  execution still requires a real saved Profile. The pending read makes no
-  model call and does not claim the affected requirement set before selection.
-  `pending_wording_failures` follows current canonical retry successors and
-  source bindings independently of the latest operation, so retrying one failed
-  proposal cannot hide another unresolved proposal.
-- `POST /v1/actions/fit.refresh`: `profile_id`, explicit `job_ids` (up to 100,
-  empty allowed for catalog relationships only), required
-  `expected_input_fingerprint`, `prepare_wording`, and `limits`. Defaults admit
-  up to 40 model-call attempts, 100 affected qualifications, 20 wording proposals and
-  600 seconds. The full catalog is never truncated to meet a work limit.
-- `GET /v1/fit/refresh/operations/{operation_id}`: fixed scope, phase, selected
-  IDs, counters, deadline, failure code and partial-publication boundary. For
-  an already admitted action, `?allow_pending=true` returns `null` until its
-  feature operation exists; it does not establish action admission. The default
-  remains 404 for an absent operation.
-- `POST /v1/action-runs/{run_id}/cancel`: the shared durable cancellation path.
+Reservations precede external I/O and counters/checkpoints survive restart. A lost
+external acknowledgement cannot spend a fresh allowance. Input/catalog/posting/
+assignment changes refuse stale completion; cancellation and failures preserve
+accepted results. Factual publication and later expression failure are reported
+separately. Ordinary gateway lane/workspace spend preflight still applies; work
+limits are not a guaranteed monetary maximum. Reads, saves, approval and the
+refresh's own writes admit no additional work or cascades.
 
-An explicitly selected `retry_wording_proposal_ids` array uses the same action
-with an empty job scope to retry failed or semantically uncertain authoring.
-It defaults to empty and does not authorize unrelated proposal work. Exact
-current source/achievement/requirement bindings and prior outcome are checked
-before work; pending, approved, rejected and deferred proposals cannot be
-retried through this option. Each new attempt records its predecessor, while
-an exact retry of its action identity reuses that attempt. Failed/uncertain
-wording remains visible as unfinished work rather than a completed update.
-Prior attempts remain history; a successful subset retry does not clear
-unselected failures.
+## Public surfaces and adapter boundary
 
-The action admission stamp covers saved facts, approved wording, guidance,
-catalog and prior recorded assessments/jobs. One active action per profile is
-enforced even before a worker starts. A new key cannot bypass an existing run;
-`action_scope_busy` identifies it. The worker also fences captured input at
-publication. Catalog, Profile or selected job changes cannot expand the plan.
-Pending proposal bookkeeping does not count as new approved input.
+HTTP, CLI and durable actions call the same `FitService`; `bootstrap.build_feature`
+constructs the SQLite adapter and injects its feature-owned store port. The
+feature reads public Profile/Requirements snapshots, never sibling private tables.
+Canonical writes and bounded invalidation events commit in one SQLite transaction.
 
-The `model_calls` counter reserves an attempt before gateway/provider admission;
-it includes a refused or uncertain attempt and does not prove a provider charge.
-Manual operation limits are separate from the gateway's lane/workspace spend
-admission. Responses explicitly report `hard_monetary_bound: false`; neither a
-model-call count nor a daily spend threshold guarantees a maximum final charge
-for an external provider call. No real-provider spend QA follows from this API.
+- Jobs: `GET /v1/jobs/{id}/fit`, `/fit/history`, `/fit/coverage`; explicit
+  `/fit/assess`, `/fit/correct` and `/fit/coverage/refresh` actions.
+- Library: `GET /v1/fit/requirement-library` returns the active reusable catalog,
+  recorded current/stale assessments, exact relations and maintained assignments.
+  Before Profile exists it remains readable as `readiness: profile_required`.
+- User associations: creation/revision/state/history endpoints retain revision-
+  bound intent with `origin: user` and `assessment_status: unassessed`. They never
+  write qualification, coverage, scores, approval or model work.
+- Maintained wording: explicit selection/state/history endpoints bind exact
+  current approved wording and positive coverage; assignment history remains
+  separate from immutable coverage receipts.
+- Audit/composition: evidence-map, bounded bulk summaries, policy, model-supplied
+  keyword labels and Digest joins retain recorded identities/currentness.
+- Refresh: pending and operation reads are model-free. A manual operation's
+  selected job IDs, versions, counters, limits, checkpoints and failure state
+  remain inspectable through completion, partial failure or cancellation.
 
-Events are `FitAssessed`, `FitCorrected`, `FitRequirementCorrected`,
-`FitCoverageUpdated`, `FitRefreshUpdated`, `FitAssociationUpdated`, and
-`FitCurrentWordingUpdated`, carrying
-IDs and revisions only. Failure responses never
-include private model prose. Failed factual refreshes preserve the last accepted
-score; expression-preparation failures cannot lower a factual score. A stale
-coverage caller receives no positive composition edge. Honest `not_recorded`
-coverage can still be source-fenced for a complete baseline with visible gaps.
-
-## Verification boundary
-
-Recurring verification belongs to the fresh integrated E2E suite. Owner proof
-uses the real Python HTTP application, SQLite, Profile and Requirements actions,
-and a controlled loopback external-model transport. Static compilation and
-lint remain useful. These checks do not establish real-provider quality,
-packaged runtime behavior, browser rendering, or the integrated Temporal worker;
-those remain separate integration evidence.
+Validation follows `docs/local-reliability-qa.md`: actual public application
+journeys in owned synthetic workspaces, controlled only at the external provider
+boundary. No labeled semantic corpus, internal replacement service, snapshot test
+or recorded-output replay establishes model authority.

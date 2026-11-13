@@ -16,6 +16,7 @@ import {
   catalogMatching,
   citeSources,
   modelSources,
+  typedExtraction,
 } from "./requirements-data.js";
 import { qualificationBatchDecision } from "./qualification-data.js";
 export { qualificationBatchDecision } from "./qualification-data.js";
@@ -195,7 +196,7 @@ export function qualificationDecision(
     requirement_citations: citeSources(call, ["requirement"]),
     achievement_ids: achievementIds,
     keywords: [],
-    eligibility: "eligible",
+    eligibility: "unknown",
     blocker_category: null,
     warning_category: null,
   };
@@ -274,29 +275,10 @@ export async function createScoredFit(
     data: { expected_posting_revision: posting.revision, expected_revision: 0 },
   });
   const extraction = await modelCall(app, "requirements.extract");
-  const source = modelSources(extraction)[0]!;
   const localIds = ["recovery", "ownership"];
-  extraction.reply({
-    status: "complete",
-    requirements: clauses.map((text, index) => ({
-      local_id: localIds[index],
-      text,
-      definition: text,
-      qualifiers: [],
-      scope: "resume",
-      tier: "must_have",
-      weight: 1,
-      support: "supported",
-      spans: [
-        {
-          source_id: source.source_id,
-          quote: text,
-        },
-      ],
-    })),
-    reason: "Explicit complete inventory for this authored synthetic posting.",
-    citations: citeSources(extraction, [source.source_id]),
-  });
+  extraction.reply(typedExtraction(extraction, { requirements: clauses.map((text, index) => ({
+    localId: localIds[index]!, text,
+  })) }));
   const matching = await modelCall(app, "requirements.match_catalog");
   matching.reply(
     catalogMatching(

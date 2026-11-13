@@ -27,6 +27,7 @@ import {
   catalogMatching,
   citeSources,
   modelSources,
+  typedExtraction,
 } from "./requirements-data.js";
 
 const modelOperations = (app: ApplicationStack, since = 0) =>
@@ -39,13 +40,13 @@ const pendingRefresh = (api: APIRequestContext) =>
 const operation = (api: APIRequestContext, runId: string) =>
   json<RefreshOperation>(api, "get", `/v1/fit/refresh/operations/${runId}`);
 
-async function saveName(api: APIRequestContext, name: string) {
+async function saveRoleSummary(api: APIRequestContext, label: string) {
   const current = await json<Profile>(api, "get", "/v1/profile");
   return json<Profile>(api, "patch", "/v1/profile", {
     expectedProfileVersion: current.profileVersion,
     profile: {
       ...current.profile,
-      personal: { ...current.profile.personal, full_name: name },
+      resume: { ...current.profile.resume, experience_entries: current.profile.resume.experience_entries.map((row, index) => index === 0 ? { ...row, summary: `Maintained services with reviewed recovery evidence: ${label}.` } : row) },
     },
   });
 }
@@ -375,7 +376,7 @@ test("manual cancellation retains accepted scores and distinct keys cannot admit
   app,
 }) => {
   const seed = await createScoredFit(api, app, "manual-cancel");
-  await saveName(api, "Synthetic Changed Candidate");
+  await saveRoleSummary(api, "Synthetic Changed Candidate");
   const pending = await pendingRefresh(api);
   const payload = refreshPayload(pending);
   const before = app.external.calls.length;
@@ -474,7 +475,7 @@ for (const changedSource of ["Profile", "posting", "catalog"] as const) {
       expectedRevision: settings.revision,
       dailyBudgetUsd: 0,
     });
-    await saveName(api, "Synthetic First Saved Change");
+    await saveRoleSummary(api, "Synthetic First Saved Change");
     const payload = refreshPayload(await pendingRefresh(api));
     const before = app.external.calls.length;
     const run = await startRefresh(
@@ -484,7 +485,7 @@ for (const changedSource of ["Profile", "posting", "catalog"] as const) {
     );
     const held = await modelCall(app, "fit.catalog-impact");
     if (changedSource === "Profile")
-      await saveName(api, "Synthetic Later Saved Change");
+      await saveRoleSummary(api, "Synthetic Later Saved Change");
     if (changedSource === "posting")
       await json(api, "patch", `/v1/jobs/${seed.posting.job_id}`, {
         expectedRevision: seed.posting.revision,
@@ -503,27 +504,9 @@ for (const changedSource of ["Profile", "posting", "catalog"] as const) {
       });
       const call = await modelCall(app, "requirements.extract");
       const source = modelSources(call)[0]!;
-      call.reply({
-        status: "complete",
-        requirements: [
-          {
-            local_id: "separate",
-            text: source.text,
-            definition: "Own a separate qualified operational responsibility",
-            qualifiers: [
-              { dimension: "domain", value: "separate synthetic service" },
-            ],
-            scope: "resume",
-            tier: "must_have",
-            weight: 1,
-            support: "supported",
-            spans: [{ source_id: source.source_id, quote: source.text }],
-          },
-        ],
-        reason:
-          "Explicit distinct canonical addition from this current source.",
-        citations: citeSources(call, [source.source_id]),
-      });
+      call.reply(typedExtraction(call, { requirements: [{
+        localId: "separate", text: source.text, definition: "Own a separate qualified operational responsibility",
+      }] }));
       const matching = await modelCall(app, "requirements.match_catalog");
       matching.reply(
         catalogMatching(matching, { separate: { verdict: "new" } }),
@@ -564,7 +547,7 @@ test("a saved change while a manual refresh is queued refuses before any selecto
   });
   const replacement = await app.restartWorker();
   expect(replacement.current).not.toBe(replacement.previous);
-  await saveName(api, "Synthetic Reviewed Queued Change");
+  await saveRoleSummary(api, "Synthetic Reviewed Queued Change");
   const payload = refreshPayload(await pendingRefresh(api));
   const blockerPosting = await createPosting(api, "manual-queue-blocker");
   const before = app.external.calls.length;
@@ -588,7 +571,7 @@ test("a saved change while a manual refresh is queued refuses before any selecto
         ).status,
     )
     .toBe("queued");
-  await saveName(api, "Synthetic Newer Queued Change");
+  await saveRoleSummary(api, "Synthetic Newer Queued Change");
   held.reply({
     status: "complete",
     requirements: [],

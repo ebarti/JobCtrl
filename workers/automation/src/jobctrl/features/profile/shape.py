@@ -98,6 +98,7 @@ def canonical_profile(value):
     result.setdefault("application_preferences", {}).setdefault("how_heard", "")
     result.setdefault("resume_constraints", {}).setdefault("real_metrics", [])
     resume = result["resume"]
+    resume.setdefault("language_entries", [])
     resume.setdefault("executive_profile", {}).setdefault("baseline_text", "")
     for role in resume.get("experience_entries", []):
         for key in ("date_range", "location", "summary"):
@@ -136,4 +137,4 @@ def canonical_profile(value):
 
 
 def empty_profile():
-    return canonical_profile({"resume": {"experience_entries": [], "education_entries": [], "skill_categories": []}})
+    return canonical_profile({"resume": {"experience_entries": [], "education_entries": [], "skill_categories": [], "language_entries": []}})

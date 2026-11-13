@@ -4,6 +4,87 @@ export type ModelSource = { source_id: string; text: string };
 export const modelSources = (call: ExternalCall) =>
   call.body["sources"] as ModelSource[];
 
+export type ReusableDemand = {
+  localId: string;
+  text: string;
+  name?: string;
+  definition?: string;
+  category?: "skill" | "professional_experience";
+  basis?: "explicit" | "inferred" | "explicit_and_inferred";
+  rationale?: string | null;
+  sourceNote?: string | null;
+};
+type EducationDemand = {
+  text: string;
+  qualification: string;
+  subjects?: string[];
+  alternative?: string | null;
+};
+type LanguageDemand = { text: string; language: string; proficiency?: string | null };
+
+/** Authored decisions for this live external request. Literal quote binding is
+ * shared plumbing; the caller supplies every meaning and language judgment. */
+export function typedExtraction(
+  call: ExternalCall,
+  {
+    requirements = [],
+    education = [],
+    languages = [],
+    classification = "english",
+    status = "complete",
+  }: {
+    requirements?: ReusableDemand[];
+    education?: EducationDemand[];
+    languages?: LanguageDemand[];
+    classification?: "english" | "non_english" | "uncertain";
+    status?: "complete" | "needs_review" | "unsupported_language";
+  },
+) {
+  const source = modelSources(call)[0]!;
+  const quotes: { evidence_id: string; source_id: string; quote: string }[] = [];
+  const refs = (quote: string) => {
+    let selected = quotes.find((row) => row.quote === quote);
+    if (!selected) {
+      selected = { evidence_id: `quote-${quotes.length + 1}`, source_id: source.source_id, quote };
+      quotes.push(selected);
+    }
+    return [selected.evidence_id];
+  };
+  const reusable = requirements.map((row) => ({
+    local_id: row.localId,
+    category: row.category ?? "professional_experience",
+    name: row.name ?? row.text,
+    definition: row.definition ?? row.text,
+    basis: row.basis ?? "explicit",
+    rationale: row.rationale ?? null,
+    source_note: row.sourceNote ?? null,
+    evidence_refs: refs(row.text),
+  }));
+  const directEducation = education.map((row) => ({
+    qualification: row.qualification,
+    subjects: row.subjects ?? [],
+    alternative: row.alternative ?? null,
+    source_note: null,
+    evidence_refs: refs(row.text),
+  }));
+  const directLanguages = languages.map((row) => ({
+    language: row.language,
+    proficiency: row.proficiency ?? null,
+    source_note: null,
+    evidence_refs: refs(row.text),
+  }));
+  const languageRefs = quotes.length ? [quotes[0]!.evidence_id] : refs(source.text);
+  return {
+    status,
+    language: { classification, reason: "Explicit source-bound language determination for this synthetic posting.", evidence_refs: languageRefs },
+    quotes,
+    requirements: reusable,
+    education: directEducation,
+    languages: directLanguages,
+    unresolved: [],
+  };
+}
+
 export function citeSources(call: ExternalCall, sourceIds: string[]) {
   return sourceIds.map((sourceId) => {
     const source = modelSources(call).find((row) => row.source_id === sourceId);
@@ -40,6 +121,7 @@ export function catalogMatching(
     context.incoming.map((row) => row.local_id).sort(),
   );
   return {
+    status: "complete",
     catalog_revision: context.catalog_revision,
     decisions: context.incoming.map((incoming) => {
       const choice = choices[incoming.local_id]!;

@@ -1,10 +1,11 @@
 import type { APIRequestContext } from "@playwright/test";
 import { expect, json, modelCall, type ApplicationStack, type ExternalCall } from "../harness/fixtures.js";
-import { catalogMatching, citeSources, modelSources, type CatalogChoice } from "./requirements-data.js";
+import { catalogMatching, typedExtraction, type CatalogChoice } from "./requirements-data.js";
 
 export type CapturedPosting = { job_id: string; revision: number; source_id: string; source_revision: number; source_hash: string; description: string };
 export type RequirementDefinition = { localId: string; text: string; definition?: string };
 export type RequirementSnapshot = {
+  contract_version: "requirements-v2";
   job_id: string; revision: number; posting_revision: number; posting_hash: string; stale: boolean;
   requirements: {
     occurrence_id: string; requirement_id: string; requirement_revision: number; job_id: string;
@@ -33,17 +34,7 @@ export function reusableModelCatalog(app: ApplicationStack) {
 }
 
 export function extractionFor(call: ExternalCall, definitions: RequirementDefinition[]) {
-  const source = modelSources(call)[0]!;
-  return {
-    status: "complete",
-    requirements: definitions.map((row) => ({
-      local_id: row.localId, text: row.text, definition: row.definition ?? row.text,
-      qualifiers: [], scope: "resume", tier: "must_have", weight: 1, support: "supported",
-      spans: [{ source_id: source.source_id, quote: row.text }],
-    })),
-    reason: "Explicit complete inventory for this current authored synthetic posting.",
-    citations: citeSources(call, [source.source_id]),
-  };
+  return typedExtraction(call, { requirements: definitions });
 }
 
 /** Real public refresh with explicitly expected external calls; no inference or response replay. */

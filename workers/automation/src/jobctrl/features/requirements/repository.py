@@ -7,7 +7,7 @@ from contextlib import contextmanager
 
 from jobctrl.app.errors import ConflictError, NotFoundError
 
-from .domain import RequirementError, canonical_json, now
+from .domain import CONTRACT_VERSION, MEANING_KEYS, RequirementError, canonical_json, current_contract, now
 
 
 class SqliteRequirementStore:
@@ -36,7 +36,7 @@ class SqliteRequirementStore:
             return {}
         placeholders = ",".join("?" for _ in job_ids)
         rows = connection.execute(
-            "SELECT s.job_id,s.revision,s.posting_revision,s.posting_hash, "
+            "SELECT s.job_id,s.revision,s.posting_revision,s.posting_hash,s.snapshot_json, "
             "(SELECT json_group_array(json_object( "
             "'requirement_id',json_extract(item.value,'$.requirement_id'), "
             "'accepted_revision',json_extract(item.value,'$.requirement_revision'), "
@@ -51,11 +51,19 @@ class SqliteRequirementStore:
             records = json.loads(row["bindings_json"])
             accepted = {(item["requirement_id"], item["accepted_revision"]) for item in records}
             current = {(item["requirement_id"], item["current_revision"]) for item in records if item["current_revision"] is not None}
+            snapshot = json.loads(row["snapshot_json"])
+            reasons = [] if current_contract(snapshot) else ["contract_changed"]
+            if any(item["accepted_revision"] != item["current_revision"] for item in records):
+                reasons.append("requirement_revised")
+            direct = [{"requirement_id": item["requirement_id"], "requirement_revision": item["revision"]}
+                      for field in ("education", "languages") for item in snapshot.get(field, [])] if current_contract(snapshot) else []
             bindings[row["job_id"]] = {
+                "contract_version": snapshot.get("contract_version"), "status": snapshot.get("status"),
+                "stale_reasons": reasons,
                 "revision": row["revision"], "posting_revision": row["posting_revision"], "posting_hash": row["posting_hash"],
-                "stale": any(item["accepted_revision"] != item["current_revision"] for item in records),
-                "requirement_revisions": [{"requirement_id": ident, "requirement_revision": revision} for ident, revision in sorted(accepted)],
-                "current_requirement_revisions": [{"requirement_id": ident, "requirement_revision": revision} for ident, revision in sorted(current)],
+                "stale": bool(reasons),
+                "requirement_revisions": [{"requirement_id": ident, "requirement_revision": revision} for ident, revision in sorted(accepted)] + direct,
+                "current_requirement_revisions": [{"requirement_id": ident, "requirement_revision": revision} for ident, revision in sorted(current)] + direct,
             }
         return bindings
 
@@ -101,7 +109,7 @@ class SqliteRequirementStore:
         ).fetchall()
         if meta is None or any(row["meaning_json"] is None for row in rows):
             raise RequirementError("catalog_snapshot_invalid")
-        return int(meta[0]), [self._meaning(row) for row in rows]
+        return int(meta[0]), [meaning for row in rows if current_contract(meaning := self._meaning(row))]
 
     def model_call(self, input_fingerprint):
         with self.database.connect() as connection:
@@ -135,14 +143,14 @@ class SqliteRequirementStore:
 
     @staticmethod
     def _document(meaning):
-        return canonical_json({k: meaning[k] for k in ("definition", "qualifiers", "scope")})
+        return canonical_json({k: meaning[k] for k in MEANING_KEYS})
 
     def catalog(self, *, limit=50, offset=0, query=""):
         revision, meanings = self.catalog_snapshot()
         # q is a literal catalog filter, never equivalence or novelty authority.
         if query:
             meanings = [row for row in meanings if query.casefold() in self._document(row).casefold()]
-        return {"catalog_revision": revision, "total": len(meanings), "requirements": meanings[offset:offset + limit]}
+        return {"contract_version": CONTRACT_VERSION, "catalog_revision": revision, "total": len(meanings), "requirements": meanings[offset:offset + limit]}
 
     def index_status(self):
         with self.read_session() as connection:
@@ -151,10 +159,15 @@ class SqliteRequirementStore:
                 "SELECT m.* FROM requirements_heads h JOIN requirements_meanings m "
                 "ON m.requirement_id=h.requirement_id AND m.revision=h.revision",
             )]
-            indexed = connection.execute("SELECT requirement_id,revision,document FROM requirements_retrieval").fetchall()
+            meanings = [meaning for meaning in meanings if current_contract(meaning)]
+            indexed = connection.execute(
+                "SELECT r.requirement_id,r.revision,r.document FROM requirements_retrieval r "
+                "JOIN requirements_meanings m ON m.requirement_id=r.requirement_id AND m.revision=r.revision "
+                "WHERE json_extract(m.meaning_json,'$.contract_version')=?", (CONTRACT_VERSION,),
+            ).fetchall()
             expected = {(m["requirement_id"], m["revision"]): self._document(m) for m in meanings}
             actual = {(row[0], int(row[1])): row[2] for row in indexed}
-            return {"catalog_revision": meta[0], "indexed_revision": meta[1], "meaning_count": len(meanings),
+            return {"contract_version": CONTRACT_VERSION, "catalog_revision": meta[0], "indexed_revision": meta[1], "meaning_count": len(meanings),
                     "indexed_count": len(indexed), "fresh": meta[0] == meta[1] and len(indexed) == len(actual) and expected == actual}
 
     def rebuild_index(self, expected_catalog_revision):
@@ -168,6 +181,8 @@ class SqliteRequirementStore:
                 "ON m.requirement_id=h.requirement_id AND m.revision=h.revision",
             ).fetchall():
                 meaning = self._meaning(row)
+                if not current_contract(meaning):
+                    continue
                 connection.execute("INSERT INTO requirements_retrieval(requirement_id,revision,document) VALUES (?,?,?)",
                                    (meaning["requirement_id"], meaning["revision"], self._document(meaning)))
             connection.execute("UPDATE requirements_catalog SET indexed_revision=? WHERE singleton=1", (revision,))
@@ -259,7 +274,10 @@ class SqliteRequirementStore:
             if attempt["input_fingerprint"] != input_fingerprint:
                 raise ConflictError("The requirement action ID belongs to another input.")
             row = connection.execute("SELECT snapshot_json FROM requirements_snapshots WHERE attempt_id=?", (attempt_id,)).fetchone()
-            return json.loads(row[0]) if row else None
+            snapshot = json.loads(row[0]) if row else None
+            if snapshot is not None and not current_contract(snapshot):
+                raise RequirementError("requirements_contract_changed")
+            return snapshot
 
     def accepted_revision_action(self, operation_id, input_fingerprint):
         with self.read_session() as connection:
@@ -270,6 +288,8 @@ class SqliteRequirementStore:
                 raise ConflictError("The requirement action ID belongs to another input.")
             meaning = self.get_meaning(row["requirement_id"], row["revision"], connection)
             head = self.get_meaning(row["requirement_id"], connection=connection)
+            if not current_contract(meaning):
+                raise RequirementError("requirements_contract_changed")
             return {**meaning, "stale": head["revision"] != meaning["revision"], "reused_action": True}
 
     def finish_attempt(self, attempt_id, state, failure_code=None):
@@ -286,6 +306,8 @@ class SqliteRequirementStore:
                 raise RequirementError("cancelled")
             posting_guard(posting["job_id"], posting["revision"], posting["source_hash"], connection=connection)
             current = self.get_meaning(revised["requirement_id"], connection=connection)
+            if not current_contract(revised) or not current_contract(current):
+                raise RequirementError("requirements_contract_changed")
             if current["revision"] != expected_revision:
                 raise ConflictError("The canonical requirement changed.")
             epoch = connection.execute("SELECT revision FROM requirements_catalog WHERE singleton=1").fetchone()[0]
@@ -313,6 +335,8 @@ class SqliteRequirementStore:
             return revised
 
     def assert_snapshot_current(self, snapshot, connection):
+        if not current_contract(snapshot):
+            raise ConflictError("The requirement contract changed. Refresh requirements first.", reason="contract_changed")
         saved = self.current_snapshot(snapshot["job_id"], connection)
         if saved is None or saved["revision"] != snapshot["revision"]:
             raise ConflictError("The accepted requirement snapshot changed.")
@@ -327,7 +351,7 @@ class SqliteRequirementStore:
 
     def publish(
         self, *, posting, expected_revision, catalog_revision, meanings, occurrences,
-        extraction_id, attempt_id, posting_guard, cancelled, event_type="RequirementsUpdated",
+        extraction_id, attempt_id, posting_guard, cancelled, extraction, event_type="RequirementsUpdated",
     ):
         with self.database.transaction() as connection:
             if cancelled():
@@ -342,6 +366,8 @@ class SqliteRequirementStore:
             if actual_catalog != catalog_revision:
                 raise RequirementError("catalog_changed")
             for meaning in meanings:
+                if not current_contract(meaning):
+                    raise RequirementError("requirements_contract_changed")
                 connection.execute(
                     "INSERT INTO requirements_meanings VALUES (?,?,?,?,?)",
                     (meaning["requirement_id"], meaning["revision"], self._document(meaning),
@@ -358,6 +384,7 @@ class SqliteRequirementStore:
                 (new_catalog_revision, new_catalog_revision),
             )
             snapshot = {
+                "contract_version": CONTRACT_VERSION, **extraction,
                 "job_id": posting["job_id"], "revision": expected_revision + 1,
                 "posting_revision": posting["revision"], "posting_hash": posting["source_hash"],
                 "source_id": posting["source_id"], "source_revision": posting["source_revision"],

@@ -151,7 +151,7 @@ function editorControlId(
 }
 
 export type ProfileActiveSection =
-  "experience" | "skills" | "education" | "personal" | "resume";
+  "experience" | "skills" | "education" | "languages" | "personal" | "resume";
 
 /** Peer Profile content remains mounted, without a whole-section disclosure. */
 function ProfileSection({
@@ -387,6 +387,7 @@ export function StructuredProfileEditor({
         "resume.experience_entries",
         "resume.education_entries",
         "resume.skill_categories",
+        "resume.language_entries",
       ]) {
         for (const entry of recordArrayAt(draft, entryPath)) {
           reservedRepeatIdsRef.current.add(textFrom(entry["id"]));
@@ -1578,6 +1579,7 @@ export function StructuredProfileEditor({
   const experienceEntries = recordArrayAt(profile, "resume.experience_entries");
   const educationEntries = recordArrayAt(profile, "resume.education_entries");
   const skillCategories = recordArrayAt(profile, "resume.skill_categories");
+  const languageEntries = recordArrayAt(profile, "resume.language_entries");
   const showProvinceStateField = isUnitedStatesAddressCountry(
     textAt(profile, "personal.country"),
   );
@@ -2133,6 +2135,39 @@ export function StructuredProfileEditor({
                 variant="secondary"
               >
                 Add education
+              </Button>
+            </FieldGroup>
+          </ProfileSection>
+
+          <ProfileSection
+            className="profile-disclosure profile-disclosure--languages"
+            collapsedSummary={`${languageEntries.length} ${languageEntries.length === 1 ? "language" : "languages"}`}
+            defaultOpen={false}
+            description="Your languages and proficiency, included in every resume"
+            headingLevel={3}
+            id="profile-languages"
+            hidden={activeSection !== "languages"}
+            title="Languages"
+          >
+            <FieldGroup className="repeat-list">
+              {languageEntries.length === 0 ? <p className="muted">Add the languages you use and describe your proficiency in your own words.</p> : null}
+              {languageEntries.map((entry, index) => (
+                <FieldSet className="repeat-section" key={textFrom(entry["id"])} aria-label={`Language ${index + 1}`}>
+                  <AdaptiveFieldGrid>
+                    {textField(`resume.language_entries.${index}.language`, "Language")}
+                    {textField(`resume.language_entries.${index}.proficiency`, "Proficiency", "text", { placeholder: "For example, native or professional working proficiency" })}
+                  </AdaptiveFieldGrid>
+                  <div className="repeat-controls">
+                    <Button
+                      aria-label={`Remove language ${index + 1}`}
+                      onClick={() => removeRepeatItem("resume.language_entries", index)}
+                      size="sm" type="button" variant="outline"
+                    >Remove language</Button>
+                  </div>
+                </FieldSet>
+              ))}
+              <Button onClick={() => addRepeatItem("resume.language_entries")} size="sm" type="button" variant="secondary">
+                <IconPlus size={14} aria-hidden="true" /> Add language
               </Button>
             </FieldGroup>
           </ProfileSection>

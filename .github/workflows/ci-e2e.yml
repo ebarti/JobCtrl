@@ -26,6 +26,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Fetch the fixed predecessor for the real workspace upgrade journey
+        run: git fetch --no-tags --depth=1 origin 8ab86e9232d66fff9795906e061d208e7a057d8b
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - name: Set up Node
@@ -98,7 +100,7 @@ jobs:
             /tmp/jobctrl-transform-1428/e2e-*/junit.xml
             /tmp/jobctrl-transform-1428/e2e-*/results.json
             /tmp/jobctrl-transform-1428/e2e-*/playwright/
-            /tmp/jobctrl-transform-1428/e2e-*/application-*/api.log
+            /tmp/jobctrl-transform-1428/e2e-*/application-*/api*.log
             /tmp/jobctrl-transform-1428/e2e-*/application-*/worker-*.log
             /tmp/jobctrl-transform-1428/e2e-*/temporal-*/temporal.log
           retention-days: 7

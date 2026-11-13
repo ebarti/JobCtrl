@@ -205,14 +205,39 @@ const EXPLANATION_CONTRACTS = [
     path: "/architecture/scoring",
     heading: "#inputs-and-semantic-authority",
     selectors: [
+      "#typed-requirements-and-permitted-evidence",
       "#deterministic-score-resolution",
       "#profile-edits-and-explicit-refresh",
+      "#generation-history-and-rollout",
     ],
     tokens: [
       "All rows pass schema, evidence and immutable gateway-receipt validation",
       "Invalid, stale, refused or cancelled work preserves accepted assessments and scores",
       "document gap and does not reduce factual fit",
-      "requirement-fit-v2-scoped",
+      "requirements-v2",
+      "requirement-fit-v3-equal",
+      "one item",
+      "For N = 0, no score is calculated",
+      "no source importance weights, must-have multipliers, blocker caps or invented source priorities",
+      "selected jobs' direct Education and Languages demands",
+      "Incompatible operation",
+      "stop old writers and back up the workspace",
+      "Rollback after such writes restores that backup",
+    ],
+  },
+  {
+    path: "/user/data-and-safety",
+    heading: "#typed-requirements-upgrade",
+    selectors: ["#back-up-and-restore"],
+    tokens: [
+      "stop every old application and worker writer",
+      "consistent workspace backup",
+      "workflow history and referenced accepted artifacts",
+      "active Skills/Professional Experience catalog",
+      "Incompatible old operations are refused",
+      "rollback restores the verified pre-upgrade backup",
+      "Installing an older binary alone is unsafe",
+      "has not rolled out to a live workspace",
     ],
   },
   {
@@ -1788,33 +1813,45 @@ try {
       (label) => (label.textContent ?? "").replace(/\s+/g, " ").trim(),
     );
     const requiredLabels = [
-      "Reuse current assessments and assess the missing set together.",
-      "Classify the returned evidence.",
-      "Apply evidence credit and requirement priority.",
-      "Assign the display band.",
+      "Skills",
+      "Professional Experience",
+      "Education",
+      "Languages",
+      "requirement-fit-v3-equal",
       "Confidence is a review signal, not a points adjustment.",
-      "Eligibility is recorded separately from soft fit.",
+      "Eligibility is recorded separately from fit.",
       "The minimum-fit threshold does not change the saved score.",
-      "A correction is not a hidden weight change.",
+      "A correction retains its own authority.",
     ];
     const requiredTokens = [
-      "requirement-fit-v2-scoped",
+      "requirements-v2",
+      "requirement-fit-v3-equal",
       "Direct match",
       "Strong match",
       "Transferable evidence",
-      "1.25×",
-      "score = 1 + round(9 × coverage)",
-      "zero contribution to both the numerator and denominator",
+      "demand counts as one item",
+      "meaning do not increase its points",
+      "alternatives group counts as one demand",
+      "score = clamp(1 + floor(9 × qualification coverage + 0.5), 1, 10)",
+      "For N = 0, there is no calculated score",
+      "no posting importance weights, must-have multipliers, blocker caps or invented source priorities",
+      "professional experience only if the posting explicitly offers that alternative",
+      "Language / Proficiency records only",
+      "without claiming a degree",
+      "source categories, identities, revisions and citations",
+      "Personal traits, certifications and licenses, job conditions and detailed years-of-experience analysis are excluded",
+      "skipped rather than translated or assigned zero fit",
+      "Update affected matches",
+      "Saving a Profile starts neither action",
+      "contract-change refresh status",
       "prior accepted score",
       "no word-overlap or opaque dimension-score fallback",
-      "evidence ID",
-      "capped at 4",
-      "Unavailable evidence",
     ];
-    // The Python Fit owner refuses missing weighted capability inputs. The
-    // retired dimension fallback must not return as current user guidance.
+    // The typed Fit owner uses equal-item arithmetic and refuses incomplete
+    // assessments. Retired weighted or opaque scoring must not return as guidance.
     const retiredFallbackTokens = [
       "45% technical fit", "30% experience fit", "25% role fit",
+      "requirement-fit-v2-scoped", "1.25×", "capped at 4",
     ];
     return {
       missingHeadings: [

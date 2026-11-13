@@ -20,7 +20,9 @@ const assessmentSchema = z.object({ assessment_id: z.string(), requirement_id: z
   requirement_revision: z.union([z.number(), z.string()]), definition: z.string(),
   achievement_ids: z.array(z.string()), evidence_refs: z.array(evidenceSchema),
   kind: z.enum(["matched", "transferable", "missing", "blocked", "not_assessed"]),
-  origin: z.enum(["model", "manual", "revalidated"]), rationale: z.string(), confidence: z.string(),
+  origin: z.enum(["model", "manual", "revalidated", "bundled_synthetic_example"]), rationale: z.string(), confidence: z.string(),
+  category: z.enum(["skill", "professional_experience", "education", "language"]).optional(), name: z.string().optional(),
+  wording_support: z.enum(["section", "achievement", "none"]).optional(),
   determination_id: z.string(), provenance: z.record(z.string(), z.unknown()), ...freshness,
 }).passthrough();
 const coverageSchema = z.object({ relation_id: z.string(), requirement_id: z.string(),
@@ -37,12 +39,12 @@ const currentWordingSchema = z.object({ assignment_id: z.string(), revision: z.n
   created_at: z.string(), updated_at: z.string(), ...freshness,
 }).passthrough();
 const entrySchema = z.object({ requirement_id: z.string(), revision: z.number().int().positive(), definition: z.string(),
-  scope: z.enum(["resume", "eligibility", "logistics", "employer_condition"]),
-  qualifiers: z.array(z.object({ dimension: z.string(), value: z.string() })),
+  contract_version: z.literal("requirements-v2"), category: z.enum(["skill", "professional_experience"]), name: z.string(),
   assessment: assessmentSchema.nullable(), coverage: z.array(coverageSchema), associations: z.array(associationSchema),
   current_wordings: z.array(currentWordingSchema), wording_assignments: z.array(currentWordingSchema),
 }).passthrough();
 const librarySchema = z.object({ profile_id: z.string(), readiness: z.enum(["ready", "profile_required"]),
+  contract_version: z.string().optional(), synthetic: z.boolean().optional(),
   profile_revision: z.number().int().positive().nullable(), fact_semantics_version: z.number().int().positive().nullable(),
   wording_revision: z.number().int().positive().nullable(), catalog_revision: z.number().int().nonnegative(), requirements: z.array(entrySchema),
 });

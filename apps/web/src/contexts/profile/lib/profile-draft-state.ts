@@ -92,6 +92,7 @@ const recoveryProjection = object({
       skill_categories: list(
         object({ ...scalars("id label"), items: strings }),
       ),
+      language_entries: list(object(scalars("id language proficiency"))),
       tailoring_rules: object({
         required_experience_entry_ids: strings,
         required_education_entry_ids: strings,

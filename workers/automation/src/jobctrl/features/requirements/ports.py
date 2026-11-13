@@ -59,5 +59,6 @@ class RequirementStore(Protocol):
     def publish(
         self, *, posting: dict, expected_revision: int, catalog_revision: int,
         meanings: list[dict], occurrences: list[dict], extraction_id: str,
-        attempt_id: str, posting_guard: Callable, cancelled: Callable[[], bool], event_type: str = "RequirementsUpdated",
+        attempt_id: str, posting_guard: Callable, cancelled: Callable[[], bool], extraction: dict,
+        event_type: str = "RequirementsUpdated",
     ) -> dict: ...

@@ -44,10 +44,7 @@ for (const defect of [
       expectedProfileVersion: current.profileVersion,
       profile: {
         ...current.profile,
-        personal: {
-          ...current.profile.personal,
-          full_name: "Synthetic Selector Source Change",
-        },
+        resume: { ...current.profile.resume, experience_entries: current.profile.resume.experience_entries.map((row, index) => index === 0 ? { ...row, summary: "Maintained services with reviewed recovery evidence: Synthetic Selector Source Change." } : row) },
       },
     });
     const pending = await json<PendingRefresh>(
@@ -194,10 +191,7 @@ test("a manual refresh publishes only its selected scored jobs while canonical q
     expectedProfileVersion: current.profileVersion,
     profile: {
       ...current.profile,
-      personal: {
-        ...current.profile.personal,
-        full_name: "Synthetic Selected Job Update",
-      },
+      resume: { ...current.profile.resume, experience_entries: current.profile.resume.experience_entries.map((row, index) => index === 0 ? { ...row, summary: "Maintained services with reviewed recovery evidence: Synthetic Selected Job Update." } : row) },
     },
   });
   const pending = await json<PendingRefresh>(

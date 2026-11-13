@@ -1,289 +1,215 @@
 # Requirements
 
-Requirements owns reusable qualified meanings, immutable meaning revisions,
-posting occurrences, model equivalence/novelty authority and catalog retrieval.
-`bootstrap.build_feature(runtime, jobs=...)` registers its actual HTTP routes and
-durable actions. The application composition loads it after Jobs and before Fit.
-It uses the public Jobs snapshot/current-version port and never accesses Jobs,
-Profile or Fit private storage.
+Requirements owns the `requirements-v2` generation: reusable Skills and
+Professional Experience meanings, their immutable revisions, exact posting
+occurrences, and job-local Education and Language demands. Its configured model
+owns extraction, source interpretation and equivalence. Fit owns factual
+qualification and scoring; Profile owns candidate facts and approved wording.
+`bootstrap.build_feature(runtime, jobs=...)` registers the HTTP routes and
+versioned durable actions through the public Jobs posting/currentness port.
 
-The previous employer-analysis `Requirement` fields are retained: job-specific
-text, must-have/preferred tier, priority weight, coverage scope and exact posting
-evidence. Job-local IDs become explicit occurrences joined to reusable canonical
-IDs/revisions. Requirement extraction no longer depends on Materials or an
-employer-analysis ensemble. Employer role framing, narratives and company
-research belong to their corresponding owners; person qualification and wording
-coverage belong to Fit.
+## Meaning and source authority
 
-## Source and semantic authority
+Extraction reads the complete exact saved posting description. Title, company
+and location metadata are not separately supplied or interpreted. A
+content-derived source ID identifies the complete description without a job ID,
+posting revision or observation timestamp. The source text is untrusted data.
 
-Every new extraction, catalog matching determination and correction calls the
-configured `Runtime.model` gateway in the `requirements` lane. Its persisted
-provider/model/prompt/input receipt accompanies the accepted owner binding.
-Domain checks enforce strict schemas, complete incoming ID inventories,
-revisions and exact contiguous posting spans. The model alone decides support,
-qualified meaning, equivalence and novelty. Unsupported, uncertain or malformed
-output never replaces an accepted snapshot.
+The extraction call first classifies the substantive posting language using
+owned verbatim evidence. An English posting may produce `complete`; material
+ambiguity refuses acceptance. A non-English posting produces
+`unsupported_language`, source evidence and empty item arrays. This is a
+recorded exclusion outcome, not a zero score or translated posting. Preparation
+stops before qualification and scoring.
 
-The `requirements-extract-v3-content-bound` wire asks the model for each
-supporting span as an exact `{source_id, quote}` selection. It does not ask the
-model to calculate numeric character offsets. Requirements verifies the supplied
-source ID and verbatim quote against the frozen posting, requires exactly one
-occurrence (including overlapping matches), and derives Python character
-`start`/`end` positions mechanically. Missing, foreign, blank or ambiguous quotes
-refuse the entire extraction; the application never chooses a first occurrence,
-normalizes text, guesses a nearby match or makes a repair-model call. Meaning,
-support and qualifier selection remain the model's decisions.
+The model extracts demonstrable skills and explicitly requested broad
+professional background. A coherent skill includes its ordinary activities,
+methods, quality checks and outcomes; responsibilities do not become one item
+per task. Independently demonstrable capabilities remain separate. Explicit
+named-technology expertise remains identifiable, while examples and alternatives
+belong in source notes. A generic parent skill requires additional demanded
+competence. Future work alone establishes no prior-background prerequisite.
 
-Canonical occurrences and the manual correction API retain the existing
-`{start, end, quote}` Span contract and exact source-slice validation. The raw
-quote-selection result remains unchanged in the gateway receipt and feature
-cache. Pure binding also runs during validation; the service uses the bound
-canonical Extraction only after those raw-result authority checks succeed.
-The bumped prompt and schema participate in the cache fingerprint, so an older
-numeric-selection response cannot be replayed as a v2 determination. Existing
-accepted snapshots and failed-attempt history are preserved.
+Personal attributes, certifications/licenses, job conditions, benefits and
+application instructions are excluded. Numerical duration/tenure analysis is
+excluded, including empty generic experience residues manufactured by removing
+a duration threshold. Excluded material does not become unresolved work.
+Education retains its qualification, subjects and any explicit equivalent-
+experience alternative. Languages retain the stated proficiency without an
+invented proficiency scale. Offered language classes establish no requirement.
+There are no generated tiers, weights, scopes or importance labels.
 
-Duration, scale, seniority, domain, logical alternatives, exceptions and scope
-remain part of qualified meaning. Tier/weight belong to an occurrence. A
-paraphrase may reuse a canonical ID only through a recorded model decision.
-Externally authored source labels remain provenance data. Extraction and full
-catalog matching use `posting-content:v1:<fingerprint>` source IDs over the
-complete exact posting text. Targeted corrections retain generated
-`posting:<job-id>:<revision>:<hash>` sources. Neither namespace can alias catalog
-sources or the catalog inventory source.
+The source-bound prompt preserves the reviewed v6 decomposition and equivalence
+rules. In particular, implementing a strategy does not by itself establish
+hands-on execution; guide/lead/implement wording or seniority alone cannot
+justify a different identity. Matching compares the actual competence and its
+owned evidence. It cannot invent a scope distinction to justify novelty.
 
-Extraction remains a separate source-bound call. The complete incoming batch
-and the **entire current canonical catalog**, including each definition, scope
-and qualifier, then enter one `requirements.match_catalog` determination. It
-returns exactly one `equivalent`, `new` or `uncertain` decision per incoming
-local ID. Canonical equivalence names an exact catalog ID/revision. Equivalence
-within the incoming batch points to an earlier, genuinely new representative;
-all occurrences remain recorded while only the representative creates a
-canonical meaning. There is no top-k selection, widening, paging, chunking,
-separate novelty judge or lexical fallback.
+Each raw quote is `{evidence_id, source_id, quote}`. Every quote must be nonblank,
+verbatim, contiguous, unique in its exact source, and used by the language
+classification or an extracted item. Every evidence reference must resolve to
+that source's quote inventory. The application derives Python character offsets
+without normalization, first-match selection or a repair call. An inferred item
+requires a recorded rationale. Unsupported or malformed results preserve prior
+accepted state.
 
-Every decision cites the posting, its incoming qualified meaning and the
-catalog inventory. Equivalence also cites its canonical or incoming target.
-The response echoes the exact catalog epoch. The inventory records canonical
-count and ID/revision/meaning fingerprints; it does not claim a prior negative
-sweep. Unknown, missing or duplicate incoming IDs, foreign targets, stale
-revisions, invalid local-reference graphs and non-verbatim citations refuse the
-whole result. Any uncertain decision preserves the previous accepted snapshot.
+## Extraction and accepted DTOs
 
-Matching reads canonical heads and meanings in one read transaction, independent
-of the repairable FTS index. Missing canonical revisions refuse the snapshot.
-The index, canonical heads and catalog epoch still update together on writes;
-the separate index-status reader verifies index documents against those heads.
-Explicit index repair copies current canonical meanings under a catalog-version
-guard and makes zero model calls; it cannot create or change a meaning.
+The strict single-posting extraction response contains:
 
-Each refresh permits at most five new model calls: extraction plus at most four
-whole-catalog attempts when a concurrent publication changes the catalog.
-Posting input remains bounded to 192,000 bytes. The gateway checks its full
-serialized request against a 1 MiB structural limit before provider admission;
-model lane, capacity and spend admission apply to each new external call. That
-byte limit does not establish token-context fit. The current gateway exposes no
-selected-model token-context capacity for a separate token preflight. Known
-context refusals remain explicit when the gateway exposes them; generic
-provider failures retain their actual failure code. Size, work, spend, provider
-or context refusal never triggers smaller requests or an automatic retry and
-never publishes a partial catalog decision.
+- `status`: `complete`, `needs_review` or `unsupported_language`.
+- `language`: `classification` (`english`, `non_english` or `uncertain`),
+  source-bound `reason`, and `evidence_refs`.
+- `quotes`: the owned exact quote inventory.
+- `requirements`: `local_id`, `category` (`skill` or
+  `professional_experience`), `name`, `definition`, `basis` (`explicit`,
+  `inferred` or `explicit_and_inferred`), nullable `rationale` and `source_note`,
+  and `evidence_refs`.
+- `education`: `qualification`, `subjects`, nullable `alternative` and
+  `source_note`, and `evidence_refs`.
+- `languages`: `language`, nullable `proficiency` and `source_note`, and
+  `evidence_refs`.
+- `unresolved`: source-owned material ambiguity (`question`, `reason`,
+  `evidence_refs`). A complete response has none.
 
-## Exact result reuse and posting publication
+Accepted snapshots add `contract_version: requirements-v2`, exact job/posting/
+source identities, monotonic snapshot `revision`, catalog revision, the immutable
+extraction receipt ID and `extraction_provenance`. Their quotes include derived
+`start` and `end` values. Read projections add `stale`, `stale_reasons` and
+`latest_attempt`.
 
-The feature-owned cache records one bounded result and immutable gateway receipt
-per exact call. The complete request fingerprint binds operation, instructions,
-prompt and output schema, all sources and context, and one frozen execution
-descriptor. That descriptor resolves provider/model, effective saved reasoning
-effort and the digest of allowlisted nonsecret provider configuration once for
-both lookup and invocation. It contains no credentials. Budget/quote admission
-remains live; credentials resolve only at the native provider boundary. The
-gateway does not automatically reuse every operation's result.
+Each reusable occurrence retains its original extracted name, category,
+definition, basis, rationale, source note, evidence references and spans.
+`requirement_id`, `requirement_revision` (also `revision`) and a nested
+`canonical: {contract_version, category, name, definition}` separately record
+its accepted binding. Canonicalization and binding correction never replace the
+original interpretation. Occurrences retain exact destination posting/source
+versions, semantic source identity and immutable extraction/matching receipts.
 
-Extraction's semantic input is the complete exact posting text under its
-content source ID. Matching uses prompt
-`requirements-catalog-match-v2-content-bound` and additionally binds the entire
-incoming inventory, catalog epoch and canonical IDs/revisions/meanings. Job IDs,
-posting revisions and observation timestamps do not perturb an otherwise
-identical semantic request. No whitespace normalization, excerpts, token overlap
-or similar-text matching establishes an exact hit. Changed content, catalog,
-execution settings or prompt/schema cannot reuse a mismatched result.
+Education and Languages stay in the snapshot's `education` and `languages`
+arrays. Each has its original fields, category `education` or `language`, a
+`requirements-v2:direct:` identity derived from its exact destination posting,
+field and value, revision 1, exact spans and extraction provenance. These IDs
+are job-local. Direct fields never enter catalog equivalence, the reusable
+library or achievement-wording authoring.
 
-An explicit forced refresh includes its durable operation ID in both semantic
-calls. Another force action asks for new authority; a retry of that same action
-may reuse its settled result. Ordinary accepted-snapshot revision numbers do
-not prevent exact content reuse.
+The public `snapshot_items(snapshot)` adapter requires this generation and a
+complete extraction. It returns detached per-occurrence assessment rows, using
+the recorded canonical meaning for reusable items while retaining `original`.
+Direct rows expose `requirement_revision`, `occurrence_id`, `name` and the exact
+structured direct meaning serialized as JSON. The adapter makes no semantic
+judgment and does not mutate the accepted snapshot.
 
-Every reused result passes strict schema and source-citation checks and joins
-its recorded ID through the gateway's public immutable receipt reader. The
-receipt must be succeeded with the same operation/provider/model/lane/prompt/
-input binding and canonical typed result. If a worker stopped after the gateway
-receipt settled but before the feature cache committed, an exact succeeded
-receipt can recover that projection after the same checks. Missing or
-mismatched referenced authority refuses reuse without a new-model fallback;
-failed/invalid calls are never accepted cache entries.
+## Complete matching and exact reuse
 
-A gateway receipt marked succeeded proves only gateway schema success until
-Requirements validates its exact spans and owner rules. An owner-invalid raw
-result is not reusable authority. A separately admitted ordinary retry may make
-its one planned determination; it never repairs or retries a newly refused
-semantic result within the same attempt. Corruption of an accepted feature
-cache entry remains a hard refusal rather than permission for another call.
+One `requirements.match_catalog` determination sees the complete incoming
+Skills/Experience inventory and the entire active canonical catalog. Canonical
+sources contain each definition/category/name plus its original extraction and
+quoted posting evidence. The catalog inventory binds its epoch, full ID/revision
+set and source meanings. There is no top-k selection, paging, chunking, lexical
+fallback or separate novelty judgment.
 
-Semantic reuse never replaces actual publication identity. The owner adds
-`provenance.source_binding` containing the semantic content source and exact
-destination `{job_id, revision, source_id, source_revision, source_hash}`. It
-does not edit the shared raw response or imply a new call for that job. Each
-destination keeps its own occurrences, posting spans and source history.
-Cache acceptance and final publication retain the public Jobs posting guard
-and applicable catalog-epoch guard in their transactions. A changed destination
-cannot publish requirements even when a semantic result is reusable.
+Every incoming local ID receives exactly one `equivalent`, `new` or `uncertain`
+verdict. Canonical equivalence names an exact catalog ID/revision. Incoming
+equivalence points directly to an earlier genuinely new representative, never a
+chain. Cross-category substitution, unknown/duplicate/missing IDs, stale targets,
+invalid source citations or any uncertainty refuse the whole result. Each
+decision cites the posting, its incoming meaning and the complete inventory;
+equivalence also cites its selected target. All occurrences remain recorded.
 
-Unpublished same-source canonical IDs derive mechanically from the accepted
-extraction receipt, local occurrence ID and qualified meaning fingerprint. This
-keeps new identifiers stable across interrupted refreshes; only an actual model
-equivalence decision can reuse another meaning.
-No source-dependent semantic interpretation is replaced by that identifier rule.
+The feature cache binds the entire sent request: operation, prompt/instructions,
+strict schema, every source/context value and one frozen provider/model/effort/
+nonsecret-configuration descriptor. Budget and lane admission remain live.
+Content-derived source IDs permit exact description extraction reuse across
+jobs; similar text or normalized whitespace cannot establish an exact hit.
+Matching additionally binds the entire catalog and incoming inventory. Forced
+actions include their stable operation ID, allowing same-action recovery while
+requesting fresh authority for a different force action.
 
-## Concurrency, corrections and recovery
+A cache entry is accepted only after source/schema checks and joining its
+succeeded immutable gateway receipt. A stopped worker can recover an exact
+settled receipt after those same checks. Corrupt or mismatched accepted cache
+authority refuses reuse; it does not authorize a fresh fallback call. A raw
+result invalid under owner rules is never accepted cache authority. Destination
+`source_binding` separately records the real job/posting versions without
+rewriting the shared semantic result or implying another provider call.
+
+A refresh permits extraction and at most four complete-catalog attempts under
+concurrent publication. The complete description remains bounded to 192,000
+bytes and the gateway enforces its complete serialized input limit before
+provider admission. Size, context, lane, capacity, budget and provider refusals
+preserve accepted state without smaller requests or automatic repair calls.
+
+## Generations, history and publication
+
+Existing SQL schema strings remain unchanged. New meaning JSON, occurrences,
+snapshots, semantic requests, cache provenance and action fingerprints explicitly
+use `requirements-v2`; new canonical IDs use its namespace. Missing generation
+means legacy. Catalog snapshots, library reads and repairable index views expose
+only current-generation meanings. An older meaning never becomes current by
+resemblance. The global catalog epoch and job snapshot revisions remain
+monotonic.
+
+Legacy accepted snapshots, meaning revisions, occurrences and receipts remain
+readable with `stale_reasons: [contract_changed]`. They cannot pass currentness
+checks, enter a current catalog, qualify new work or resume/replay as new
+operations. Versioned durable actions reject incompatible action replay before
+returning old terminal results. No read, save or generation transition starts
+model work. Operational rollout requires stopped old writers and a workspace
+backup; rollback after new writes restores that backup.
 
 Inference occurs outside the write transaction. Publication uses one
-`BEGIN IMMEDIATE`, checks the expected accepted snapshot revision, invokes Jobs'
-public posting revision/hash guard in that same connection, and checks the
-catalog epoch before writing meanings, occurrences, the accepted snapshot and
-its committed event. A competing catalog publication triggers a fresh bounded
-resolution pass, up to four passes, so simultaneous discoveries reuse the
-winning canonical ID. A changed posting or accepted snapshot refuses the write.
+transaction to check cancellation, expected accepted revision, the public Jobs
+posting revision/hash, and the captured catalog epoch before appending meanings,
+occurrences and the snapshot and moving the accepted pointer. A catalog race may
+repeat one bounded complete matching determination. Posting or accepted-state
+changes refuse publication. Failed, cancelled or interrupted work retains the
+previous accepted snapshot and historical artifacts.
 
-Binding correction records an explicit user reason and a fresh source-bound
-model judgment against exactly the user-selected canonical target, then publishes
-a new immutable job snapshot. This targeted correction does not search the
-catalog or establish newness. Canonical meaning
-correction adds a revision and updates the retrieval index. Readers retain the
-old accepted snapshot with `stale=true`; they never silently reinterpret an old
-binding under a new meaning revision. Fit and Resumes use `assert_current` in
-their own publication transactions.
+Explicit binding correction compares only the selected current-generation
+target with the original occurrence, then publishes a new immutable snapshot.
+Canonical correction applies the same scope/exclusions and a whole-catalog
+check, appends a revision and leaves older bindings visibly stale. Both retain
+source-bound receipt authority and explicit user reasons. Public
+`assert_current` and `assert_current_catalog` can join a consumer's transaction.
+Requirements writes emit invalidations; they do not schedule Fit or wording work.
 
-Durable actions bind `ActionContext.run_id` to the exact accepted feature result
-inside the canonical transaction. A retry after feature commit and before the
-shared action receipt reuses that result without another model call. A later
-source/artifact revision marks the returned historical result stale. Reusing an
-action ID with another input conflicts. Failed, cancelled and interrupted
-attempts retain accepted artifacts and the shared model gateway's real spend
-uncertainty. Cached model results are separate from accepted Requirements
-publication; no final artifact binding exists before the complete fenced
-transaction succeeds. Requirement writes emit invalidations and do not schedule
-Fit reassessment or wording-coverage refreshes.
+## Public entrypoints
 
-Permanent Job deletion calls `delete_job_data(job_id, connection=...)` through
-the reviewed Jobs owner transaction. It removes only per-job requirement
-snapshots, occurrences and attempts. Neutral reusable catalog meanings,
-their quoted provenance and immutable model/revision records remain independent.
-Exact-call cache rows owned by that job are removed with its private per-job
-state; immutable model audit receipts retain their separate ownership.
-
-## Public application contract
-
-Reads return fresh JSON DTO copies and make no model calls:
-
-- `get_job_requirements(job_id, connection=None)` returns the accepted snapshot,
-  its current stale status and latest attempt; absent acceptance is 404.
-- `find_job_requirements(job_id, connection=None)` returns that snapshot or
-  `None` for an existing Job without acceptance. A missing/deleted Job remains
-  404. HTTP uses this nullable reader for honest first-use state.
-- `job_bindings(job_ids, connection=None, postings=None)` returns narrow accepted
-  binding summaries for at most 1,000 IDs. Unassessed IDs are omitted. One owner
-  query joins recorded canonical revisions to current heads, and one public
-  Jobs batch read fences posting revisions/hashes; callers may supply their
-  same-transaction public posting snapshot map. Summaries contain the accepted
-  snapshot/posting versions, accepted/current requirement revision lists and
-  explicit staleness. They make no model calls or per-job sibling queries.
-- `get_requirement(requirement_id, revision=None, connection=None)` reads the
-  current or exact historical canonical revision.
-- `catalog_snapshot(connection=None)` returns the complete current catalog in
-  stable canonical-ID order, with `catalog_revision`, `meanings_fingerprint`
-  and `requirements`. Every row contains `requirement_id`, `revision`,
-  `definition`, `qualifiers` and `scope`; there is no pagination, filtering,
-  model work or search-index dependency. The returned JSON values are detached
-  from the immutable canonical revision records. Passing a connection joins the
-  caller's read transaction so Profile/catalog snapshots share one source view.
-- `assert_current_catalog(snapshot, connection=None)` re-reads the catalog and
-  checks its exact epoch, complete ID/revision inventory, semantic contents and
-  fingerprint. Consumers retain the unmodified public snapshot and pass their
-  publication connection to fence the complete operation atomically. Any added,
-  revised, missing or changed meaning refuses publication; this guard never
-  widens the original work set or schedules model work.
-- `assert_current(snapshot, connection=None)` fences accepted snapshot identity,
-  posting revision/hash and every canonical meaning revision. Consumers pass
-  their existing write connection to make publication atomic.
-- `catalog(limit=50, offset=0, query="")` lists current meanings. The query is a
-  literal user filter; it does not judge semantic identity.
-- `delete_job_data(job_id, connection=None)` participates in the Jobs owner's
-  authorized permanent-deletion transaction.
-
-A snapshot contains `job_id`, `revision`, `posting_revision`, `posting_hash`,
-`source_id`, `source_revision`, `catalog_revision`, `created_at`,
-`extraction_determination_id` and `requirements`. Public reads add `stale` and
-`latest_attempt`. Each occurrence contains `occurrence_id`, `requirement_id`,
-`requirement_revision` (also `revision` for canonical-reader convenience),
-`definition`, `qualifiers`, `scope`, job-specific `text`, `tier`, `weight`,
-posting/source IDs/revisions/hash, exact `spans`, `model_source_id`, model receipt
-IDs and full immutable provenance. Correction adds the previous occurrence ID
-and a recorded reason/receipt. An unrelated catalog addition does not invalidate
-a current snapshot.
-
-## HTTP and durable actions
-
-| Entry point | Behavior |
+| Entry point | Contract |
 | --- | --- |
-| `GET /v1/jobs/{job_id}/requirements` | Accepted snapshot, staleness and latest attempt, or HTTP 200 JSON `null` for an existing unassessed Job. Missing/deleted Job is 404. |
-| `HEAD /v1/jobs/{job_id}/requirements` | Same safe read status; it never parses a refresh body or invokes a model/write. |
-| `POST /v1/jobs/{job_id}/requirements` | Refresh with `expected_posting_revision`, `expected_revision` (zero initially), optional `force`. |
-| `GET /v1/requirements?limit=50&offset=0&q=literal` | Current catalog with epoch and total. |
-| `GET /v1/requirements/index` | Exact catalog/index revision, counts and freshness. |
-| `POST /v1/requirements/index/rebuild` | Mechanical repair guarded by `expected_catalog_revision`; zero model calls. |
-| `GET /v1/requirements/{requirement_id}` | Current meaning and accepted job occurrences; `?revision=N` reads immutable history. |
-| `GET /v1/requirements/{requirement_id}/history?kind=revisions` | Bounded immutable meaning-revision inventory with the current canonical revision and explicit current/stale labels. |
-| `GET /v1/requirements/{requirement_id}/history?kind=occurrences` | Bounded retained occurrence history, including superseded accepted job snapshots, original source spans and exact canonical revisions. |
-| `POST /v1/jobs/{job_id}/requirements/{occurrence_id}/binding` | Explicit target ID/revision, expected posting/snapshot versions and user reason. |
-| `POST /v1/requirements/{requirement_id}/revisions` | Source-bound proposed meaning correction with expected meaning/posting versions and user reason. |
-| `requirements.refresh` | Same refresh action through the durable dispatcher; payload also includes `job_id`. |
-| `requirements.correct_binding` | Same correction action; payload also includes `job_id` and `occurrence_id`. |
-| `requirements.revise` | Same canonical correction; payload also includes `requirement_id`. |
+| `GET/HEAD /v1/jobs/{job_id}/requirements` | Accepted snapshot with currentness, or JSON null for an existing unassessed Job. No work. |
+| `POST /v1/jobs/{job_id}/requirements` | `expected_posting_revision`, `expected_revision`, optional `force`. |
+| `GET /v1/requirements` | Bounded active catalog; `q` is a literal user filter. |
+| `GET /v1/requirements/index` | Active-generation index counts and exact freshness. |
+| `POST /v1/requirements/index/rebuild` | Mechanical active-index repair under `expected_catalog_revision`, zero model calls. |
+| `GET /v1/requirements/{requirement_id}` | Current or exact historical meaning, original provenance and accepted occurrences. |
+| `GET /v1/requirements/{requirement_id}/history` | Bounded revisions or occurrences with accepted/current/stale reasons. |
+| `POST /v1/jobs/{job_id}/requirements/{occurrence_id}/binding` | Versioned explicit binding correction with selected target and reason. |
+| `POST /v1/requirements/{requirement_id}/revisions` | Versioned source-bound canonical correction. Proposed shape is the extracted requirement plus exact spans. |
+| `requirements.refresh`, `requirements.correct_binding`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2`. |
 
-The history endpoint accepts `limit` (default 50, maximum 200) and `offset` and
-returns `requirement_id`, `current_revision`, `kind`, `total`, `limit`, `offset`
-and `rows`. Revision rows retain their original definition, scope, qualifiers
-and provenance. Occurrence rows add `snapshot_revision` and `accepted`; the
-latter means the occurrence belongs to the current accepted job snapshot, not
-that its posting or meaning remains current. `current` and `stale_reasons`
-separately check the recorded canonical revision, accepted snapshot and public
-Jobs posting revision/hash in one read transaction. This is retained accepted
-occurrence history, not a claim that failed extraction attempts published
-requirements. Permanent job deletion removes that job's occurrences under the
-existing retention contract. Reading any catalog/history endpoint makes no
-model call and grants no approval or factual support.
+Public owner methods also include nullable `find_job_requirements`, required
+`get_job_requirements`, exact/historical `get_requirement`, full
+`catalog_snapshot`, `assert_current_catalog`, `assert_current`, and bounded
+`job_bindings`. Bindings include generation/status, accepted/current revisions
+(including job-local direct IDs) and explicit stale reasons. Missing/deleted Jobs
+remain 404. Returned JSON is detached and reads make no provider calls.
 
-Events are `RequirementsUpdated`, `RequirementBindingCorrected` and
-`RequirementMeaningRevised` and `RequirementIndexRebuilt`. Payloads contain only invalidation IDs/revisions.
-The HTTP layer exposes safe failure codes; private posting/model prose never
-enters exception messages. Provider/spend failures retain their gateway status,
-source/schema validation failures are 422, and revision/index/cancellation
-conflicts are 409. Complete-input or work refusal returns 503
-`requirements_catalog_unavailable` with a safe reason and relevant catalog/count
-metadata. It has no continuation or chunk fallback. A missing canonical revision
-returns 503 `catalog_snapshot_invalid`. Provider/spend refusal keeps the actual
-gateway status. The user can retry explicitly after changing the limiting
-condition; no previous artifact is cleared by a failed or unavailable refresh.
+Permanent deletion participates in Jobs' authorized transaction and deletes
+only that job's snapshots, occurrences, attempts and owned cache rows. Neutral
+catalog meanings and independent immutable model receipts remain retained.
+Errors expose safe codes without posting/model prose. Source/schema failures
+are 422, contract/revision/cancellation conflicts are 409, and complete-input
+catalog refusal is 503 `requirements_catalog_unavailable` with safe metadata.
 
-## Verification boundary
+## Verification
 
-The target suite is application E2E with owned synthetic state and controlled
-external model HTTP responses. Source binding, semantic authority and structural
-failures are exercised through real application routes, SQLite and model
-admission; there are no semantic matcher fallbacks, replay corpora or internal
-domain/repository mocks. Recurring E2E belongs to the transformation E2E owner.
-Local static validation uses the shared environment's Ruff and compilation of
-this feature. Root integration separately owns Temporal scheduling, browser
-journeys, removal of legacy entrypoints and final capability closure.
+Use the actual public application journeys in `docs/local-reliability-qa.md`
+with owned synthetic state and controlled external provider boundaries. Cover
+legacy retention and zero automatic calls, complete matching and category
+boundaries, exact reuse and receipt recovery, all four categories, language
+exclusion, invalid/ambiguous/foreign evidence, catalog/source/publication races,
+corrections, cancellation and worker recovery. Static checks do not establish
+semantic accuracy or product-level completion. Keep real posting trial inputs
+and outputs outside the repository.

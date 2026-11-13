@@ -41,6 +41,11 @@ function applyTextChanges(document: ResumeDocument, changes: readonly ResumePlat
         if (change.semanticId === `education:${row.id}:${field}`) { row[field] = text; matched = true; }
       }
     }
+    for (const row of next.languages ?? []) {
+      for (const field of ["language", "proficiency"] as const) {
+        if (change.semanticId === `language:${row.id}:${field}`) { row[field] = text; matched = true; }
+      }
+    }
     if (!matched) throw new Error("This edit changes a combined or unrecognized field. Edit that field in Profile and compose again; your local edits are still here.");
   }
   return next;
@@ -142,8 +147,8 @@ function ResumeWorkspace({ latest, onDirtyChange, onProfileChanged, managedPrepa
     </section> : null}
     <details><summary>Document coverage and source version</summary><p>Profile revision {revision.profile_revision}. Coverage: {revision.coverage_manifest.status ?? "recorded"}. This describes document wording, separately from person fit.</p>
     {revision.coverage_manifest.requirements?.length ? <ul>{revision.coverage_manifest.requirements.map((item, index) => {
-      const row = item as { requirement_id?: string; covered?: boolean; weight?: number };
-      return <li key={`${row.requirement_id ?? "requirement"}:${index}`}>{row.requirement_id ?? "Requirement"}: {row.covered ? "covered" : "not covered"}{row.weight === undefined ? "" : `, weight ${row.weight}`}</li>;
+      const row = item as { requirement_id?: string; covered?: boolean; wording_eligible?: boolean };
+      return <li key={`${row.requirement_id ?? "requirement"}:${index}`}>{row.requirement_id ?? "Requirement"}: {row.wording_eligible === false ? "supported by Profile section; achievement wording not required" : row.covered ? "covered" : "not covered"}</li>;
     })}</ul> : null}</details>
     <h4>Advisory coherence review</h4><p>Status: {reviewStatusLabel(revision.review.status)}{revision.review.failure_code ? ` (${revision.review.failure_code})` : ""}.</p>
     {revision.review.findings.length ? <ul>{revision.review.findings.map((finding, index) => <li key={index}>{finding.detail}</li>)}</ul> : null}

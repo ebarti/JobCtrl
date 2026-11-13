@@ -29,6 +29,7 @@ const RunListSchema = z.object({ ok: z.literal(true), runs: z.array(z.object({
 }).passthrough()) });
 const ResultSchema = z.object({ failures: z.array(SourceFailureSchema).optional(), status: z.string().optional(), acquisitionStatus: z.string().optional(),
   preparationAvailable: z.boolean().optional(), preparation: z.object({ status: z.string(), assessedJobs: z.number().int().nonnegative(), failedJobs: z.number().int().nonnegative(),
+    skippedJobs: z.number().int().nonnegative().optional(), skipped: z.array(z.object({ jobId: z.string(), reason: z.string() })).optional(),
     failures: z.array(z.object({ jobId: z.string(), stage: z.string(), code: z.string().nullable() })) }).optional(),
   newJobs: z.number().int().nonnegative().optional(), observedJobs: z.number().int().nonnegative().optional() }).passthrough();
 const ScopeBusySchema = z.object({ error: z.object({ code: z.literal("action_scope_busy") }) });

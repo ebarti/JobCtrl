@@ -8,7 +8,7 @@ import {
 } from "../harness/fixtures.js";
 import {
   catalogMatching,
-  citeSources,
+  typedExtraction,
   type CatalogContext,
 } from "./requirements-data.js";
 
@@ -35,30 +35,11 @@ type Requirements = {
 };
 const sources = (call: ExternalCall) => call.body["sources"] as Source[];
 
-function extraction(
-  call: ExternalCall,
-  duration: string,
-  support = "supported",
-) {
-  const source = sources(call)[0]!;
-  return {
-    status: "complete",
-    requirements: [
-      {
-        local_id: "leadership",
-        text: source.text,
-        definition: "Lead engineering teams",
-        qualifiers: [{ dimension: "duration", value: duration }],
-        scope: "resume",
-        tier: "must_have",
-        weight: 1,
-        support,
-        spans: [{ source_id: source.source_id, quote: source.text }],
-      },
-    ],
-    reason: "Explicit source-bound determination for this controlled journey.",
-    citations: [{ source_id: source.source_id, quote: source.text }],
-  };
+function extraction(call: ExternalCall, definition: string, support = "supported") {
+  return typedExtraction(call, {
+    requirements: [{ localId: "leadership", text: sources(call)[0]!.text, definition }],
+    ...(support === "unsupported" ? { status: "needs_review" as const, classification: "uncertain" as const } : {}),
+  });
 }
 
 async function novel(app: ApplicationStack) {
@@ -80,13 +61,13 @@ test("requirement meanings reuse recorded IDs and reject invalid or stale refres
   }
   const first = await capture(
     "five",
-    "At least five years leading engineering teams.",
+    "Lead engineering teams through service incidents.",
   );
   const pendingFirst = api.post(`/v1/jobs/${first.job_id}/requirements`, {
     data: { expected_posting_revision: first.revision, expected_revision: 0 },
   });
   const initial = await modelCall(app, "requirements.extract");
-  initial.reply(extraction(initial, "at least five years"));
+  initial.reply(extraction(initial, "Lead engineering incident response"));
   await novel(app);
   const firstResponse = await pendingFirst;
   expect(firstResponse.status(), await firstResponse.text()).toBe(200);
@@ -100,7 +81,7 @@ test("requirement meanings reuse recorded IDs and reject invalid or stale refres
 
   const paraphrase = await capture(
     "five-paraphrase",
-    "A minimum of five years managing engineering teams.",
+    "Lead engineering teams during operational incidents.",
   );
   const beforeReuse = app.external.calls.length;
   const pendingReuse = api.post(`/v1/jobs/${paraphrase.job_id}/requirements`, {
@@ -110,7 +91,7 @@ test("requirement meanings reuse recorded IDs and reject invalid or stale refres
     },
   });
   const same = await modelCall(app, "requirements.extract");
-  same.reply(extraction(same, "at least five years"));
+  same.reply(extraction(same, "Lead engineering incident response"));
   const compare = await modelCall(app, "requirements.match_catalog");
   compare.reply(
     catalogMatching(compare, {
@@ -128,7 +109,7 @@ test("requirement meanings reuse recorded IDs and reject invalid or stale refres
 
   const qualified = await capture(
     "ten",
-    "At least ten years leading engineering teams.",
+    "Design a multi-region service architecture.",
   );
   const pendingQualified = api.post(
     `/v1/jobs/${qualified.job_id}/requirements`,
@@ -140,7 +121,7 @@ test("requirement meanings reuse recorded IDs and reject invalid or stale refres
     },
   );
   const ten = await modelCall(app, "requirements.extract");
-  ten.reply(extraction(ten, "at least ten years"));
+  ten.reply(extraction(ten, "Design multi-region service architecture"));
   await novel(app);
   const qualifiedResponse = await pendingQualified;
   expect(qualifiedResponse.status(), await qualifiedResponse.text()).toBe(200);
@@ -163,7 +144,7 @@ test("requirement meanings reuse recorded IDs and reject invalid or stale refres
   });
   const unsupported = await modelCall(app, "requirements.extract");
   unsupported.reply(
-    extraction(unsupported, "at least five years", "unsupported"),
+    extraction(unsupported, "Lead engineering incident response", "unsupported"),
   );
   expect((await pendingUnsupported).status()).toBe(422);
   let retained = await json<Requirements>(
@@ -183,7 +164,7 @@ test("requirement meanings reuse recorded IDs and reject invalid or stale refres
   });
   const invalid = await modelCall(app, "requirements.extract");
   invalid.reply({
-    ...extraction(invalid, "at least five years"),
+    ...extraction(invalid, "Lead engineering incident response"),
     unauthorizedExtraField: true,
   });
   expect((await pendingInvalid).status()).toBe(502);
@@ -205,9 +186,9 @@ test("requirement meanings reuse recorded IDs and reject invalid or stale refres
   const stale = await modelCall(app, "requirements.extract");
   await json(api, "patch", `/v1/jobs/${first.job_id}`, {
     expectedRevision: first.revision,
-    description: "At least six years leading engineering teams.",
+    description: "Lead engineering teams through incident follow-up reviews.",
   });
-  stale.reply(extraction(stale, "at least five years"));
+  stale.reply(extraction(stale, "Lead engineering incident response"));
   expect((await pendingStale).status()).toBe(409);
   retained = await json<Requirements>(
     api,
@@ -229,13 +210,11 @@ test("quote selections derive canonical Unicode ranges and reuse the exact raw e
   const request = { expected_posting_revision: posting.revision, expected_revision: 0 };
   const first = api.post(`/v1/jobs/${posting.job_id}/requirements`, { data: request });
   const extractionCall = await modelCall(app, "requirements.extract");
-  expect(extractionCall.body["prompt_version"]).toBe("requirements-extract-v3-content-bound");
-  const schema = extractionCall.body["response_schema"] as { $defs: { Citation: { required: string[]; properties: Record<string, unknown> } } };
-  expect([...schema.$defs.Citation.required].sort()).toEqual(["quote", "source_id"]);
-  expect(Object.keys(schema.$defs.Citation.properties).sort()).toEqual(["quote", "source_id"]);
-  const selected = extraction(extractionCall, "not duration-bound");
-  selected.requirements[0] = { ...selected.requirements[0]!, text: quote, definition: quote, qualifiers: [],
-    spans: [{ source_id: sources(extractionCall)[0]!.source_id, quote }] };
+  expect(extractionCall.body["prompt_version"]).toBe("requirements-v2-extract-v1-content-bound");
+  const schema = extractionCall.body["response_schema"] as { properties: Record<string, unknown> };
+  expect(schema.properties).toHaveProperty("quotes");
+  expect(schema.properties).toHaveProperty("language");
+  const selected = typedExtraction(extractionCall, { requirements: [{ localId: "leadership", text: quote }] });
   extractionCall.reply(selected);
   const uncertain = await modelCall(app, "requirements.match_catalog");
   uncertain.reply(catalogMatching(uncertain, { leadership: { verdict: "uncertain" } }));
@@ -264,9 +243,7 @@ test("foreign missing ambiguous and legacy numeric quote selections preserve acc
   });
   const initial = api.post(`/v1/jobs/${posting.job_id}/requirements`, { data: { expected_posting_revision: posting.revision, expected_revision: 0 } });
   const initialCall = await modelCall(app, "requirements.extract");
-  const initialChoice = extraction(initialCall, "not duration-bound");
-  initialChoice.requirements[0] = { ...initialChoice.requirements[0]!, text: quote, definition: quote, qualifiers: [],
-    spans: [{ source_id: sources(initialCall)[0]!.source_id, quote }] };
+  const initialChoice = typedExtraction(initialCall, { requirements: [{ localId: "leadership", text: quote }] });
   initialCall.reply(initialChoice);
   await novel(app);
   const initialResponse = await initial;
@@ -285,10 +262,9 @@ test("foreign missing ambiguous and legacy numeric quote selections preserve acc
       data: { expected_posting_revision: posting.revision, expected_revision: accepted.revision, force: true },
     });
     const call = await modelCall(app, "requirements.extract");
-    const choice = extraction(call, "not duration-bound");
+    const choice = typedExtraction(call, { requirements: [{ localId: "leadership", text: quote }] });
     const { status, code, ...selection } = failure;
-    call.reply({ ...choice, requirements: [{ ...choice.requirements[0], text: quote, definition: quote, qualifiers: [],
-      spans: [{ source_id: sources(call)[0]!.source_id, ...selection }] }] });
+    call.reply({ ...choice, quotes: [{ ...choice.quotes[0], ...selection }] });
     const response = await refreshing;
     expect(response.status(), await response.text()).toBe(status);
     expect(await response.json()).toMatchObject({ error: { code } });
@@ -303,10 +279,13 @@ test("one catalog determination resolves the full posting batch and more than tw
   api,
   app,
 }) => {
-  const clauses = Array.from(
-    { length: 15 },
-    (_, index) => `Lead engineering teams for at least ${index + 1} years.`,
-  );
+  const clauses = [
+    "Design network routing.", "Manage database recovery.", "Operate container clusters.",
+    "Build deployment pipelines.", "Implement access controls.", "Lead incident response.",
+    "Review service architecture.", "Manage cloud capacity.", "Build data ingestion.",
+    "Implement payment processing.", "Develop mobile applications.", "Design API contracts.",
+    "Operate search infrastructure.", "Lead engineering hiring.", "Maintain workflow recovery.",
+  ];
   const seed = await json<Posting>(api, "post", "/v1/jobs/capture", {
     url: "https://example.com/jobs/full-catalog",
     title: "Synthetic Engineering Leader",
@@ -317,31 +296,9 @@ test("one catalog determination resolves the full posting batch and more than tw
     data: { expected_posting_revision: seed.revision, expected_revision: 0 },
   });
   const extracting = await modelCall(app, "requirements.extract");
-  const source = sources(extracting)[0]!;
-  extracting.reply({
-    status: "complete",
-    requirements: clauses.map((text, index) => ({
-      local_id: `duration-${index + 1}`,
-      text,
-      definition: "Lead engineering teams",
-      qualifiers: [
-        { dimension: "duration", value: `at least ${index + 1} years` },
-      ],
-      scope: "resume",
-      tier: "must_have",
-      weight: 1,
-      support: "supported",
-      spans: [
-        {
-          source_id: source.source_id,
-          quote: text,
-        },
-      ],
-    })),
-    reason:
-      "The complete authored source contains fifteen separately qualified requirements.",
-    citations: citeSources(extracting, [source.source_id]),
-  });
+  extracting.reply(typedExtraction(extracting, { requirements: clauses.map((text, index) => ({
+    localId: `capability-${index + 1}`, text,
+  })) }));
   const seedMatching = await modelCall(app, "requirements.match_catalog");
   expect(
     (seedMatching.body["context"] as CatalogContext).incoming,
@@ -351,7 +308,7 @@ test("one catalog determination resolves the full posting batch and more than tw
       seedMatching,
       Object.fromEntries(
         clauses.map((_, index) => [
-          `duration-${index + 1}`,
+          `capability-${index + 1}`,
           { verdict: "new" as const },
         ]),
       ),
@@ -371,7 +328,7 @@ test("one catalog determination resolves the full posting batch and more than tw
   expect(catalog.requirements).toHaveLength(5);
 
   const descriptions = [
-    "A minimum of fifteen years managing engineering teams.",
+    "Maintain durable workflow recovery.",
     "Own the incident recovery program for a global service.",
     "Be accountable for the same global service incident recovery program.",
   ];
@@ -386,34 +343,10 @@ test("one catalog determination resolves the full posting batch and more than tw
     data: { expected_posting_revision: posting.revision, expected_revision: 0 },
   });
   const batch = await modelCall(app, "requirements.extract");
-  const batchSource = sources(batch)[0]!;
-  batch.reply({
-    status: "complete",
-    requirements: descriptions.map((text, index) => ({
-      local_id: ["existing", "new-primary", "new-paraphrase"][index],
-      text,
-      definition:
-        index === 0
-          ? "Lead engineering teams"
-          : "Own global service incident recovery",
-      qualifiers:
-        index === 0
-          ? [{ dimension: "duration", value: "at least 15 years" }]
-          : [],
-      scope: "resume",
-      tier: "must_have",
-      weight: 1,
-      support: "supported",
-      spans: [
-        {
-          source_id: batchSource.source_id,
-          quote: text,
-        },
-      ],
-    })),
-    reason: "Explicit source-bound incoming meanings for the complete batch.",
-    citations: citeSources(batch, [batchSource.source_id]),
-  });
+  batch.reply(typedExtraction(batch, { requirements: descriptions.map((text, index) => ({
+    localId: ["existing", "new-primary", "new-paraphrase"][index]!, text,
+    definition: index === 0 ? "Maintain workflow recovery" : "Own global service incident recovery",
+  })) }));
   const matching = await modelCall(app, "requirements.match_catalog");
   const context = matching.body["context"] as CatalogContext;
   expect(context.candidates).toHaveLength(15);
@@ -500,7 +433,7 @@ for (const defect of [
       url: `https://example.com/jobs/catalog-${defect.replaceAll(" ", "-")}`,
       title: "Synthetic Engineering Leader",
       company: "Synthetic Validation Company",
-      description: "At least five years leading engineering teams.",
+      description: "Lead engineering teams through service incidents.",
     });
     const first = api.post(`/v1/jobs/${posting.job_id}/requirements`, {
       data: {
@@ -509,7 +442,7 @@ for (const defect of [
       },
     });
     const initial = await modelCall(app, "requirements.extract");
-    initial.reply(extraction(initial, "at least five years"));
+    initial.reply(extraction(initial, "Lead engineering incident response"));
     await novel(app);
     const initialResponse = await first;
     expect(initialResponse.status(), await initialResponse.text()).toBe(200);
@@ -523,7 +456,7 @@ for (const defect of [
       },
     });
     const refreshed = await modelCall(app, "requirements.extract");
-    refreshed.reply(extraction(refreshed, "at least five years"));
+    refreshed.reply(extraction(refreshed, "Lead engineering incident response"));
     const matching = await modelCall(app, "requirements.match_catalog");
     const value = catalogMatching(matching, {
       leadership: {
@@ -622,13 +555,13 @@ test("an oversized complete catalog request refuses without truncation or automa
     url: "https://example.com/jobs/full-input-refusal",
     title: "Synthetic Engineering Leader",
     company: "Synthetic Payload Company",
-    description: "At least five years leading engineering teams.",
+    description: "Lead engineering teams through service incidents.",
   });
   const first = api.post(`/v1/jobs/${posting.job_id}/requirements`, {
     data: { expected_posting_revision: posting.revision, expected_revision: 0 },
   });
   const initial = await modelCall(app, "requirements.extract");
-  initial.reply(extraction(initial, "at least five years"));
+  initial.reply(extraction(initial, "Lead engineering incident response"));
   await novel(app);
   const initialResponse = await first;
   expect(initialResponse.status(), await initialResponse.text()).toBe(200);
@@ -669,29 +602,12 @@ test("an oversized complete catalog request refuses without truncation or automa
     },
   });
   const extracting = await modelCall(app, "requirements.extract");
-  const source = sources(extracting)[0]!;
-  const result = {
-    status: "complete",
-    requirements: clauses.map((text, index) => ({
-      local_id: `responsibility-${index + 1}`,
-      text,
-      definition: text,
-      qualifiers,
-      scope: "resume",
-      tier: "must_have",
-      weight: 1,
-      support: "supported",
-      spans: [
-        {
-          source_id: source.source_id,
-          quote: text,
-        },
-      ],
-    })),
-    reason:
-      "Each authored responsibility has the complete common qualifications stated in this source.",
-    citations: citeSources(extracting, [source.source_id]),
-  };
+  const result = typedExtraction(extracting, { requirements: clauses.map((text, index) => ({
+    localId: `responsibility-${index + 1}`, text,
+    definition: `${text} ${qualifiers.map((row) => row.value).join(" ")}`.slice(0, 2400),
+    rationale: qualifiers.map((row) => row.value).join(" ").slice(0, 1900),
+    sourceNote: qualifiers.map((row) => row.value).join(" ").slice(-1900),
+  })) });
   expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(1024 * 1024);
   extracting.reply(result);
   const response = await refresh;

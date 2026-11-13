@@ -127,7 +127,7 @@ export function EvidenceMapConnections({ search = "", focusSourceId = "", jobId 
     <p>These are saved requirement assessments, not a new judgment about your capabilities.</p>
     {gaps.length ? <ul>{[...groupedGaps].map(([key, group]) => <li key={key}>
       <strong>Requirement {group[0]!.requirement_id}, revision {group[0]!.requirement_revision}</strong> · {group[0]!.kind.replaceAll("_", " ")}.
-      <ul>{group.map((gap, index) => <li key={`${gap.job_id}:${gap.score_revision}:${index}`}><Link to="/jobs/$jobId" params={{ jobId: gap.job_id }}>{gap.job_id}</Link> · {gap.current ? "current" : "stale"} · {gap.tier}, weight {gap.weight}.
+      <ul>{group.map((gap, index) => <li key={`${gap.job_id}:${gap.score_revision}:${index}`}><Link to="/jobs/$jobId" params={{ jobId: gap.job_id }}>{gap.job_id}</Link> · {gap.current ? "current" : "stale"}{gap.category ? ` · ${gap.category.replaceAll("_", " ")}` : " · historical requirement"}.
         <p>{gap.text}</p><p>{gap.rationale}</p><p>Determination {gap.determination_id} · score revision {gap.score_revision}.</p></li>)}</ul>
     </li>)}</ul> : fit && !fitQuery.error ? <p>No qualification gaps recorded for this view.</p> : null}
     <h3>Recorded wording gaps</h3><p>Wording coverage is separate from the person-fit assessment.</p>

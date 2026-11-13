@@ -38,6 +38,10 @@ application URL, provenance and uncertainty. Fetching or interpreting untrusted
 content does not confer permission to take an external action. Requirements
 owns qualified source-bound requirement meanings and occurrences derived from
 that snapshot.
+The `requirements-v2` path first uses a source-bound English-language gate;
+non-English postings are skipped before extraction and Fit, without translation
+or a zero score. The reusable catalog contains Skills/Professional Experience;
+Education/Languages remain direct job-local demands.
 
 ## Score
 
@@ -46,12 +50,17 @@ corrections. It references recorded Profile and Requirements versions. A
 requirement not represented in approved resume wording can be reported as a
 document gap, but cannot lower the person's factual qualification. Failed or
 stale evaluation preserves the previous accepted record and reports its state.
+Fit qualifies all four typed categories against their permitted Profile sources
+and resolves `requirement-fit-v3-equal` with one item per distinct canonical
+meaning or direct demand. Current section-backed support creates no achievement
+expression gap. See [scoring](../scoring.md) for evidence and arithmetic.
 
 ## Tailor
 
-Resumes composes all roles and achievements from the approved Profile baseline,
-selecting exactly one approved wording per achievement by deterministic weighted
-requirement coverage, complementary depth and stable ties. Profile owns wording
+Resumes retains all baseline sections, roles and achievements, including
+Language / Proficiency, and selects exactly one approved wording per achievement.
+Each eligible canonical requirement receives one policy point, followed by
+complementary depth and stable ties. Profile owns wording
 and approval; Fit owns coverage relations. One advisory coherence review of the
 assembled document is separate from mechanical validity and user acceptance.
 Baseline-copy/off mode makes zero resume model calls. The

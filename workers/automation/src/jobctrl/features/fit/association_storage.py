@@ -9,6 +9,7 @@ from jobctrl.app.errors import ConflictError, NotFoundError
 from .associations import association_view, binding_fingerprint, validate_association
 from .qualification import now
 from .serialization import encoded
+from .contract import CONTRACT_VERSION, current_contract, require_contract
 from .sources import dto, fingerprint
 
 
@@ -57,6 +58,8 @@ class AssociationStorage:
         return self._read(read, connection)
 
     def _association_view(self, record, connection):
+        if not current_contract(record):
+            return {**record, "current": False, "stale_reasons": ["contract_changed"]}
         try:
             profile = dto(self.profile.snapshot(record["profile_id"], connection=connection))
         except NotFoundError:
@@ -88,6 +91,7 @@ class AssociationStorage:
                 (request["profile_id"], request["association_id"]),
             ).fetchone()
             if previous is not None:
+                require_contract(json.loads(previous["association_json"]))
                 if previous["request_fingerprint"] != request_fingerprint:
                     raise ConflictError("This association request identity already belongs to different input.")
                 return self._association_view(json.loads(previous["association_json"]), connection)
@@ -95,7 +99,7 @@ class AssociationStorage:
             requirement = self.requirements.get_requirement(request["requirement_id"], connection=connection)
             library = self.profile.library(request["profile_id"], connection=connection)
             validate_association(request, requirement, profile, library)
-            record = {**request, "revision": 1, "origin": "user", "assessment_status": "unassessed",
+            record = {**request, "contract_version": CONTRACT_VERSION, "revision": 1, "origin": "user", "assessment_status": "unassessed",
                       "state": "active", "role_id": next(role["role_id"] for role in profile["roles"]
                           if any(row["achievement_id"] == request["achievement_id"] for row in role["achievements"])),
                       "created_at": now(), "updated_at": now()}
@@ -115,6 +119,7 @@ class AssociationStorage:
             if row is None:
                 raise NotFoundError("The association does not exist.")
             previous = json.loads(row["association_json"])
+            require_contract(previous)
             replay_fingerprint = fingerprint({"operation": "revise", "request": request})
             if (previous["revision"] == request["expected_revision"] + 1
                     and previous.get("last_request_fingerprint") == replay_fingerprint):
@@ -143,6 +148,7 @@ class AssociationStorage:
             if row is None:
                 raise NotFoundError("The association does not exist.")
             previous = json.loads(row["association_json"])
+            require_contract(previous)
             replay_fingerprint = fingerprint({"operation": "state", "association_id": association_id, "request": request})
             if (previous["revision"] == request["expected_revision"] + 1
                     and previous.get("last_request_fingerprint") == replay_fingerprint):

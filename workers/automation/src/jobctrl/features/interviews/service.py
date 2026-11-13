@@ -256,7 +256,7 @@ class InterviewService:
         if self.requirements is not None:
             try:
                 candidate = self.requirements.get_job_requirements(job_id, connection=connection)
-                if not candidate.get("stale"):
+                if not candidate.get("stale") and candidate.get("status") == "complete":
                     requirement_snapshot = candidate
             except NotFoundError:
                 pass
@@ -269,9 +269,9 @@ class InterviewService:
                 if item["requirement_id"] in seen:
                     continue
                 seen.add(item["requirement_id"])
-                rows.append({"requirementId": item["requirement_id"], "requirementText": item["text"],
+                rows.append({"requirementId": item["requirement_id"], "requirementText": item["definition"],
                              "sourceExcerpt": " ".join(span["quote"] for span in item.get("spans", [])),
-                             "tier": item["tier"], "weight": item["weight"]})
+                             "category": item["category"]})
                 if len(rows) == 20:
                     break
             if any(len(row["requirementText"]) > 3000 or len(row["sourceExcerpt"]) > 3000 for row in rows):

@@ -17,4 +17,5 @@ def build_feature(runtime: Runtime, *, profile, jobs, requirements, fit, resumes
     )
     return Feature("preparation", service, build_routes(service),
                    {"preparation.run": service.run, "preparation.retry": service.retry},
-                   action_finalizers={"preparation.run": checkpoints.finalize_run, "preparation.retry": checkpoints.finalize_run})
+                   action_finalizers={"preparation.run": checkpoints.finalize_run, "preparation.retry": checkpoints.finalize_run},
+                   action_versions={"preparation.run": "requirements-v2", "preparation.retry": "requirements-v2"})

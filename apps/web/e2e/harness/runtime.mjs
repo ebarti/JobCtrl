@@ -312,6 +312,7 @@ export async function applicationStack(
     features,
     discoveryTransport = "http",
     nativeAccountingPreflight = false,
+    sourceRevision,
     preflight = false,
     pythonExecutable = process.env.JOBCTRL_E2E_PYTHON ?? python,
     staticDir = process.env.JOBCTRL_E2E_STATIC_DIR ??
@@ -379,6 +380,9 @@ export async function applicationStack(
   const renderFailure = path.join(directory, "fail-chromium-launch");
   const services = [];
   let worker;
+  let server;
+  let serverGeneration = 0;
+  let upgraded = false;
   let workerGeneration = 0;
   async function startWorker() {
     worker = await launch(
@@ -397,7 +401,35 @@ export async function applicationStack(
     services.push(worker);
     return worker.pid;
   }
+  async function startServer() {
+    server = await launch(
+      ++serverGeneration === 1 ? "api" : `api-${serverGeneration}`,
+      pythonExecutable,
+      ["-m", "jobctrl.app.server", "--host", "127.0.0.1", "--port", env.JOBCTRL_API_PORT,
+        "--workspace", workspace, ...(preflight ? [] : ["--static-dir", staticDir])],
+      { directory, env },
+    );
+    services.push(server);
+    await waitFor(async () => {
+      server.assertRunning();
+      return (await fetch(`${baseURL}/v1/health`, { signal: AbortSignal.timeout(2_000) })).ok;
+    }, "Python HTTP health");
+  }
   try {
+    if (sourceRevision) {
+      if (sourceRevision !== "8ab86e9232d66fff9795906e061d208e7a057d8b")
+        throw new Error("The source upgrade journey requires its exact fixed predecessor.");
+      const resolved = await execFile("git", ["rev-parse", "--verify", `${sourceRevision}^{commit}`], { cwd: repo, timeout: 5_000 });
+      if (resolved.stdout.trim() !== sourceRevision)
+        throw new Error("The predecessor source identity did not resolve exactly.");
+      const archive = path.join(directory, "predecessor-source.tar");
+      const extracted = path.join(directory, "predecessor-source");
+      await mkdir(extracted, { mode: 0o700 });
+      await execFile("git", ["archive", "--format=tar", "--output", archive, sourceRevision, "workers/automation/src"], { cwd: repo, timeout: 10_000 });
+      await execFile("tar", ["-xf", archive, "-C", extracted], { timeout: 10_000 });
+      await rm(archive);
+      env.PYTHONPATH = path.join(extracted, "workers/automation/src");
+    }
     if (process.env.JOBCTRL_E2E_INSTALLED === "1") {
       const payloadRoot = await realpath(process.env.JOBCTRL_E2E_PAYLOAD_DIR);
       const [executable, assets] = await Promise.all([
@@ -446,31 +478,7 @@ export async function applicationStack(
       { mode: 0o700, flag: "wx" },
     );
     if (!nativeAccountingPreflight) env.JOBCTRL_E2E_CREDENTIAL_HELPER = credentialHelper;
-    const server = await launch(
-      "api",
-      pythonExecutable,
-      [
-        "-m",
-        "jobctrl.app.server",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        env.JOBCTRL_API_PORT,
-        "--workspace",
-        workspace,
-        ...(preflight ? [] : ["--static-dir", staticDir]),
-      ],
-      { directory, env },
-    );
-    services.push(server);
-    await waitFor(async () => {
-      server.assertRunning();
-      return (
-        await fetch(`${baseURL}/v1/health`, {
-          signal: AbortSignal.timeout(2_000),
-        })
-      ).ok;
-    }, "Python HTTP health");
+    await startServer();
     if (!preflight) {
       await startWorker();
       await waitFor(async () => {
@@ -506,6 +514,49 @@ export async function applicationStack(
       setupMs: Math.round(performance.now() - started),
       get workerPid() {
         return worker?.pid;
+      },
+      async upgradeSource() {
+        if (!sourceRevision || upgraded || preflight)
+          throw new Error("Only the fixed owned predecessor runtime can upgrade once.");
+        const previous = worker.pid;
+        for (const service of [worker, server]) {
+          await service.stop();
+          services.splice(services.indexOf(service), 1);
+        }
+        // The real public predecessor CLI takes the consistent backup after its
+        // HTTP/worker writers have stopped. No domain tables are seeded.
+        const backup = path.join(directory, "pre-upgrade.db");
+        await execFile(pythonExecutable, ["-m", "jobctrl", "--workspace", workspace, "backup", "--output", backup], { env, cwd: repo, timeout: 15_000 });
+        const installed = process.env.JOBCTRL_E2E_INSTALLED === "1";
+        if (installed) delete env.PYTHONPATH;
+        else env.PYTHONPATH = process.env.JOBCTRL_E2E_SOURCE_PATH ?? path.join(repo, "workers/automation/src");
+        const origin = (await execFile(pythonExecutable, ["-c", "import pathlib,jobctrl\nprint(pathlib.Path(jobctrl.__file__).resolve())"], { env, cwd: directory, timeout: 5_000 })).stdout.trim();
+        if (installed ? !origin.startsWith(`${env.JOBCTRL_PAYLOAD_DIR}${path.sep}`)
+          : origin !== path.join(env.PYTHONPATH, "jobctrl/__init__.py"))
+          throw new Error("The upgraded application did not load its exact candidate source or installed payload.");
+        await startServer();
+        await startWorker();
+        await waitFor(async () => {
+          worker.assertRunning();
+          return (await (await fetch(`${baseURL}/v1/health`)).json()).worker?.healthy === true;
+        }, "upgraded Python worker registration");
+        upgraded = true;
+        return { previous, current: worker.pid, backup, candidateOrigin: origin, mode: installed ? "installed" : "source" };
+      },
+      async databaseSchemaFingerprint() {
+        const inspected = await execFile(pythonExecutable, ["-c", `
+import hashlib, json, os, pathlib, sqlite3, sys
+root = pathlib.Path(sys.argv[1])
+owner = json.loads((root / ".jobctrl-e2e-owned.json").read_text())
+assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
+file = root / "jobctrl.db"
+assert not file.is_symlink()
+with sqlite3.connect(file.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
+    conn.execute("PRAGMA query_only=ON")
+    schema = conn.execute("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").fetchall()
+print(hashlib.sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
+`, workspace], { env, timeout: 5_000, maxBuffer: 10_000 });
+        return inspected.stdout.trim();
       },
       async failRendering() {
         await writeFile(renderFailure, "external browser process failure\n", {
@@ -569,6 +620,12 @@ export async function applicationStack(
             ),
           );
         return { ...result, images };
+      },
+      async inspectDocx(bytes) {
+        const file = path.join(directory, `export-${randomUUID()}.docx`);
+        await writeFile(file, bytes, { flag: "wx", mode: 0o600 });
+        const inspected = await execFile(pythonExecutable, ["-c", "import sys, zipfile, xml.etree.ElementTree as ET\nwith zipfile.ZipFile(sys.argv[1]) as archive:\n document = ET.fromstring(archive.read('word/document.xml'))\n print('\\n'.join(node.text or '' for node in document.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')))\n", file], { env, timeout: 10_000, maxBuffer: 2_000_000 });
+        return inspected.stdout;
       },
       async discoveryCheckpoint(runId) {
         // Read actual committed SDK checkpoints/receipts; never seed domain

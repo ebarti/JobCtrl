@@ -10,6 +10,7 @@ import unicodedata
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 
+from .contract import CONTRACT_VERSION, assessment_fields, current_contract, require_contract, reusable
 from .coverage import Coverage, variant_fingerprint
 from .domain import FORMULA_VERSION, calculate_score, fit_band
 from .models import QualificationDecision
@@ -20,26 +21,27 @@ from .library import requirement_library
 from .current_wording import assignment_view
 from .sources import (
     achievements, approved_fingerprint, dto, fact_fingerprint, fact_sources, fingerprint, requirement_source,
-    semantic_sources,
+    job_fingerprint, qualification_fingerprint, semantic_sources, wording_eligible,
 )
 
 
 def unique_requirements(snapshot: dict) -> list[dict]:
-    """Count each recorded canonical meaning once; repeated occurrences remain linked."""
+    """Count each canonical meaning or distinct direct demand once."""
+    from jobctrl.features.requirements import snapshot_items
+    require_contract(snapshot)
+    if snapshot.get("status") != "complete":
+        raise AppError("unsupported_posting_language", "Fit is unavailable for this posting language. The posting is skipped without a replacement score.", 409)
     rows: dict[str, dict] = {}
-    for occurrence in snapshot["requirements"]:
-        required = ("requirement_id", "requirement_revision", "definition", "scope", "tier", "weight")
+    for occurrence in snapshot_items(snapshot):
+        required = ("requirement_id", "requirement_revision", "definition", "category", "name")
         if any(key not in occurrence for key in required):
-            raise AppError("fit_requirement_snapshot_invalid", "Fit requires qualified requirement identities and priority.", 409)
+            raise AppError("fit_requirement_snapshot_invalid", "Fit requires typed source-bound requirement identities.", 409)
         row = deepcopy(occurrence)
         ident = row["requirement_id"]
         if ident in rows:
             previous = rows[ident]
-            if any(previous.get(key) != row.get(key) for key in ("requirement_revision", "definition", "qualifiers", "scope")):
+            if any(previous.get(key) != row.get(key) for key in ("requirement_revision", "definition", "category", "name")):
                 raise AppError("fit_requirement_snapshot_invalid", "A canonical requirement has conflicting definitions.", 409)
-            previous["weight"] = max(previous["weight"], row["weight"])
-            if row["tier"] == "must_have":
-                previous["tier"] = "must_have"
             previous["occurrence_ids"].append(row["occurrence_id"])
         else:
             row["occurrence_ids"] = [row["occurrence_id"]]
@@ -138,6 +140,7 @@ class FitService:
         if any(type(value) is not bool for value in (force, prepare_wording, prepare_coverage)):
             raise AppError("fit_invalid_option", "Fit options must be booleans.")
         operation_fingerprint = fingerprint({"action": "assess", "job_id": job_id, "profile_id": profile_id,
+                                             "contract_version": CONTRACT_VERSION,
                                              "expected_revision": expected_revision, "force": force,
                                              "prepare_wording": prepare_wording, "prepare_coverage": prepare_coverage})
         replay = self._replay_operation(operation_id, operation_fingerprint)
@@ -153,11 +156,11 @@ class FitService:
             self._assert_score_revision(read, job_id, expected_revision)
             self._require_manual_refresh(read, job_id, profile_id, force=force)
             initial_assessment = read.latest_score(job_id) is None
-            source_hash = fact_fingerprint(profile)
             for requirement in rows:
+                source_hash = qualification_fingerprint(profile, requirement)
                 previous = read.latest_requirement_assessment(profile_id, requirement["requirement_id"])
                 if previous is not None and (force or not initial_assessment and (
-                        previous["source_fingerprint"] != source_hash
+                        not current_contract(previous) or previous["source_fingerprint"] != source_hash
                         or str(previous["requirement_revision"]) != str(requirement["requirement_revision"]))):
                     raise AppError("fit_refresh_required", "Saved inputs changed. Start a manual Fit refresh to update existing assessments.", 409)
         records, reused = await self.qualification.resolve_many(
@@ -167,22 +170,17 @@ class FitService:
         qualifications = []
         for requirement, record in zip(rows, records, strict=True):
             self._check_cancelled(cancelled)
-            qualifications.append({**record, **{key: requirement[key] for key in (
-                "scope", "tier", "weight", "occurrence_ids",
-            )}, "text": requirement.get("text", requirement["definition"]),
-                "posting_provenance": {key: requirement.get(key) for key in (
-                    "source_id", "source_revision", "source_hash", "spans", "extraction_determination_id",
-                    "equivalence_determination_ids",
-                )}})
+            qualifications.append({**record, **assessment_fields(requirement)})
         self._check_cancelled(cancelled)
         try:
             resolved = calculate_score(qualifications)
         except (ValueError, KeyError, TypeError):
-            raise AppError("fit_score_inputs_invalid", "No coherent weighted capability score can be calculated.", 422) from None
+            raise AppError("fit_score_inputs_invalid", "No coherent typed qualification score can be calculated.", 422) from None
         source_binding = {
+            "contract_version": CONTRACT_VERSION,
             "profile_id": profile_id, "profile_revision": profile["profile_revision"],
             "fact_semantics_version": profile["fact_semantics_version"],
-            "source_fingerprint": fact_fingerprint(profile),
+            "source_fingerprint": job_fingerprint(profile, rows),
             "scoring_guidance_fingerprint": fingerprint(profile_snapshot.scoring_guidance),
             "approved_variants_fingerprint": approved_fingerprint(profile),
             "requirements_revision": requirements_snapshot["revision"],
@@ -204,7 +202,8 @@ class FitService:
         try:
             if prepare_coverage:
                 coverage_result = await self.coverage.refresh(
-                    profile_snapshot, requirements_snapshot, rows, prepare_wording=prepare_wording, cancelled=cancelled,
+                    profile_snapshot, requirements_snapshot, [row for row in rows if reusable(row)],
+                    prepare_wording=prepare_wording, cancelled=cancelled,
                 )
         except asyncio.CancelledError:
             raise
@@ -231,10 +230,14 @@ class FitService:
 
     def _get_job_fit(self, read, job_id, profile_id="default", *, include_coverage=True):
         score = read.latest_score(job_id)
-        result = {"job_id": job_id, "current": False, "stale_reasons": [], "score": score, "coverage": None}
+        result = {"contract_version": CONTRACT_VERSION, "job_id": job_id, "current": False,
+                  "stale_reasons": [], "score": score, "coverage": None}
         threshold = read.settings_snapshot().get("minFitScore", 7)
         result["selection"] = {"min_fit_score": threshold, "ready_for_materials": False}
         if score is None:
+            return result
+        if not current_contract(score) or score.get("formula_version") != FORMULA_VERSION:
+            result["stale_reasons"].append("contract_changed")
             return result
         binding = score["source_binding"]
         if binding["profile_id"] != profile_id:
@@ -245,10 +248,15 @@ class FitService:
             profile = dto(profile_snapshot)
             requirements_snapshot = read.job_requirements(job_id)
             rows = unique_requirements(requirements_snapshot)
-        except NotFoundError:
+        except AppError as error:
+            if error.code in {"contract_changed", "unsupported_posting_language"}:
+                result["stale_reasons"].append(error.code)
+                return result
+            if not isinstance(error, NotFoundError):
+                raise
             result["stale_reasons"].append("source_unavailable")
             return result
-        source_hash = fact_fingerprint(profile)
+        source_hash = job_fingerprint(profile, rows)
         if source_hash != binding["source_fingerprint"]:
             if (profile["fact_semantics_version"] == binding["fact_semantics_version"]
                     and fingerprint(profile_snapshot.scoring_guidance) != binding["scoring_guidance_fingerprint"]):
@@ -266,16 +274,17 @@ class FitService:
             result["stale_reasons"].append("requirements_changed")
         for row in score["assessments"]:
             current = read.latest_assessment(profile_id, row["requirement_id"], row["requirement_revision"],
-                                                   source_fingerprint=source_hash)
+                                                   source_fingerprint=qualification_fingerprint(profile, row))
             if current is None or current["assessment_id"] != row["assessment_id"]:
                 if "qualification_changed" not in result["stale_reasons"]:
                     result["stale_reasons"].append("qualification_changed")
         result["current"] = not result["stale_reasons"]
         result["selection"]["ready_for_materials"] = (
-            result["current"] and score["score"] >= threshold and score["eligibility"]["status"] != "blocked"
+            result["current"] and score["score"] is not None and score["score"] >= threshold
+            and score["eligibility"]["status"] != "blocked"
         )
         if include_coverage:
-            result["coverage"] = self._coverage_for(read, profile["profile_revision"], rows, profile["approved_variants"],
+            result["coverage"] = self._coverage_for(read, profile["profile_revision"], [row for row in rows if reusable(row)], profile["approved_variants"],
                                                    profile_id=profile_id)
             if requirements_snapshot.get("stale"):
                 coverage = result["coverage"]
@@ -296,6 +305,7 @@ class FitService:
             raise AppError("fit_invalid_score", "A corrected Fit score must be an integer from 1 to 10.")
         rationale = self._rationale(rationale)
         operation_fingerprint = fingerprint({"action": "correct", "job_id": job_id,
+                                             "contract_version": CONTRACT_VERSION,
                                              "expected_revision": expected_revision, "score": score, "rationale": rationale})
         replay = self._replay_operation(operation_id, operation_fingerprint)
         if replay is not None:
@@ -304,8 +314,12 @@ class FitService:
             previous = self._assert_score_revision(read, job_id, expected_revision)
         if previous is None:
             raise NotFoundError("Assess this job before correcting its Fit score.")
+        require_contract(previous)
+        if previous["score"] is None:
+            raise AppError("fit_score_unavailable", "No demands were assessed, so there is no score to correct.", 409)
         created = now()
         correction = {
+            "contract_version": CONTRACT_VERSION,
             "correction_id": "fit-correction-" + fingerprint({
                 "job_id": job_id, "previous_revision": expected_revision, "score": score,
                 "rationale": rationale, "created_at": created,
@@ -329,7 +343,7 @@ class FitService:
                             kind: str, strength: str | None, confidence: str, rationale: str,
                             evidence_refs: list[dict], achievement_ids: list[str],
                             eligibility="unknown", blocker_category=None, warning_category=None,
-                            profile_id="default") -> dict:
+                            profile_id="default", wording_support=None, evidence_route=None) -> dict:
         """An explicit human source-bound correction, retained separately from model authority."""
         self._rationale(rationale)
         if type(expected_fact_semantics_version) is not int or expected_fact_semantics_version < 1:
@@ -344,7 +358,11 @@ class FitService:
             raise ConflictError("The canonical requirement has changed.")
         requirement = {**requirement, "requirement_revision": canonical_revision}
         facts = fact_sources(profile)
-        source_hash = fact_fingerprint(profile, facts)
+        source_hash = qualification_fingerprint(profile, requirement, facts)
+        previous = self.store.latest_assessment(profile_id, requirement_id, requirement_revision,
+                                               source_fingerprint=source_hash)
+        if previous is None or previous["assessment_id"] != expected_assessment_id:
+            raise ConflictError("The accepted person qualification has changed.")
         index = {source["source_id"]: source for source in facts}
         evidence = []
         for ref in evidence_refs:
@@ -359,6 +377,9 @@ class FitService:
                 "evidence": evidence,
                 "requirement_citations": [{"source_id": "requirement", "quote": requirement_source(requirement)["text"]}],
                 "achievement_ids": achievement_ids, "keywords": [], "eligibility": eligibility,
+                "wording_support": wording_support if wording_support is not None else (
+                    previous["wording_support"] if kind in {"matched", "transferable"} else "none"),
+                "evidence_route": evidence_route,
                 "blocker_category": blocker_category, "warning_category": warning_category,
             })
         except (ValueError, TypeError):
@@ -368,14 +389,11 @@ class FitService:
         correction_id = "fit-human-determination-" + fingerprint({
             "expected_assessment_id": expected_assessment_id, "selected": selected.model_dump(), "created_at": created,
         })
-        previous = self.store.latest_assessment(profile_id, requirement_id, requirement_revision,
-                                               source_fingerprint=source_hash)
-        if previous is None or previous["assessment_id"] != expected_assessment_id:
-            raise ConflictError("The accepted person qualification has changed.")
         record = {**previous, "assessment_id": "fit-assessment-" + fingerprint(correction_id),
                   **{key: getattr(selected, key) for key in (
                       "kind", "strength", "confidence", "rationale", "achievement_ids",
                       "eligibility", "blocker_category", "warning_category",
+                      "wording_support", "evidence_route",
                   )}, "evidence_refs": evidence_refs, "determination_id": correction_id,
                   "origin": "manual", "correction_of": previous["assessment_id"],
                   "provenance": {"receipt_id": correction_id, "actor": "user", "created_at": created},
@@ -393,7 +411,7 @@ class FitService:
         profile_snapshot = self.qualification.snapshot(profile_id)
         requirements_snapshot = self.requirements.get_job_requirements(job_id)
         result = await self.coverage.refresh(profile_snapshot, requirements_snapshot,
-                                              unique_requirements(requirements_snapshot),
+                                              [row for row in unique_requirements(requirements_snapshot) if reusable(row)],
                                               prepare_wording=prepare_wording, cancelled=cancelled)
         return {**self.get_job_fit(job_id, profile_id), "coverage_preparation": result}
 
@@ -403,6 +421,9 @@ class FitService:
             return self._coverage_for(read, profile_revision, requirements, approved_variants, profile_id=profile_id)
 
     def _coverage_for(self, read, profile_revision, requirements, approved_variants, *, profile_id="default"):
+        if any(not current_contract(row) for row in requirements):
+            raise AppError("contract_changed", "Wording coverage requires the current requirements contract.", 409)
+        requirements = [row for row in requirements if reusable(row)]
         profile = dto(read.profile_snapshot(profile_id))
         source_hash = fact_fingerprint(profile)
         variants = {row["variant_id"]: row for row in profile["approved_variants"]}
@@ -412,11 +433,11 @@ class FitService:
                       if row["requirement_id"] in requirement_ids]
         maintained_scope = {"profile_id": profile_id, "requirement_ids": requirement_ids,
                             "achievement_ids": achievement_ids, "assignments": maintained}
-        result = {"profile_id": profile_id, "profile_revision": profile_revision,
+        result = {"contract_version": CONTRACT_VERSION, "profile_id": profile_id, "profile_revision": profile_revision,
                   "fact_semantics_version": profile["fact_semantics_version"],
                   "status": "current", "requirements": [], "relations": [], "wording_gaps": [],
-                  "approved_variants": [], "current_wordings": [],
-                  "source_binding": {"profile_id": profile_id, "profile_revision": profile_revision,
+                  "approved_variants": [], "current_wordings": [], "section_support": [],
+                  "source_binding": {"contract_version": CONTRACT_VERSION, "profile_id": profile_id, "profile_revision": profile_revision,
                                      "source_fingerprint": source_hash, "relation_ids": [], "assessment_ids": {},
                                      "current_wordings_scope": {"requirement_ids": requirement_ids, "achievement_ids": achievement_ids},
                                      "current_wordings_fingerprint": fingerprint(maintained_scope)}}
@@ -437,19 +458,24 @@ class FitService:
         for supplied in requirements:
             ident = supplied["requirement_id"]
             revision = supplied.get("requirement_revision", supplied.get("revision"))
-            result["requirements"].append({"requirement_id": ident, "requirement_revision": revision,
-                                            "weight": supplied.get("weight", 0), "tier": supplied.get("tier")})
             current = read.requirement(ident)
+            result["requirements"].append({"contract_version": CONTRACT_VERSION,
+                "requirement_id": ident, "requirement_revision": revision,
+                **{key: current[key] for key in ("category", "name", "definition")}})
             if str(current.get("requirement_revision") or current["revision"]) != str(revision):
                 result["status"] = "stale"
                 continue
             assessment = read.latest_assessment(profile_id, ident, revision,
-                                                       source_fingerprint=source_hash)
+                                                       source_fingerprint=qualification_fingerprint(profile, current))
             result["source_binding"]["assessment_ids"][ident] = assessment["assessment_id"] if assessment else None
             if assessment is None:
                 if result["status"] != "stale":
                     result["status"] = "not_recorded"
                 result["wording_gaps"].append({"requirement_id": ident, "status": "qualification_not_recorded"})
+                continue
+            if assessment["kind"] in {"matched", "transferable"} and not wording_eligible(assessment):
+                result["section_support"].append({"requirement_id": ident, "assessment_id": assessment["assessment_id"],
+                    "category": assessment["category"], "evidence_refs": assessment["evidence_refs"]})
                 continue
             current_wordings = [assignment_view(row, read, profile) for row in maintained if row["requirement_id"] == ident]
             result["current_wordings"].extend(current_wordings)
@@ -493,6 +519,7 @@ class FitService:
             self._assert_current(read, snapshot)
 
     def _assert_current(self, read, snapshot):
+        require_contract(snapshot)
         if snapshot.get("status") not in {"current", "not_recorded"}:
             raise ConflictError("Source-current Fit coverage is required.")
         profile = dto(read.profile_snapshot(snapshot["profile_id"]))
@@ -525,42 +552,49 @@ class FitService:
         profiles = {}
         for profile_id in {score["source_binding"]["profile_id"] for score in scores.values()}:
             try:
-                profiles[profile_id] = fact_fingerprint(dto(read.profile_snapshot(profile_id)))
+                profiles[profile_id] = dto(read.profile_snapshot(profile_id))
             except NotFoundError:
                 profiles[profile_id] = None
         wanted = {}
         for score in scores.values():
             profile_id = score["source_binding"]["profile_id"]
+            if not current_contract(score) or profiles[profile_id] is None:
+                continue
             for row in score["assessments"]:
-                key = (profile_id, row["requirement_id"], str(row["requirement_revision"]), profiles[profile_id])
-                if profiles[profile_id] is not None:
-                    wanted[key] = dict(zip(("profile_id", "requirement_id", "requirement_revision", "source_fingerprint"), key))
+                source_hash = qualification_fingerprint(profiles[profile_id], row)
+                key = (profile_id, row["requirement_id"], str(row["requirement_revision"]), source_hash)
+                wanted[key] = dict(zip(("profile_id", "requirement_id", "requirement_revision", "source_fingerprint"), key))
         current_assessments = read.assessment_id_batch(list(wanted.values()))
-        result = {ident: {"job_id": ident, "current": False, "stale_reasons": [], "score": None,
-                          "normalized_keywords": []} for ident in ids}
+        result = {ident: {"contract_version": CONTRACT_VERSION, "job_id": ident, "current": False,
+                          "stale_reasons": [], "score": None, "normalized_keywords": []} for ident in ids}
         for ident, score in scores.items():
             source, reasons = score["source_binding"], []
+            profile = profiles[source["profile_id"]]
             current_requirements = requirement_bindings.get(ident)
-            source_hash = profiles[source["profile_id"]]
-            if source_hash != source["source_fingerprint"]:
-                reasons.append("profile_facts_changed")
-            if current_requirements is None or current_requirements["stale"] or any(
-                current_requirements[key] != source[target] for key, target in (
-                    ("revision", "requirements_revision"), ("posting_revision", "posting_revision"),
-                    ("posting_hash", "posting_hash"),
-                )
-            ):
-                reasons.append("requirements_changed")
-            if any(current_assessments.get((source["profile_id"], row["requirement_id"],
-                                           str(row["requirement_revision"]), source_hash)) != row["assessment_id"]
-                   for row in score["assessments"]):
-                reasons.append("qualification_changed")
-            keywords = sorted({" ".join(unicodedata.normalize("NFKC", label).split()).casefold()
-                               for row in score["assessments"] for label in row["keywords"] if label.strip()})
+            if not current_contract(score) or score.get("formula_version") != FORMULA_VERSION:
+                reasons.append("contract_changed")
+            else:
+                if profile is None or job_fingerprint(profile, score["assessments"]) != source["source_fingerprint"]:
+                    reasons.append("profile_facts_changed")
+                if (current_requirements is None or not current_contract(current_requirements)
+                        or current_requirements["stale"] or any(current_requirements[key] != source[target]
+                            for key, target in (("revision", "requirements_revision"),
+                                ("posting_revision", "posting_revision"), ("posting_hash", "posting_hash")))):
+                    reasons.append("requirements_changed")
+                if current_requirements is not None and current_requirements.get("status") == "unsupported_language":
+                    reasons.append("unsupported_posting_language")
+                if profile is None or any(current_assessments.get((source["profile_id"], row["requirement_id"],
+                        str(row["requirement_revision"]), qualification_fingerprint(profile, row))) != row["assessment_id"]
+                        for row in score["assessments"]):
+                    reasons.append("qualification_changed")
+            keywords = [] if {"contract_changed", "unsupported_posting_language"}.intersection(reasons) else sorted({
+                " ".join(unicodedata.normalize("NFKC", label).split()).casefold()
+                for row in score["assessments"] for label in row["keywords"] if label.strip()})
             summary = {key: score[key] for key in ("revision", "score", "computed_score", "fit_band", "confidence",
                                                    "eligibility", "created_at", "source_binding")}
-            result[ident] = {"job_id": ident, "current": not reasons, "stale_reasons": reasons,
-                             "score": summary, "normalized_keywords": keywords}
+            summary.update({key: score[key] for key in ("contract_version", "formula_version", "policy_version", "summary") if key in score})
+            result[ident] = {"contract_version": CONTRACT_VERSION, "job_id": ident, "current": not reasons,
+                             "stale_reasons": reasons, "score": summary, "normalized_keywords": keywords}
         return result
 
     def minimum_fit_score(self, connection=None) -> int:
@@ -572,9 +606,11 @@ class FitService:
             threshold = self.minimum_fit_score(connection)
         summaries = self.summary_for_jobs(job_ids, connection=connection)
         high = [ident for ident, value in summaries.items()
-                if value["score"] is not None and value["score"]["score"] >= threshold]
+                if not {"contract_changed", "unsupported_posting_language"}.intersection(value["stale_reasons"]) and value["score"] is not None
+                and value["score"]["score"] is not None and value["score"]["score"] >= threshold]
         cutoff = self._instant(since) if since is not None else None
-        new = [ident for ident, value in summaries.items() if value["score"] is not None
+        new = [ident for ident, value in summaries.items() if not {"contract_changed", "unsupported_posting_language"}.intersection(value["stale_reasons"])
+               and value["score"] is not None and value["score"]["score"] is not None
                and (cutoff is None or self._instant(value["score"]["created_at"]) >= cutoff)]
         return {"highFitJobIds": high, "currentHighFitJobIds": [ident for ident in high if summaries[ident]["current"]],
                 "newMatchJobIds": new,
@@ -583,7 +619,7 @@ class FitService:
     def keywords(self) -> dict:
         results = {}
         for job_id, value in self.summary_for_jobs(self.store.scored_job_ids()).items():
-            if value["score"] is None:
+            if value["score"] is None or {"contract_changed", "unsupported_posting_language"}.intersection(value["stale_reasons"]):
                 continue
             for label in {label for row in value["score"]["assessments"] for label in row["keywords"] if label.strip()}:
                 display = " ".join(unicodedata.normalize("NFKC", label).split())
@@ -628,8 +664,8 @@ class FitService:
                                                     "determination_id": row["determination_id"]})
                         if row["kind"] in {"missing", "blocked", "transferable", "not_assessed"}:
                             gaps.append({**binding, **{key: row[key] for key in (
-                                "text", "kind", "tier", "weight", "rationale", "determination_id",
-                            )}})
+                                "text", "name", "category", "kind", "rationale", "determination_id",
+                            ) if key in row}})
                         seen, current_variants, covered = set(), set(), False
                         for relation in recorded.get(row["assessment_id"], []):
                             key = (relation["variant_id"], str(relation["variant_revision"]))
@@ -648,7 +684,7 @@ class FitService:
                             if source_current:
                                 current_variants.add(key)
                             covered = covered or source_current and relation["covered"]
-                        if row["kind"] in {"matched", "transferable"} and not covered:
+                        if wording_eligible(row) and row["kind"] in {"matched", "transferable"} and not covered:
                             expected_variants = {(variant["variant_id"], str(variant["revision"]))
                                                  for variant in variants.values()
                                                  if variant["achievement_id"] in row["achievement_ids"]}
@@ -656,7 +692,7 @@ class FitService:
                                 "missing_approved_wording" if expected_variants.issubset(current_variants) else "not_recorded")
                             wording_gaps.append({**binding, "status": status,
                                                  "person_qualification": row["kind"]})
-        return {"profile_id": profile_id, "sources": list(sources.values()), "gaps": gaps,
+        return {"contract_version": CONTRACT_VERSION, "profile_id": profile_id, "sources": list(sources.values()), "gaps": gaps,
                 "coverage": coverage, "wording_gaps": wording_gaps}
 
     def delete_job_data(self, job_id, connection=None):
@@ -667,6 +703,7 @@ class FitService:
         recorded = self.store.operation(operation_id, input_fingerprint)
         if recorded is None:
             return None
+        require_contract(recorded)
         current = self.get_job_fit(recorded["job_id"], recorded["score"]["source_binding"]["profile_id"],
                                    include_coverage=False)
         result = {**recorded, "operation_reused": True}

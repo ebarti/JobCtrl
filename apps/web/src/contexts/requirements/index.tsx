@@ -19,15 +19,30 @@ export type { CanonicalRequirement, RequirementDetail, RequirementHistory, Requi
 
 const requirementSchema = z.object({
   occurrence_id: z.string(), requirement_id: z.string(), requirement_revision: z.number(),
-  text: z.string(), definition: z.string(), scope: z.string(), tier: z.string(), weight: z.number(),
-  qualifiers: z.array(z.object({ dimension: z.string(), value: z.string() }).passthrough()),
+  text: z.string().optional(), definition: z.string(), contract_version: z.string().optional(),
+  category: z.enum(["skill", "professional_experience"]).optional(), name: z.string().optional(),
+  basis: z.enum(["explicit", "inferred", "explicit_and_inferred"]).optional(), rationale: z.string().nullable().optional(), source_note: z.string().nullable().optional(),
+  scope: z.string().optional(), tier: z.string().optional(), weight: z.number().optional(),
+  qualifiers: z.array(z.object({ dimension: z.string(), value: z.string() }).passthrough()).optional(),
   source_id: z.string(), source_revision: z.number(), source_hash: z.string(),
   spans: z.array(z.object({ start: z.number(), end: z.number(), quote: z.string() }).passthrough()),
   extraction_determination_id: z.string(), equivalence_determination_ids: z.array(z.string()),
 }).passthrough();
+const directDemandSchema = z.object({
+  requirement_id: z.string(), revision: z.number(), category: z.enum(["education", "language"]),
+  qualification: z.string().optional(), subjects: z.array(z.string()).optional(), alternative: z.string().nullable().optional(),
+  language: z.string().optional(), proficiency: z.string().nullable().optional(), source_note: z.string().nullable().optional(),
+  source_id: z.string(), source_revision: z.number(),
+  spans: z.array(z.object({ start: z.number(), end: z.number(), quote: z.string() }).passthrough()),
+}).passthrough();
 const requirementsSchema = z.object({
   job_id: z.string(), revision: z.number(), posting_revision: z.number(), posting_hash: z.string(),
   catalog_revision: z.number(), requirements: z.array(requirementSchema), stale: z.boolean(),
+  contract_version: z.string().optional(), status: z.enum(["complete", "unsupported_language"]).optional(), stale_reasons: z.array(z.string()).optional(),
+  language: z.object({ classification: z.enum(["english", "non_english", "uncertain"]), reason: z.string(),
+    evidence_refs: z.array(z.string()) }).passthrough().optional(),
+  quotes: z.array(z.object({ evidence_id: z.string(), source_id: z.string(), quote: z.string(), start: z.number(), end: z.number() }).passthrough()).optional(),
+  education: z.array(directDemandSchema).optional(), languages: z.array(directDemandSchema).optional(), unresolved: z.array(z.unknown()).optional(),
   latest_attempt: z.unknown().nullable(),
 }).passthrough();
 export type RequirementsSnapshot = z.infer<typeof requirementsSchema>;
@@ -39,6 +54,8 @@ export const requirementsKeys = {
 function parseRequirements(value: unknown): RequirementsSnapshot {
   const parsed = requirementsSchema.safeParse(value);
   if (!parsed.success) throw new Error("The requirements response is invalid. Refresh to verify the saved snapshot.");
+  if (parsed.data.contract_version !== "requirements-v2") return { ...parsed.data, stale: true,
+    stale_reasons: [...new Set([...(parsed.data.stale_reasons ?? []), "contract_changed"])] };
   return parsed.data;
 }
 async function writeRequirements(http: HttpPort, path: string, body: unknown): Promise<RequirementsSnapshot> {
@@ -48,8 +65,8 @@ async function writeRequirements(http: HttpPort, path: string, body: unknown): P
 }
 
 const catalogSchema = z.object({ catalog_revision: z.number(), total: z.number(), requirements: z.array(z.object({
-  requirement_id: z.string(), revision: z.number(), definition: z.string(), scope: z.string(),
-  qualifiers: z.array(z.object({ dimension: z.string(), value: z.string() })),
+  requirement_id: z.string(), revision: z.number(), definition: z.string(), contract_version: z.literal("requirements-v2"),
+  category: z.enum(["skill", "professional_experience"]), name: z.string(),
 }).passthrough()) }).passthrough();
 const correctionSchema = z.object({ requirementId: z.string().min(1), reason: z.string().trim().min(1) });
 function BindingCorrection({ jobId, postingRevision, snapshot, occurrenceId }: {
@@ -78,14 +95,14 @@ function BindingCorrection({ jobId, postingRevision, snapshot, occurrenceId }: {
     setValidation(""); correct.mutate({ requirement_id: meaning.requirement_id, requirement_revision: meaning.revision, reason: parsed.data.reason });
   } });
   return <details onToggle={(event) => setOpen(event.currentTarget.open)}><summary>Correct catalog binding</summary>
-    <p>Select an existing qualified meaning after reviewing its definition and scope. The correction records your reason and preserves the previous snapshot.</p>
+    <p>Select an existing meaning after reviewing its category and definition. The correction records your reason and preserves the previous snapshot.</p>
     {!availability.available ? <p>{availability.reason}</p> : null}
     <form onSubmit={(event) => { event.preventDefault(); if (availability.available) setSearch(draftSearch); }}><label>Search catalog<input value={draftSearch} onChange={(event) => setDraftSearch(event.currentTarget.value)} disabled={!availability.available} /></label><Button type="submit" variant="outline" disabled={!availability.available}>Search catalog</Button></form>
     {catalog.error ? <p role="alert">{catalog.error.message}</p> : null}
     {catalog.data ? <form onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
       <p>{catalog.data.total} matching meanings; showing up to 50.</p>
       <form.Field name="requirementId">{(field) => <label>Qualified meaning<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}><option value="">Select a meaning</option>
-        {catalog.data!.requirements.map((item) => <option key={item.requirement_id} value={item.requirement_id}>{item.definition} — {item.scope}{item.qualifiers.length ? ` (${item.qualifiers.map((q) => `${q.dimension}: ${q.value}`).join("; ")})` : ""}</option>)}
+        {catalog.data!.requirements.map((item) => <option key={item.requirement_id} value={item.requirement_id}>{item.name} — {item.category === "skill" ? "Skill" : "Professional experience"}: {item.definition}</option>)}
       </select></label>}</form.Field>
       <form.Field name="reason">{(field) => <label>Reason<textarea value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
       <Button type="submit" disabled={correct.isPending}>Save binding correction</Button>
@@ -117,6 +134,11 @@ export function useExtractRequirements(jobId: string) {
   });
 }
 
+function categoryLabel(category: string | undefined) {
+  return category === "skill" ? "Skill" : category === "professional_experience" ? "Professional experience"
+    : category === "education" ? "Education" : category === "language" ? "Language" : "Historical requirement";
+}
+
 export function RequirementsPanel({ jobId, postingRevision }: { jobId: string; postingRevision: number | null }) {
   const { featureFlags } = usePorts();
   const availability = getApiCapabilityAvailability(featureFlags, "rescoreJob");
@@ -124,24 +146,51 @@ export function RequirementsPanel({ jobId, postingRevision }: { jobId: string; p
   const extract = useExtractRequirements(jobId);
   const snapshot = query.data;
   const revision = postingRevision ?? snapshot?.posting_revision ?? null;
+  const historical = Boolean(snapshot && snapshot.contract_version !== "requirements-v2");
+  const directDemands = [...(snapshot?.education ?? []), ...(snapshot?.languages ?? [])];
   return <section className="section" aria-labelledby="requirements-title">
-    <h3 id="requirements-title">Requirements</h3>
-    <p>Requirements are bound to the captured posting and their recorded source spans.</p>
+    <h3 id="requirements-title">Posting requirements</h3>
+    <p>Skills and professional experience use the reusable catalog. Education and languages stay with this job and use their matching Profile sections.</p>
     {query.isPending ? <p>Loading requirements…</p> : null}
     {query.error ? <p role="alert">{query.error.message} {snapshot ? "The last accepted snapshot remains below." : ""}</p> : null}
-    {snapshot?.stale ? <p role="status">This snapshot belongs to an earlier posting or catalog revision. Refresh to assess the current posting.</p> : null}
+    {historical ? <p role="status">The requirements contract changed. This historical snapshot is retained for inspection. Refresh requirements manually to extract the current categories.</p>
+      : snapshot?.stale ? <p role="status">This snapshot belongs to earlier saved inputs. Refresh requirements manually to assess the current posting.</p> : null}
     {snapshot ? <>
-      <p className="muted">Snapshot {snapshot.revision} · posting revision {snapshot.posting_revision} · catalog revision {snapshot.catalog_revision}</p>
-      {snapshot.requirements.length ? <ul>{snapshot.requirements.map((requirement) => <li key={requirement.occurrence_id}>
-        <strong>{requirement.text}</strong> <span>({requirement.tier}, weight {requirement.weight})</span>
+      <p className="muted">Snapshot {snapshot.revision} · posting revision {snapshot.posting_revision} · catalog revision {snapshot.catalog_revision}{historical ? " · historical contract" : ""}</p>
+      {snapshot.status === "unsupported_language" ? <p role="status">This posting was skipped because its recorded language is not English. Requirement extraction and person-fit scoring did not run.</p> : null}
+      {snapshot.language ? <details><summary>Posting language and source evidence</summary>
+        <p>{snapshot.language.classification === "english" ? "English" : snapshot.language.classification === "non_english" ? "Non-English" : "Language uncertain"}: {snapshot.language.reason}</p>
+        {snapshot.language.evidence_refs.map((id) => { const quote = snapshot.quotes?.find((item) => item.evidence_id === id);
+          return quote ? <blockquote key={id}>{quote.quote}<footer>Posting source {quote.source_id}</footer></blockquote> : <p key={id}>Recorded evidence {id}; its source quote is unavailable in this snapshot.</p>;
+        })}
+      </details> : null}
+      {snapshot.requirements.length ? <><h4>Reusable skills and professional experience</h4><ul>{snapshot.requirements.map((requirement) => <li key={requirement.occurrence_id}>
+        <strong>{requirement.name ?? requirement.text ?? requirement.definition}</strong> <span>· {categoryLabel(requirement.category)}</span>
         <p>{requirement.definition}</p>
-        {requirement.qualifiers.length ? <p>Qualifiers: {requirement.qualifiers.map((qualifier) => `${qualifier.dimension}: ${qualifier.value}`).join("; ")}</p> : null}
-        <details><summary>Source and determination</summary><p>Requirement {requirement.requirement_id}, revision {requirement.requirement_revision}; source {requirement.source_id}, revision {requirement.source_revision}.</p>
+        {requirement.basis ? <p className="muted">Posting basis: {requirement.basis.replaceAll("_", " ")}</p> : null}
+        {requirement.rationale ? <p>{requirement.rationale}</p> : null}
+        {requirement.source_note ? <p>Posting context: {requirement.source_note}</p> : null}
+        {historical && (requirement.tier || requirement.weight !== undefined) ? <p className="muted">Historical metadata: {requirement.tier?.replaceAll("_", " ")}{requirement.weight !== undefined ? ` · weight ${requirement.weight}` : ""}. This is not current scoring policy.</p> : null}
+        <details><summary>Posting source and catalog binding</summary><p>Extracted meaning: {requirement.definition}</p><p>Requirement {requirement.requirement_id}, revision {requirement.requirement_revision}; source {requirement.source_id}, revision {requirement.source_revision}.</p>
           {requirement.spans.map((span, index) => <blockquote key={`${span.start}:${span.end}:${index}`}>{span.quote}</blockquote>)}
           <p>Extraction {requirement.extraction_determination_id}{requirement.equivalence_determination_ids.length ? `; equivalence ${requirement.equivalence_determination_ids.join(", ")}` : ""}</p>
         </details>
-        {revision !== null ? <BindingCorrection jobId={jobId} postingRevision={revision} snapshot={snapshot} occurrenceId={requirement.occurrence_id} /> : null}
-      </li>)}</ul> : <p>No requirements were recorded in this snapshot.</p>}
+        {!historical && revision !== null ? <BindingCorrection jobId={jobId} postingRevision={revision} snapshot={snapshot} occurrenceId={requirement.occurrence_id} /> : null}
+      </li>)}</ul></> : snapshot.status !== "unsupported_language" ? <p>No reusable skills or professional-experience requirements were recorded.</p> : null}
+      {directDemands.length ? <><h4>Education and language demands</h4><p>Each demand counts once toward person fit. These demands do not enter the reusable catalog or request achievement wording.</p>
+        <ul>{directDemands.map((demand) => <li key={demand.requirement_id}>
+          <strong>{demand.category === "education" ? demand.qualification : demand.language}</strong> <span>· {categoryLabel(demand.category)}</span>
+          {demand.category === "education" ? <>
+            {demand.subjects?.length ? <p>Subjects: {demand.subjects.join("; ")}</p> : null}
+            {demand.alternative ? <p>Posting permits an alternative: {demand.alternative}. An experience route does not assert a degree.</p> : null}
+            <p className="muted">Evidence section: Education{demand.alternative ? "; professional experience for the stated alternative" : ""}.</p>
+          </> : <><p>Required proficiency: {demand.proficiency ?? "Not specified in the posting"}.</p><p className="muted">Evidence section: Languages / Proficiency.</p></>}
+          {demand.source_note ? <p>Posting context: {demand.source_note}</p> : null}
+          <details><summary>Posting source</summary><p>Job-local demand {demand.requirement_id}, revision {demand.revision}; source {demand.source_id}, revision {demand.source_revision}.</p>
+            {demand.spans.map((span, index) => <blockquote key={`${span.start}:${span.end}:${index}`}>{span.quote}</blockquote>)}
+          </details>
+        </li>)}</ul></> : null}
+      {snapshot.unresolved?.length ? <details><summary>Unresolved posting ambiguities ({snapshot.unresolved.length})</summary><pre>{JSON.stringify(snapshot.unresolved, null, 2)}</pre></details> : null}
     </> : !query.isPending && !query.error ? <p>No requirements have been extracted for this posting.</p> : null}
     <Button type="button" disabled={!availability.available || revision === null || extract.isPending || query.isPending} onClick={() => {
       if (availability.available && revision !== null) extract.mutate({ expected_posting_revision: revision, expected_revision: snapshot?.revision ?? 0 });

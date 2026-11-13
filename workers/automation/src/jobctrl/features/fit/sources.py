@@ -10,6 +10,7 @@ from typing import Any
 from jobctrl.app.errors import AppError
 
 from .serialization import encoded
+from .contract import CONTRACT_VERSION, DIRECT_CATEGORIES, require_contract
 
 
 def fingerprint(value: Any) -> str:
@@ -82,6 +83,55 @@ def fact_fingerprint(profile: dict, facts: list[dict] | None = None) -> str:
                         "achievements": achievement_inventory(profile)})
 
 
+def evidence_category(source: dict) -> str | None:
+    """Read recorded structural ownership; prose and IDs never classify facts."""
+    path = source.get("path", [])
+    if isinstance(path, (list, tuple)) and len(path) == 3 and path[0] == "resume":
+        if source.get("kind") == "fact" and path[1] == "skill_categories":
+            return "skill"
+        if source.get("kind") == "fact" and path[1] == "education_entries":
+            return "education"
+        if source.get("kind") == "language" and path[1] == "language_entries":
+            return "language"
+    if source.get("kind") in {"role", "authored_achievement", "evidence"} and source.get("role_id"):
+        return "professional_experience"
+    return None
+
+
+def permitted_facts(requirement: dict, facts: list[dict], *, evidence_route=None) -> list[dict]:
+    require_contract(requirement)
+    category = requirement["category"]
+    allowed = {"skill", "professional_experience"} if category == "skill" else {category}
+    if category == "education" and requirement.get("alternative"):
+        if evidence_route == "equivalent_experience":
+            allowed = {"professional_experience"}
+        elif evidence_route is None:
+            allowed.add("professional_experience")
+    return [row for row in facts if evidence_category(row) in allowed]
+
+
+def qualification_fingerprint(profile: dict, requirement: dict, facts=None) -> str:
+    facts = fact_sources(profile) if facts is None else facts
+    selected = permitted_facts(requirement, facts)
+    experience = any(evidence_category(row) == "professional_experience" for row in selected)
+    return fingerprint({"contract_version": CONTRACT_VERSION, "sources": selected,
+                        "guidance": [row for row in facts if row.get("kind") == "user_scoring_guidance"],
+                        "achievements": achievement_inventory(profile) if experience else {}})
+
+
+def job_fingerprint(profile: dict, requirements: list[dict]) -> str:
+    facts = fact_sources(profile)
+    return fingerprint({"contract_version": CONTRACT_VERSION,
+        "requirements": [{"requirement_id": row["requirement_id"],
+                          "sources": qualification_fingerprint(profile, row, facts)} for row in requirements]})
+
+
+def wording_eligible(assessment: dict) -> bool:
+    return (assessment.get("contract_version") == CONTRACT_VERSION
+            and assessment.get("category") not in DIRECT_CATEGORIES
+            and assessment.get("wording_support") == "achievement")
+
+
 def source_id(ref: str | dict) -> str:
     return ref if isinstance(ref, str) else ref["source_id"]
 
@@ -89,10 +139,12 @@ def source_id(ref: str | dict) -> str:
 def requirement_source(requirement: dict) -> dict:
     # JSON is a literal complete definition/qualifier source, never lexical input
     # to a hand-written meaning classifier.
-    text = encoded({
-        "definition": requirement["definition"], "qualifiers": requirement.get("qualifiers", {}),
-        "scope": requirement["scope"],
-    })
+    require_contract(requirement)
+    text = encoded({"contract_version": CONTRACT_VERSION,
+                    "category": requirement["category"], "name": requirement["name"],
+                    "definition": requirement["definition"],
+                    **{key: requirement[key] for key in ("qualification", "subjects", "alternative", "language", "proficiency")
+                       if key in requirement}})
     return {"source_id": "requirement", "revision": str(requirement["requirement_revision"]), "text": text}
 
 

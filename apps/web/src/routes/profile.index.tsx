@@ -15,6 +15,7 @@ const labels = {
   experience: "Experience",
   skills: "Skills",
   education: "Education",
+  languages: "Languages",
   personal: "Personal details",
   resume: "Resume",
 } as const;
