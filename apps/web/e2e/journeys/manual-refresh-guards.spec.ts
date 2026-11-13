@@ -17,11 +17,7 @@ import {
   type PendingRefresh,
   type RefreshOperation,
 } from "./fit-data.js";
-import {
-  catalogMatching,
-  citeSources,
-  modelSources,
-} from "./requirements-data.js";
+import { catalogMatching } from "./requirements-data.js";
 
 for (const defect of [
   "missing requirement",
@@ -166,30 +162,12 @@ test("a manual refresh publishes only its selected scored jobs while canonical q
 }) => {
   const seed = await createScoredFit(api, app, "selected-job-first");
   const second = await createPosting(api, "selected-job-second");
+  const beforeRequirements = app.external.calls.length;
   const extracting = api.post(`/v1/jobs/${second.job_id}/requirements`, {
     data: { expected_posting_revision: second.revision, expected_revision: 0 },
   });
-  const extraction = await modelCall(app, "requirements.extract");
-  const source = modelSources(extraction)[0]!;
-  extraction.reply({
-    status: "complete",
-    requirements: [
-      {
-        local_id: "recovery",
-        text: source.text,
-        definition: "Implement and maintain durable workflow recovery.",
-        qualifiers: [],
-        scope: "resume",
-        tier: "must_have",
-        weight: 1,
-        support: "supported",
-        spans: [{ source_id: source.source_id, quote: source.text }],
-      },
-    ],
-    reason:
-      "Explicit source-bound requirement for a second independently selected job.",
-    citations: citeSources(extraction, [source.source_id]),
-  });
+  // The exact saved body already has accepted extraction authority. The
+  // changed catalog epoch still needs one complete matching determination.
   const matching = await modelCall(app, "requirements.match_catalog");
   matching.reply(
     catalogMatching(matching, {
@@ -200,6 +178,7 @@ test("a manual refresh publishes only its selected scored jobs while canonical q
     }),
   );
   expect((await extracting).status()).toBe(200);
+  expect(app.external.calls.slice(beforeRequirements).map((call) => call.body["operation"])).toEqual(["requirements.match_catalog"]);
   const secondFit = await json<FitState>(
     api,
     "post",
