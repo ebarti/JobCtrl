@@ -15,14 +15,14 @@ jobs:
       with:
         persist-credentials: false
     - name: Set up pnpm
-      uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
     - name: Set up Node
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
       with:
         node-version: 22.21.1
         cache: pnpm
     - name: Set up pinned uv
-      uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e
+      uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
       with:
         version: 0.11.7
         enable-cache: true
