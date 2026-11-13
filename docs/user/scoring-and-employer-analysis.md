@@ -124,6 +124,13 @@ assessments or scores. An all-current set needs no qualification call. This
 changes the amount of repeated work, not evidence standards, model effort or
 the score calculation.
 
+A job with no prior score can receive its first assessment during the
+preparation you explicitly started, even if shared assessments were recorded
+before your latest saved Profile changes. It checks only that job's fixed
+requirement set and preserves earlier assessment history and other jobs' scores.
+A previously scored job still needs **Update affected matches** when saved
+changes require new qualification. Saving a Profile starts neither action.
+
 With accepted qualified requirements, the calculation works like
 this:
 
@@ -292,9 +299,10 @@ decision; re-score runs the current scoring pipeline and creates a new model-
 derived version.
 Manual corrections carry the existing requirement evidence forward to the new
 score version, preserving its original profile and employer-analysis provenance.
-They do not reassess that evidence. Post-edit preparation that needs updated
-qualification asks for **Update affected matches** first; it cannot bypass the
-manual boundary by silently refreshing from a tailoring request. Existing
+They do not reassess that evidence. Post-edit preparation for a previously
+scored job that needs updated qualification asks for **Update affected matches**
+first; it cannot bypass the manual boundary by silently refreshing from a
+tailoring request. Existing
 accepted resumes remain available, and opening their editor does not start a
 score refresh.
 Resetting stale scores prepares their stages for another run; it does not run

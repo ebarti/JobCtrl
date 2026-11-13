@@ -50,12 +50,13 @@ class Qualification:
             return read.profile_snapshot(profile_id)
 
     async def resolve_many(self, profile_snapshot, requirements: list[dict], requirements_snapshot: dict, *, force=False,
-                           cancelled=lambda: False):
+                           initial_assessment=False, cancelled=lambda: False):
         profile = dto(profile_snapshot)
         facts = fact_sources(profile)
         source_hash = fact_fingerprint(profile, facts)
         current = {}
         missing = []
+        prior_heads = {}
         with self.store.read_snapshot() as read:
             read.validate_sources(profile_snapshot, requirements_snapshot)
             for requirement in requirements:
@@ -65,8 +66,10 @@ class Qualification:
                 if accepted is not None and not force:
                     current[ident] = accepted
                     continue
-                if read.latest_requirement_assessment(profile["profile_id"], ident) is not None:
+                previous = read.latest_requirement_assessment(profile["profile_id"], ident)
+                if previous is not None and (not initial_assessment or force):
                     raise AppError("fit_refresh_required", "Saved inputs changed. Start a manual Fit refresh to update existing assessments.", 409)
+                prior_heads[ident] = previous["assessment_id"] if previous else None
                 missing.append(requirement)
         reused = len(current)
         if missing:
@@ -74,7 +77,8 @@ class Qualification:
                 raise asyncio.CancelledError()
             candidates = await self.candidates(profile_snapshot, missing)
             published = self.store.publish_assessments(candidates, facts, profile_snapshot, requirements_snapshot,
-                {row["requirement_id"]: None for row in missing}, cancelled=cancelled)
+                {row["requirement_id"]: None for row in missing}, expected_prior_assessment_ids=prior_heads,
+                initial_job_id=requirements_snapshot["job_id"] if initial_assessment else None, cancelled=cancelled)
             current.update({row["requirement_id"]: row for row in published})
         return [current[row["requirement_id"]] for row in requirements], reused
 

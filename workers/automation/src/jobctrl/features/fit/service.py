@@ -152,14 +152,17 @@ class FitService:
             read.validate_sources(profile_snapshot, requirements_snapshot)
             self._assert_score_revision(read, job_id, expected_revision)
             self._require_manual_refresh(read, job_id, profile_id, force=force)
+            initial_assessment = read.latest_score(job_id) is None
             source_hash = fact_fingerprint(profile)
             for requirement in rows:
                 previous = read.latest_requirement_assessment(profile_id, requirement["requirement_id"])
-                if previous is not None and (force or previous["source_fingerprint"] != source_hash
-                        or str(previous["requirement_revision"]) != str(requirement["requirement_revision"])):
+                if previous is not None and (force or not initial_assessment and (
+                        previous["source_fingerprint"] != source_hash
+                        or str(previous["requirement_revision"]) != str(requirement["requirement_revision"]))):
                     raise AppError("fit_refresh_required", "Saved inputs changed. Start a manual Fit refresh to update existing assessments.", 409)
         records, reused = await self.qualification.resolve_many(
-            profile_snapshot, rows, requirements_snapshot, force=force, cancelled=cancelled,
+            profile_snapshot, rows, requirements_snapshot, force=force,
+            initial_assessment=initial_assessment, cancelled=cancelled,
         )
         qualifications = []
         for requirement, record in zip(rows, records, strict=True):

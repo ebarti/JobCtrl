@@ -50,11 +50,18 @@ belongs to the coordinated runtime cutover.
 ## Batched qualification authority
 
 `Qualification.resolve_many` reads current authorities for the full job
-requirement set before inference. Any previously accepted qualification whose
-facts or canonical revision changed still returns `fit_refresh_required`;
-initial job assessment cannot silently refresh that authority. Existing accepted
-single-requirement assessments remain reusable under the same source keys and
-retain their original provenance.
+requirement set before inference. For a job with no prior score, its explicitly
+started first assessment with `force: false` may batch requirements without
+current authority even when older shared qualifications exist under prior saved
+inputs. The service derives this permission from score history; it is not a
+caller-supplied bypass. This work is limited to that job's fixed requirement
+set. Publication rechecks score revision zero and compares both current-source
+and captured historical assessment heads in the same transaction. It retains
+all history and rewrites no other job's score. Force cannot replace prior
+qualification authority.
+A previously scored job needing changed qualification still returns
+`fit_refresh_required`. Existing current assessments remain reusable under the
+same source keys and retain their original provenance.
 
 All missing requirements enter one `fit.qualification-batch` determination,
 prompt `fit-qualification-batch-v1`, in the existing `scoring` lane. The request
@@ -195,9 +202,11 @@ old approved variant is globally deleted or relabeled as unapproved. Consumers
 join maintained selections and separately fence their mapping fingerprint;
 historical document acceptance keeps its recorded selection and source rules.
 
-Post-edit qualification through older assessment/coverage commands returns
-`fit_refresh_required`; initial missing qualification remains available to
-explicit job preparation. Manual refresh uses:
+Post-edit qualification for a previously scored job through older
+assessment/coverage commands returns `fit_refresh_required`. A job with no prior
+score may resolve its fixed requirement set during explicit initial preparation;
+shared assessment history alone does not require a catalog-wide refresh.
+Manual refresh uses:
 
 - `GET /v1/fit/refresh/pending?profile_id=default`: returns HTTP 200 with
   `readiness: "ready"`, a saved-input stamp, recorded pending reasons,

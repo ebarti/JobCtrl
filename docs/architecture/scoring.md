@@ -72,8 +72,13 @@ revision, and the complete factual source/achievement fingerprint. An accepted
 qualification retains its original model or user authority across jobs; a new
 posting occurrence, priority or model selection does not manufacture a new
 assessment. If every qualification is current, this stage makes zero model
-calls. Previously assessed inputs that changed still require explicit manual
-refresh.
+calls. A job with no prior score may resolve its fixed requirement set during
+explicitly authorized initial preparation, including new current authority where
+older shared qualifications predate saved changes. Publication compares the
+captured current-source and historical heads, rechecks that the job has no
+score and preserves history; it rewrites no other
+job's score. Updating qualification for a previously scored job after saved-input
+changes still requires explicit manual refresh. Saves start neither operation.
 
 The entire missing set enters one `fit.qualification-batch` request in the
 scoring lane, with the complete factual inventory supplied once and a distinct

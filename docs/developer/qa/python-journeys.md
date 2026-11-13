@@ -46,11 +46,12 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **91 journeys in 31 spec files**:
-**90 Chromium cases in 30 files**, plus **one demo case in one file**. The
+The current configured inventory is **93 journeys in 31 spec files**:
+**92 Chromium cases in 30 files**, plus **one demo case in one file**. The
 configured all-project listing retains the complete 77-case/29-file parent and
-adds 14 cases in two files for batched qualification and exact-result reuse;
-no parent case is removed.
+adds 14 cases in two files for batched qualification and exact-result reuse,
+plus two initial-assessment admission cases in the existing Fit batching file.
+No parent case is removed.
 
 The 77-case parent comprised the earlier 57 plus three direct-Jobs search
 journeys, five provider-isolation/recovery journeys, one native accounting-setup
@@ -72,6 +73,20 @@ own assessment/canonical identity and result fingerprint, distinct from the
 shared immutable raw-batch receipt/fingerprint. All-current sets make zero
 qualification calls. Explicit manual refresh keeps complete-catalog impact,
 fixed source/job scope, durable checkpoints and existing work limits.
+
+Initial job admission is separate: a job with no prior score may reuse current
+authority and batch the remainder of its fixed requirement set during its
+explicit preparation, including when earlier shared qualifications predate
+saved Profile changes. Captured-head comparisons fence publication, history is
+retained and other jobs' scores are unchanged. Previously scored jobs still
+require manual affected-match refresh for changed qualification; saves and
+reads start no work. The earlier 12- and 39-case runs below predate this admission
+repair; the repair has its own 25-case result below.
+The two added [Fit batching cases](../../../apps/web/e2e/journeys/fit-batching.spec.ts)
+target first assessment with historical and unseen qualifications after a
+preference edit, preserved old scores and manual-refresh boundaries, zero-call
+replay, and a held batch refused after a competing historical-head publication.
+A successful inventory listing is not an executed passing result.
 
 Requirements and role analysis use exact complete content and frozen
 provider/model/effective effort/configuration for model-call reuse. Catalog
@@ -108,17 +123,35 @@ browser console. Build and dependency locks remained unchanged.
 
 Its frozen Python tree
 `c1c4c0270bf9c2929942e6be27f83c14b0e1318a46fe9a72f81a1475aba0c6e5`
-matches the final production source and the live pre-guard source. The source
+matched production and the live pre-guard source at that verification. The source
 candidate fingerprint was
 `e4e2ac635c7c05587bc935553fbdfb9c27b0e4356e47d4857e121067ccaa23ce`;
 the web bundle was
 `f201a831b79682e521c8aacf8ba3e36fe06216a9cfe8f1e5a62b401ce19168f1`.
 The wrapper measured **258.498 seconds** for journeys, **267.876 seconds** total
 and **7.940 seconds** for the build. This qualifies the named source paths on
-that snapshot, not all 91 cases or the exact final published candidate. Check
+that snapshot, not the complete current inventory or the exact final published candidate. Check
 [PR #1475's checks](https://github.com/ebarti/JobCtrl/pull/1475/checks) for
-whole-91-case qualification of the reviewed head; only completed successful
+whole-inventory qualification of the reviewed head; only completed successful
 required checks for that exact head establish the hosted result.
+
+The first-assessment admission repair passed **25/25 journeys** in
+`e2e-dEFAbJ`, using
+`corepack pnpm e2e -- fit-batching.spec.ts manual-refresh-guards.spec.ts search-assessment.spec.ts`.
+Both added admission/history and historical-head race cases passed, alongside
+batch partition/citation refusals, source-change fences, cancellation,
+existing-score manual-refresh guards, bounded work/replay and actual worker
+replacement. The runner used one worker, zero retries, zero skips and zero flaky
+cases; build outputs and dependency locks remained unchanged. Its frozen Python
+tree was
+`4f6f35a12a0f9617341772b8250ab87eb4f7015684b915c40f4b5214c7597d01`,
+with source candidate
+`8c8b64b4b9d63640b8e57be1d5eb351df5fb27a0bc1d0da15437caa4aeb54dcd`
+and the same web bundle as the 39-case run. The wrapper measured
+**172.929 seconds** for journeys, **182.873 seconds** total and **8.371 seconds**
+for the build. This is affected source proof; exact reviewed-head whole-suite
+and terminal provider evidence remain owned by the PR checks and issue linked
+here, without a new full-CI or live-provider success claim.
 
 The preceding authorized five-job observation took **91 minutes 59 seconds**
 and recorded **62 qualification calls and 40 qualification reuses**. These are

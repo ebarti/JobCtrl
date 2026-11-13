@@ -3349,6 +3349,16 @@ assessment identities and exact row fingerprints while sharing the immutable
 raw-batch receipt and its fingerprint. An all-current set makes no qualification
 call. No score arithmetic or provider/model/effort policy changes.
 
+Initial authorization is determined by the destination job's score history.
+A job with no prior score may reuse current authority and batch the remainder
+of its fixed requirement set, even when earlier shared qualifications predate
+saved Profile changes. Compare captured prior assessment heads before atomic
+publication and preserve all history. No other job's score is rewritten. A
+previously scored job needing post-edit qualification still requires explicit
+manual affected-match refresh; saves and reads admit no work. This preserves
+the 10 November distinction between initial job preparation and retroactive
+Profile-wide work.
+
 Requirements extraction and Jobs role analysis identify semantic content by the
 complete exact text, separate from destination Job/posting identity. Catalog
 matching also binds the entire incoming inventory and current catalog. Exact

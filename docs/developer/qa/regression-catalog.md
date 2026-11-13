@@ -50,8 +50,14 @@ learning milestone cannot prove capability. Unknowns and correction history
 remain visible. Rejected/deferred proposals are deduplicated rather than
 regenerated for every posting.
 
-Post-edit refresh requires explicit manual admission. One source-bound impact
-selection sees the complete catalog and saved evidence changes, including
+Post-edit refresh of previously scored jobs requires explicit manual admission.
+A job with no prior score may resolve only its fixed requirement set during
+explicit first assessment even when older shared authority predates saved
+changes. Require the no-prior-score fence, current-source and historical-head
+comparisons, retained history and unchanged scores for every other job. Saves
+and reads admit no work.
+One source-bound impact selection sees the complete catalog and saved evidence
+changes, including
 previously missing/unlinked requirements. Only selected requirements require
 new qualification; unaffected receipts retain their original semantic authority.
 Exact current approved-wording bindings are direct reuse. Group actual wording

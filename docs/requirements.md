@@ -164,8 +164,14 @@ assessment must reuse current Profile/canonical-requirement/revision/factual-
 source authority first, then send the entire missing set in one source-bound
 qualification request. Require a complete, exact per-requirement partition,
 independent row identities and citations, and atomic publication of all new
-assessments. Manual affected-match refresh retains its explicit frozen scope,
-complete-catalog impact decision, checkpoints and finite work limits. Exact
+assessments. A job with no prior score may resolve only its fixed requirement
+set during explicit initial preparation even when older shared qualifications
+predate saved changes. Publication must recheck the absence of a score, compare
+captured current-source and historical assessment heads, retain history and
+rewrite no other job's score. Post-edit qualification for a
+previously scored job still requires manual refresh. Manual affected-match
+refresh retains its explicit frozen scope, complete-catalog impact decision,
+checkpoints and finite work limits. Exact
 role-analysis and Requirements call reuse must bind complete semantic inputs,
 prompt/schema and frozen provider/model/effective effort/configuration identity.
 Semantic content identity must remain separate from each actual posting's
