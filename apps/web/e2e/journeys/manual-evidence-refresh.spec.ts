@@ -9,12 +9,12 @@ import {
   terminal,
   type ApplicationStack,
 } from "../harness/fixtures.js";
-import { createPosting, type Library, type Profile } from "./core-data.js";
+import { createPosting, type Library, type Profile, type Posting } from "./core-data.js";
 import {
   createScoredFit,
   groupedCoverageDecision,
   impactPartition,
-  qualificationDecision,
+  qualificationBatchDecision,
   refreshPayload,
   startRefresh,
   type FitState,
@@ -239,18 +239,18 @@ test("Profile manually updates the previously missing match, reuses unaffected a
       [ownershipId]: "affected",
     }),
   );
-  const qualification = await modelCall(app, "fit.qualification");
+  const qualification = await modelCall(app, "fit.qualification-batch");
   expect(
-    (qualification.body["context"] as { binding: { requirement_id: string } })
-      .binding.requirement_id,
-  ).toBe(ownershipId);
+    (qualification.body["context"] as { requirements: { requirement_id: string }[] })
+      .requirements.map((row) => row.requirement_id),
+  ).toEqual([ownershipId]);
   qualification.reply(
-    qualificationDecision(qualification, {
+    qualificationBatchDecision(qualification, () => ({
       achievementIds: [ownershipAchievement.achievement_id],
       evidenceSourceIds: [
         `evidence:${ownershipAchievement.source_refs[0]!.source_id}`,
       ],
-    }),
+    })),
   );
   const coverage = await modelCall(app, "fit.wording-coverage-grouped");
   expect(
@@ -322,7 +322,7 @@ test("Profile manually updates the previously missing match, reuses unaffected a
   expect(recoveryAfter.provenance).toEqual(recoveryBefore.provenance);
   expect(modelOperations(app, beforeEdits)).toEqual([
     "fit.catalog-impact",
-    "fit.qualification",
+    "fit.qualification-batch",
     "fit.wording-coverage-grouped",
     "profile.wording_authoring",
   ]);
@@ -491,7 +491,10 @@ for (const changedSource of ["Profile", "posting", "catalog"] as const) {
         description: "Own a materially revised workflow recovery requirement.",
       });
     if (changedSource === "catalog") {
-      const posting = await createPosting(api, "concurrent-catalog-addition");
+      const posting = await json<Posting>(api, "post", "/v1/jobs/capture", {
+        url: "https://example.com/jobs/concurrent-catalog-addition", title: "Synthetic Separate Service Owner",
+        company: "Synthetic Catalog Company", description: "Own a separate qualified operational responsibility for a synthetic service.",
+      });
       const extracting = api.post(`/v1/jobs/${posting.job_id}/requirements`, {
         data: {
           expected_posting_revision: posting.revision,
@@ -569,6 +572,7 @@ test("a saved change while a manual refresh is queued refuses before any selecto
     job_id: blockerPosting.job_id,
     expected_posting_revision: blockerPosting.revision,
     expected_revision: 0,
+    force: true,
   });
   const held = await modelCall(app, "requirements.extract");
   const queued = await startRefresh(api, payload, "manual-queued-stamp");

@@ -73,7 +73,7 @@ test("explicit saved-job assessment recovers fit without acquisition and preserv
   expect(refused.steps.find((step) => step.stage === "fit")).toMatchObject({ status: "failed", errorCode: "fit_refresh_required" });
   expect(app.external.calls.some((call) => call.path === "/discovery" || call.path === "/posting-page")).toBe(false);
   const operations = app.external.calls.filter((call) => call.path === "/model").map((call) => String(call.body["operation"]));
-  expect(operations.filter((operation) => operation === "fit.qualification")).toHaveLength(1);
+  expect(operations.filter((operation) => operation === "fit.qualification-batch")).toHaveLength(1);
   expect(operations.some((operation) => operation.startsWith("fit.coverage") || operation.startsWith("profile.wording") || operation.startsWith("resumes."))).toBe(false);
   expect((await json<{ runs: unknown[] }>(api, "get", "/v1/action-runs?action=fit.refresh")).runs).toEqual([]);
   expect((await json<{ resumes: unknown[] }>(api, "get", `/v1/resumes?jobId=${posting.job_id}`)).resumes).toEqual([]);
@@ -160,7 +160,7 @@ test("search replay preserves a failed job while a replacement worker finishes t
   expect(retained.jobIds).toEqual(frozen.jobIds);
   expect(retained.steps).toContainEqual(failed);
   expect(app.external.calls.filter((call) => call.path === "/discovery")).toHaveLength(1);
-  expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification")).toHaveLength(2);
+  expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(2);
 });
 
 test("search assesses retained new jobs after every source fails and preserves the canonical failed acquisition", async ({ api, app }) => {

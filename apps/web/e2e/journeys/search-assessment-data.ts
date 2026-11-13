@@ -5,7 +5,7 @@ import {
   type ExternalCall,
 } from "../harness/fixtures.js";
 import type { Library } from "./core-data.js";
-import { qualificationDecision } from "./fit-data.js";
+import { qualificationBatchDecision } from "./qualification-data.js";
 import { catalogMatching, citeSources, modelSources } from "./requirements-data.js";
 
 type SearchPosting = {
@@ -111,12 +111,13 @@ export async function serveSavedAssessment(
     : { verdict: "new" } }));
   if (!qualificationExpected) return;
 
-  const qualification = await modelCall(app, "fit.qualification");
+  const qualification = await modelCall(app, "fit.qualification-batch");
   await beforeQualification?.(qualification);
   if (qualification.closed) return;
   const achievement = library.roles[0]!.achievements[0]!;
-  const choice = qualificationDecision(qualification, kind === "matched"
+  const choice = qualificationBatchDecision(qualification, () => kind === "matched"
     ? { achievementIds: [achievement.achievement_id], evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] }
     : { kind: "missing" });
-  qualification.reply(invalidEvidence ? { ...choice, evidence: [{ source_id: "foreign-unowned-evidence", quote: "A source that was never supplied." }] } : choice);
+  if (invalidEvidence) choice.requirements[0]!.evidence = [{ source_id: "foreign-unowned-evidence", quote: "A source that was never supplied." }];
+  qualification.reply(choice);
 }

@@ -17,19 +17,21 @@ class RequirementModelAdapter:
 
     async def determine(
         self, *, kind, schema, prompt_version, instruction, sources, context,
-        entity_id, validate, budget=None,
+        entity_id, validate, budget=None, publication_posting=None, source_binding=None,
     ):
         selection = self.gateway.selection()
         model_spec = f"{selection['provider']}:{selection['model']}"
+        execution = self.gateway.freeze_execution(model_spec)
         arguments = dict(
             operation=kind,
             instructions=instruction,
             sources=sources,
             response_schema=schema.model_json_schema(),
-            context={**context, "entity_id": entity_id},
+            context={**context, **({"entity_id": entity_id} if entity_id is not None else {})},
             prompt_version=prompt_version,
             lane="requirements",
             model=model_spec,
+            execution=execution,
         )
         try:
             # The gateway validates the complete payload, including schema and
@@ -44,7 +46,41 @@ class RequirementModelAdapter:
             parsed, provenance = self._checked(cached, input_fingerprint, kind, schema, validate)
             if budget is not None:
                 budget.reused += 1
-            return parsed, provenance
+            return parsed, self._bind(provenance, publication_posting, source_binding)
+        # A worker may stop after the canonical receipt settles but before the
+        # feature projection commits. Recover only an exact, revalidated result.
+        recovered = self.gateway.find_succeeded(input_fingerprint)
+        if recovered is not None:
+            if (recovered.get("status") != "succeeded" or recovered.get("input_fingerprint") != input_fingerprint
+                    or recovered.get("operation") != kind or recovered.get("prompt_version") != prompt_version
+                    or recovered.get("provider") != execution.provider or recovered.get("model") != execution.model
+                    or recovered.get("lane") != "requirements"):
+                raise RequirementError("model_cache_receipt_invalid")
+            try:
+                parsed = schema.model_validate(recovered["value"])
+                validate(parsed)
+            except (ValueError, RequirementError):
+                # Gateway structural success is not owner acceptance. A new
+                # explicitly admitted refresh may make its one planned call;
+                # this never retries a newly refused result within an attempt.
+                recovered = None
+            if recovered is not None:
+                provenance = {key: recovered[key] for key in (
+                    "receipt_id", "provider", "model", "lane", "prompt_version", "input_fingerprint", "created_at",
+                )}
+                provenance["accepted_result_fingerprint"] = fingerprint(parsed.model_dump())
+                if budget is not None:
+                    budget.reused += 1
+                posting = publication_posting or context.get("posting")
+                if not isinstance(posting, dict):
+                    raise RequirementError("model_source_context_missing")
+                accepted = self.store.save_model_call(
+                    input_fingerprint=input_fingerprint, operation=kind, posting=posting,
+                    catalog_revision=context.get("catalog_revision"), result=parsed.model_dump(), provenance=provenance,
+                    posting_guard=self.jobs.assert_posting_current,
+                )
+                parsed, provenance = self._checked(accepted, input_fingerprint, kind, schema, validate)
+                return parsed, self._bind(provenance, publication_posting, source_binding)
         if budget is not None:
             budget.consume()
         try:
@@ -67,7 +103,7 @@ class RequirementModelAdapter:
         provenance["accepted_result_fingerprint"] = fingerprint(parsed.model_dump())
         if provenance.get("input_fingerprint") != input_fingerprint:
             raise RequirementError("model_cache_binding_invalid")
-        posting = context.get("posting")
+        posting = publication_posting or context.get("posting")
         if not isinstance(posting, dict):
             raise RequirementError("model_source_context_missing")
         accepted = self.store.save_model_call(
@@ -75,7 +111,19 @@ class RequirementModelAdapter:
             catalog_revision=context.get("catalog_revision"), result=parsed.model_dump(), provenance=provenance,
             posting_guard=self.jobs.assert_posting_current,
         )
-        return self._checked(accepted, input_fingerprint, kind, schema, validate)
+        parsed, provenance = self._checked(accepted, input_fingerprint, kind, schema, validate)
+        return parsed, self._bind(provenance, publication_posting, source_binding)
+
+    @staticmethod
+    def _bind(provenance, posting, source_binding):
+        if source_binding is None:
+            return provenance
+        if not isinstance(posting, dict):
+            raise RequirementError("model_source_context_missing")
+        # This owner binding describes reuse; it never rewrites the shared
+        # immutable provider response or claims a call was made for this job.
+        return {**provenance, "source_binding": {"version": 1, "semantic_source": source_binding,
+                                               "destination_posting": posting}}
 
     @staticmethod
     def _raise_catalog_refusal(failure, kind, context):

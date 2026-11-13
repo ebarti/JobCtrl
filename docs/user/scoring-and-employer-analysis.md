@@ -54,6 +54,14 @@ or wording coverage; those remain explicit actions. See the
 [catalog architecture](../architecture/scoring.md#requirements-catalog-matching)
 for the source and revision checks.
 
+When the complete posting text and model inputs are identical, Requirements can
+reuse an accepted extraction or catalog-matching result. The selected provider,
+model and effective reasoning settings must also match. A changed catalog needs
+its own matching decision. Reuse keeps each job's actual source, posting
+revision and occurrences separate; it does not merge openings or claim that a
+new provider call occurred. Similar wording alone never qualifies for exact
+result reuse.
+
 In the Original source candidate, **Jobs → Requirements** opens the independent
 canonical library; achievement tags in **My profile → Experience** open the same
 meaning. Inspect definition, scope, qualifiers, linked achievements, exact
@@ -107,13 +115,31 @@ Jobs that reference the same qualified requirement reuse a current person
 assessment against the same saved facts. Similar text alone does not establish
 that shared identity. Exact approved wording coverage is reused as recorded.
 
-When Discovery supplies explicit requirements, the calculation works like
+Before requesting new qualification, Fit checks every requirement for current
+accepted support. It sends the entire remaining set in one model request, with
+the complete saved factual evidence supplied once. Each requirement still has
+its own result, citations and assessment identity. A missing, duplicate,
+foreign or invalid result refuses the batch without replacing accepted
+assessments or scores. An all-current set needs no qualification call. This
+changes the amount of repeated work, not evidence standards, model effort or
+the score calculation.
+
+A job with no prior score can receive its first assessment during the
+preparation you explicitly started, even if shared assessments were recorded
+before your latest saved Profile changes. It checks only that job's fixed
+requirement set and preserves earlier assessment history and other jobs' scores.
+A previously scored job still needs **Update affected matches** when saved
+changes require new qualification. Saving a Profile starts neither action.
+
+With accepted qualified requirements, the calculation works like
 this:
 
-1. **Send the accepted requirements to the scorer.** The scoring request
-   includes each requirement's ID, posting text and evidence, priority weight
-   from 0 to 1, and tier: must-have or nice-to-have. The structured scorer
-   returns those fields with its assessment.
+1. **Reuse current assessments and assess the missing set together.** The
+   model receives each missing canonical requirement's exact ID, revision,
+   meaning and scope alongside the saved factual sources. It returns one
+   source-bound decision for every requested requirement. Each job retains its
+   own occurrence text, evidence, weight from 0 to 1 and must-have or nice-to-have
+   tier for the calculation.
 2. **Classify the returned evidence.** A matched or transferable row must carry
    at least one supplied Candidate Profile evidence ID. Strict determination
    validation rejects foreign requirement/evidence IDs and unsupported quotes.
@@ -273,9 +299,10 @@ decision; re-score runs the current scoring pipeline and creates a new model-
 derived version.
 Manual corrections carry the existing requirement evidence forward to the new
 score version, preserving its original profile and employer-analysis provenance.
-They do not reassess that evidence. Post-edit preparation that needs updated
-qualification asks for **Update affected matches** first; it cannot bypass the
-manual boundary by silently refreshing from a tailoring request. Existing
+They do not reassess that evidence. Post-edit preparation for a previously
+scored job that needs updated qualification asks for **Update affected matches**
+first; it cannot bypass the manual boundary by silently refreshing from a
+tailoring request. Existing
 accepted resumes remain available, and opening their editor does not start a
 score refresh.
 Resetting stale scores prepares their stages for another run; it does not run

@@ -21,9 +21,10 @@ class PostingReader(Protocol):
 class RequirementModel(Protocol):
     async def determine(
         self, *, kind: str, schema: type[BaseModel], prompt_version: str,
-        instruction: str, sources: list[dict], context: dict, entity_id: str,
+        instruction: str, sources: list[dict], context: dict, entity_id: str | None,
         validate: Callable[[Any], None],
         budget: ModelCallBudget | None = None,
+        publication_posting: dict | None = None, source_binding: dict | None = None,
     ) -> tuple[Any, dict]: ...
 
 

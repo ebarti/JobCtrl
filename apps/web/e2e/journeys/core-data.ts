@@ -6,6 +6,7 @@ import {
   type ApplicationStack,
 } from "../harness/fixtures.js";
 import { catalogMatching } from "./requirements-data.js";
+import { qualificationBatchDecision } from "./qualification-data.js";
 
 /** Authored synthetic data submitted through the public Profile action. These
  * are not persisted model outputs, labels, or an internal repository seed. */
@@ -237,33 +238,12 @@ export async function qualifyPosting(
       prepare_coverage: false,
     },
   });
-  const qualification = await modelCall(app, "fit.qualification");
+  const qualification = await modelCall(app, "fit.qualification-batch");
   const achievement = library.roles[0]!.achievements[0]!;
   const sourceId = `evidence:${achievement.source_refs[0]!.source_id}`;
-  const input = qualification.body["sources"] as {
-    source_id: string;
-    text: string;
-  }[];
-  const fact = input.find((row) => row.source_id === sourceId)!;
-  const requirement = input.find((row) => row.source_id === "requirement")!;
-  qualification.reply({
-    ...(qualification.body["context"] as { binding: Record<string, string> })
-      .binding,
-    kind: "matched",
-    strength: "direct",
-    confidence: "high",
-    rationale:
-      "The authored recovery achievement directly supports this requirement.",
-    evidence: [{ source_id: fact.source_id, quote: fact.text }],
-    requirement_citations: [
-      { source_id: requirement.source_id, quote: requirement.text },
-    ],
-    achievement_ids: [achievement.achievement_id],
-    keywords: ["durable workflows"],
-    eligibility: "eligible",
-    blocker_category: null,
-    warning_category: null,
-  });
+  qualification.reply(qualificationBatchDecision(qualification, () => ({
+    achievementIds: [achievement.achievement_id], evidenceSourceIds: [sourceId], keywords: ["durable workflows"],
+  })));
   const assessed = await assessing;
   expect(assessed.status(), await assessed.text()).toBe(200);
   expect((await assessed.json()).score.score).toBe(10);
