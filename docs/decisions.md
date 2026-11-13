@@ -3335,3 +3335,50 @@ establishes no current-wording migration result, provider quality, release or
 hosted deployment. See [Profile](user/candidate-profile.md#approved-wording-library),
 [Requirements Library](user/requirements-library.md) and
 [Fit/scoring ownership](architecture/scoring.md#requirements-library-and-user-intent).
+
+## 2026-11-13: Batch Missing Qualifications And Separate Exact Reuse From Publication
+
+**Decision.** Fit resolves the complete current requirement set against accepted
+person authority before inference. The reuse key remains Profile ID, canonical
+requirement ID/revision and the complete factual source/achievement fingerprint.
+All missing qualifications enter one source-bound batch with complete facts
+supplied once and one namespaced source per requirement. The exact requested
+IDs/revisions must appear once each, with independent source-valid decisions.
+All new assessment rows validate and publish atomically. Rows retain independent
+assessment identities and exact row fingerprints while sharing the immutable
+raw-batch receipt and its fingerprint. An all-current set makes no qualification
+call. No score arithmetic or provider/model/effort policy changes.
+
+Requirements extraction and Jobs role analysis identify semantic content by the
+complete exact text, separate from destination Job/posting identity. Catalog
+matching also binds the entire incoming inventory and current catalog. Exact
+model-call reuse freezes provider/model, effective reasoning effort and
+allowlisted nonsecret configuration for both fingerprint lookup and invocation;
+prompt/schema, complete sources and context remain part of that identity.
+Feature owners validate immutable succeeded receipts before reuse. The gateway
+does not impose a blanket result cache. A forced refresh has a new action-bound
+identity; retries of the same action can reuse its settled result.
+
+Each destination records an explicit semantic-source-to-posting binding and
+passes its original publication/version/cancellation guards. Reuse cannot merge
+openings, fabricate an observation or rewrite a shared provider receipt.
+Gateway schema success alone is not owner acceptance. Failed or invalid results
+preserve accepted artifacts; a separately admitted retry is distinct from a
+within-attempt repair loop. No lexical fallback, normalized-text similarity,
+truncation or automatic chunking establishes semantic identity or support.
+
+**Scope.** This refines the 10 November complete-catalog and manual-refresh
+decision. Explicit affected-match admission, full-catalog impact selection,
+fixed scope, call/item/deadline limits and durable checkpoints remain. Selected
+uncheckpointed qualification work uses one batch and one call reservation.
+Saves, reads and wording approvals start no work. Factual fit, exact approved
+wording coverage and resume acceptance remain independent.
+
+**Owning references and evidence.** [Scoring architecture](architecture/scoring.md),
+[Fit](../workers/automation/src/jobctrl/features/fit/README.md#batched-qualification-authority),
+[Requirements](../workers/automation/src/jobctrl/features/requirements/README.md#exact-result-reuse-and-posting-publication),
+[Jobs](../workers/automation/src/jobctrl/features/jobs/README.md#exact-role-analysis-reuse)
+and the [QA ledger](developer/qa/python-journeys.md). Issue
+[#1473](https://github.com/ebarti/JobCtrl/issues/1473) tracks implementation and
+operational improvement. This contract alone establishes no passing journey,
+new timing, real-provider judgment quality, installed release or deployment.

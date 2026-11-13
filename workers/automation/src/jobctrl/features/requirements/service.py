@@ -409,8 +409,12 @@ class RequirementsService:
             if not current["stale"]:
                 return current
         source_text = posting.get("text") or posting.get("description") or ""
-        source_id = self._model_source_id(posting)
+        source_binding = self._content_source(source_text)
+        source_id = source_binding["source_id"]
         attempt_id = operation_id or str(uuid.uuid4())
+        # A force action deliberately asks for new authority, but retries of
+        # that same durable action must reuse a successfully settled receipt.
+        refresh_binding = {"operation_id": attempt_id} if force else None
         self.store.start_attempt({
             "attempt_id": attempt_id, "job_id": job_id, "posting_revision": posting["revision"],
             "expected_revision": expected_revision,
@@ -426,13 +430,11 @@ class RequirementsService:
             budget = ModelCallBudget(fingerprint({"action": action_fingerprint, "posting": self._posting_identity(posting)}),
                                      MAX_NEW_MODEL_CALLS_PER_REFRESH)
             selection, extraction_receipt = await self.model.determine(
-                kind="requirements.extract", schema=ExtractionSelection, prompt_version="requirements-extract-v2-quote-selection",
+                kind="requirements.extract", schema=ExtractionSelection, prompt_version="requirements-extract-v3-content-bound",
                 instruction=EXTRACTION_INSTRUCTION, sources=sources,
-                context={"posting": self._posting_identity(posting), "refresh_binding": {
-                    "expected_revision": expected_revision, "force": force,
-                }}, entity_id=job_id,
+                context={"posting_content": source_binding, "refresh_binding": refresh_binding}, entity_id=None,
                 validate=lambda result: validate_extraction_selection(result, source_id=source_id, text=source_text),
-                budget=budget,
+                budget=budget, publication_posting=self._publication_identity(posting), source_binding=source_binding,
             )
             extraction = bind_extraction(selection, source_id=source_id, text=source_text)
             extraction_id = extraction_receipt["receipt_id"]
@@ -443,6 +445,7 @@ class RequirementsService:
                     new_meanings, occurrences = await self._resolve_inventory(
                         extraction, posting=posting, source_text=source_text, catalog=catalog, epoch=epoch,
                         extraction_receipt=extraction_receipt, budget=budget, cancelled=cancelled, heartbeat=heartbeat,
+                        source_binding=source_binding, refresh_binding=refresh_binding,
                     )
                     self.store.publish(
                         posting=posting, expected_revision=expected_revision, catalog_revision=epoch,
@@ -467,12 +470,13 @@ class RequirementsService:
             raise
 
     async def _resolve_inventory(self, extraction, *, posting, source_text, catalog, epoch,
-                                 extraction_receipt, budget, cancelled, heartbeat):
+                                 extraction_receipt, budget, cancelled, heartbeat, source_binding=None, refresh_binding=None):
         if not extraction.requirements:
             return [], []
         matches, receipt, inventory = await self._match_catalog(
             extraction.requirements, posting=posting, source_text=source_text, catalog=catalog, epoch=epoch,
             cancelled=cancelled, budget=budget, heartbeat=heartbeat,
+            source_binding=source_binding, refresh_binding=refresh_binding,
         )
         new_meanings = []
         occurrences = []
@@ -496,7 +500,7 @@ class RequirementsService:
                 "job_id": posting["job_id"], "posting_revision": posting["revision"],
                 "text": extracted.text, **{k: meaning[k] for k in ("definition", "qualifiers", "scope")},
                 "tier": extracted.tier, "weight": extracted.weight,
-                "source_id": posting["source_id"], "model_source_id": self._model_source_id(posting),
+                "source_id": posting["source_id"], "model_source_id": source_binding["source_id"] if source_binding else self._model_source_id(posting),
                 "source_revision": posting["source_revision"], "source_hash": posting["source_hash"],
                 "spans": [span.model_dump() for span in extracted.spans],
                 "extraction_determination_id": extraction_receipt["receipt_id"],
@@ -508,8 +512,12 @@ class RequirementsService:
 
     @staticmethod
     def _posting_identity(posting):
-        return {**{key: posting[key] for key in ("job_id", "revision", "source_id", "source_revision", "source_hash")},
+        return {**RequirementsService._publication_identity(posting),
                 "model_source_id": RequirementsService._model_source_id(posting)}
+
+    @staticmethod
+    def _publication_identity(posting):
+        return {key: posting[key] for key in ("job_id", "revision", "source_id", "source_revision", "source_hash")}
 
     @staticmethod
     def _model_source_id(posting):
@@ -518,14 +526,22 @@ class RequirementsService:
         return f"posting:{posting['job_id']}:{posting['revision']}:{posting['source_hash']}"
 
     @staticmethod
+    def _content_source(text):
+        # Exact full text is the entire semantic posting input to extraction.
+        # No whitespace normalization, excerpting, or semantic matching occurs.
+        text_fingerprint = fingerprint(text)
+        return {"version": 1, "source_id": f"posting-content:v1:{text_fingerprint}",
+                "text_fingerprint": text_fingerprint}
+
+    @staticmethod
     def _check_cancel(cancelled):
         if cancelled():
             raise RequirementError("cancelled")
 
     async def _match_catalog(self, incoming, *, posting, source_text, catalog, epoch, cancelled,
-                             budget=None, heartbeat=None):
+                             budget=None, heartbeat=None, source_binding=None, refresh_binding=None):
         self._check_cancel(cancelled)
-        source_id = self._model_source_id(posting)
+        source_id = source_binding["source_id"] if source_binding else self._model_source_id(posting)
         candidate_keys = [(row["requirement_id"], row["revision"]) for row in catalog]
         if len(candidate_keys) != len(set(candidate_keys)):
             raise RequirementError("catalog_snapshot_invalid")
@@ -539,8 +555,12 @@ class RequirementsService:
         inventory_id = f"catalog-inventory:{fingerprint(inventory)}"
         source_map = {source_id: source_text, inventory_id: canonical_json(inventory)}
         incoming_source_ids = {}
+        incoming_binding = {"posting_content": source_binding,
+                            "inventory": [row.model_dump() for row in incoming]} if source_binding else None
         for extracted in incoming:
-            incoming_id = f"incoming:{fingerprint({'posting': self._posting_identity(posting), 'local_id': extracted.local_id})}"
+            identity = ({"input": incoming_binding, "local_id": extracted.local_id} if source_binding
+                        else {"posting": self._posting_identity(posting), "local_id": extracted.local_id})
+            incoming_id = f"incoming:{fingerprint(identity)}"
             incoming_source_ids[extracted.local_id] = incoming_id
             source_map[incoming_id] = canonical_json(extracted.model_dump())
         for candidate in catalog:
@@ -555,21 +575,23 @@ class RequirementsService:
         # truncation, an extra novelty call or partial publication.
         matching, receipt = await self.model.determine(
             kind="requirements.match_catalog", schema=CatalogMatching,
-            prompt_version="requirements-catalog-match-v1", instruction=CATALOG_MATCHING_INSTRUCTION,
+            prompt_version="requirements-catalog-match-v2-content-bound" if source_binding else "requirements-catalog-match-v1", instruction=CATALOG_MATCHING_INSTRUCTION,
             sources=[{"source_id": ident, "text": text} for ident, text in source_map.items()],
             context={
-                "posting": self._posting_identity(posting), "catalog_revision": epoch,
+                **({"posting_content": source_binding, "refresh_binding": refresh_binding} if source_binding
+                   else {"posting": self._posting_identity(posting)}), "catalog_revision": epoch,
                 "catalog_inventory_source_id": inventory_id,
                 "incoming": [{**row.model_dump(), "model_source_id": incoming_source_ids[row.local_id]} for row in incoming],
                 "candidates": [{"requirement_id": row["requirement_id"], "revision": row["revision"]} for row in catalog],
             },
-            entity_id=posting["job_id"],
+            entity_id=None if source_binding else posting["job_id"],
             validate=lambda result: validate_catalog_matching(
                 result, catalog=catalog, catalog_revision=epoch, incoming=incoming,
                 incoming_source_ids=incoming_source_ids, sources=source_map,
                 posting_source_id=source_id, inventory_source_id=inventory_id,
             ),
-            budget=budget,
+            budget=budget, publication_posting=self._publication_identity(posting) if source_binding else None,
+            source_binding=source_binding,
         )
         self._check_cancel(cancelled)
         return matching, receipt, inventory
@@ -589,13 +611,17 @@ class RequirementsService:
 
     @classmethod
     def _new_meaning(cls, extracted, posting, extraction_receipt, receipt, inventory):
+        source_binding = extraction_receipt.get("source_binding")
+        posting_binding = ({**cls._publication_identity(posting),
+                            "model_source_id": source_binding["semantic_source"]["source_id"]}
+                           if source_binding else cls._posting_identity(posting))
         return {
             "requirement_id": str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:requirement:" + fingerprint({
                 "extraction_receipt": extraction_receipt["receipt_id"], "local_id": extracted.local_id,
                 "meaning": meaning_data(extracted),
             }))), "revision": 1, **meaning_data(extracted), "created_at": now(),
             "provenance": {
-                "posting": cls._posting_identity(posting), "spans": [s.model_dump() for s in extracted.spans],
+                "posting": posting_binding, "spans": [s.model_dump() for s in extracted.spans],
                 "extraction": extraction_receipt, "resolution": [receipt],
                 "catalog_matching": inventory, "matching_local_id": extracted.local_id,
             },

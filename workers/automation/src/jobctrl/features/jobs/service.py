@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Protocol
 
 from jobctrl.app.errors import AppError
@@ -444,7 +445,10 @@ class JobsService:
         if not posting["description"]:
             raise AppError("posting_description_missing", "Capture the complete posting before role analysis.", 409)
         try:
-            result = await self.role_analysis.analyze(posting, models=models, cancelled=cancelled)
+            result = await self.role_analysis.analyze(
+                posting, models=models, cancelled=cancelled,
+                refresh_identity=(operation_id or str(uuid.uuid4())) if force else None,
+            )
             result.update(operation_id=operation_id, operation_fingerprint=operation_fingerprint)
             return self.repository.save_analysis(posting, result, cancelled=cancelled)
         except Exception as error:

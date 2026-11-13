@@ -18,12 +18,13 @@ export function citeSources(call: ExternalCall, sourceIds: string[]) {
 export type CatalogContext = {
   catalog_revision: number;
   catalog_inventory_source_id: string;
-  posting: { model_source_id: string };
+  posting?: { model_source_id: string };
+  posting_content?: { source_id: string };
   incoming: { local_id: string; model_source_id: string }[];
   candidates: { requirement_id: string; revision: number }[];
 };
 
-type CatalogChoice =
+export type CatalogChoice =
   | { verdict: "new" | "uncertain" }
   | { verdict: "equivalent"; requirementId: string }
   | { verdict: "equivalent"; incomingLocalId: string };
@@ -43,7 +44,7 @@ export function catalogMatching(
     decisions: context.incoming.map((incoming) => {
       const choice = choices[incoming.local_id]!;
       const sourceIds = [
-        context.posting.model_source_id,
+        context.posting_content?.source_id ?? context.posting!.model_source_id,
         incoming.model_source_id,
         context.catalog_inventory_source_id,
       ];

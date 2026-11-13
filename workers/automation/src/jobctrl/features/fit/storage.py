@@ -88,16 +88,29 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
 
     def publish_assessment(self, record, facts, profile_snapshot, requirements_snapshot,
                            expected_assessment_id, *, cancelled=lambda: False):
+        return self.publish_assessments([record], facts, profile_snapshot, requirements_snapshot,
+            {record["requirement_id"]: expected_assessment_id}, cancelled=cancelled)[0]
+
+    def publish_assessments(self, records, facts, profile_snapshot, requirements_snapshot,
+                            expected_assessment_ids, *, cancelled=lambda: False):
+        identifiers = [record["requirement_id"] for record in records]
+        if len(identifiers) != len(set(identifiers)) or set(identifiers) != set(expected_assessment_ids):
+            raise AppError("fit_qualification_partition_invalid", "The Fit publication requires one expected head for every candidate.", 422)
         with self._database.transaction() as connection:
             self._check_cancelled(cancelled)
             self._assert_sources(connection, profile_snapshot, requirements_snapshot)
-            latest = self.latest_assessment(
-                record["profile_id"], record["requirement_id"], record["requirement_revision"],
-                source_fingerprint=record["source_fingerprint"], connection=connection,
-            )
-            if (latest["assessment_id"] if latest else None) != expected_assessment_id:
-                raise ConflictError("The accepted person qualification changed during inference.")
-            return self.save_assessment(connection, record, facts)
+            for record in records:
+                latest = self.latest_assessment(
+                    record["profile_id"], record["requirement_id"], record["requirement_revision"],
+                    source_fingerprint=record["source_fingerprint"], connection=connection,
+                )
+                if (latest["assessment_id"] if latest else None) != expected_assessment_ids[record["requirement_id"]]:
+                    raise ConflictError("The accepted person qualification changed during inference.")
+            published = []
+            for record in records:
+                self._check_cancelled(cancelled)
+                published.append(self.save_assessment(connection, record, facts))
+            return published
 
     def publish_score(self, candidate, profile_snapshot, requirements_snapshot, expected_revision,
                       qualifications, reuse_if_unchanged, operation_id, input_fingerprint, *, cancelled=lambda: False):

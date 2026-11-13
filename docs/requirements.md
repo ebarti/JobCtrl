@@ -159,6 +159,20 @@ refresh and wording preparation, not the current resume composition cardinality
 rule in BR-049. The broader cardinality question remains open in
 [#1129](https://github.com/ebarti/JobCtrl/issues/1129).
 
+Qualification and exact-reuse clarification (2026-11-13): initial person-fit
+assessment must reuse current Profile/canonical-requirement/revision/factual-
+source authority first, then send the entire missing set in one source-bound
+qualification request. Require a complete, exact per-requirement partition,
+independent row identities and citations, and atomic publication of all new
+assessments. Manual affected-match refresh retains its explicit frozen scope,
+complete-catalog impact decision, checkpoints and finite work limits. Exact
+role-analysis and Requirements call reuse must bind complete semantic inputs,
+prompt/schema and frozen provider/model/effective effort/configuration identity.
+Semantic content identity must remain separate from each actual posting's
+publication identity and guards. No lexical fallback, truncation, chunks or
+rewritten shared receipt may establish authority. See the
+[batching and reuse decision](decisions.md#_2026-11-13-batch-missing-qualifications-and-separate-exact-reuse-from-publication).
+
 ## Technical Requirements
 
 ### Product Surface And Runtime

@@ -553,7 +553,7 @@ test("Jobs starts saved searches directly, preserves live progress across naviga
     await expect(row.getByText(`${score}/10`, { exact: true })).toBeVisible();
   }
   const operations = app.external.calls.filter((call) => call.path === "/model").map((call) => call.body["operation"]);
-  expect(operations.filter((operation) => operation === "fit.qualification")).toHaveLength(3);
+  expect(operations.filter((operation) => operation === "fit.qualification-batch")).toHaveLength(3);
   expect(operations.some((operation) => String(operation).startsWith("fit.coverage") || String(operation).startsWith("profile.wording") || String(operation).startsWith("resumes."))).toBe(false);
   expect((await json<{ runs: unknown[] }>(api, "get", "/v1/action-runs?action=fit.refresh")).runs).toEqual([]);
 });

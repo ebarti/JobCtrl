@@ -56,6 +56,37 @@ counts across navigation/reload/tabs, lost-acknowledgement recovery and exact-ru
 stop, and simultaneous two-tab admission. Historical complete-suite results
 below retain their original 57-case scope; they do not qualify the new inventory.
 
+### Batched qualification and exact-result reuse — 13 November 2026
+
+The source candidate for [#1473](https://github.com/ebarti/JobCtrl/issues/1473)
+collects current person-qualification authority before sending the complete
+missing set in one `fit.qualification-batch` request. One complete partition
+must validate before atomic new-assessment publication. Each row retains its
+own assessment/canonical identity and result fingerprint, distinct from the
+shared immutable raw-batch receipt/fingerprint. All-current sets make zero
+qualification calls. Explicit manual refresh keeps complete-catalog impact,
+fixed source/job scope, durable checkpoints and existing work limits.
+
+Requirements and role analysis use exact complete content and frozen
+provider/model/effective effort/configuration for model-call reuse. Catalog
+matching additionally binds the complete incoming inventory and current
+catalog. Every reuse revalidates canonical receipt and owner rules; each
+destination still has its own actual posting binding and publication guards.
+Forced actions retain distinct durable refresh identity. Gateway schema success
+alone is not owner acceptance. No lexical fallback, chunks, truncation or
+rewritten model response establishes authority.
+
+The preceding authorized five-job observation took **91 minutes 59 seconds**
+and recorded **62 qualification calls and 40 qualification reuses**. These are
+aggregate operational observations, not a synthetic replay corpus or a general
+performance guarantee. No job or Profile identity belongs in the public record.
+At this documentation update, the changed candidate's actual journey results
+and repeat five-job timing have not yet been supplied. Record their exact
+candidate, model/effort, command, receipt/call counts, preservation checks and
+elapsed boundaries separately before claiming improvement or complete
+qualification. Source behavior and a smaller planned call count alone prove no
+new end-to-end timing, provider quality, release or deployment result.
+
 ### Five-job QA follow-up — 12 November 2026
 
 The skill-group heading is now the existing label field itself, with the

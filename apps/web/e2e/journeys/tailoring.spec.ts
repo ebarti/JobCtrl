@@ -18,6 +18,7 @@ import {
   type Resume,
 } from "./core-data.js";
 import { catalogMatching } from "./requirements-data.js";
+import { qualificationBatchDecision } from "./qualification-data.js";
 import {
   groupedCoverageDecision,
   type GroupedCoverageContext,
@@ -106,32 +107,14 @@ test("approved wording composes the full baseline and failed model or render ref
       prepare_coverage: true,
     },
   });
-  const qualification = await modelCall(app, "fit.qualification");
-  const qualificationContext = qualification.body["context"] as {
-    binding: Record<string, string>;
-  };
+  const qualification = await modelCall(app, "fit.qualification-batch");
   const fact = sources(qualification).find(
     (source) => source.source_id === evidenceId,
   )!;
-  const requirement = sources(qualification).find(
-    (source) => source.source_id === "requirement",
-  )!;
   expect(fact).toBeTruthy();
-  qualification.reply({
-    ...qualificationContext.binding,
-    kind: "matched",
-    strength: "direct",
-    confidence: "high",
-    rationale:
-      "The authored achievement directly supports the qualified requirement.",
-    evidence: citations([fact]),
-    requirement_citations: citations([requirement]),
-    achievement_ids: [achievement.achievement_id],
-    keywords: ["durable workflows"],
-    eligibility: "eligible",
-    blocker_category: null,
-    warning_category: null,
-  });
+  qualification.reply(qualificationBatchDecision(qualification, () => ({
+    achievementIds: [achievement.achievement_id], evidenceSourceIds: [fact.source_id], keywords: ["durable workflows"],
+  })));
   const baselineCoverage = await modelCall(app, "fit.wording-coverage-grouped");
   baselineCoverage.reply(
     groupedCoverageDecision(baselineCoverage, {

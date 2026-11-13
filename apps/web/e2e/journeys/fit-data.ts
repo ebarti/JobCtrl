@@ -17,6 +17,8 @@ import {
   citeSources,
   modelSources,
 } from "./requirements-data.js";
+import { qualificationBatchDecision } from "./qualification-data.js";
+export { qualificationBatchDecision } from "./qualification-data.js";
 
 export type FitAssessment = {
   assessment_id: string;
@@ -320,24 +322,21 @@ export async function createScoredFit(
       prepare_coverage: false,
     },
   });
-  for (let index = 0; index < clauses.length; index += 1) {
-    const call = await modelCall(app, "fit.qualification");
+  const call = await modelCall(app, "fit.qualification-batch");
+  call.reply(qualificationBatchDecision(call, (binding) => {
+    const index = requirements.requirements.findIndex((row) => row.requirement_id === binding.requirement_id);
+    expect(index).toBeGreaterThanOrEqual(0);
     const achievement =
       library.roles[0]!.achievements[sameAchievement ? 0 : index]!;
-    call.reply(
-      qualificationDecision(
-        call,
-        index === 1 && missingOwnership
+    return index === 1 && missingOwnership
           ? { kind: "missing" }
           : {
               achievementIds: [achievement.achievement_id],
               evidenceSourceIds: [
                 `evidence:${achievement.source_refs[0]!.source_id}`,
               ],
-            },
-      ),
-    );
-  }
+            };
+  }));
   const assessed = await assessing;
   expect(assessed.status(), await assessed.text()).toBe(200);
   return {

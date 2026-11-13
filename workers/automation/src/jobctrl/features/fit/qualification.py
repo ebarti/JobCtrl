@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 from pydantic import ValidationError
@@ -9,7 +10,7 @@ from pydantic import ValidationError
 from jobctrl.app.errors import AppError
 
 from .models import (
-    QUALIFICATION_INSTRUCTIONS, QualificationDecision,
+    QUALIFICATION_INSTRUCTIONS, QualificationBatchDecision,
 )
 from .sources import (
     achievement_inventory, achievements, dto, evidence_refs, fact_fingerprint,
@@ -22,11 +23,11 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def decide(model, *, operation, schema, instructions, sources, context):
+async def decide(model, *, operation, schema, instructions, sources, context, prompt_version="1"):
     response = await model.determine(
         operation=operation, instructions=instructions, sources=sources,
         response_schema=schema.model_json_schema(), context=context,
-        prompt_version="1", lane="scoring",
+        prompt_version=prompt_version, lane="scoring",
     )
     try:
         accepted = schema.model_validate(response.value)
@@ -48,42 +49,97 @@ class Qualification:
         with self.store.read_snapshot(connection) as read:
             return read.profile_snapshot(profile_id)
 
-    async def resolve(self, profile_snapshot, requirement: dict, requirements_snapshot: dict, *, force=False,
-                      cancelled=lambda: False):
+    async def resolve_many(self, profile_snapshot, requirements: list[dict], requirements_snapshot: dict, *, force=False,
+                           cancelled=lambda: False):
         profile = dto(profile_snapshot)
         facts = fact_sources(profile)
         source_hash = fact_fingerprint(profile, facts)
-        binding = (profile["profile_id"], requirement["requirement_id"], requirement["requirement_revision"])
-        current = self.store.latest_assessment(*binding, source_fingerprint=source_hash)
-        if current is not None and not force:
-            return current, True
-        previous = self.store.latest_requirement_assessment(profile["profile_id"], requirement["requirement_id"])
-        if previous is not None:
-            raise AppError("fit_refresh_required", "Saved inputs changed. Start a manual Fit refresh to update existing assessments.", 409)
-        record = await self.candidate(profile_snapshot, requirement)
-        return self.store.publish_assessment(record, facts, profile_snapshot, requirements_snapshot,
-            current["assessment_id"] if current else None, cancelled=cancelled), False
+        current = {}
+        missing = []
+        with self.store.read_snapshot() as read:
+            read.validate_sources(profile_snapshot, requirements_snapshot)
+            for requirement in requirements:
+                ident = requirement["requirement_id"]
+                accepted = read.latest_assessment(profile["profile_id"], ident, requirement["requirement_revision"],
+                                                  source_fingerprint=source_hash)
+                if accepted is not None and not force:
+                    current[ident] = accepted
+                    continue
+                if read.latest_requirement_assessment(profile["profile_id"], ident) is not None:
+                    raise AppError("fit_refresh_required", "Saved inputs changed. Start a manual Fit refresh to update existing assessments.", 409)
+                missing.append(requirement)
+        reused = len(current)
+        if missing:
+            if cancelled():
+                raise asyncio.CancelledError()
+            candidates = await self.candidates(profile_snapshot, missing)
+            published = self.store.publish_assessments(candidates, facts, profile_snapshot, requirements_snapshot,
+                {row["requirement_id"]: None for row in missing}, cancelled=cancelled)
+            current.update({row["requirement_id"]: row for row in published})
+        return [current[row["requirement_id"]] for row in requirements], reused
 
-    async def candidate(self, profile_snapshot, requirement: dict, *, model=None):
-        """Prepare one source-bound result; the caller owns atomic publication."""
+    async def candidates(self, profile_snapshot, requirements: list[dict], *, model=None):
+        """Prepare one complete source-bound batch; the caller owns atomic publication."""
+        if not requirements:
+            return []
+        index = {row["requirement_id"]: row for row in requirements}
+        if len(index) != len(requirements):
+            raise AppError("fit_qualification_partition_invalid", "The Fit qualification input contains duplicate requirements.", 422)
         profile = dto(profile_snapshot)
         facts = fact_sources(profile)
         source_hash = fact_fingerprint(profile, facts)
-        sources = semantic_sources(requirement, facts)
+        own_sources = {}
+        sources = []
+        for requirement in requirements:
+            ident = requirement["requirement_id"]
+            local = semantic_sources(requirement, facts)
+            local[0] = {**local[0], "source_id": "requirement:" + ident}
+            own_sources[ident] = local
+            sources.append(local[0])
+        sources.extend(own_sources[requirements[0]["requirement_id"]][1:])
         inventory = achievements(profile)
+        authority_model = model or self.model
         result, provenance = await decide(
-            model or self.model, operation="fit.qualification", schema=QualificationDecision,
+            authority_model, operation="fit.qualification-batch", schema=QualificationBatchDecision,
             instructions=QUALIFICATION_INSTRUCTIONS, sources=sources,
             context={
-                "binding": {"requirement_id": requirement["requirement_id"],
-                            "requirement_revision": str(requirement["requirement_revision"])},
+                "requirements": [{"requirement_id": row["requirement_id"],
+                                  "requirement_revision": str(row["requirement_revision"]), "scope": row["scope"],
+                                  "source_id": "requirement:" + row["requirement_id"]} for row in requirements],
                 "profile_id": profile["profile_id"], "fact_semantics_version": profile["fact_semantics_version"],
-                "scope": requirement["scope"],
                 "achievements": [{"achievement_id": ident, "role_id": row["role_id"], "source_refs": row.get("source_refs", [])}
                                  for ident, row in inventory.items()],
             },
+            prompt_version="fit-qualification-batch-v1",
         )
-        self.validate(result, requirement, facts, inventory, sources)
+        self._verify_batch_receipt(authority_model, result, provenance)
+        returned = [row.requirement_id for row in result.requirements]
+        if len(returned) != len(set(returned)) or set(returned) != set(index):
+            raise AppError("fit_qualification_partition_invalid", "The Fit response must assess every requested requirement exactly once.", 422)
+        for row in result.requirements:
+            self.validate(row, index[row.requirement_id], facts, inventory, own_sources[row.requirement_id],
+                          requirement_source_id="requirement:" + row.requirement_id)
+        decisions = {row.requirement_id: row for row in result.requirements}
+        return [self._record(profile, source_hash, facts, requirement,
+                             decisions[requirement["requirement_id"]], provenance) for requirement in requirements]
+
+    @staticmethod
+    def _verify_batch_receipt(model, result, provenance):
+        try:
+            receipt = model.receipt(provenance["receipt_id"])
+            canonical = QualificationBatchDecision.model_validate(receipt["value"])
+            valid = (receipt.get("status") == "succeeded" and receipt.get("operation") == "fit.qualification-batch"
+                     and receipt.get("prompt_version") == "fit-qualification-batch-v1"
+                     and all(receipt.get(key) == provenance.get(key) for key in (
+                         "provider", "model", "lane", "prompt_version", "input_fingerprint", "created_at"))
+                     and canonical.model_dump() == result.model_dump())
+        except (AppError, KeyError, TypeError, ValueError):
+            valid = False
+        if not valid:
+            raise AppError("fit_model_provenance_invalid", "The Fit qualification batch receipt cannot be verified.", 422)
+
+    @staticmethod
+    def _record(profile, source_hash, facts, requirement, result, provenance):
         record = {
             "assessment_id": "fit-assessment-" + fingerprint({
                 "profile_id": profile["profile_id"], "requirement_id": requirement["requirement_id"],
@@ -100,18 +156,19 @@ class Qualification:
             "keywords": result.keywords, "eligibility": result.eligibility,
             "blocker_category": result.blocker_category, "warning_category": result.warning_category,
             "requirement_citations": [row.model_dump() for row in result.requirement_citations],
-            "determination_id": provenance["receipt_id"], "provenance": provenance,
+            "determination_id": provenance["receipt_id"],
+            "provenance": {**provenance, "qualification_result_fingerprint": fingerprint(result.model_dump())},
             "origin": "model", "created_at": now(),
         }
         return record
 
     @staticmethod
-    def validate(result, requirement, facts, inventory, sources):
+    def validate(result, requirement, facts, inventory, sources, *, requirement_source_id="requirement"):
         if (result.requirement_id != requirement["requirement_id"]
                 or result.requirement_revision != str(requirement["requirement_revision"])):
             raise AppError("fit_requirement_binding_invalid", "The Fit response referenced a different requirement.", 422)
-        validate_citations(result.requirement_citations, sources, required_ids=("requirement",))
-        if any(citation.source_id == "requirement" for citation in result.evidence):
+        validate_citations(result.requirement_citations, sources, required_ids=(requirement_source_id,))
+        if any(citation.source_id == requirement_source_id for citation in result.evidence):
             raise AppError("fit_evidence_binding_invalid", "Employer requirements cannot prove candidate facts.", 422)
         validate_citations(result.evidence, sources)
         supported = result.kind in {"matched", "transferable"}

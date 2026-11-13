@@ -7,7 +7,7 @@ import hashlib
 import json
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -17,7 +17,7 @@ from jsonschema.exceptions import SchemaError, ValidationError
 from jobctrl.app.database import Database
 from jobctrl.app.errors import AppError, NotFoundError
 from jobctrl.app.events import now
-from jobctrl.app.settings import Settings
+from jobctrl.app.settings import PROVIDER_CONFIGURATION_KEYS, Settings
 from jobctrl.app.synthetic import synthetic_boundary
 
 
@@ -25,6 +25,28 @@ from jobctrl.app.synthetic import synthetic_boundary
 class ModelResult:
     value: dict
     provenance: dict
+
+
+@dataclass(frozen=True)
+class ModelExecution:
+    """One immutable non-secret execution selection, shared by lookup and call."""
+
+    provider: str
+    model: str
+    reasoning_effort: str | None
+    _provider_configuration: tuple[tuple[str, str], ...] = field(repr=False)
+
+    def identity(self) -> dict:
+        return {"reasoning_effort": self.reasoning_effort,
+                "provider_configuration_sha256": hashlib.sha256(
+                    _canonical(dict(self._provider_configuration)).encode()).hexdigest()}
+
+    def configuration(self) -> dict:
+        # Return a fresh container so a downstream adapter cannot mutate the
+        # frozen selection. Credentials are resolved only at its native boundary.
+        return {"providerConfiguration": dict(self._provider_configuration),
+                "codexReasoningEfforts": {self.model: self.reasoning_effort}
+                if self.provider == "codex" else {}}
 
 
 def _canonical(value) -> str:
@@ -48,8 +70,8 @@ class ModelGateway:
         self.settings = settings
         self.synthetic = synthetic_boundary(workspace, os.environ.get("JOBCTRL_E2E_PROVIDER_URL"))
 
-    def selection(self, model: str | None = None) -> dict:
-        settings = self.settings.snapshot()
+    @staticmethod
+    def _selection(settings: dict, model: str | None = None) -> dict:
         provider = settings["defaultProvider"]
         if model and ":" in model:
             provider, model = model.split(":", 1)
@@ -60,6 +82,36 @@ class ModelGateway:
             raise AppError("model_unavailable", "Select a model for this provider.", 503)
         return {"provider": provider, "model": selected}
 
+    def selection(self, model: str | None = None) -> dict:
+        return self._selection(self.settings.snapshot(), model)
+
+    def freeze_execution(self, model: str | None = None, *, selection: dict | None = None) -> ModelExecution:
+        """Resolve model and effective saved effort/configuration exactly once.
+
+        Cache owners pass the returned descriptor to both fingerprint and
+        determine. Accounting, admission and credentials deliberately stay live.
+        """
+        settings = self.settings.snapshot()
+        selected = selection or self._selection(settings, model)
+        provider, selected_model = selected["provider"], selected["model"]
+        if provider not in {"codex", "claude", "google"} or not isinstance(selected_model, str) or not selected_model.strip():
+            raise AppError("model_unavailable", "Choose a supported provider and model.")
+        effort = settings.get("codexReasoningEfforts", {}).get(selected_model, "high") if provider == "codex" else None
+        if provider == "codex" and effort not in {"low", "medium", "high", "xhigh", "max"}:
+            raise AppError("model_reasoning_effort_invalid", "Choose a supported Codex reasoning effort.")
+        configuration = settings.get("providerConfiguration", {})
+        return ModelExecution(provider, selected_model, effort,
+                              tuple(sorted((key, value) for key, value in configuration.items()
+                                           if key in PROVIDER_CONFIGURATION_KEYS)))
+
+    def _execution(self, execution, *, model=None, selection=None) -> ModelExecution:
+        frozen = execution if execution is not None else self.freeze_execution(model, selection=selection)
+        if (not isinstance(frozen, ModelExecution)
+                or model is not None and model not in {frozen.model, f"{frozen.provider}:{frozen.model}"}
+                or selection is not None and (selection.get("provider"), selection.get("model")) != (frozen.provider, frozen.model)):
+            raise AppError("model_execution_mismatch", "The frozen execution must match the selected provider and model.")
+        return frozen
+
     def accounting_capability(self, model: str | None = None, *, selection: dict | None = None, settings: dict | None = None) -> dict:
         selected = selection or self.selection(model)
         quote = (settings if settings is not None else self.settings.snapshot()).get("modelPricingQuotes", {}).get(f"{selected['provider']}:{selected['model']}")
@@ -69,7 +121,7 @@ class ModelGateway:
                 "pricingQuote": quote}
 
     def _payload(self, *, operation: str, instructions: str, sources, response_schema: dict,
-                 context: dict | None, prompt_version: str, lane: str, selection: dict) -> dict:
+                 context: dict | None, prompt_version: str, lane: str, execution: ModelExecution) -> dict:
         if (not isinstance(operation, str) or not operation or len(operation) > 160
                 or not isinstance(instructions, str) or not instructions.strip()
                 or not isinstance(sources, (list, dict)) or not sources
@@ -83,17 +135,18 @@ class ModelGateway:
             raise AppError("invalid_model_schema", "The model output schema is invalid.") from None
         value = dict(operation=operation, instructions=instructions, sources=sources,
                      response_schema=response_schema, context=context or {}, prompt_version=prompt_version,
-                     lane=lane, **selection)
-        if len(_canonical(value).encode()) > 1024 * 1024:
+                     lane=lane, provider=execution.provider, model=execution.model, execution=execution.identity())
+        encoded = _canonical(value)
+        if len(encoded.encode()) > 1024 * 1024:
             raise AppError("model_input_too_large", "The source-bound model input exceeds its limit.", 413)
-        return value
+        return json.loads(encoded)
 
     def fingerprint(self, *, operation: str, instructions: str, sources, response_schema: dict,
                     context: dict | None = None, prompt_version: str = "1", lane: str = "interactive",
-                    model: str | None = None, selection: dict | None = None) -> str:
+                    model: str | None = None, selection: dict | None = None, execution: ModelExecution | None = None) -> str:
         value = self._payload(operation=operation, instructions=instructions, sources=sources,
                               response_schema=response_schema, context=context, prompt_version=prompt_version,
-                              lane=lane, selection=selection or self.selection(model))
+                              lane=lane, execution=self._execution(execution, model=model, selection=selection))
         return hashlib.sha256(_canonical(value).encode()).hexdigest()
 
     def receipt(self, receipt_id: str, connection=None) -> dict:
@@ -258,7 +311,7 @@ class ModelGateway:
             )
         return receipt_id
 
-    async def _external(self, payload: dict):
+    async def _external(self, payload: dict, execution: ModelExecution):
         if self.synthetic:
             url = os.environ.get("JOBCTRL_E2E_PROVIDER_URL")
             if not url:
@@ -279,7 +332,7 @@ class ModelGateway:
         result = await execute_provider(
             workspace=self.workspace, provider=payload["provider"], model=payload["model"],
             instructions=payload["instructions"], payload={"sources": payload["sources"], "context": payload["context"]},
-            response_schema=payload["response_schema"], configuration=self.settings.snapshot(),
+            response_schema=payload["response_schema"], configuration=execution.configuration(),
         )
         return result.value, dict(input_tokens=result.input_tokens, output_tokens=result.output_tokens,
                                  cost_usd=result.cost_usd, cost_source=result.cost_source,
@@ -287,19 +340,21 @@ class ModelGateway:
 
     async def determine(self, *, operation: str, instructions: str, sources, response_schema: dict,
                         context: dict | None = None, prompt_version: str = "1", lane: str = "interactive",
-                        model: str | None = None, require_accounting: bool = False) -> ModelResult:
+                        model: str | None = None, require_accounting: bool = False,
+                        execution: ModelExecution | None = None) -> ModelResult:
         if type(require_accounting) is not bool:
             raise AppError("invalid_model_request", "Accounting admission must be an explicit boolean.")
+        execution = self._execution(execution, model=model)
         payload = self._payload(operation=operation, instructions=instructions, sources=sources,
                                 response_schema=response_schema, context=context, prompt_version=prompt_version,
-                                lane=lane, selection=self.selection(model))
+                                lane=lane, execution=execution)
         receipt_id = self._admit(payload, require_accounting=require_accounting)
         usage = {}
         try:
-            value, usage = await self._external(payload)
+            value, usage = await self._external(payload, execution)
             if not isinstance(value, dict):
                 raise AppError("model_schema_violation", "The provider did not return a JSON object.", 502)
-            Draft202012Validator(response_schema).validate(value)
+            Draft202012Validator(payload["response_schema"]).validate(value)
             encoded = _canonical(value)
             if len(encoded.encode()) > 2 * 1024 * 1024:
                 raise AppError("model_output_too_large", "The provider output exceeds its limit.", 502)

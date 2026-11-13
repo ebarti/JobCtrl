@@ -25,7 +25,7 @@ revisions and exact contiguous posting spans. The model alone decides support,
 qualified meaning, equivalence and novelty. Unsupported, uncertain or malformed
 output never replaces an accepted snapshot.
 
-The `requirements-extract-v2-quote-selection` wire asks the model for each
+The `requirements-extract-v3-content-bound` wire asks the model for each
 supporting span as an exact `{source_id, quote}` selection. It does not ask the
 model to calculate numeric character offsets. Requirements verifies the supplied
 source ID and verbatim quote against the frozen posting, requires exactly one
@@ -37,7 +37,7 @@ support and qualifier selection remain the model's decisions.
 
 Canonical occurrences and the manual correction API retain the existing
 `{start, end, quote}` Span contract and exact source-slice validation. The raw
-v2 quote-selection result remains unchanged in the gateway receipt and feature
+quote-selection result remains unchanged in the gateway receipt and feature
 cache. Pure binding also runs during validation; the service uses the bound
 canonical Extraction only after those raw-result authority checks succeed.
 The bumped prompt and schema participate in the cache fingerprint, so an older
@@ -47,9 +47,11 @@ accepted snapshots and failed-attempt history are preserved.
 Duration, scale, seniority, domain, logical alternatives, exceptions and scope
 remain part of qualified meaning. Tier/weight belong to an occurrence. A
 paraphrase may reuse a canonical ID only through a recorded model decision.
-Externally authored source labels remain provenance data. Generated
-`posting:<job-id>:<revision>:<hash>` model source IDs cannot alias catalog sources
-or the catalog inventory source.
+Externally authored source labels remain provenance data. Extraction and full
+catalog matching use `posting-content:v1:<fingerprint>` source IDs over the
+complete exact posting text. Targeted corrections retain generated
+`posting:<job-id>:<revision>:<hash>` sources. Neither namespace can alias catalog
+sources or the catalog inventory source.
 
 Extraction remains a separate source-bound call. The complete incoming batch
 and the **entire current canonical catalog**, including each definition, scope
@@ -88,20 +90,55 @@ provider failures retain their actual failure code. Size, work, spend, provider
 or context refusal never triggers smaller requests or an automatic retry and
 never publishes a partial catalog decision.
 
+## Exact result reuse and posting publication
+
 The feature-owned cache records one bounded result and immutable gateway receipt
-per exact call. Its key binds the configured provider/model, prompt and output
-schema, every source and the exact context. Matching context binds the complete
-incoming inventory, catalog epoch and canonical IDs/revisions; extraction also binds the
-expected accepted snapshot revision and force selection. Source changes,
-semantic revisions, catalog publications, model changes and prompt/schema
-changes therefore cannot reuse unsafe negative judgments. Every reused result
-passes the same strict schema and source-citation checks and joins its recorded
-ID through the gateway's public receipt reader. The live receipt must be
-succeeded with the same operation/provider/model/lane/prompt/input binding and
-canonical typed result; missing or mismatched authority refuses reuse without a
-new-model fallback. Cache acceptance
-shares a transaction with the public Jobs source guard and catalog-epoch guard.
-Failed/invalid calls are never cached as accepted decisions.
+per exact call. The complete request fingerprint binds operation, instructions,
+prompt and output schema, all sources and context, and one frozen execution
+descriptor. That descriptor resolves provider/model, effective saved reasoning
+effort and the digest of allowlisted nonsecret provider configuration once for
+both lookup and invocation. It contains no credentials. Budget/quote admission
+remains live; credentials resolve only at the native provider boundary. The
+gateway does not automatically reuse every operation's result.
+
+Extraction's semantic input is the complete exact posting text under its
+content source ID. Matching uses prompt
+`requirements-catalog-match-v2-content-bound` and additionally binds the entire
+incoming inventory, catalog epoch and canonical IDs/revisions/meanings. Job IDs,
+posting revisions and observation timestamps do not perturb an otherwise
+identical semantic request. No whitespace normalization, excerpts, token overlap
+or similar-text matching establishes an exact hit. Changed content, catalog,
+execution settings or prompt/schema cannot reuse a mismatched result.
+
+An explicit forced refresh includes its durable operation ID in both semantic
+calls. Another force action asks for new authority; a retry of that same action
+may reuse its settled result. Ordinary accepted-snapshot revision numbers do
+not prevent exact content reuse.
+
+Every reused result passes strict schema and source-citation checks and joins
+its recorded ID through the gateway's public immutable receipt reader. The
+receipt must be succeeded with the same operation/provider/model/lane/prompt/
+input binding and canonical typed result. If a worker stopped after the gateway
+receipt settled but before the feature cache committed, an exact succeeded
+receipt can recover that projection after the same checks. Missing or
+mismatched referenced authority refuses reuse without a new-model fallback;
+failed/invalid calls are never accepted cache entries.
+
+A gateway receipt marked succeeded proves only gateway schema success until
+Requirements validates its exact spans and owner rules. An owner-invalid raw
+result is not reusable authority. A separately admitted ordinary retry may make
+its one planned determination; it never repairs or retries a newly refused
+semantic result within the same attempt. Corruption of an accepted feature
+cache entry remains a hard refusal rather than permission for another call.
+
+Semantic reuse never replaces actual publication identity. The owner adds
+`provenance.source_binding` containing the semantic content source and exact
+destination `{job_id, revision, source_id, source_revision, source_hash}`. It
+does not edit the shared raw response or imply a new call for that job. Each
+destination keeps its own occurrences, posting spans and source history.
+Cache acceptance and final publication retain the public Jobs posting guard
+and applicable catalog-epoch guard in their transactions. A changed destination
+cannot publish requirements even when a semantic result is reusable.
 
 Unpublished same-source canonical IDs derive mechanically from the accepted
 extraction receipt, local occurrence ID and qualified meaning fingerprint. This
@@ -143,7 +180,8 @@ Permanent Job deletion calls `delete_job_data(job_id, connection=...)` through
 the reviewed Jobs owner transaction. It removes only per-job requirement
 snapshots, occurrences and attempts. Neutral reusable catalog meanings,
 their quoted provenance and immutable model/revision records remain independent.
-Per-job exact-call cache rows are removed with the other private per-job state.
+Exact-call cache rows owned by that job are removed with its private per-job
+state; immutable model audit receipts retain their separate ownership.
 
 ## Public application contract
 

@@ -171,6 +171,15 @@ If every source eventually fails after saving jobs, those retained new jobs
 still receive initial assessment. The overall search reports a partial outcome,
 while its acquisition status and source failures remain failed and inspectable.
 
+Assessment reuses exact accepted results before making another model request.
+Requirements keeps content-based result reuse separate from each job's actual
+posting identity. Fit reuses current person assessments for shared canonical
+requirements and sends the entire missing set for one job together in one
+qualification request. Every requirement retains its own evidence and result;
+no source text is shortened or replaced by word-overlap matching. See
+[Scoring](scoring-and-employer-analysis.md#how-the-score-is-calculated) for reuse,
+validation and score calculation. Search still performs no wording preparation.
+
 The cohort contains only jobs newly saved by this search. Existing accepted
 scores are not reassessed because a Profile or catalog changed; use the explicit
 affected-matches operation for that decision. Reads and preference saves start

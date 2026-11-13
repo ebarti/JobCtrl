@@ -18,13 +18,33 @@ There are no retrieval subsets, catalog pages, chunk loops or separate novelty
 judge. Citations, full incoming-ID cardinality, exact canonical revisions and
 the catalog epoch are validated before an atomic publication.
 
-Extraction's v2 model wire selects exact source IDs and unique verbatim quotes.
+Extraction's quote-selection model wire selects exact source IDs and unique verbatim quotes.
 Requirements derives their numeric character ranges from the frozen posting;
 missing, foreign or repeated quotes fail without fuzzy matching or another
 model call. The canonical/manual Span contract remains numeric. Raw selections
 stay identical to their immutable model receipt and cache entry; normalization
 is pure validation, and the service uses the canonical spans only after that
 verified boundary succeeds.
+
+Extraction identifies its semantic source by a fingerprint of the complete,
+exact posting text. Matching additionally binds the full incoming qualified
+inventory and current catalog. Job IDs, posting revisions and observation times
+are publication identity, not additional semantic input. Identical semantic
+inputs may therefore reuse a verified Requirements receipt across postings;
+similar or normalized text cannot. Each destination still publishes its own
+occurrences under its actual posting/source IDs, revisions and hash. A separate
+`source_binding` records the content source and destination posting without
+rewriting the immutable model response or claiming another provider call.
+
+An exact-call lookup and any resulting call share one frozen execution
+descriptor: provider/model, effective reasoning effort and the digest of
+allowlisted nonsecret provider configuration. Prompt/schema versions, complete
+sources and context also participate in the fingerprint. Budget admission and
+credentials remain live at their owning boundaries. A missing feature-cache row
+can recover a succeeded gateway receipt only through the same exact identity,
+strict result/citation validation and publication guards. There is no blanket
+gateway result cache. An explicit forced refresh has its own durable action
+binding; retries of that same action may reuse its settled result.
 
 The complete serialized input must pass the gateway's structural payload limit
 and lane/spend admission. A byte bound does not prove token-context fit; the
@@ -46,13 +66,32 @@ Requirements' private tables to assemble or validate that inventory.
 
 ## Inputs and semantic authority
 
-For each qualified requirement, Fit records a source-bound model determination
-or explicit user correction over the relevant Profile facts. Exact source IDs,
-revisions and citations establish which evidence was considered; word overlap,
-regexes or retrieval rankings do not establish support. Previously accepted
-qualification can be reused for the same qualified meaning and unchanged factual
-sources across jobs. Failed, invalid or stale determinations do not replace the
-last accepted score.
+Fit first resolves accepted person qualifications for the complete job
+requirement set. Reuse is keyed by Profile ID, canonical requirement ID and
+revision, and the complete factual source/achievement fingerprint. An accepted
+qualification retains its original model or user authority across jobs; a new
+posting occurrence, priority or model selection does not manufacture a new
+assessment. If every qualification is current, this stage makes zero model
+calls. Previously assessed inputs that changed still require explicit manual
+refresh.
+
+The entire missing set enters one `fit.qualification-batch` request in the
+scoring lane, with the complete factual inventory supplied once and a distinct
+`requirement:<id>` source for each meaning. There is no per-requirement call
+loop, chunking, truncation or lexical fallback. The response must partition the
+exact requested IDs and revisions once each. Each row must cite its own
+requirement; no requirement can prove a candidate fact or substitute for another
+row's meaning. All rows pass schema, evidence and immutable gateway-receipt
+validation before the new assessments publish together in one transaction.
+
+Each accepted row keeps its own assessment identity and canonical revision.
+Rows share the batch determination/receipt ID and
+`provenance.accepted_result_fingerprint` for the complete raw result;
+`provenance.qualification_result_fingerprint` separately identifies the exact
+row. Publication rechecks sources, accepted heads and cancellation. The score's
+existing final guards remain separate. Invalid, stale, refused or cancelled
+work preserves accepted assessments and scores. Provider/model/effort policy
+and scoring arithmetic are unchanged by batching.
 
 Person qualification is separate from Fit's recorded requirement-to-approved-
 wording coverage relations. An unexpressed or unapproved wording is a document
@@ -104,9 +143,13 @@ requirements. It sees each prior assessment's own before-sources and the current
 facts. Newly added evidence can support requirements previously missing or
 unlinked. Missing exact dependencies require reassessment; literal unchanged
 dependencies alone cannot prove that new evidence is irrelevant. There are no
-per-requirement impact calls. Affected requirements receive qualification once;
-unaffected decisions retain original semantic authority with a shared impact
-receipt and current-source revalidation.
+per-requirement impact calls. The affected set without completed qualification
+checkpoints receives one complete qualification batch; unaffected decisions
+retain original semantic authority with a shared impact receipt and
+current-source revalidation. The complete batch map is checkpointed before its
+individual requirement checkpoints. One batch consumes one model-call
+reservation; affected-item and deadline limits remain unchanged. Batching
+cannot expand the admitted operation or grant a new allowance on retry.
 
 Candidates publish atomically after checking Profile, guidance, the complete
 catalog, selected job/posting snapshots and prior assessment/score heads.

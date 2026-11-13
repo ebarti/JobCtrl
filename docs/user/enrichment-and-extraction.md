@@ -52,6 +52,16 @@ A failed fetch or exhausted cascade records a retryable attempt without
 manufacturing a snapshot. Failure remains isolated to that job, so useful
 results from the rest of the source batch survive.
 
+Downstream role analysis and requirement extraction can reuse a verified model
+result when their complete source text, context and execution settings are
+exactly identical. This is separate from deciding whether two leads are the
+same opening. A reused result is bound to the destination job's actual posting
+revision and source history before publication; it does not create a new
+observation or borrow another job's score. Changed content or execution settings
+cannot use a result from different inputs. [Scoring](scoring-and-employer-analysis.md#shared-requirement-meanings)
+explains how canonical requirement identity then permits reuse of current
+person assessments.
+
 An explicit enrichment retry from the web app or CLI keeps the last accepted
 description, application URL and attempt history while reopening extraction.
 It clears the failed stage's error and execution fields. The attempt counter

@@ -122,6 +122,9 @@ class BoundedModel:
         value = await self.operation.external(key, arguments["operation"], invoke)
         return SimpleNamespace(**value)
 
+    def receipt(self, receipt_id):
+        return self._model.receipt(receipt_id)
+
 
 class BoundedProfile:
     def __init__(self, operation, profile):
@@ -341,6 +344,15 @@ class ManualRefresh:
                 state = self.store.update_refresh(operation_id, {"selected_requirement_ids": selected, "phase": "qualification"})
                 if len(selected) > state["limits"]["max_requirements"]:
                     raise AppError("fit_refresh_requirement_limit", "The selected requirements exceed this manual refresh's fixed work limit.", 409)
+                batch = operation.checkpoint_value("qualification_batch")
+                if batch is None:
+                    pending = [row for row in requirements if row["requirement_id"] in selected
+                               and operation.checkpoint_value("qualification:" + row["requirement_id"]) is None]
+                    prepared = await self.service.qualification.candidates(profile_snapshot, pending, model=operation.model)
+                    batch = {row["requirement_id"]: {**row, "refresh_operation_id": operation_id,
+                             "impact_selection_receipt_id": selection["provenance"]["receipt_id"]} for row in prepared}
+                    operation.check()
+                    operation.checkpoint("qualification_batch", batch)
                 candidates = {}
                 for requirement in requirements:
                     operation.check()
@@ -348,9 +360,9 @@ class ManualRefresh:
                     if ident in selected:
                         candidate = operation.checkpoint_value("qualification:" + ident)
                         if candidate is None:
-                            candidate = await self.service.qualification.candidate(profile_snapshot, requirement, model=operation.model)
-                            candidate["refresh_operation_id"] = operation_id
-                            candidate["impact_selection_receipt_id"] = selection["provenance"]["receipt_id"]
+                            candidate = batch.get(ident)
+                            if candidate is None:
+                                raise AppError("fit_refresh_checkpoint_invalid", "The retained qualification batch is incomplete.", 409)
                             operation.checkpoint("qualification:" + ident, candidate)
                         candidates[ident] = candidate
                     else:

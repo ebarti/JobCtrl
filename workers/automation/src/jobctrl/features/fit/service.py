@@ -158,14 +158,12 @@ class FitService:
                 if previous is not None and (force or previous["source_fingerprint"] != source_hash
                         or str(previous["requirement_revision"]) != str(requirement["requirement_revision"])):
                     raise AppError("fit_refresh_required", "Saved inputs changed. Start a manual Fit refresh to update existing assessments.", 409)
+        records, reused = await self.qualification.resolve_many(
+            profile_snapshot, rows, requirements_snapshot, force=force, cancelled=cancelled,
+        )
         qualifications = []
-        reused = 0
-        for requirement in rows:
+        for requirement, record in zip(rows, records, strict=True):
             self._check_cancelled(cancelled)
-            record, was_reused = await self.qualification.resolve(
-                profile_snapshot, requirement, requirements_snapshot, force=force, cancelled=cancelled,
-            )
-            reused += was_reused
             qualifications.append({**record, **{key: requirement[key] for key in (
                 "scope", "tier", "weight", "occurrence_ids",
             )}, "text": requirement.get("text", requirement["definition"]),

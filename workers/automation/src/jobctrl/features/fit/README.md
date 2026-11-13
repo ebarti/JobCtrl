@@ -11,8 +11,8 @@ available for Profile inspection without becoming factual authority.
 
 | Capability | Canonical target entry point | Retention and boundary |
 | --- | --- | --- |
-| Requirement-level person qualification | `FitService.assess_job` / `fit.assess` | Strict model judgment over the complete qualified meaning and versioned factual sources; never inferred from a resume or word overlap. |
-| Reuse across jobs | `Qualification.resolve` | Keyed by Profile, canonical requirement revision and factual source inventory. A new job occurrence changes priorities without repeating the qualification. |
+| Requirement-level person qualification | `FitService.assess_job` / `Qualification.resolve_many` / `fit.assess` | Reuse current authority first; one strict source-bound batch covers the entire missing requirement set against complete factual sources. Never inferred from a resume or word overlap. |
+| Reuse across jobs | `Qualification.resolve_many` | Keyed by Profile ID, canonical requirement ID/revision and the complete factual source/achievement fingerprint. A new job occurrence changes priorities without repeating qualification; an all-current set makes zero qualification calls. |
 | Factual edits | `fit.refresh` / `fit.catalog-impact` | Manual, fixed-input operation. One complete-catalog decision selects affected requirements, including previously missing support. Unchanged support retains original semantic authority with current-source revalidation. Saves and approval never start it. |
 | Capability score | `domain.calculate_score` | Retains `requirement-fit-v2-scoped`: direct 1, strong .85, transferable .6, must-have multiplier 1.25, four-decimal contributions, half-up 1–10 mapping and capability-blocker cap 4. Eligibility/logistics/employer conditions contribute no points. |
 | Confidence and eligibility | `get_job_fit` | Persisted model verdicts and cited reasons remain separate from points. Compensation/location/work-model preferences are warning categories. Unknowns remain unknown. |
@@ -46,6 +46,44 @@ qualified requirement catalog. Missing or incoherent weighted requirements
 cannot create a replacement score; there is no lexical or legacy fallback.
 Old scoring modules are outside this target composition and their final removal
 belongs to the coordinated runtime cutover.
+
+## Batched qualification authority
+
+`Qualification.resolve_many` reads current authorities for the full job
+requirement set before inference. Any previously accepted qualification whose
+facts or canonical revision changed still returns `fit_refresh_required`;
+initial job assessment cannot silently refresh that authority. Existing accepted
+single-requirement assessments remain reusable under the same source keys and
+retain their original provenance.
+
+All missing requirements enter one `fit.qualification-batch` determination,
+prompt `fit-qualification-batch-v1`, in the existing `scoring` lane. The request
+supplies the complete factual inventory once and namespaces each requirement as
+`requirement:<id>`. The strict wire is `{ requirements: QualificationDecision[] }`.
+It must contain each requested ID and exact revision once, with no missing,
+duplicate or foreign row. A row's requirement citations must bind its own
+meaning. No requirement source can prove candidate facts or stand in for a
+different requirement. There are no chunks, truncation, semantic retries,
+lexical fallback or new raw-result cache.
+
+The raw batch is re-read through its immutable gateway receipt ID and checked
+for exact value, operation, prompt and provider/model/lane/input provenance.
+All row schemas and source/evidence bindings validate before
+`FitStore.publish_assessments` publishes the complete new set atomically under
+Profile, guidance, posting, Requirements, expected-assessment-head and
+cancellation guards. Each row has its own assessment identity, canonical
+revision and `provenance.qualification_result_fingerprint`. Rows share the
+batch determination/receipt ID and `provenance.accepted_result_fingerprint` of
+the raw batch. The shared raw fingerprint must not be described as the row's
+result fingerprint. Score publication retains its separate final guards.
+
+Manual refresh uses the same batch wire only after its complete-catalog impact
+decision and within its frozen selected scope. It prepares selected requirements
+without completed checkpoints in one batch, checkpoints the complete map before
+individual rows, and reserves one model call for that batch. Existing affected-
+item limits, deadlines, failure/partial-result reporting and explicit admission
+remain. Saves, reads and wording approval start no work. Batching changes neither
+provider/model/effort policy nor qualification semantics or score arithmetic.
 
 ## Public HTTP and events
 
