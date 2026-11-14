@@ -148,6 +148,22 @@ function fitStatusLabel(value: string): string {
   return labels[value] ?? (words ? words[0]!.toLocaleUpperCase() + words.slice(1) : words);
 }
 
+const educationDefinitionSchema = z.object({ qualification: z.string(), subjects: z.array(z.string()), alternative: z.string().nullable(), source_note: z.string().nullable() });
+const languageDefinitionSchema = z.object({ language: z.string(), proficiency: z.string().nullable(), source_note: z.string().nullable() });
+function requirementDefinitionText(assessment: z.infer<typeof assessmentSchema>): string {
+  if (assessment.category !== "education" && assessment.category !== "language") return assessment.definition;
+  let value: unknown;
+  try { value = JSON.parse(assessment.definition); } catch { return assessment.definition; }
+  const parsed = assessment.category === "education" ? educationDefinitionSchema.safeParse(value) : languageDefinitionSchema.safeParse(value);
+  if (!parsed.success) return assessment.definition;
+  const demand = parsed.data;
+  const note = demand.source_note && demand.source_note !== assessment.source_note ? demand.source_note : null;
+  return "qualification" in demand
+    ? [demand.qualification, demand.subjects.length ? `Subjects: ${demand.subjects.join("; ")}` : null,
+      demand.alternative ? `Alternative: ${demand.alternative}` : null, note].filter(Boolean).join(" · ")
+    : [demand.language, `Proficiency: ${demand.proficiency ?? "Not specified in the posting"}`, note].filter(Boolean).join(" · ");
+}
+
 function CorrectionForm({ score, revision, onSave, pending }: {
   score: number; revision: number; onSave: (body: { expected_revision: number; score: number; rationale: string }) => void; pending: boolean;
 }) {
@@ -322,11 +338,12 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
       <details className="fit-audit"><summary>Assessment source versions</summary><p className="muted">Profile revision {fit.score.source_binding.profile_revision} · requirements revision {fit.score.source_binding.requirements_revision} · posting revision {fit.score.source_binding.posting_revision}</p></details>
       <ul className="fit-requirements" aria-label="Requirement assessments">{fit.score.assessments.map((assessment, index) => {
         const direct = assessment.category === "education" || assessment.category === "language";
+        const definition = requirementDefinitionText(assessment);
         return <li key={assessment.assessment_id}>
           <article className="fit-requirement" aria-label={`Requirement ${index + 1}`}>
             <div className="fit-requirement__heading"><h4 className="fit-requirement__text">{assessment.name ?? assessment.text}</h4><span className="fit-requirement__status" data-kind={assessment.kind}>{fitStatusLabel(assessment.kind)}</span></div>
             <p className="fit-requirement__contribution">{assessment.category ? fitStatusLabel(assessment.category) : "Historical requirement"} · {historical ? "Stored contribution: " : "Support credit: "}{assessment.contribution.awarded_points}/{assessment.contribution.max_points}{direct ? " · job-local demand" : ""}</p>
-            {assessment.definition !== (assessment.name ?? assessment.text) ? <p>{assessment.definition}</p> : null}
+            {definition !== (assessment.name ?? assessment.text) ? <p>{definition}</p> : null}
             {assessment.source_note ? <p>Posting context: {assessment.source_note}</p> : null}
             {assessment.evidence_route === "equivalent_experience" ? <p>Matched through the posting’s equivalent-experience alternative. This does not assert a degree.</p>
               : assessment.evidence_route === "education" ? <p>Evidence route: Profile Education.</p>

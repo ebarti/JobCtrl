@@ -9,7 +9,7 @@ import { groupedCoverageDecision, impactPartition, refreshPayload, startRefresh,
 type DirectDemand = { requirement_id: string; category: "education" | "language"; revision: number };
 type Snapshot = RequirementSnapshot & { education: DirectDemand[]; languages: DirectDemand[]; status: string };
 type Evidence = { source_id: string; kind: string; text: string; path?: string[] };
-type Assessment = { assessment_id: string; requirement_id: string; category: string; kind: string; evidence_route: string | null; wording_support: string; evidence_refs: { source_id: string }[]; provenance: { receipt_id: string }; contribution: { max_points: number; awarded_points: number } };
+type Assessment = { assessment_id: string; requirement_id: string; category: string; definition: string; kind: string; evidence_route: string | null; wording_support: string; evidence_refs: { source_id: string }[]; provenance: { receipt_id: string }; contribution: { max_points: number; awarded_points: number } };
 type Fit = { current: boolean; score: { revision: number; score: number | null; fit_band: string | null; formula_version: string; summary: { assessed_count: number; supported_count: number; qualification_coverage: number | null }; assessments: Assessment[] } | null; coverage: { wording_gaps: unknown[] } };
 const assess = { expected_revision: 0, prepare_wording: true, prepare_coverage: true };
 const operations = (app: ApplicationStack, since = 0) => app.external.calls.slice(since).filter((call) => call.path === "/model").map((call) => call.body["operation"]);
@@ -46,7 +46,7 @@ async function typedJob(api: APIRequestContext, app: ApplicationStack, slug: str
       { localId: "operations", text: texts[1]!, category: "professional_experience", name: "Production service operations" },
     ],
     education: [
-      { text: texts[2]!, qualification: "Engineering degree" },
+      { text: texts[2]!, qualification: "Engineering degree", subjects: ["Engineering"] },
       { text: texts[3]!, qualification: "Engineering degree", alternative: "Equivalent professional experience" },
     ],
     languages: [{ text: texts[4]!, language: "English", proficiency: "Professional working proficiency" }],
@@ -86,6 +86,19 @@ test("typed qualifications share one batch, use permitted Profile sections and r
   expect(seed.fit.coverage.wording_gaps).toEqual([]);
   expect(operations(app)).toEqual(["requirements.extract", "requirements.match_catalog", "fit.qualification-batch"]);
   const callsBeforeName = app.external.calls.length;
+  await page.goto(`/jobs/${seed.posting.job_id}?jobTab=fit`);
+  const assessments = page.getByRole("list", { name: "Requirement assessments", exact: true });
+  await expect(assessments.getByRole("article", { name: "Requirement 3", exact: true })).toContainText("Engineering degree · Subjects: Engineering");
+  await expect(assessments.getByRole("article", { name: "Requirement 4", exact: true })).toContainText("Engineering degree · Alternative: Equivalent professional experience");
+  await expect(assessments.getByRole("article", { name: "Requirement 5", exact: true })).toContainText("English · Proficiency: Professional working proficiency");
+  for (const [index, row] of seed.fit.score!.assessments.entries()) {
+    if (row.category === "education" || row.category === "language") {
+      await expect(assessments.getByRole("article", { name: `Requirement ${index + 1}`, exact: true })).not.toContainText(row.definition);
+    }
+  }
+  expect((await json<Fit>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).score).toEqual(seed.fit.score);
+  expect(app.external.calls).toHaveLength(callsBeforeName);
+  await testInfo.attach("typed-readable-direct-demands", { contentType: "image/png", body: await page.screenshot({ fullPage: true }) });
   const identityOnly = await json<Profile>(api, "get", "/v1/profile");
   identityOnly.profile.personal.full_name = "Synthetic Updated Display Name";
   await json(api, "patch", "/v1/profile", { expectedProfileVersion: identityOnly.profileVersion, profile: identityOnly.profile });
