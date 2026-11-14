@@ -266,7 +266,7 @@ for (const changedSource of ["Profile", "requirement binding"] as const) {
         reason: "Explicitly confirm this occurrence's qualified canonical meaning.",
       } });
       const correction = await modelCall(app, "requirements.correct_binding");
-      expect(correction.body["prompt_version"]).toBe("requirements-v2-binding-correction-v1");
+      expect(correction.body["prompt_version"]).toBe("requirements-v2-binding-correction-v2");
       expect((correction.body["context"] as { posting: { job_id: string } }).posting.job_id).toBe(seed.posting.job_id);
       expect(modelSources(correction).some((row) => row.source_id.startsWith(`posting:${seed.posting.job_id}:`))).toBe(true);
       correction.reply({ decisions: [{ requirement_id: occurrence.requirement_id, requirement_revision: occurrence.requirement_revision, relation: "equivalent", reason: "The exact current posting supports the selected canonical meaning.", citations: citeSources(correction, modelSources(correction).map((row) => row.source_id)) }] });

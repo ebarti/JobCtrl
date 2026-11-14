@@ -20,7 +20,7 @@ test("Requirements exact content reuse keeps destination bindings and invalidate
   reusableModelCatalog(app);
   const first = await captureReusePosting(api, "reuse-first", body);
   const accepted = await acceptReuseRequirements(api, app, first, requirement, { recovery: { verdict: "new" } });
-  expect(accepted.extraction!.body["prompt_version"]).toBe("requirements-v2-extract-v3-content-bound");
+  expect(accepted.extraction!.body["prompt_version"]).toBe("requirements-v2-extract-v4-content-bound");
   const context = accepted.extraction!.body["context"] as { posting_content: { source_id: string; text_fingerprint: string }; refresh_binding: unknown };
   const semanticSourceId = context.posting_content.source_id;
   expect(semanticSourceId).toBe(`posting-content:requirements-v2:${context.posting_content.text_fingerprint}`);

@@ -36,6 +36,13 @@ reuse their owned quote. Explicit named-technology expertise remains
 identifiable, while examples and alternatives
 belong in source notes. A generic parent skill requires additional demanded
 competence. Future work alone establishes no prior-background prerequisite.
+Every distinct in-scope demand must remain in the returned definitions;
+attaching its quote or claiming that it was grouped in rationale or source notes
+cannot preserve omitted meaning. Independently demanded capabilities and
+background prerequisites retain their own categories. Technical practice,
+software implementation and technology use remain Skills when phrased as
+experience or prior work. Professional Experience requires a separate source-
+established role, domain or operating-context prerequisite.
 
 Personal attributes, certifications/licenses, job conditions, benefits and
 application instructions are excluded. Numerical duration/tenure analysis is
