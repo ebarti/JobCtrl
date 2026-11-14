@@ -34,7 +34,12 @@ function ApplicationResumeWorkspace({ jobId, profileVersion, defaultMode, onProf
   const [reviewSelection, setReviewSelection] = useState<{ resumeId: string; requestId: string } | null>(null);
   const resumeRef = useRef<HTMLElement>(null);
   const reviewReady = useCallback((resumeId?: string, requestId?: string) => {
-    if (resumeId && requestId) setReviewSelection({ resumeId, requestId });
+    if (resumeId && requestId) {
+      // Completion selects the prepared result without interrupting an active
+      // editor. Explicit Review navigation below still moves focus deliberately.
+      setReviewSelection({ resumeId, requestId });
+      return;
+    }
     resumeRef.current?.scrollIntoView({ block: "start" });
     resumeRef.current?.focus({ preventScroll: true });
   }, []);
