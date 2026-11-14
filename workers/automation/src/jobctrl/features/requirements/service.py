@@ -331,7 +331,7 @@ class RequirementsService:
         self._check_cancel(cancelled)
         budget = ModelCallBudget(action_fingerprint, MAX_NEW_MODEL_CALLS_PER_REFRESH)
         _, correction_receipt = await self.model.determine(
-            kind="requirements.revise", schema=RevisionDecision, prompt_version="requirements-v2-revision-v1",
+            kind="requirements.revise", schema=RevisionDecision, prompt_version="requirements-v2-revision-v3",
             instruction=(EXTRACTION_INSTRUCTION + "\nFor this canonical correction, apply the same in-scope "
                          "skill/professional_experience rules and exclusions to the proposed meaning. Assess only "
                          "whether the complete proposed meaning is supported. Do not extract another inventory. "
@@ -442,7 +442,7 @@ class RequirementsService:
             budget = ModelCallBudget(fingerprint({"action": action_fingerprint, "posting": self._posting_identity(posting)}),
                                      MAX_NEW_MODEL_CALLS_PER_REFRESH)
             selection, extraction_receipt = await self.model.determine(
-                kind="requirements.extract", schema=ExtractionSelection, prompt_version="requirements-v2-extract-v1-content-bound",
+                kind="requirements.extract", schema=ExtractionSelection, prompt_version="requirements-v2-extract-v3-content-bound",
                 instruction=EXTRACTION_INSTRUCTION, sources=sources,
                 context={"contract_version": CONTRACT_VERSION, "posting_content": source_binding, "refresh_binding": refresh_binding}, entity_id=None,
                 validate=lambda result: validate_extraction_selection(result, source_id=source_id, text=source_text),

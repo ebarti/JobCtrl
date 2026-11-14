@@ -23,10 +23,17 @@ recorded exclusion outcome, not a zero score or translated posting. Preparation
 stops before qualification and scoring.
 
 The model extracts demonstrable skills and explicitly requested broad
-professional background. A coherent skill includes its ordinary activities,
-methods, quality checks and outcomes; responsibilities do not become one item
-per task. Independently demonstrable capabilities remain separate. Explicit
-named-technology expertise remains identifiable, while examples and alternatives
+professional background. An inferred name may express the competence implied
+by the source, without importing techniques, quality checks or other demands
+that its evidence does not establish. Source-described ordinary activities,
+methods, quality checks and outcomes stay within one coherent skill;
+responsibilities do not become one item per task. A shared action, sentence or
+broad outcome does not unite different objects of professional judgment.
+Independently demonstrable capabilities remain separate; a joint capability
+requires source evidence of their interaction or integration. Decomposition
+follows the posting rather than catalog targets, and separate capabilities may
+reuse their owned quote. Explicit named-technology expertise remains
+identifiable, while examples and alternatives
 belong in source notes. A generic parent skill requires additional demanded
 competence. Future work alone establishes no prior-background prerequisite.
 
