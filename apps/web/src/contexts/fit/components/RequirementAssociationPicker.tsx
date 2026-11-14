@@ -63,12 +63,14 @@ function sentenceCase(value: string) {
   return text ? text[0]!.toLocaleUpperCase() + text.slice(1) : text;
 }
 
-export function requirementQualifierText(requirement: { scope: string; qualifiers: { dimension: string; value: string }[] }) {
+export function requirementQualifierText(requirement: { category?: string | undefined; scope?: string | undefined; qualifiers?: { dimension: string; value: string }[] | undefined }) {
+  if (requirement.category) return requirement.category === "skill" ? "Skill" : requirement.category === "professional_experience" ? "Professional experience"
+    : requirement.category === "education" ? "Education" : requirement.category === "language" ? "Language" : sentenceCase(requirement.category);
   const scopes: Record<string, string> = {
     resume: "Capability or responsibility", eligibility: "Eligibility", logistics: "Logistics", employer_condition: "Employer condition",
   };
-  return [scopes[requirement.scope] ?? sentenceCase(requirement.scope),
-    ...requirement.qualifiers.map((qualifier) => `${sentenceCase(qualifier.dimension)}: ${qualifier.value}`)].join(" · ");
+  return [requirement.scope ? scopes[requirement.scope] ?? sentenceCase(requirement.scope) : "Historical requirement",
+    ...(requirement.qualifiers ?? []).map((qualifier) => `${sentenceCase(qualifier.dimension)}: ${qualifier.value}`)].join(" · ");
 }
 
 function wordingOptionLabel(library: Library, variant: AchievementChoice["variants"][number]) {

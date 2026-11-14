@@ -29,6 +29,7 @@ import {
   catalogMatching,
   citeSources,
   modelSources,
+  typedExtraction,
 } from "./requirements-data.js";
 
 type Assignment = {
@@ -258,25 +259,7 @@ async function captureOneExistingRequirement(
   const text = "Implement and maintain durable workflow recovery.";
   const start = source.text.indexOf(text);
   expect(start).toBeGreaterThanOrEqual(0);
-  extraction.reply({
-    status: "complete",
-    requirements: [
-      {
-        local_id: "recovery",
-        text,
-        definition: text,
-        qualifiers: [],
-        scope: "resume",
-        tier: "must_have",
-        weight: 1,
-        support: "supported",
-        spans: [{ source_id: source.source_id, quote: text }],
-      },
-    ],
-    reason:
-      "This controlled source contains this one complete supported requirement.",
-    citations: citeSources(extraction, [source.source_id]),
-  });
+  extraction.reply(typedExtraction(extraction, { requirements: [{ localId: "recovery", text }] }));
   const matching = await modelCall(app, "requirements.match_catalog");
   matching.reply(
     catalogMatching(matching, {

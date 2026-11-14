@@ -10,6 +10,7 @@ function SearchFeedbackComposition({ controller, render }: { controller: Discove
     databaseInstanceId: controller.workspace?.databaseInstanceId, enabled, active });
   return render({ phase: progress.isError ? null : progress.data?.phase ?? null, assessedJobs: progress.data?.assessedJobs ?? null,
     failedJobs: progress.data?.failedJobs ?? null, totalJobs: progress.data?.totalJobs ?? null,
+    skippedJobs: progress.data?.skippedJobs ?? null, skipped: progress.data?.skipped ?? [],
     failures: progress.data?.failures ?? [], unavailable: enabled && Boolean(progress.error) });
 }
 

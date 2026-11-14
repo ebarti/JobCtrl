@@ -68,4 +68,6 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         "resumes.review": action(service.review, asynchronous=True),
         "resumes.locale_generate": action(locale_generate, asynchronous=True),
         "resumes.locale_review": action(locale_review, asynchronous=True),
-    })
+    }, action_versions={name: "requirements-v2" for name in (
+        "resumes.compose", "resumes.render", "resumes.review", "resumes.locale_generate", "resumes.locale_review",
+    )})

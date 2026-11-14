@@ -6,6 +6,7 @@ import asyncio
 
 from jobctrl.app.errors import AppError, ConflictError
 
+from .contract import CONTRACT_VERSION, current_contract, reusable
 from .coverage_groups import (
     GROUPED_COVERAGE_INSTRUCTIONS, GroupedCoverageDecision, coverage_record, group_sources,
     owned_support, relation_key, validate_group_decision,
@@ -16,6 +17,7 @@ from .qualification import decide, now
 from .serialization import encoded
 from .sources import (
     achievements, citations_still_bound, dto, fact_fingerprint, fact_sources, fingerprint, source_id,
+    qualification_fingerprint, wording_eligible,
 )
 
 
@@ -32,6 +34,7 @@ class Coverage:
 
     async def refresh(self, profile_snapshot, requirements_snapshot, requirements: list[dict], *,
                       prepare_wording=True, cancelled=lambda: False, operation=None) -> dict:
+        requirements = [row for row in requirements if reusable(row)]
         if operation is not None and operation.retry_wording_proposal_ids:
             plans = prepare_wording_retries(self, profile_snapshot, requirements_snapshot, requirements, operation)
             proposals = []
@@ -56,11 +59,11 @@ class Coverage:
             for requirement in requirements:
                 assessment = read.latest_assessment(
                     profile["profile_id"], requirement["requirement_id"], requirement["requirement_revision"],
-                    source_fingerprint=source_hash,
+                    source_fingerprint=qualification_fingerprint(profile, requirement, facts),
                 )
                 if assessment is None:
                     raise ConflictError("Current person qualification is required before preparing wording coverage.")
-                if assessment["kind"] not in {"matched", "transferable"}:
+                if assessment["kind"] not in {"matched", "transferable"} or not wording_eligible(assessment):
                     continue
                 # Qualification records supported achievements. Group that
                 # explicit mapping; IDs/order never select semantic ownership.
@@ -139,6 +142,7 @@ class Coverage:
                 self._validate_group(result, achievement_id, entries, approved, group_facts, sources,
                                      missing, relations, retained_ids, outstanding, owned_ids=owned_ids)
                 record = {
+                    "contract_version": CONTRACT_VERSION,
                     "group_key": group_key, "profile_id": profile["profile_id"], "achievement_id": achievement_id,
                     "requirements": bindings, "source_fingerprint": fingerprint(sources),
                     "current_wordings": heads,
@@ -220,7 +224,7 @@ class Coverage:
         if operation is not None:
             for proposal in failures:
                 operation.record_wording_failure(proposal)
-        return {"assessed_relations": assessed_relations, "reused_relations": reused_relations,
+        return {"contract_version": CONTRACT_VERSION, "assessed_relations": assessed_relations, "reused_relations": reused_relations,
                 "assessed_groups": assessed_groups, "reused_groups": reused_groups,
                 "proposals": proposals, "wording_failures": failures}
 
@@ -232,7 +236,7 @@ class Coverage:
         sources = group_sources(entries, variants, group_facts)
         bindings = [self._requirement_binding(requirement, assessment, achievement) for requirement, assessment in entries]
         group_key = "fit-wording-group-" + fingerprint({
-            "format": "fit-wording-group-v2", "profile_id": profile["profile_id"],
+            "format": "fit-wording-group-v3", "contract_version": CONTRACT_VERSION, "profile_id": profile["profile_id"],
             "achievement_id": achievement["achievement_id"], "achievement": achievement, "sources": sources,
             "requirements": [{key: row[key] for key in row if key not in {
                 "assessment_id", "support_receipt_id", "support_rationale",
@@ -261,9 +265,9 @@ class Coverage:
 
     @staticmethod
     def _requirement_binding(requirement, assessment, achievement):
-        return {"requirement_id": requirement["requirement_id"], "requirement_revision": requirement["requirement_revision"],
-                "definition": requirement["definition"], "qualifiers": requirement.get("qualifiers", {}),
-                "scope": requirement["scope"], "assessment_id": assessment["assessment_id"],
+        return {"contract_version": CONTRACT_VERSION, "requirement_id": requirement["requirement_id"], "requirement_revision": requirement["requirement_revision"],
+                "definition": requirement["definition"], "category": requirement["category"], "name": requirement["name"],
+                "assessment_id": assessment["assessment_id"],
                 "support_kind": assessment["kind"], "support_strength": assessment.get("strength"),
                 "qualification_determination_id": assessment["determination_id"],
                 "support_receipt_id": assessment.get("revalidation_provenance", {}).get("receipt_id", assessment["determination_id"]),
@@ -313,7 +317,7 @@ class Coverage:
         )
         retained.sort(key=lambda row: row["relation_id"] != preferred_relation_id)
         for relation in retained:
-            if (relation["qualification_determination_id"] != assessment["determination_id"]
+            if (not current_contract(relation) or relation["qualification_determination_id"] != assessment["determination_id"]
                     or relation["variant_fingerprint"] != variant_fingerprint(variant)
                     or not citations_still_bound(relation["source_refs"], facts)):
                 continue
@@ -431,7 +435,7 @@ class Coverage:
                 + encoded({"requirements": bindings, "new_gap_requirement_ids": gaps,
                            "authoring_action": action, "replacement_variant_ids": record["decision"]["replacement_variant_ids"]})
             ),
-            "origin_metadata": {"owner": "fit", "group_key": record["group_key"], "requirements": bindings,
+            "origin_metadata": {"contract_version": CONTRACT_VERSION, "owner": "fit", "group_key": record["group_key"], "requirements": bindings,
                                 "gap_requirement_ids": gaps, "group_determination_id": record["provenance"]["receipt_id"],
                                 "group_rationale": record["decision"]["rationale"],
                                 "authoring_action": action,
@@ -456,7 +460,7 @@ class Coverage:
         proposal_id = proposal.get("proposal_id") or proposal.get("request_id")
         if not isinstance(proposal_id, str) or not proposal_id:
             raise AppError("fit_wording_request_invalid", "Profile did not return a retained authoring request identity.", 422)
-        binding = {"origin_key": origin, "profile_id": profile["profile_id"], "requirements": bindings,
+        binding = {"contract_version": CONTRACT_VERSION, "origin_key": origin, "profile_id": profile["profile_id"], "requirements": bindings,
                    "proposal_id": proposal_id, "achievement_id": achievement["achievement_id"],
                    "evidence_refs": refs, "group_key": record["group_key"], "gap_requirement_ids": gaps,
                    "authoring_action": action,

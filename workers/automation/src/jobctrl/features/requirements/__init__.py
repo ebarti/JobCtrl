@@ -1,5 +1,5 @@
 """Public requirement catalog and source-bound occurrence ownership."""
 
-from .domain import RequirementError
+from .domain import CONTRACT_VERSION, RequirementError, current_contract, snapshot_items
 
-__all__ = ["RequirementError"]
+__all__ = ["CONTRACT_VERSION", "RequirementError", "current_contract", "snapshot_items"]

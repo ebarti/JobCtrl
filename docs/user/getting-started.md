@@ -327,6 +327,13 @@ the current data, journal, backups and accounting evidence when recovery is
 uncertain.
 :::
 
+The typed-requirement source candidate also has a generation-specific
+[upgrade and rollback boundary](data-and-safety.md#typed-requirements-upgrade):
+stop old writers and back up before new-generation writes; restoring that backup
+is required for rollback afterward. Installing an older binary alone does not
+restore compatible requirement or workflow authority. This work has not rolled
+out to a live workspace.
+
 For released versions, use the release-specific installation and recovery
 instructions. A source merge does not publish an installed update.
 

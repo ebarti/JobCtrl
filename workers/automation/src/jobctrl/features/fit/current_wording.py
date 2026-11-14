@@ -10,7 +10,8 @@ from jobctrl.app.errors import ConflictError
 
 from .associations import AssociationValue
 from .coverage import variant_fingerprint
-from .sources import achievements, fact_fingerprint
+from .contract import current_contract
+from .sources import achievements, qualification_fingerprint, wording_eligible
 
 
 class CurrentWordingInput(AssociationValue):
@@ -39,6 +40,8 @@ ASSIGNMENT_PINS = ("profile_id", "achievement_id", "requirement_id", "requiremen
 def assignment_reasons(record, read, profile):
     """Inspect recorded IDs and exact current bindings; never choose wording."""
     reasons = []
+    if not current_contract(record):
+        return ["contract_changed"]
     requirement = read.requirement(record["requirement_id"])
     if str(requirement["revision"]) != str(record["requirement_revision"]):
         reasons.append("requirement_revised")
@@ -48,10 +51,10 @@ def assignment_reasons(record, read, profile):
     if record["achievement_id"] not in inventory:
         reasons.append("achievement_unavailable")
     assessment = read.latest_assessment(record["profile_id"], record["requirement_id"], record["requirement_revision"],
-                                        source_fingerprint=fact_fingerprint(profile))
+                                        source_fingerprint=qualification_fingerprint(profile, requirement))
     if (assessment is None or str(assessment["requirement_revision"]) != str(record["requirement_revision"])
-            or assessment["source_fingerprint"] != fact_fingerprint(profile)
-            or assessment["kind"] not in {"matched", "transferable"}
+            or assessment["source_fingerprint"] != qualification_fingerprint(profile, requirement)
+            or not wording_eligible(assessment) or assessment["kind"] not in {"matched", "transferable"}
             or record["achievement_id"] not in assessment["achievement_ids"]):
         reasons.append("qualification_changed_or_unavailable")
     variant = next((row for row in profile["approved_variants"] if row["variant_id"] == record["variant_id"]), None)

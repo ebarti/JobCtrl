@@ -21,7 +21,9 @@ const job = z.object({ job_id: z.string(), revision: z.number(), source_id: z.st
   active_state: z.string().optional(), observed_at: z.string().optional(), provenance: z.unknown().optional(),
   hidden: z.boolean(), deleted: z.boolean(), state_revision: z.number() }).passthrough();
 const feature = z.object({ enabled: z.boolean(), available: z.boolean() }).passthrough();
-const fit = z.object({ current: z.boolean(), score: z.object({ score: z.number(), eligibility: z.object({ status: z.string() }).passthrough() }).passthrough().nullable() }).passthrough();
+const fit = z.object({ current: z.boolean(), stale_reasons: z.array(z.string()).optional(),
+  score: z.object({ score: z.number().nullable(), contract_version: z.string().optional(), formula_version: z.string().optional(),
+    eligibility: z.object({ status: z.string() }).passthrough() }).passthrough().nullable() }).passthrough();
 const preparation = z.object({ stage: z.string().nullable(), state: z.string().nullable() }).passthrough();
 const compensation = z.object({ summary: z.object({
   posted: z.object({ displayRange: z.string().nullable(), recordStatus: z.string() }).passthrough(),

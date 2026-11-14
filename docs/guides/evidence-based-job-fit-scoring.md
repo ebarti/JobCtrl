@@ -30,8 +30,10 @@ The scoring boundary deliberately separates employer claims from candidate
 claims:
 
 - the captured posting supplies employer evidence, while Requirements owns
-  reusable qualified meanings, job-specific priorities and source occurrences;
-- the versioned Candidate Profile owns experience, skills, achievements,
+  reusable Skills/Professional Experience meanings, direct job-local
+  Education/Languages demands and source occurrences;
+- the versioned Candidate Profile owns experience, education, skills,
+  Language / Proficiency, achievements,
   preferences, and evidence about the job seeker.
 
 The scorer may classify how those sources relate. It may not turn wording from
@@ -41,17 +43,21 @@ labels it unavailable rather than displaying it as proof.
 
 Read [Candidate Profile](../user/candidate-profile.md) for candidate evidence
 ownership and [shared requirement meanings](../user/scoring-and-employer-analysis.md#shared-requirement-meanings)
-for the complete-catalog matching boundary. Every incoming requirement and the
-entire catalog, including qualifiers and scope, enter one matching request.
+for the complete-catalog matching boundary. The complete incoming reusable batch
+and active catalog, including category, name and definition, enter one matching request.
 The model decides existing identity, genuine novelty or uncertainty; a retrieval
 miss or word overlap cannot establish a new meaning.
 
 ## Score Requirements Before Resolving The Number
 
-For accepted qualified requirements, Fit records a structured assessment of
-each meaning against the saved factual sources. A row records the
-requirement identity, importance, posting evidence, fit classification, and
-supporting Candidate Profile evidence.
+Fit assesses all four categories against permitted saved factual sources.
+Skills can use structured Skills and factual roles/achievements; Professional
+Experience uses factual roles/achievements; Education uses Education records or
+an explicitly offered equivalent-experience alternative; Languages uses only
+structured Language / Proficiency. An education experience route is recorded
+without asserting a degree. A row records the exact canonical or job-local
+demand identity, posting evidence, fit classification and supporting Profile
+sources.
 
 The useful unit is the row:
 
@@ -60,13 +66,17 @@ The useful unit is the row:
 | Direct or strong match | Profile evidence substantially supports the requirement |
 | Transferable evidence | The profile supports adjacent experience, but not the exact claim |
 | Missing | The current profile does not contain supporting evidence |
-| Blocked | A hard requirement is not met and constrains eligibility |
+| Blocked | The assessed demand has no support credit; downstream eligibility remains separate |
 | Not assessed | The decision record does not contain a usable classification |
 
-Versioned deterministic code then turns those rows into the saved score. More
-important requirements contribute more, matched evidence receives more credit
-than transferable evidence, and blocked requirements constrain the final
-result. The current weights, rounding rules, compatibility path, and worked
+Versioned deterministic code then turns those rows into the saved score.
+`requirement-fit-v3-equal` gives each distinct canonical requirement and each
+distinct job-local demand one item, with direct/strong/transferable credits of
+`1`, `0.85` and `0.6`, and missing/blocked credit of `0`. Duplicate occurrences
+do not multiply points; an alternatives group is one demand. For `N > 0`, the
+score is `clamp(1 + floor(9 * sum(credits) / N + 0.5), 1, 10)`. For `N = 0`,
+there is no calculated score. There are no posting weights, must-have multiplier
+or blocker cap. The rounding rules, retained historical policy, and worked
 example live in the canonical
 [Scoring guide](../user/scoring-and-employer-analysis.md#how-the-score-is-calculated).
 
@@ -84,7 +94,7 @@ JobCtrl keeps three concepts distinct:
 - **Confidence** tells you how much scrutiny the evidence needs. It is a review
   signal, not a hidden points multiplier.
 - **Eligibility** decides whether downstream work such as automatic material
-  generation may proceed. Hard blockers and the live minimum-fit threshold can
+  generation may proceed. Its own safety gates and the live minimum-fit threshold can
   affect eligibility without rewriting the saved score.
 
 Changing the minimum-fit threshold therefore does not recalculate old scores.
@@ -121,12 +131,15 @@ current Python source,
 complete shared catalog. Newly saved evidence can affect previously missing
 support; current assessments are reused across jobs that reference the same
 qualified meaning. A selected job cohort controls which saved scores may be
-updated without narrowing the catalog used for that review.
+updated without narrowing the catalog used for that review. The operation also
+freezes the selected jobs' direct Education/Languages demands.
 
 Factual support and approved expression remain separate. Exact current wording
 relations can be reused; remaining supported expression gaps are grouped by
-achievement for a reviewable proposal. Missing wording does not lower factual
-fit, and approving wording does not prove a new capability or regenerate an
+achievement for a reviewable proposal. A current section-backed match creates no
+achievement-wording gap; an already covered expression is not rewritten for
+stylistic variation. Missing wording does not lower factual fit, and approving
+wording does not prove a new capability or regenerate an
 accepted resume. The [Profile update guide](../user/candidate-profile.md#update-affected-matches)
 owns the finite work limits, provider-cost caveat, partial results and explicit
 retry/cancellation steps. The source flow does not establish installed-release
@@ -141,6 +154,16 @@ retain the model determination and exact source bindings; changed inputs cannot
 silently replace a current accepted result. A failed factual refresh preserves
 the accepted score, and later wording failure is reported separately from any
 factual results already saved.
+
+The current contract is `requirements-v2`. Non-English postings are identified
+by a source-bound model decision before extraction and skipped without
+translation or a zero score. The active reusable catalog starts empty for this
+generation. Legacy accepted scores and artifacts retain their original evidence
+and bytes with contract-change refresh status; they cannot establish current
+ranking or composition readiness. A failed or incompatible operation cannot
+replace that accepted history. No live workspace rollout follows from a source
+change; [backup and rollback](../user/data-and-safety.md#typed-requirements-upgrade)
+require their own operational proof.
 
 These checks establish which sources and model decision were accepted. They do
 not independently establish that an authored fact is true or that a model's

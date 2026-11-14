@@ -13,7 +13,7 @@ type IdentityProfile = Omit<Profile, "profile"> & {
   };
 };
 
-test("Profile peer sections save complete role, summary, skills and education edits and restore removed experience with its original identities", async ({
+test("Profile peer sections save complete role, summary, skills, education and language edits and restore removed experience with its original identities", async ({
   api,
   app,
   page,
@@ -46,6 +46,7 @@ test("Profile peer sections save complete role, summary, skills and education ed
     "Experience",
     "Skills",
     "Education",
+    "Languages",
     "Personal details",
     "Resume",
   ])
@@ -55,6 +56,7 @@ test("Profile peer sections save complete role, summary, skills and education ed
     ["profile-personal", "Personal details"],
     ["profile-skills", "Skills"],
     ["profile-education", "Education"],
+    ["profile-languages", "Languages"],
     ["profile-experience", "Experience"],
     ["profile-resume-editor", "Resume"],
   ]) {
@@ -699,6 +701,41 @@ test("Profile peer sections save complete role, summary, skills and education ed
       (item) => item.id === categoryId,
     ),
   ).toBe(false);
+
+  await peer("Languages").click();
+  await page.getByRole("button", { name: "Add language", exact: true }).click();
+  const languageRow = page.getByRole("group", { name: "Language 1", exact: true });
+  const languageSaved = page.waitForResponse(async (response) => new URL(response.url()).pathname === "/v1/profile" && response.request().method() === "PATCH" && response.status() === 200 && (await response.json()).profile?.resume?.language_entries[0]?.proficiency === "Professional working proficiency");
+  await languageRow.getByRole("textbox", { name: "Language", exact: true }).fill("English");
+  await languageRow.getByRole("textbox", { name: "Proficiency", exact: true }).fill("Professional working proficiency");
+  expect((await languageSaved).status()).toBe(200);
+  saved = await canonical();
+  const languageId = saved.profile.resume.language_entries[0]!.id;
+  expect(languageId).toBeTruthy();
+  await page.reload();
+  await expect(languageRow.getByRole("textbox", { name: "Language", exact: true })).toHaveValue("English");
+  const proficiencySaved = page.waitForResponse(async (response) => new URL(response.url()).pathname === "/v1/profile" && response.request().method() === "PATCH" && response.status() === 200 && (await response.json()).profile?.resume?.language_entries[0]?.proficiency === "Full professional proficiency");
+  await languageRow.getByRole("textbox", { name: "Proficiency", exact: true }).fill("Full professional proficiency");
+  expect((await proficiencySaved).status()).toBe(200);
+  saved = await canonical();
+  expect(saved.profile.resume.language_entries).toEqual([{ id: languageId, language: "English", proficiency: "Full professional proficiency" }]);
+  await page.getByRole("button", { name: "Add language", exact: true }).click();
+  const secondLanguageSaved = page.waitForResponse(async (response) => new URL(response.url()).pathname === "/v1/profile" && response.request().method() === "PATCH" && response.status() === 200 && (await response.json()).profile?.resume?.language_entries[1]?.language === "French");
+  await page.getByRole("group", { name: "Language 2", exact: true }).getByRole("textbox", { name: "Language", exact: true }).fill("French");
+  expect((await secondLanguageSaved).status()).toBe(200);
+  const removedLanguageSaved = page.waitForResponse(async (response) => new URL(response.url()).pathname === "/v1/profile" && response.request().method() === "PATCH" && response.status() === 200 && (await response.json()).profile?.resume?.language_entries.length === 1);
+  await page.getByRole("button", { name: "Remove language 2", exact: true }).click();
+  expect((await removedLanguageSaved).status()).toBe(200);
+  saved = await canonical();
+  expect(saved.profile.resume.language_entries).toEqual([{ id: languageId, language: "English", proficiency: "Full professional proficiency" }]);
+  await testInfo.attach("profile-language-autosave", { contentType: "image/png", body: await page.locator("#profile-languages").screenshot() });
+  await peer("Resume").click();
+  const baselineEditor = page.getByRole("textbox", { name: "Baseline resume editor editor", exact: true });
+  await expect(baselineEditor).toContainText("English");
+  await expect(baselineEditor).toContainText("Full professional proficiency");
+  const baselinePreview = await api.get("/v1/profile/preview.html");
+  expect(baselinePreview.status(), await baselinePreview.text()).toBe(200);
+  expect(await baselinePreview.text()).toContain("Full professional proficiency");
 
   await peer("Education").click();
   await page

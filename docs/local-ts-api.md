@@ -73,6 +73,15 @@ admission. See the [Fit owner reference](../workers/automation/src/jobctrl/featu
 and [Requirements owner reference](../workers/automation/src/jobctrl/features/requirements/README.md)
 for exact fields and source-authority boundaries.
 
+`requirements.correct_occurrences` is a version-fenced durable correction of
+1–20 selected reusable occurrence meanings; its direct route is
+`POST /v1/jobs/{job_id}/requirements/corrections`. It preserves unselected
+meaning, binding, evidence and authority, uses a single source-bound revision
+batch followed by complete-catalog matching, and records separate correction
+provenance. Reasons are guidance rather than evidence. See
+[the typed Requirements API](api/jobs-and-materials.md#typed-job-requirements)
+for payload, retention and durable call limits.
+
 Maintained wording is separately exposed in the Fit library's `current_wordings`
 and `wording_assignments`. `POST /v1/fit/current-wordings` selects an exact
 approved variant with a current positive coverage receipt under Profile and

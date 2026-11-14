@@ -24,6 +24,7 @@ test("Jobs retain the selected opportunity and preparation mode through first Pr
   const pending = await api.get("/v1/fit/refresh/pending");
   expect(pending.status(), await pending.text()).toBe(200);
   expect(await pending.json()).toEqual({
+    contract_version: "requirements-v2",
     profile_id: "default",
     readiness: "profile_required",
   });

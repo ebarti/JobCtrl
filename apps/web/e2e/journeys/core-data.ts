@@ -5,7 +5,7 @@ import {
   modelCall,
   type ApplicationStack,
 } from "../harness/fixtures.js";
-import { catalogMatching } from "./requirements-data.js";
+import { catalogMatching, typedExtraction } from "./requirements-data.js";
 import { qualificationBatchDecision } from "./qualification-data.js";
 
 /** Authored synthetic data submitted through the public Profile action. These
@@ -62,6 +62,7 @@ export const baseline = {
         items: ["Python", "SQLite", "Temporal"],
       },
     ],
+    language_entries: [] as { id: string; language: string; proficiency: string }[],
     tailoring_rules: {},
   },
 };
@@ -95,6 +96,7 @@ export type ResumeRevision = {
   document: {
     personal: { full_name: string };
     summary: string;
+    languages?: { id: string; language: string; proficiency: string }[];
     experience: {
       id: string;
       title: string;
@@ -208,25 +210,9 @@ export async function qualifyPosting(
   const source = (
     extraction.body["sources"] as { source_id: string; text: string }[]
   )[0]!;
-  extraction.reply({
-    status: "complete",
-    requirements: [
-      {
-        local_id: "recovery",
-        text: source.text,
-        definition: "Implement durable workflow recovery",
-        qualifiers: [],
-        scope: "resume",
-        tier: "must_have",
-        weight: 1,
-        support: "supported",
-        spans: [{ source_id: source.source_id, quote: source.text }],
-      },
-    ],
-    reason:
-      "Explicit source-bound admission for the application preparation journey.",
-    citations: [{ source_id: source.source_id, quote: source.text }],
-  });
+  extraction.reply(typedExtraction(extraction, { requirements: [{
+    localId: "recovery", text: source.text, definition: "Implement durable workflow recovery",
+  }] }));
   const matching = await modelCall(app, "requirements.match_catalog");
   matching.reply(catalogMatching(matching, { recovery: { verdict: "new" } }));
   const extracted = await extracting;

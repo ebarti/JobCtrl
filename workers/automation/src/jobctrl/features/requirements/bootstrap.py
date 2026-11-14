@@ -5,8 +5,8 @@ from __future__ import annotations
 from jobctrl.app.contracts import Feature, Runtime
 from jobctrl.app.errors import AppError
 
-from .domain import RequirementError
-from .http import CorrectionRequest, RefreshRequest, RevisionRequest, raise_application_error, routes
+from .domain import CONTRACT_VERSION, RequirementError
+from .http import CorrectionRequest, OccurrenceCorrectionsRequest, RefreshRequest, RevisionRequest, raise_application_error, routes
 from .model import RequirementModelAdapter
 from .repository import SqliteRequirementStore
 from .schema import SCHEMA
@@ -69,7 +69,27 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         except RequirementError as failure:
             raise_application_error(failure)
 
+    async def correct_occurrences(context, payload):
+        from pydantic import ValidationError
+        try:
+            job_id = payload.get("job_id")
+            if not isinstance(job_id, str) or not job_id:
+                raise AppError("invalid_job_id", "Supply the job ID.")
+            body = OccurrenceCorrectionsRequest.model_validate({key: value for key, value in payload.items() if key != "job_id"})
+        except (ValidationError, AttributeError):
+            raise AppError("invalid_request", "The occurrence correction fields are invalid.") from None
+        try:
+            return await service.correct_occurrences(job_id, **body.model_dump(), cancelled=context.cancelled,
+                operation_id=context.run_id, heartbeat=context.heartbeat)
+        except RequirementError as failure:
+            raise_application_error(failure)
+
     return Feature(
         name="requirements", service=service, routes=routes(service),
-        actions={"requirements.refresh": refresh, "requirements.revise": revise, "requirements.correct_binding": correct_binding},
+        actions={"requirements.refresh": refresh, "requirements.revise": revise, "requirements.correct_binding": correct_binding,
+                 "requirements.correct_occurrences": correct_occurrences},
+        action_versions={name: CONTRACT_VERSION for name in (
+            "requirements.refresh", "requirements.revise", "requirements.correct_binding",
+            "requirements.correct_occurrences",
+        )},
     )

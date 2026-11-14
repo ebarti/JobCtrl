@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Route } from "@playwright/test";
 import { test, expect, json, completed } from "../harness/fixtures.js";
 import {
   baseline,
@@ -15,7 +16,8 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   api,
   app,
 }, testInfo) => {
-  const { library } = await createBaseline(api);
+  const languages = [{ id: "english", language: "English", proficiency: "Professional working proficiency" }, { id: "catalan", language: "Catalan", proficiency: "Native proficiency" }];
+  const { library } = await createBaseline(api, { ...baseline, resume: { ...baseline.resume, language_entries: languages } });
   const posting = await createPosting(api);
   await page.goto(`/jobs/${posting.job_id}`);
   await page
@@ -57,6 +59,7 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   ).toHaveAttribute("aria-selected", "true");
   const copied = current(resume!);
   expect(copied.mode).toBe("baseline_copy");
+  expect(copied.document.languages).toEqual(languages);
   expect(copied.review.status).toBe("not_applicable");
   expect(copied.document.experience.map((role) => role.id)).toEqual(
     baseline.resume.experience_entries.map((role) => role.id),
@@ -121,6 +124,19 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   const inspected = await app.inspectPdf(bytes);
   expect(inspected.pages).toBeGreaterThanOrEqual(1);
   expect(inspected.text).toContain(baseline.personal.full_name);
+  for (const language of languages) {
+    expect(inspected.text).toContain(language.language);
+    expect(inspected.text).toContain(language.proficiency);
+  }
+  for (const format of ["txt", "html", "docx"] as const) {
+    const exported = await api.get(`/v1/resumes/${resume!.resume_id}/export?format=${format}&accepted=true`);
+    expect(exported.status(), await exported.text()).toBe(200);
+    const text = format === "docx" ? await app.inspectDocx(await exported.body()) : await exported.text();
+    for (const language of languages) {
+      expect(text).toContain(language.language);
+      expect(text).toContain(language.proficiency);
+    }
+  }
   for (const role of baseline.resume.experience_entries) {
     expect(inspected.text).toContain(role.company);
     expect(inspected.text).toContain(role.title);
@@ -161,6 +177,7 @@ test("approved baseline copy preserves every role, requires exact edit approval 
     name: "Resume editor",
     exact: true,
   });
+  for (const language of languages) await expect(editor).toContainText(language.proficiency);
   await editor
     .getByText(baseline.resume.experience_entries[0]!.bullets[0]!, {
       exact: true,
@@ -174,6 +191,7 @@ test("approved baseline copy preserves every role, requires exact edit approval 
     })
     .toBe(editedText);
   expect(current(resume!).mechanical.status).toBe("invalid");
+  expect(current(resume!).document.languages).toEqual(languages);
   expect(resume!.accepted_revision_id).toBe(copied.revision_id);
   const refused = await api.post(`/v1/resumes/${resume!.resume_id}/accept`, {
     data: { expected_version: resume!.version, override_review: false },
@@ -297,56 +315,103 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   await page
     .getByRole("combobox", { name: "Resume to prepare", exact: true })
     .selectOption("baseline");
-  const applicationAdmission = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === "/v1/actions/preparation.run" &&
-      response.request().method() === "POST",
-  );
-  await page
-    .getByRole("button", { name: "Prepare resume", exact: true })
-    .click();
-  const applicationResponse = await applicationAdmission;
-  expect(applicationResponse.status()).toBe(202);
-  expect(applicationResponse.request().postDataJSON()).toMatchObject({
-    recipe: "prepare",
-    scope: "selected",
-    job_ids: [posting.job_id],
-    resume_mode: "baseline",
-  });
-  await completed(
-    api,
-    ((await applicationResponse.json()) as { runId: string }).runId,
-  );
+  // Delay only delivery of the real terminal run-list response. The actual
+  // Python workflow, database, renderer and browser editor remain in use.
+  let applicationRunId: string | null = null;
+  let completionHeld = false;
+  let releaseCompletion!: () => void;
+  const completionGate = new Promise<void>((resolve) => { releaseCompletion = resolve; });
+  const preparationListUrl = new URL("/v1/preparation/runs", app.baseURL);
+  const matchesPreparationList = (url: URL) => url.href === preparationListUrl.href;
+  const forwardingPreparationReads: Promise<void>[] = [];
+  const forwardPreparationList = async (route: Route) => {
+    const response = await route.fetch();
+    try {
+      const listed = (await response.json()) as { runs: { runId: string; status: string }[] };
+      if (applicationRunId && listed.runs.some((run) => run.runId === applicationRunId && run.status === "succeeded")) {
+        completionHeld = true;
+        await completionGate;
+      }
+      await route.fulfill({ response });
+    } finally {
+      await response.dispose();
+    }
+  };
+  const delayPreparationList = async (route: Route) => {
+    const forwarding = forwardPreparationList(route);
+    forwardingPreparationReads.push(forwarding);
+    await forwarding;
+  };
+  await page.route(matchesPreparationList, delayPreparationList);
   const applicationEditor = page.getByRole("textbox", {
     name: "Resume editor",
     exact: true,
   });
-  await expect(applicationEditor).toContainText(applicationName);
-  resume = await getResume(api, resume!.resume_id);
-  expect(current(resume).document.personal.full_name).toBe(applicationName);
-  expect(current(resume).document.experience.map((role) => role.id)).toEqual(
-    baseline.resume.experience_entries.map((role) => role.id),
-  );
-  expect(resume.accepted_revision_id).toBe(editedRevision);
-  const unchangedAccepted = await api.get(
-    `/v1/resumes/${resume.resume_id}/export?format=pdf&accepted=true`,
-  );
-  expect(unchangedAccepted.status()).toBe(200);
-  expect(
-    createHash("sha256")
-      .update(await unchangedAccepted.body())
-      .digest("hex"),
-  ).toBe(createHash("sha256").update(editedBytes).digest("hex"));
-  await testInfo.attach("applications-prepared-baseline-mobile", {
-    contentType: "image/png",
-    body: await page.screenshot(),
-  });
-  await applicationEditor.getByText(applicationName, { exact: true }).click();
-  await page.keyboard.press("End");
-  await page.keyboard.insertText(" — retained application draft");
-  await expect(
-    page.getByRole("button", { name: "Prepare resume", exact: true }),
-  ).toBeDisabled();
+  try {
+    const applicationAdmission = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === "/v1/actions/preparation.run" &&
+        response.request().method() === "POST",
+    );
+    await page
+      .getByRole("button", { name: "Prepare resume", exact: true })
+      .click();
+    const applicationResponse = await applicationAdmission;
+    expect(applicationResponse.status()).toBe(202);
+    expect(applicationResponse.request().postDataJSON()).toMatchObject({
+      recipe: "prepare",
+      scope: "selected",
+      job_ids: [posting.job_id],
+      resume_mode: "baseline",
+    });
+    applicationRunId = ((await applicationResponse.json()) as { runId: string }).runId;
+    await completed(api, applicationRunId);
+    await expect.poll(() => completionHeld).toBe(true);
+    await expect(applicationEditor).toContainText(applicationName);
+    resume = await getResume(api, resume!.resume_id);
+    expect(current(resume).document.personal.full_name).toBe(applicationName);
+    expect(current(resume).document.experience.map((role) => role.id)).toEqual(
+      baseline.resume.experience_entries.map((role) => role.id),
+    );
+    expect(resume.accepted_revision_id).toBe(editedRevision);
+    const unchangedAccepted = await api.get(
+      `/v1/resumes/${resume.resume_id}/export?format=pdf&accepted=true`,
+    );
+    expect(unchangedAccepted.status()).toBe(200);
+    expect(
+      createHash("sha256")
+        .update(await unchangedAccepted.body())
+        .digest("hex"),
+    ).toBe(createHash("sha256").update(editedBytes).digest("hex"));
+    await testInfo.attach("applications-prepared-baseline-mobile", {
+      contentType: "image/png",
+      body: await page.screenshot(),
+    });
+    await applicationEditor.getByText(applicationName, { exact: true }).click();
+    await page.keyboard.press("End");
+    await expect(applicationEditor).toBeFocused();
+    releaseCompletion();
+    await expect(page.getByText("Preparation ready for review.", { exact: true })).toBeVisible();
+    await expect(applicationEditor).toBeFocused();
+    await page.keyboard.insertText(" — retained application draft");
+    await expect(applicationEditor).toContainText("— retained application draft");
+    await expect(page.getByLabel("Editable baseline resume page", { exact: true })).toHaveAttribute("data-draft-dirty", "true");
+    await expect(page.getByRole("button", { name: "Save resume", exact: true })).toBeEnabled();
+    await expect(
+      page.getByRole("button", { name: "Prepare resume", exact: true }),
+    ).toBeDisabled();
+    await testInfo.attach("preparation-completion-preserves-plate-focus", {
+      contentType: "image/png",
+      body: await page.screenshot(),
+    });
+    // Deliberate Review navigation remains a focus-moving user action.
+    await page.getByRole("button", { name: "Review unsaved edits", exact: true }).click();
+    await expect(page.getByRole("region", { name: "Application resume workspace", exact: true })).toBeFocused();
+  } finally {
+    releaseCompletion();
+    await page.unroute(matchesPreparationList, delayPreparationList);
+    await Promise.all(forwardingPreparationReads);
+  }
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page
     .getByRole("navigation", { name: "Main navigation", exact: true })

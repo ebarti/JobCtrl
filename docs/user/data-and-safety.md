@@ -132,6 +132,12 @@ Model refresh, meaning correction, current-assignment decisions, live job search
 and Photon lookup remain unavailable. Typed location text stays unverified.
 Supported real Plate editing/render/export remains browser-local synthetic work.
 These source changes do not establish a hosted deployment.
+The typed-requirement source candidate keeps reusable Skills/Professional
+Experience examples separate from job-local Education/Languages demands, with
+authored Language / Proficiency Profile rows and an equal-item formula. A
+supported Skills section is not represented as a missing achievement expression.
+These synthetic records cannot establish real-provider support or a live
+workspace upgrade.
 
 The updated source-built demo also offers **Explore matching and wording**,
 which opens **How matching and wording work**, an interactive illustration with
@@ -228,7 +234,29 @@ directory; treat those logs as sensitive too.
 
 ### Back Up And Restore
 
-The Python target does not upgrade or restore a legacy database into place.
+<a id="typed-requirements-upgrade"></a>
+
+The `requirements-v2` source upgrade is a separate generation boundary inside
+the Python application. Before operational rollout, stop every old application
+and worker writer and take a consistent workspace backup, including workflow
+history and referenced accepted artifacts. Verify ownership and stopped
+processes; do not treat a database-only snapshot as that complete backup.
+This implementation work has not rolled out to a live workspace.
+
+The new generation starts with an empty active Skills/Professional Experience
+catalog. Legacy accepted rows, job revision ordering and accepted resume bytes
+remain retained, while old results require refresh for the changed contract.
+They cannot prove current ranking or composition readiness. Ordinary reads or
+Profile saves do not run a conversion or model cascade. Incompatible old
+operations are refused rather than resumed with mixed semantics.
+
+After new-generation writes, rollback restores the verified pre-upgrade backup
+as one workspace unit with compatible application/workflow state. Installing an
+older binary alone is unsafe. Keep the backup and historical accepted artifacts
+until the deliberate rollout and recovery checks have succeeded. No development
+or QA instruction authorizes restoring or resetting a real user's workspace.
+
+The Python target does not upgrade or restore a pre-Python legacy database into place.
 The explicit `profile-transfer` command reads the old workspace and requires a
 complete browser Profile source/attachment export through `--browser-sources`,
 a nonexistent target outside the source, and `--confirm-profile-only-reset`.

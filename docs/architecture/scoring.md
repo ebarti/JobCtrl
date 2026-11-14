@@ -7,13 +7,45 @@ owns document choice. This page describes the Python source contract. The
 evidence; source behavior does not establish an installed release or
 real-provider judgment quality.
 
+## Typed requirements and permitted evidence
+
+The current source contract is `requirements-v2`. Requirements separates four
+categories before Fit or wording work:
+
+| Category | Identity and reuse | Permitted factual evidence |
+| --- | --- | --- |
+| Skills | Reusable canonical catalog meaning | Structured Profile Skills, factual roles and achievements |
+| Professional Experience | Reusable canonical catalog meaning | Factual roles and achievements |
+| Education | Direct job-local demand with exact posting revision | Structured Education records; professional experience only for an explicitly offered equivalent-experience alternative |
+| Languages | Direct job-local demand with exact posting revision | Structured Language / Proficiency records only |
+
+The model determines support, degree equivalence and proficiency from permitted
+sources. Code validates evidence categories, IDs, revisions and exact citations.
+An education alternative records the experience route without asserting a
+degree. General skills, an achievement, prose in an attachment or a language
+named in a Skills group cannot prove language proficiency. Personal traits,
+certifications and licenses, job conditions and detailed tenure analysis are
+excluded from this iteration. Structured certification support remains separate
+in [#1476](https://github.com/ebarti/JobCtrl/issues/1476).
+
+A source-bound language determination precedes requirement extraction. A
+non-English posting is skipped; it is neither translated nor assigned zero fit.
+An unavailable or invalid determination preserves accepted state. Extraction
+retains source excerpts, source-bound notes, meaningful alternatives and source
+ambiguities without inventing importance weights, mandatory labels or a row for
+every task. An alternatives group represents one demand.
+
 ## Requirements catalog matching
 
-Requirements extracts the complete posting inventory, then sends that entire
-incoming batch and every current canonical catalog definition, scope and
-qualifier to one source-bound matching determination. The same response decides
+Requirements extracts the posting's typed demands, then sends the complete
+incoming Skills/Professional Experience batch and every current canonical catalog
+category, name and definition to one source-bound matching determination. The
+same response decides
 equivalence, genuine novelty or uncertainty. Incoming paraphrases share an
 explicitly selected representative; each posting occurrence remains recorded.
+Ordinary facets of one competence can reuse one meaning; materially different
+capabilities remain distinct. Education and Languages do not enter this catalog
+or matching request and cannot enter achievement-wording authoring.
 There are no retrieval subsets, catalog pages, chunk loops or separate novelty
 judge. Citations, full incoming-ID cardinality, exact canonical revisions and
 the catalog epoch are validated before an atomic publication.
@@ -27,7 +59,7 @@ is pure validation, and the service uses the canonical spans only after that
 verified boundary succeeds.
 
 Extraction identifies its semantic source by a fingerprint of the complete,
-exact posting text. Matching additionally binds the full incoming qualified
+exact posting text. Matching additionally binds the full incoming typed
 inventory and current catalog. Job IDs, posting revisions and observation times
 are publication identity, not additional semantic input. Identical semantic
 inputs may therefore reuse a verified Requirements receipt across postings;
@@ -58,7 +90,7 @@ owns the exact schema, cache and failure contracts.
 
 Manual Fit work captures Requirements' public `catalog_snapshot(connection)`
 inside its source-read transaction. The snapshot contains the complete sorted
-canonical ID/revision inventory, definitions, qualifiers, scopes, catalog epoch
+canonical ID/revision inventory, categories, names, definitions, catalog epoch
 and semantic fingerprint. Its publication transaction calls the public
 `assert_current_catalog(snapshot, connection)` guard; any catalog change refuses
 the captured operation instead of expanding its work. Fit never reads
@@ -67,10 +99,11 @@ Requirements' private tables to assemble or validate that inventory.
 ## Inputs and semantic authority
 
 Fit first resolves accepted person qualifications for the complete job
-requirement set. Reuse is keyed by Profile ID, canonical requirement ID and
+requirement set, including direct Education and Languages demands. Reuse of
+catalog qualification is keyed by Profile ID, canonical requirement ID and
 revision, and the complete factual source/achievement fingerprint. An accepted
 qualification retains its original model or user authority across jobs; a new
-posting occurrence, priority or model selection does not manufacture a new
+posting occurrence or model selection does not manufacture a new
 assessment. If every qualification is current, this stage makes zero model
 calls. A job with no prior score may resolve its fixed requirement set during
 explicitly authorized initial preparation, including new current authority where
@@ -80,14 +113,17 @@ score and preserves history; it rewrites no other
 job's score. Updating qualification for a previously scored job after saved-input
 changes still requires explicit manual refresh. Saves start neither operation.
 
-The entire missing set enters one `fit.qualification-batch` request in the
-scoring lane, with the complete factual inventory supplied once and a distinct
+The entire missing set across all four categories enters one
+`fit.qualification-batch` request in the scoring lane, with the complete factual inventory supplied once and a distinct
 `requirement:<id>` source for each meaning. There is no per-requirement call
 loop, chunking, truncation or lexical fallback. The response must partition the
 exact requested IDs and revisions once each. Each row must cite its own
 requirement; no requirement can prove a candidate fact or substitute for another
 row's meaning. All rows pass schema, evidence and immutable gateway-receipt
 validation before the new assessments publish together in one transaction.
+Direct demands also bind their job-local identities, exact posting source and
+revision. They cannot reuse another job's qualification or gain reusable catalog
+identity from similar fields.
 
 Each accepted row keeps its own assessment identity and canonical revision.
 Rows share the batch determination/receipt ID and
@@ -95,18 +131,22 @@ Rows share the batch determination/receipt ID and
 `provenance.qualification_result_fingerprint` separately identifies the exact
 row. Publication rechecks sources, accepted heads and cancellation. The score's
 existing final guards remain separate. Invalid, stale, refused or cancelled
-work preserves accepted assessments and scores. Provider/model/effort policy
-and scoring arithmetic are unchanged by batching.
+work preserves accepted assessments and scores. Batching does not change the
+configured provider/model/effort policy.
 
 Person qualification is separate from Fit's recorded requirement-to-approved-
 wording coverage relations. An unexpressed or unapproved wording is a document
 gap and does not reduce factual fit. Profile alone owns the words and approval;
 Resumes consumes the recorded coverage for composition.
+A current match backed by Profile Skills, Education or Languages is not an
+achievement-wording gap. Reuse existing approved expression. New achievement
+wording requires an actual unsupported expression need and factual achievement
+support; stylistic variation alone cannot authorize a rewrite.
 
 ## Requirements Library And User Intent
 
-The independent library composes Requirements' current canonical meanings,
-Profile's immutable achievement/wording snapshots and Fit's recorded assessments
+The independent library composes Requirements' current canonical Skills and
+Professional Experience meanings, Profile's immutable achievement/wording snapshots and Fit's recorded assessments
 and exact coverage. It groups by achievement identity and shows original posting
 occurrences separately. Missing or stale relationships remain explicit.
 
@@ -141,6 +181,9 @@ It freezes the complete catalog, factual and
 approved-wording inventories, guidance, prior assessments, selected scored jobs
 and operation limits. Pending proposal bookkeeping is separate from the
 approved inventory, so the operation does not invalidate itself.
+The frozen inputs and checkpoints also include the selected jobs' direct
+Education and Languages demands. They remain job-local throughout impact,
+qualification, score publication and recovery.
 
 When factual qualification needs review, one source-bound `fit.catalog-impact`
 determination partitions the complete catalog into affected and unchanged
@@ -192,24 +235,49 @@ infer equivalent meaning from new text.
 
 ## Deterministic Score Resolution
 
-`features/fit/domain.py` implements the versioned
-`requirement-fit-v2-scoped` arithmetic over qualified capability assessments:
+`features/fit/domain.py` implements `requirement-fit-v3-equal` over the accepted
+typed assessments. Every distinct canonical Skills/Professional Experience
+meaning and every distinct job-local Education/Languages demand contributes
+one item. Duplicate occurrences do not multiply a canonical item's contribution;
+an alternatives group is one demand.
 
-1. For each resume-capability requirement, maximum points are its weight times
-   `1.25` for a must-have or `1.0` for a nice-to-have.
-2. Direct support earns `1.0`, strong support `0.85`, transferable support
-   `0.6`, and missing or blocked support zero. Row contributions are rounded to
-   four decimals before totals are combined.
-3. `weighted_fit = sum(awarded) / sum(maximum)` and the score is
-   `1 + floor(9 * weighted_fit + 0.5)`, clamped to 1–10. A capability blocker
-   caps the score at 4.
+Direct support earns `1.0`, strong support `0.85`, transferable support `0.6`,
+and missing or blocked support zero. For an assessed set of size `N > 0`:
 
-Eligibility, logistics and employer-condition rows do not contribute points;
-blockers, warnings, confidence and unknowns are reported separately. A missing
-or incoherent set of weighted capability requirements cannot be replaced by a
-legacy opaque dimension score. The live minimum-fit setting affects selection,
-not the calculation or the person's source evidence. Compensation and other
-preferences remain warnings where applicable, not invented qualifications.
+```text
+qualification coverage = sum(evidence credits) / N
+score = clamp(1 + floor(9 * qualification coverage + 0.5), 1, 10)
+```
+
+For `N = 0`, no score is calculated. Persist formula version, assessed count
+and qualification coverage. There are no source importance weights, must-have
+multipliers, blocker caps or invented source priorities. Source notes do not
+affect arithmetic. An invalid or incomplete set cannot publish a replacement
+score, and no opaque dimension-score fallback exists. Confidence, warnings and
+downstream eligibility remain separate. The live minimum-fit setting affects
+selection, not the calculation or source evidence.
+
+## Generation, history and rollout
+
+`contract_version: requirements-v2` travels through snapshots, occurrences,
+assessments, scores, operations, model identities, publication guards and
+currentness checks. A missing version denotes legacy state. Existing SQL schema
+strings stay byte-identical; the application checks their digest. Current
+canonical IDs are namespaced, the active catalog starts empty, and current
+readers do not promote legacy meanings because their fields look compatible.
+
+Historical accepted rows, job revision ordering and accepted resume bytes remain
+available. Older results require refresh for the changed contract and cannot
+prove current ranking or composition readiness. Incompatible operation
+resumption/replay is refused. A replacement moves accepted pointers only after
+successful publication; failure, cancellation or stale inputs preserve the last
+accepted state.
+
+An operational rollout must stop old writers and back up the workspace before
+new-generation writes. Rollback after such writes restores that backup; merely
+installing an older binary is unsafe. This implementation work establishes no
+live rollout. See the [typed-requirements plan](../plans/typed-requirements.md)
+and [backup boundary](../user/data-and-safety.md#typed-requirements-upgrade).
 
 ## Corrections, policy and reads
 

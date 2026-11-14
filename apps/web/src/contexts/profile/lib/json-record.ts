@@ -95,7 +95,8 @@ export function lines(value: string): string[] {
 export function defaultRepeatItem(path: string, existingIds: Iterable<string> = []): JsonRecord {
   const prefix = path === "resume.experience_entries" ? "experience"
     : path === "resume.education_entries" ? "education"
-      : path === "resume.skill_categories" ? "skill" : null;
+      : path === "resume.skill_categories" ? "skill"
+        : path === "resume.language_entries" ? "language" : null;
   if (prefix === null) {
     return {};
   }
@@ -121,6 +122,9 @@ export function defaultRepeatItem(path: string, existingIds: Iterable<string> = 
   }
   if (path === "resume.skill_categories") {
     return { id, label: "", items: [""] };
+  }
+  if (path === "resume.language_entries") {
+    return { id, language: "", proficiency: "" };
   }
   return {};
 }

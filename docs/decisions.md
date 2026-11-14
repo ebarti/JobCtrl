@@ -1000,7 +1000,10 @@ Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#_2026-10-07-s
 
 ## 2026-06-15: Requirement-Fit Ledger — Scores Resolve From Weighted Requirement Fit
 
-Status: accepted
+Status: historical arithmetic, superseded for the current source contract by
+[Typed Requirements and Equal-Item Fit](#typed-requirements-v2). Historical
+accepted reports retain their recorded formula and bytes. The original decision
+and subsequent amendments remain below for provenance.
 
 Amended (2026-11-03): explicit re-tailoring may run with a stale score and never
 implicitly requests re-scoring. Manual score corrections carry the existing
@@ -3180,6 +3183,11 @@ automatically downgrade the workspace. See
 
 Status: accepted for implementation; integrated delivery and verification pending.
 
+The weighted composition clause below is superseded by
+[Typed Requirements and Equal-Item Fit](#typed-requirements-v2), which uses one
+policy point per eligible canonical requirement. The original transition
+and full-baseline ownership contract remain historical context.
+
 **Decision.** Replace the split business backend with a single Python modular
 application. HTTP, CLI and the durable worker call the same application actions
 and canonical writers. Explicit composition injects small public ports between
@@ -3392,3 +3400,110 @@ and the [QA ledger](developer/qa/python-journeys.md). Issue
 [#1473](https://github.com/ebarti/JobCtrl/issues/1473) tracks implementation and
 operational improvement. This contract alone establishes no passing journey,
 new timing, real-provider judgment quality, installed release or deployment.
+
+
+<a id="typed-requirements-v2"></a>
+
+## 2026-11-13: Typed Requirements and Equal-Item Fit
+
+Status: accepted for implementation; integrated journeys and live rollout are
+not established by this decision. [#1477](https://github.com/ebarti/JobCtrl/issues/1477)
+is stacked above [#1475](https://github.com/ebarti/JobCtrl/issues/1475).
+
+**Decision.** The `requirements-v2` reusable catalog contains Skills and
+Professional Experience only. Education and Languages are direct job-local
+demands; they never enter catalog matching, achievement links or wording
+authoring. Personal traits, certifications and licenses, job conditions and
+detailed years-of-experience analysis are excluded from this iteration.
+Structured certification support remains separate in
+[#1476](https://github.com/ebarti/JobCtrl/issues/1476).
+
+A source-bound model language decision precedes extraction. Non-English
+postings are skipped without translation or a zero fit score. Extraction retains
+exact excerpts, original occurrence meaning, source-bound notes, meaningful
+alternatives and unresolved ambiguity without generated importance weights,
+mandatory labels or a demand for every task. Canonical rows carry category,
+name and definition. Each occurrence retains its original meaning/evidence
+alongside its binding. The complete incoming Skills/Professional Experience
+batch and entire active catalog enter one matching determination. Ordinary
+facets of one competence may reuse a meaning; materially different capabilities
+remain distinct. Partial, invalid or uncertain decisions cannot authorize
+novelty. There is no lexical fallback.
+
+Fit reuses valid current authority, then qualifies the entire missing set across
+all four categories in one source-bound batch. Skills may cite structured Skills
+and factual roles/achievements. Professional Experience may cite factual
+roles/achievements. Education uses Education records, or professional experience
+only when the posting explicitly offers that alternative; the route is recorded
+without asserting a degree. Languages uses structured Language / Proficiency
+records only. Code validates permitted evidence categories, exact IDs, source
+revisions and citations; the model owns support, equivalence and proficiency.
+Direct demands bind their job and exact posting revision and cannot reuse
+another job's assessment.
+
+A current section-backed match creates no achievement-wording gap. Reuse
+existing approved expression. New achievement wording requires an actual
+unsupported expression need and factual achievement support; stylistic
+variation cannot justify rewriting covered content. One wording may serve
+several requirements. Tailoring retains all baseline sections, roles and
+achievements and changes only approved achievement wording. Each eligible
+canonical requirement receives one composition policy point, followed by
+complementary achievement depth and stable ties. That coefficient is internal
+policy, never importance metadata attributed to the posting.
+
+`requirement-fit-v3-equal` assigns one item to each distinct canonical requirement
+and each distinct job-local demand. Repeated canonical occurrences do not
+multiply points, and an alternatives group is one demand. Credits are direct
+`1`, strong `0.85`, transferable `0.6` and missing/blocked `0`. For `N > 0`,
+`score = clamp(1 + floor(9 * sum(credits) / N + 0.5), 1, 10)`; for `N = 0`, no
+score is calculated. Persist formula version, assessed count and qualification
+coverage. No source weights, must-have multiplier, blocker cap or invented
+source priority applies; source notes do not affect arithmetic. Confidence and
+downstream eligibility remain separate.
+
+Profile owns stable-ID authored Language / Proficiency rows in
+`resume.language_entries`. They use the existing validated autosave flow and
+remain in baseline rendering, Plate and supported text/PDF/DOCX/locale exports.
+Existing four-section templates remain valid. An empty default does not create
+a factual revision or remove earlier content. No Skills group or prose source
+is inferred into a language record.
+
+Post-edit refresh remains manually admitted and bounded. Saves, approvals,
+reads and the operation's writes start no cascades. The operation freezes the
+complete active catalog, Profile and wording versions, selected jobs' direct
+demands and finite limits. Reuse valid current assessments; stale inputs refuse
+the captured work rather than expanding it. Factual publication, wording
+proposals and document acceptance remain separate.
+
+New documents and all dependent model identities, operations and publication/
+currentness guards carry `contract_version: requirements-v2`. Missing versions
+are legacy. Existing SQL schema strings stay byte-identical; new canonical IDs
+are namespaced and the active catalog starts empty. Old fields that look
+compatible cannot promote a meaning into this generation. Preserve historical
+accepted rows, job revision ordering and accepted resume bytes, while old
+results require refresh and cannot prove current ranking or composition
+readiness. Reject incompatible operation resumption/replay. Replacement
+accepted pointers publish only on success, with prior accepted state retained
+on failure, cancellation or stale input.
+
+Operational rollout stops old writers and takes a verified consistent workspace
+backup first. After new-generation writes, rollback restores that backup with
+compatible workflow/application state; installing an older binary alone is
+unsafe. No live rollout occurred as part of this implementation decision.
+
+**Scope and precedence.** This replaces the current source arithmetic from the
+15 June / 20 October requirement-fit decisions and the weighted composition
+clause of the 6 November decision. It refines the 10 November complete-catalog
+and manual-refresh decision and the 13 November batch/exact-reuse decision with
+typed evidence and generation fences. Earlier accepted records retain their
+original policy, provenance and artifact bytes. Plans and archived decisions
+remain historical evidence.
+
+**Owning references and proof.** [Typed-requirements plan](plans/typed-requirements.md),
+[Scoring architecture](architecture/scoring.md),
+[Requirements library](user/requirements-library.md),
+[Profile](user/candidate-profile.md), [typed API](api/jobs-and-materials.md#typed-job-requirements)
+and [QA](local-reliability-qa.md). Completion requires actual owned synthetic
+upgrade, failure/concurrency, language/Plate/export and four-category application
+journeys; this contract alone establishes no passing result, real-provider
+judgment quality, installed release or deployment.

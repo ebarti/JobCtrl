@@ -130,7 +130,7 @@ For a detached stack, use `corepack pnpm dev:start`; inspect it with
 
 ### Workspace compatibility and source updates
 
-The Python application does not upgrade the previous application database in
+The Python application does not upgrade a pre-Python application database in
 place. It refuses a legacy workspace before opening its database with SQLite;
 this applies to source startup across platforms. Preserve the existing workspace
 and its history. Starting a checkout, updating source dependencies or an
@@ -154,8 +154,13 @@ synthetic data; development and QA never reset a real user's workspace.
 
 For source updates, stop the owned stack, preserve unrelated work, update the
 checkout and dependencies, and restart only after checking workspace
-compatibility. Updating a checkout does not publish or update an installed
-release. For ordinary development that does not need personal data, use a
+compatibility. The `requirements-v2` source generation requires stopped old
+writers and a verified workspace backup before new writes. Its active catalog
+starts empty while accepted history and bytes remain retained. After new writes,
+rollback restores that backup with compatible application/workflow state; an
+older binary alone is insufficient. See the
+[typed upgrade boundary](user/data-and-safety.md#typed-requirements-upgrade).
+Updating a checkout does not publish or update an installed release. For ordinary development that does not need personal data, use a
 separate owned synthetic `JOBCTRL_DIR`, with synthetic credentials and sources;
 setting that path alone does not isolate inherited environment credentials.
 

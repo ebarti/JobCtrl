@@ -11,6 +11,7 @@ from .service import FitService
 from .storage import FitStore
 from .association_storage import SCHEMA as ASSOCIATION_SCHEMA
 from .current_wording_storage import SCHEMA as CURRENT_WORDING_SCHEMA
+from .contract import CONTRACT_VERSION
 
 
 def build_feature(runtime: Runtime, **ports) -> Feature:
@@ -63,4 +64,5 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
 
     return Feature(name="fit", service=service, routes=routes(service), actions={
         "fit.assess": assess, "fit.correct": correct, "fit.refresh_coverage": refresh_coverage, "fit.refresh": refresh,
-    }, action_scopes={"fit.refresh": refresh_scope}, action_finalizers={"fit.refresh": finalize_refresh})
+    }, action_scopes={"fit.refresh": refresh_scope}, action_finalizers={"fit.refresh": finalize_refresh},
+        action_versions={key: CONTRACT_VERSION for key in ("fit.assess", "fit.correct", "fit.refresh_coverage", "fit.refresh")})

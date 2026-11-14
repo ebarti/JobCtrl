@@ -17,7 +17,7 @@ import {
   type Library,
   type Resume,
 } from "./core-data.js";
-import { catalogMatching } from "./requirements-data.js";
+import { catalogMatching, typedExtraction } from "./requirements-data.js";
 import { qualificationBatchDecision } from "./qualification-data.js";
 import {
   groupedCoverageDecision,
@@ -58,29 +58,9 @@ test("approved wording composes the full baseline and failed model or render ref
     .click();
   const extraction = await modelCall(app, "requirements.extract");
   const postingSource = sources(extraction)[0]!;
-  extraction.reply({
-    status: "complete",
-    requirements: [
-      {
-        local_id: "recovery",
-        text: postingSource.text,
-        definition: "Implement durable workflow recovery",
-        qualifiers: [],
-        scope: "resume",
-        tier: "must_have",
-        weight: 1,
-        support: "supported",
-        spans: [
-          {
-            source_id: postingSource.source_id,
-            quote: postingSource.text,
-          },
-        ],
-      },
-    ],
-    reason: "The posting expressly requires durable workflow recovery.",
-    citations: citations([postingSource]),
-  });
+  extraction.reply(typedExtraction(extraction, { requirements: [{
+    localId: "recovery", text: postingSource.text, definition: "Implement durable workflow recovery",
+  }] }));
   const matching = await modelCall(app, "requirements.match_catalog");
   matching.reply(catalogMatching(matching, { recovery: { verdict: "new" } }));
   // Wait on the public accepted requirements state rather than a UI delay.

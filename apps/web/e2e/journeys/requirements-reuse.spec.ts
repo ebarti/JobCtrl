@@ -10,7 +10,7 @@ function assertDestination(snapshot: RequirementSnapshot, posting: CapturedPosti
   const occurrence = snapshot.requirements[0]!;
   expect(occurrence).toMatchObject({ job_id: posting.job_id, source_id: posting.source_id, source_revision: posting.source_revision, source_hash: posting.source_hash, model_source_id: semanticSourceId });
   for (const provenance of [occurrence.provenance.extraction, ...occurrence.provenance.resolution]) {
-    expect(provenance.source_binding).toMatchObject({ version: 1, semantic_source: { version: 1, source_id: semanticSourceId }, destination_posting: {
+    expect(provenance.source_binding).toMatchObject({ version: 2, contract_version: "requirements-v2", semantic_source: { version: 2, contract_version: "requirements-v2", source_id: semanticSourceId }, destination_posting: {
       job_id: posting.job_id, revision: posting.revision, source_id: posting.source_id, source_revision: posting.source_revision, source_hash: posting.source_hash,
     } });
   }
@@ -20,10 +20,10 @@ test("Requirements exact content reuse keeps destination bindings and invalidate
   reusableModelCatalog(app);
   const first = await captureReusePosting(api, "reuse-first", body);
   const accepted = await acceptReuseRequirements(api, app, first, requirement, { recovery: { verdict: "new" } });
-  expect(accepted.extraction!.body["prompt_version"]).toBe("requirements-extract-v3-content-bound");
+  expect(accepted.extraction!.body["prompt_version"]).toBe("requirements-v2-extract-v5-content-bound");
   const context = accepted.extraction!.body["context"] as { posting_content: { source_id: string; text_fingerprint: string }; refresh_binding: unknown };
   const semanticSourceId = context.posting_content.source_id;
-  expect(semanticSourceId).toBe(`posting-content:v1:${context.posting_content.text_fingerprint}`);
+  expect(semanticSourceId).toBe(`posting-content:requirements-v2:${context.posting_content.text_fingerprint}`);
   expect(accepted.extraction!.body["sources"]).toEqual([{ source_id: semanticSourceId, text: body }]);
   expect(context.refresh_binding).toBeNull();
   expect(JSON.stringify(accepted.extraction!.body)).not.toContain(first.job_id);
@@ -39,7 +39,7 @@ test("Requirements exact content reuse keeps destination bindings and invalidate
   const reusedExtraction = await acceptReuseRequirements(api, app, second, requirement, equivalent, { extract: false });
   expect(app.external.calls.slice(beforeSecond).map((call) => call.body["operation"])).toEqual(["requirements.match_catalog"]);
   expect(reusedExtraction.snapshot.requirements[0]!.extraction_determination_id).toBe(accepted.snapshot.requirements[0]!.extraction_determination_id);
-  expect(reusedExtraction.matching!.body["prompt_version"]).toBe("requirements-catalog-match-v2-content-bound");
+  expect(reusedExtraction.matching!.body["prompt_version"]).toBe("requirements-v2-catalog-match-v2-content-bound");
   assertDestination(reusedExtraction.snapshot, second, semanticSourceId);
 
   const third = await captureReusePosting(api, "reuse-third", body);

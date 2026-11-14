@@ -37,12 +37,24 @@ class RevisionRequest(RequestValue):
     reason: StrictStr = Field(min_length=1, max_length=2000)
 
 
+class OccurrenceCorrectionRequest(RequestValue):
+    occurrence_id: StrictStr = Field(min_length=1, max_length=120)
+    reason: StrictStr = Field(min_length=1, max_length=2000)
+
+
+class OccurrenceCorrectionsRequest(RequestValue):
+    expected_posting_revision: StrictInt = Field(ge=1, le=2**63 - 1)
+    expected_revision: StrictInt = Field(ge=1, le=2**63 - 1)
+    corrections: list[OccurrenceCorrectionRequest] = Field(min_length=1, max_length=20)
+
+
 class RebuildRequest(RequestValue):
     expected_catalog_revision: StrictInt = Field(ge=0, le=2**63 - 1)
 
 
 def raise_application_error(failure: RequirementError):
-    if failure.code in {"catalog_changed", "cancelled", "stale_catalog_revision", "retrieval_index_stale"}:
+    if failure.code in {"catalog_changed", "cancelled", "stale_catalog_revision", "retrieval_index_stale", "requirements_contract_changed",
+                         "requirements_correction_call_unsettled"}:
         status = 409
     elif failure.code in {"model_provenance_missing", "requirements_catalog_unavailable", "catalog_snapshot_invalid"}:
         status = 503
@@ -133,6 +145,13 @@ def routes(service):
             raise_application_error(failure)
         return JSONResponse(result)
 
+    async def correct_occurrences(request):
+        body = await parse_request(request, OccurrenceCorrectionsRequest)
+        try:
+            return JSONResponse(await service.correct_occurrences(request.path_params["job_id"], **body.model_dump()))
+        except RequirementError as failure:
+            raise_application_error(failure)
+
     async def revise(request):
         body = await parse_request(request, RevisionRequest)
         try:
@@ -145,6 +164,7 @@ def routes(service):
 
     return (
         Route("/v1/jobs/{job_id}/requirements", job_requirements, methods=["GET", "POST"]),
+        Route("/v1/jobs/{job_id}/requirements/corrections", correct_occurrences, methods=["POST"]),
         Route("/v1/jobs/{job_id}/requirements/{occurrence_id}/binding", correct_binding, methods=["POST"]),
         Route("/v1/requirements", catalog, methods=["GET"]),
         Route("/v1/requirements/index", index_status, methods=["GET"]),

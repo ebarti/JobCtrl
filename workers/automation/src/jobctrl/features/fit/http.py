@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationError, model_validator
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from jobctrl.app.errors import AppError
 from .associations import AssociationState, CreateAssociation, ReviseAssociation
 from .current_wording import CurrentWordingInput, CurrentWordingState
+from .contract import CONTRACT_VERSION
+from .domain import FORMULA_VERSION
 
 
 class Input(BaseModel):
@@ -36,7 +38,14 @@ class RefreshInput(Input):
     expected_input_fingerprint: StrictStr = Field(min_length=64, max_length=64)
     retry_wording_proposal_ids: list[StrictStr] = Field(default_factory=list, max_length=100)
     prepare_wording: StrictBool = True
+    prepare_coverage: StrictBool = True
     limits: RefreshLimits = Field(default_factory=RefreshLimits)
+
+    @model_validator(mode="after")
+    def preparation_scope(self):
+        if not self.prepare_coverage and (self.prepare_wording or self.retry_wording_proposal_ids):
+            raise ValueError("Disabling coverage requires prepare_wording=false and no wording retries.")
+        return self
 
 
 class CorrectInput(Input):
@@ -74,6 +83,8 @@ class RequirementCorrectionInput(Input):
     blocker_category: StrictStr | None = None
     warning_category: StrictStr | None = None
     profile_id: StrictStr = "default"
+    wording_support: StrictStr | None = None
+    evidence_route: StrictStr | None = None
 
 
 async def body(request, schema):
@@ -165,7 +176,9 @@ def routes(service) -> tuple:
         return JSONResponse({"summaries": service.summary_for_jobs(payload.job_ids)})
 
     async def policy(request):
-        return JSONResponse({"formula_version": "requirement-fit-v2-scoped",
+        return JSONResponse({"contract_version": CONTRACT_VERSION, "formula_version": FORMULA_VERSION,
+                             "support_credits": {"direct": 1, "strong": .85, "transferable": .6, "missing": 0, "blocked": 0},
+                             "weighting": "equal_distinct_demands", "empty_score": None,
                              "correction_anchors": service.store.anchors()})
 
     async def refresh_pending(request):

@@ -5,7 +5,7 @@ from __future__ import annotations
 from jobctrl.app.errors import ConflictError
 
 from .coverage import variant_fingerprint
-from .sources import fact_fingerprint, fingerprint
+from .sources import fingerprint, qualification_fingerprint, wording_eligible
 
 
 def validate_selection(assignments, previous, provenance, read, profile):
@@ -29,10 +29,9 @@ def _model_selection(assignments, provenance, read, profile):
         raise ConflictError("The grouped selection changed its achievement.")
     bindings = {row["requirement_id"]: row for row in record["requirements"]}
     supported = {}
-    source_hash = fact_fingerprint(profile)
     for meaning in read.catalog_snapshot()["requirements"]:
-        assessment = read.latest_assessment(profile["profile_id"], meaning["requirement_id"], meaning["revision"], source_fingerprint=source_hash)
-        if assessment is not None and assessment["kind"] in {"matched", "transferable"} and owner in assessment["achievement_ids"]:
+        assessment = read.latest_assessment(profile["profile_id"], meaning["requirement_id"], meaning["revision"], source_fingerprint=qualification_fingerprint(profile, meaning))
+        if assessment is not None and wording_eligible(assessment) and assessment["kind"] in {"matched", "transferable"} and owner in assessment["achievement_ids"]:
             supported[meaning["requirement_id"]] = (meaning, assessment)
     if set(bindings) != set(supported):
         raise ConflictError("The grouped determination must include the complete currently supported requirement set.")
@@ -40,7 +39,7 @@ def _model_selection(assignments, provenance, read, profile):
         meaning, assessment = supported[ident]
         if (str(binding["requirement_revision"]) != str(meaning["revision"])
                 or binding["qualification_determination_id"] != assessment["determination_id"]
-                or any(binding[key] != meaning[key] for key in ("definition", "qualifiers", "scope"))):
+                or any(binding[key] != meaning[key] for key in ("definition", "category", "name"))):
             raise ConflictError("A grouped requirement or its qualification changed.")
     approved = [row for row in profile["approved_variants"] if row["achievement_id"] == owner]
     expected_variants = {(row["variant_id"], str(row["revision"]), variant_fingerprint(row)) for row in approved}

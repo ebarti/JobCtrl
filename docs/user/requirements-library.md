@@ -6,8 +6,16 @@ description: "Inspect reusable requirement meanings, linked achievements, exact 
 
 Open **Jobs → Requirements** to browse the canonical requirement catalog without
 selecting a job. A requirement tag in **My profile → Experience** opens the same
-record. Its definition, scope, qualifiers and revision explain the saved meaning;
+record. Its category, name, definition and revision explain the saved meaning;
 its source history records where that meaning occurred in actual postings.
+
+The current `requirements-v2` catalog contains **Skills** and **Professional
+Experience** only. **Education** and **Languages** remain direct demands on the
+job's Fit view, bound to that posting and revision. They do not appear in this
+reusable library, achievement links or wording preparation. Personal traits,
+certifications and licenses, job conditions and detailed tenure analysis are
+excluded from this iteration; structured certification support is tracked in
+[#1476](https://github.com/ebarti/JobCtrl/issues/1476).
 
 This guide describes the Original redesign source candidate. The
 [active acceptance ledger](../plans/2026-11-11-original-app-redesign.md) separates
@@ -26,7 +34,7 @@ their own identities. Your manual links remain separate unassessed intent.*
 Search filters saved definitions literally. It does not discover semantic
 equivalence or assess your evidence. Select a requirement to inspect:
 
-- its exact definition, scope, qualifiers and canonical revision;
+- its category, name, exact definition and canonical revision;
 - **Linked achievements**, grouped by saved achievement identity rather than by
   the number of wording revisions;
 - **Wordings for this requirement** within each achievement, with the exact text,
@@ -40,6 +48,10 @@ A requirement can link to several achievements, and an achievement can serve
 several requirements. One exact wording can cover several requirements. Missing
 assessment, missing wording and stale information remain explicit; none is
 silently converted into zero fit or a confirmed match.
+A Skills match already supported by structured Profile Skills is not a missing
+achievement expression. Existing approved wording is reused, and stylistic
+variation cannot create an authoring need. See the
+[permitted evidence rules](scoring-and-employer-analysis.md#how-the-score-is-calculated).
 
 The achievement link opens its exact role and achievement in **My profile →
 Experience**. The return link restores the selected requirement and library
@@ -118,11 +130,26 @@ accepted requirement or overwrite the last accepted resume. A source-history
 page can be old without implying its original posting is currently available.
 Inspect the recorded revisions and staleness reasons before reuse.
 
+The active catalog starts empty for `requirements-v2` and reads only that
+generation. Missing contract versions are legacy; older meanings are not
+promoted because they look similar. Historical accepted rows, job revisions and
+resume bytes remain retained, with contract-change refresh status where
+applicable. They cannot establish current ranking or composition readiness.
+Only a successful explicit refresh or scoped correction publishes a replacement
+accepted snapshot.
+
 Meaning corrections use the existing source-bound posting correction path;
 this library does not offer arbitrary catalog creation or silently broaden a
-posting's qualifiers. Model-created equivalence, support and coverage require
+posting's meaning or alternatives. Model-created equivalence, support and coverage require
 the configured provider, budget admission, strict source validation and a
 persisted determination. Unavailable or invalid work remains unavailable.
+
+The API also supports explicitly correcting selected posting occurrences rather
+than interpreting the whole posting again. Each correction must be supported by
+that posting, and your reason guides the review without becoming evidence.
+Other saved meanings, bindings, evidence and their model authority remain
+unchanged; earlier snapshots remain in history. This does not reassess your Fit
+or rewrite achievement wording automatically.
 
 The API ownership and revision fences are documented in
 [Jobs and Materials API](../api/jobs-and-materials.md#requirements-library-and-associations).

@@ -39,8 +39,8 @@ class SqliteApplicationStore:
         score = snapshot.get("score")
         if not snapshot.get("current") or not score:
             raise ApplicationFailure("application_fit_stale", conflict=True)
-        if score["eligibility"]["status"] == "blocked":
-            raise ApplicationFailure("application_eligibility_blocked")
+        if score.get("score") is None:
+            raise ApplicationFailure("application_fit_unavailable")
         if minimum is not None and score["score"] < minimum:
             raise ApplicationFailure("application_below_minimum_fit")
         return score["score"]
@@ -52,7 +52,7 @@ class SqliteApplicationStore:
                    "resumeAcceptanceId": sources["resume"]["acceptanceId"]}
         fit = getattr(self, "fit", None)
         snapshot = fit.get_job_fit(job, connection=conn, include_coverage=False) if fit is not None else None
-        if snapshot and snapshot.get("current") and snapshot.get("score"):
+        if snapshot and snapshot.get("current") and snapshot.get("score") and snapshot["score"].get("score") is not None:
             score = snapshot["score"]
             value = score["score"]
             band = "perfect" if value >= 9 else "strong" if value >= 7 else "moderate" if value >= 5 else "weak" if value >= 3 else "poor"

@@ -6,7 +6,7 @@ const profileSearchSchema = z.object({
   // Keep omission distinct from an explicit selection so a legacy #profile-*
   // anchor can select its peer section. The location resolver supplies the
   // ordinary Experience default when neither is present.
-  section: z.enum(["experience", "skills", "education", "personal", "resume"]).optional().catch(undefined),
+  section: z.enum(["experience", "skills", "education", "languages", "personal", "resume"]).optional().catch(undefined),
   roleId: z.string().min(1).optional().catch(undefined),
   achievementId: z.string().min(1).optional().catch(undefined),
   returnRequirement: z.string().min(1).optional().catch(undefined),

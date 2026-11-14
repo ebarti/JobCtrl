@@ -182,24 +182,24 @@ const postingExamples: Readonly<
 > = {
   "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35": {
     description:
-      "Guide reliable platform delivery. Coordinate incident response with the engineering team.",
+      "Guide reliable platform delivery. Coordinate incident response with the engineering team. Use release coordination to make delivery plans clear. Degree in engineering or equivalent professional experience. English at professional working proficiency. Spanish at professional working proficiency.",
     requirement: "Guide reliable platform delivery.",
     kind: "matched",
-    requirementId: "requirement-platform",
+    requirementId: "requirement:v2:demo:platform",
   },
   "job-contoso-reliability": {
     description:
       "Lead in a regulated domain. Guide a reliability engineering team.",
     requirement: "Lead in a regulated domain.",
     kind: "missing",
-    requirementId: "requirement-regulated-domain",
+    requirementId: "requirement:v2:demo:regulated-domain",
   },
   "job-fabrikam-systems": {
     description:
       "Lead systems delivery. Coordinate platform reliability improvements.",
     requirement: "Lead systems delivery.",
     kind: "matched",
-    requirementId: "requirement-systems",
+    requirementId: "requirement:v2:demo:systems",
   },
 };
 
@@ -240,7 +240,7 @@ export class DemoFeatureHttpAdapter {
       if (path.length === 2) {
         const query = String(options.query?.q ?? "").toLocaleLowerCase();
         if (query.length > 2500) throw badRequest("The literal catalog query is too long.");
-        const matches = catalog.filter((row) => [row.definition, row.scope, ...row.qualifiers.map((qualifier) => `${qualifier.dimension} ${qualifier.value}`)]
+        const matches = catalog.filter((row) => [row.name, row.definition, row.category]
           .some((value) => value.toLocaleLowerCase().includes(query)));
         return handled({ catalog_revision: 1, total: matches.length, requirements: matches.slice(offset, offset + limit), synthetic: true });
       }
@@ -309,7 +309,7 @@ export class DemoFeatureHttpAdapter {
         for (const assessment of records(score.assessments ?? [])) if (["missing", "blocked"].includes(String(assessment.kind))) {
           gaps.push({ job_id: jobId, current: fit.current, score_revision: score.revision,
             requirement_id: assessment.requirement_id, requirement_revision: assessment.requirement_revision, text: assessment.text,
-            kind: assessment.kind, tier: assessment.tier, weight: assessment.weight, rationale: assessment.rationale,
+            kind: assessment.kind, category: assessment.category, name: assessment.name, rationale: assessment.rationale,
             determination_id: assessment.determination_id, synthetic: true });
         }
       }
@@ -1853,6 +1853,17 @@ export class DemoFeatureHttpAdapter {
         })),
       ),
     );
+    const sections = [
+      ["skill_categories", profile.resume.skill_categories],
+      ["education_entries", profile.resume.education_entries],
+      ["language_entries", profile.resume.language_entries],
+      ["experience_entries", profile.resume.experience_entries.map(({ bullets: _bullets, achievement_ids: _ids, achievement_evidence: _evidence, ...role }) => role)],
+    ] as const;
+    for (const [section, rows] of sections) for (const record of rows) sources.push({
+      source_id: `demo:profile-section:${section}:${record.id}`,
+      revision: library.profileVersion, text: JSON.stringify(record), kind: "structured_profile_field", confirmation: "authored", origin: "profile",
+      path: ["resume", section, record.id], record: structuredClone(record), synthetic: true,
+    });
     const saved = (snapshot.state.features?.profileSources ?? []).filter(
       (source) =>
         source.origin !== "profile" ||
@@ -1960,57 +1971,58 @@ export class DemoFeatureHttpAdapter {
     const posting = await this.posting(snapshot, id);
     const example = postingExamples[id];
     if (!example) return null;
-    const start = posting.description.indexOf(example.requirement);
-    if (start < 0)
-      throw conflict(
-        "The saved synthetic requirement does not belong to this posting revision.",
-      );
     const catalog = demoCanonicalRequirements(snapshot);
     const sourceExamples = [{ text: example.requirement, requirementId: example.requirementId }];
-    if (id === "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35") sourceExamples.push({
-      text: "Coordinate incident response with the engineering team.", requirementId: "requirement-incident-response",
+    const isPlatform = id === "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35";
+    if (isPlatform) sourceExamples.push(
+      { text: "Coordinate incident response with the engineering team.", requirementId: "requirement:v2:demo:incident-response" },
+      { text: "Use release coordination to make delivery plans clear.", requirementId: "requirement:v2:demo:release-coordination" },
+    );
+    const quote = (text: string, evidenceId: string) => {
+      const start = posting.description.indexOf(text);
+      if (start < 0) throw conflict("The saved synthetic occurrence does not belong to this posting revision.");
+      return { evidence_id: evidenceId, source_id: posting.source_id, quote: text, start, end: start + text.length };
+    };
+    const sources = sourceExamples.map((item, index) => quote(item.text, `demo:quote:${id}:reusable:${index}`));
+    const directTexts = isPlatform ? [
+      "Degree in engineering or equivalent professional experience.",
+      "English at professional working proficiency.",
+      "Spanish at professional working proficiency.",
+    ] : [];
+    const directQuotes = directTexts.map((text, index) => quote(text, `demo:quote:${id}:direct:${index}`));
+    const languageQuote = quote(posting.description, `demo:quote:${id}:posting-language`);
+    const span = (item: ReturnType<typeof quote>) => [{ start: item.start, end: item.end, quote: item.quote }];
+    const provenance = { kind: "bundled_synthetic_occurrence", synthetic: true, model_called: false };
+    const direct = (index: number) => ({
+      contract_version: "requirements-v2", revision: 1, source_id: posting.source_id,
+      source_revision: posting.source_revision, source_hash: posting.source_hash, job_id: id, posting_revision: posting.revision,
+      evidence_refs: [directQuotes[index]!.evidence_id], spans: span(directQuotes[index]!), source_note: null, provenance,
     });
     return {
-      job_id: id,
-      revision: 1,
-      posting_revision: posting.revision,
-      posting_hash: posting.source_hash,
-      catalog_revision: 1,
+      contract_version: "requirements-v2", status: "complete" as const,
+      language: { classification: "english" as const, reason: "Bundled English-language illustration; no model language detection ran.", evidence_refs: [languageQuote.evidence_id] },
+      quotes: [languageQuote, ...sources, ...directQuotes],
+      job_id: id, revision: 1, posting_revision: posting.revision, posting_hash: posting.source_hash, catalog_revision: 1,
       requirements: sourceExamples.map((sourceExample, index) => {
         const canonical = catalog.find((requirement) => requirement.requirement_id === sourceExample.requirementId)!;
-        const spanStart = posting.description.indexOf(sourceExample.text);
-        if (spanStart < 0) throw conflict("The saved synthetic occurrence does not belong to this posting revision.");
         return {
-          occurrence_id: `demo:occurrence:${id}${index ? `:${index}` : ""}`,
-          requirement_id: canonical.requirement_id,
-          requirement_revision: 1,
-          job_id: id,
-          posting_revision: posting.revision,
-          text: sourceExample.text,
-          definition: canonical.definition,
-          scope: canonical.scope,
-          tier: "must_have",
-          weight: 1,
-          qualifiers: canonical.qualifiers,
-          source_id: posting.source_id,
-          source_revision: posting.source_revision,
-          source_hash: posting.source_hash,
-          spans: [
-            {
-              start: spanStart,
-              end: spanStart + sourceExample.text.length,
-              quote: sourceExample.text,
-            },
-          ],
-          extraction_determination_id: `demo:bundled-synthetic:${id}`,
-          equivalence_determination_ids: [],
-          provenance: { kind: "bundled_synthetic_occurrence", synthetic: true, model_called: false },
-          synthetic: true,
+          contract_version: "requirements-v2", occurrence_id: `demo:occurrence:v2:${id}:${index}`,
+          requirement_id: canonical.requirement_id, requirement_revision: 1, job_id: id, posting_revision: posting.revision,
+          text: sourceExample.text, name: canonical.name, category: canonical.category, definition: canonical.definition,
+          canonical: { contract_version: canonical.contract_version, category: canonical.category, name: canonical.name, definition: canonical.definition },
+          basis: "explicit", rationale: null, source_note: null, evidence_refs: [sources[index]!.evidence_id],
+          source_id: posting.source_id, source_revision: posting.source_revision, source_hash: posting.source_hash,
+          spans: span(sources[index]!), extraction_determination_id: `demo:bundled-synthetic:v2:${id}`,
+          equivalence_determination_ids: [], provenance, synthetic: true,
         };
       }),
-      stale: false,
-      latest_attempt: null,
-      synthetic: true,
+      education: isPlatform ? [{ ...direct(0), requirement_id: `demand:v2:demo:${id}:education`, category: "education" as const,
+        qualification: "Degree in engineering", subjects: ["Engineering"], alternative: "Equivalent professional experience" }] : [],
+      languages: isPlatform ? [
+        { ...direct(1), requirement_id: `demand:v2:demo:${id}:english`, category: "language" as const, language: "English", proficiency: "Professional working proficiency" },
+        { ...direct(2), requirement_id: `demand:v2:demo:${id}:spanish`, category: "language" as const, language: "Spanish", proficiency: "Professional working proficiency" },
+      ] : [],
+      unresolved: [], stale: false, stale_reasons: [], latest_attempt: null, synthetic: true,
     };
   }
 
@@ -2026,95 +2038,95 @@ export class DemoFeatureHttpAdapter {
   }
 
   private async fit(snapshot: DemoWorkspaceSnapshot, id: string) {
-    await this.posting(snapshot, id);
+    const posting = await this.posting(snapshot, id);
     const job = snapshot.state.readModel.jobs.details[id]?.job;
+    const requirements = await this.requirements(snapshot, id);
     const example = postingExamples[id];
-    if (!job || !example)
-      return {
-        job_id: id,
-        current: false,
-        stale_reasons: [],
-        score: null,
-        coverage: null,
-      };
-    const factsCurrent =
-      !snapshot.state.features?.profileSourcesChanged &&
-      snapshot.state.features?.fitProfileSourceSignature ===
-        stableDemoStringify(snapshot.state.readModel.profile.config.profile);
+    if (!job || !example || !requirements) return {
+      contract_version: "requirements-v2", job_id: id, current: false, stale_reasons: [], score: null, coverage: null, synthetic: true,
+    };
+    const signature = snapshot.state.features?.fitProfileSourceSignature;
+    const factsCurrent = !snapshot.state.features?.profileSourcesChanged && signature === stableDemoStringify(snapshot.state.readModel.profile.config.profile);
     const current = factsCurrent && !job.scoreStaleness.isStale;
+    // A fixed authored illustration keeps its original sources when visitors edit
+    // their synthetic Profile. It never decides a match from edited prose.
+    const assessedProfile = ProfileSchema.parse(signature ? JSON.parse(signature) : snapshot.state.readModel.profile.config.profile);
+    const sectionRef = (section: string, record: { id: string } | undefined) => record ? [{
+      source_id: `demo:profile-section:${section}:${record.id}`, revision: 1, quote: JSON.stringify(record),
+    }] : [];
+    const role = assessedProfile.resume.experience_entries[0];
+    const roleRecord = role ? (({ bullets: _bullets, achievement_ids: _ids, achievement_evidence: _evidence, ...record }) => record)(role) : undefined;
+    const achievementRef = (achievementId: string) => assessedProfile.resume.experience_entries.flatMap((entry) => {
+      const index = entry.achievement_ids?.indexOf(achievementId) ?? -1;
+      return index < 0 ? [] : [{ source_id: `achievement:${achievementId}`, revision: 1, quote: entry.bullets[index]! }];
+    });
+    const assessments: Data[] = requirements.requirements.map((requirement, index) => {
+      const sectionBacked = requirement.requirement_id === "requirement:v2:demo:release-coordination";
+      const achievementId = requirement.requirement_id === "requirement:v2:demo:incident-response" ? "demo:achievement:incident-practice"
+        : requirement.requirement_id === "requirement:v2:demo:systems" ? "demo:achievement:systems-delivery" : "demo:achievement:platform-reliability";
+      const refs = sectionBacked ? sectionRef("skill_categories", assessedProfile.resume.skill_categories.find((item) => item.id === "demo:skills:delivery"))
+        : example.kind === "matched" ? achievementRef(achievementId) : [];
+      const kind = example.kind === "missing" ? "missing" : refs.length ? "matched" : "not_assessed";
+      const strength = kind === "matched" ? requirement.requirement_id === "requirement:v2:demo:incident-response" ? "strong" : "direct" : null;
+      return {
+        contract_version: "requirements-v2", assessment_id: `demo:assessment:v2:${id}:reusable:${index}`,
+        requirement_id: requirement.requirement_id, requirement_revision: requirement.requirement_revision,
+        category: requirement.category, name: requirement.name, text: requirement.definition, definition: requirement.definition,
+        kind, strength, confidence: kind === "not_assessed" ? "low" : "high",
+        rationale: sectionBacked ? "Authored illustration: the saved Skills section supplies release coordination; an achievement rewrite is unnecessary."
+          : example.kind === "missing" ? "Authored illustration: regulated-domain leadership is not established by the saved synthetic sources."
+          : "Authored illustration: this saved achievement supplies the recorded support. No model assessment ran.",
+        evidence_refs: refs, achievement_ids: kind === "matched" && !sectionBacked ? [achievementId] : [],
+        evidence_route: null, wording_support: kind === "matched" ? sectionBacked ? "section" : "achievement" : "none",
+        determination_id: `demo:bundled-synthetic:v2:${id}`, origin: "bundled_synthetic_example", eligibility: "unknown",
+        blocker_category: null, warning_category: null, contribution: { max_points: 1, awarded_points: strength === "direct" ? 1 : strength === "strong" ? 0.85 : 0 }, synthetic: true,
+      };
+    });
+    for (const demand of requirements.education) assessments.push({
+      contract_version: "requirements-v2", assessment_id: `demo:assessment:v2:${id}:education`, requirement_id: demand.requirement_id, requirement_revision: demand.revision,
+      category: "education", name: demand.qualification, text: `${demand.qualification} or ${demand.alternative}`, definition: `${demand.qualification} or ${demand.alternative}`,
+      kind: roleRecord ? "matched" : "not_assessed", strength: roleRecord ? "direct" : null, confidence: roleRecord ? "high" : "low",
+      rationale: "Authored illustration: the posting explicitly permits equivalent professional experience. The recorded route uses experience and does not claim a degree.",
+      evidence_refs: sectionRef("experience_entries", roleRecord), achievement_ids: [], evidence_route: "equivalent_experience", wording_support: "none",
+      determination_id: `demo:bundled-synthetic:v2:${id}`, origin: "bundled_synthetic_example", eligibility: "unknown",
+      blocker_category: null, warning_category: null, contribution: { max_points: 1, awarded_points: roleRecord ? 1 : 0 }, synthetic: true,
+    });
+    for (const demand of requirements.languages) {
+      // These authored examples bind exact fixture IDs, never visitor text.
+      const language = demand.requirement_id.endsWith(":english") ? assessedProfile.resume.language_entries.find((item) => item.id === "demo:language:english") : undefined;
+      assessments.push({
+        contract_version: "requirements-v2", assessment_id: `demo:assessment:v2:${id}:${demand.requirement_id}`, requirement_id: demand.requirement_id, requirement_revision: demand.revision,
+        category: "language", name: `${demand.language} · ${demand.proficiency}`, text: `${demand.language} at ${demand.proficiency}`, definition: `${demand.language} at ${demand.proficiency}`,
+        kind: language ? "matched" : "not_assessed", strength: language ? "direct" : null, confidence: language ? "high" : "low",
+        rationale: language ? "Authored illustration: the saved Languages / Proficiency entry supplies this language demand."
+          : "Authored illustration: no structured proficiency entry was recorded for this demand. Other Skills or experience do not establish it.",
+        evidence_refs: sectionRef("language_entries", language), achievement_ids: [], evidence_route: null, wording_support: "none",
+        determination_id: `demo:bundled-synthetic:v2:${id}`, origin: "bundled_synthetic_example", eligibility: "unknown",
+        blocker_category: null, warning_category: null, contribution: { max_points: 1, awarded_points: language ? 1 : 0 }, synthetic: true,
+      });
+    }
+    const count = assessments.length;
+    const coverage = count ? assessments.reduce((sum, item) => sum + Number(data(item.contribution).awarded_points), 0) / count : null;
+    const computed = coverage === null ? null : Math.max(1, Math.min(10, 1 + Math.floor(9 * coverage + 0.5)));
+    const score = job.scoreCorrection ? job.fitScore : computed;
     return {
-      job_id: id,
-      current,
-      stale_reasons: current
-        ? []
-        : [
-            !factsCurrent
-              ? "profile_facts_changed"
-              : "saved_synthetic_assessment_stale",
-          ],
+      contract_version: "requirements-v2", job_id: id, current, stale_reasons: current ? [] : [!factsCurrent ? "profile_facts_changed" : "saved_synthetic_assessment_stale"],
       score: {
-        revision: job.scoreVersion ?? 1,
-        score: job.fitScore ?? 0,
-        computed_score: job.scoreCorrection?.originalScore ?? job.fitScore ?? 0,
-        fit_band: job.scoreBreakdown?.fitBand ?? "unassessed",
-        confidence: job.scoreBreakdown?.confidence ?? "low",
-        eligibility: {
-          status: job.scoreBreakdown?.eligibility?.status ?? "unknown",
-          blockers: (job.scoreBreakdown?.eligibility?.hardBlockers ?? []).map((rationale) => ({ requirement_id: example.requirementId, rationale, evidence_refs: [] })),
-          warnings: (job.scoreBreakdown?.eligibility?.warnings ?? []).map((rationale) => ({ requirement_id: example.requirementId, rationale, evidence_refs: [] })),
-        },
-        assessments: [
-          {
-            assessment_id: `demo:assessment:${id}`,
-            requirement_id: example.requirementId,
-            requirement_revision: 1,
-            text: example.requirement,
-            definition: example.requirement,
-            scope: "resume",
-            tier: "must_have",
-            weight: 1,
-            kind: example.kind,
-            strength: example.kind === "matched" ? "supported" : null,
-            confidence: "high",
-            rationale: job.scoreReasoning ?? "Saved synthetic tour example.",
-            evidence_refs: [],
-            achievement_ids: [],
-            determination_id: `demo:bundled-synthetic:${id}`,
-            origin: "bundled_synthetic_example",
-            eligibility: job.scoreBreakdown?.eligibility?.status ?? "unknown",
-            blocker_category: job.scoreBreakdown?.eligibility?.status === "blocked" ? "qualification" : null,
-            warning_category: null,
-            contribution: {
-              max_points: 10,
-              awarded_points: example.kind === "matched" ? 10 : 0,
-            },
-            synthetic: true,
-          },
-        ],
-        source_binding: {
-          profile_revision: 1,
-          fact_semantics_version: 1,
-          requirements_revision: 1,
-          posting_revision: 1,
-        },
+        contract_version: "requirements-v2", formula_version: "requirement-fit-v3-equal", policy_version: "requirement-fit-v3-equal",
+        revision: job.scoreVersion ?? 1, score, computed_score: computed,
+        fit_band: score === null ? null : score >= 9 ? "excellent" : score >= 7 ? "strong" : score >= 5 ? "plausible" : score >= 3 ? "stretch" : "poor",
+        confidence: assessments.some((item) => item.confidence === "low") ? "low" : "high",
+        summary: { qualification_coverage: coverage, weighted_fit: coverage, assessed_count: count,
+          supported_count: assessments.filter((item) => item.kind === "matched" || item.kind === "transferable").length, blocker_count: 0 },
+        eligibility: { status: "unknown", blockers: [], warnings: [] }, assessments,
+        source_binding: { profile_revision: 1, fact_semantics_version: 1, requirements_revision: 1, posting_revision: posting.revision },
       },
       coverage: {
-        status: current ? "not_assessed" : "stale",
-        relations: [],
-        wording_gaps:
-          example.kind === "missing"
-            ? [
-                {
-                  requirement_id: example.requirementId,
-                  status: "unsupported",
-                  proposal_id: null,
-                  proposal_status: null,
-                },
-              ]
-            : [],
-        synthetic: true,
-      },
-      synthetic: true,
+        contract_version: "requirements-v2", status: current ? "not_assessed" : "stale", relations: [], wording_gaps: [],
+        section_support: assessments.filter((item) => item.wording_support === "section").map((item) => ({
+          requirement_id: item.requirement_id, assessment_id: item.assessment_id, category: item.category, evidence_refs: item.evidence_refs,
+        })), synthetic: true,
+      }, synthetic: true,
     };
   }
 
@@ -2903,6 +2915,7 @@ export class DemoFeatureHttpAdapter {
         details: String(data(entry).details ?? ""),
       })),
       skills: structuredClone(resume.skill_categories),
+      languages: structuredClone(resume.language_entries),
     };
   }
 

@@ -823,6 +823,19 @@ function profileWithPlateChanges(
       continue;
     }
 
+    const languageMatch = /^language:(.+):(language|proficiency)$/.exec(change.semanticId);
+    if (languageMatch) {
+      const target = findEntry("resume.language_entries", languageMatch[1]);
+      if (!target) {
+        appliedTargets.delete(change.semanticId);
+        conflictCount += 1;
+        continue;
+      }
+      const path = `resume.language_entries.${target.index}.${languageMatch[2]}`;
+      applySingleText(change, readText(path), (value) => setPathValue(updatedProfile, path, value));
+      continue;
+    }
+
     const skillMatch = /^skills:(.+):(label|item:([1-9]\d*))$/.exec(
       change.semanticId,
     );

@@ -5,7 +5,8 @@ from __future__ import annotations
 from jobctrl.app.errors import ConflictError
 
 from .coverage_groups import owned_support
-from .sources import fingerprint
+from .contract import current_contract
+from .sources import fingerprint, qualification_fingerprint, wording_eligible
 
 
 def expand_groups(read, profile, groups, inventory, source_hash):
@@ -13,7 +14,7 @@ def expand_groups(read, profile, groups, inventory, source_hash):
     catalog = read.catalog_snapshot()
     meanings = {row["requirement_id"]: {**row, "requirement_revision": row["revision"]}
                 for row in catalog["requirements"]}
-    heads = read.current_wordings(profile["profile_id"], achievement_ids=list(groups))
+    heads = [row for row in read.current_wordings(profile["profile_id"], achievement_ids=list(groups)) if current_contract(row)]
     for head in heads:
         if head["requirement_id"] not in meanings:
             raise ConflictError("A maintained wording's canonical requirement is unavailable.")
@@ -24,12 +25,12 @@ def expand_groups(read, profile, groups, inventory, source_hash):
             if requirement_id in indexed:
                 continue
             assessment = read.latest_assessment(profile["profile_id"], requirement_id,
-                requirement["requirement_revision"], source_fingerprint=source_hash)
+                requirement["requirement_revision"], source_fingerprint=qualification_fingerprint(profile, requirement))
             if assessment is None:
                 if requirement_id in retained:
                     raise ConflictError("A maintained wording needs current qualification before grouped refresh.")
                 continue
-            if (assessment["kind"] in {"matched", "transferable"} and ident in assessment["achievement_ids"]
+            if (wording_eligible(assessment) and assessment["kind"] in {"matched", "transferable"} and ident in assessment["achievement_ids"]
                     and owned_support(inventory[ident], assessment)):
                 indexed[requirement_id] = (requirement, assessment)
         groups[ident] = list(indexed.values())
@@ -173,7 +174,10 @@ def publish_selection(coverage, *, result, record, profile, profile_snapshot, re
         required = {row["requirement_id"] for row in heads
                     if (row["variant_id"], str(row["variant_revision"])) in replaced}
         required.update(variant.get("provenance", {}).get("intended_requirement_ids", []))
-        if not required or any((ident, variant["variant_id"]) not in selected_pairs for ident in required):
+        # The current qualification owns whether achievement expression is
+        # needed. Historical authoring intent cannot recreate a section gap.
+        required.intersection_update(row["requirement_id"] for row, _ in entries)
+        if any((ident, variant["variant_id"]) not in selected_pairs for ident in required):
             return False
     if not selected and not heads:
         return False

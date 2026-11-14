@@ -52,7 +52,7 @@ test("Fit batches cold requirements once, shares exact receipts and reuses only 
   expect(new Set(first.score!.assessments.map((row) => row.assessment_id)).size).toBe(2);
   for (const row of first.score!.assessments) {
     const decision = response.requirements.find((item) => item.requirement_id === row.requirement_id)!;
-    expect(row.provenance).toMatchObject({ receipt_id: row.determination_id, prompt_version: "fit-qualification-batch-v1", lane: "scoring", accepted_result_fingerprint: fingerprint(response), qualification_result_fingerprint: fingerprint(decision) });
+    expect(row.provenance).toMatchObject({ receipt_id: row.determination_id, prompt_version: "fit-qualification-batch-v3", lane: "scoring", accepted_result_fingerprint: fingerprint(response), qualification_result_fingerprint: fingerprint(decision) });
     expect(row.requirement_revision).toBe(Number(decision.requirement_revision));
     expect(row.requirement_citations).toEqual(decision.requirement_citations);
     expect(row.requirement_citations[0]!.source_id).toBe(`requirement:${row.requirement_id}`);
@@ -88,21 +88,21 @@ test("Fit batches cold requirements once, shares exact receipts and reuses only 
   expect(app.external.calls.slice(beforeMixed).map((call) => call.body["operation"])).toEqual(["fit.qualification-batch"]);
 });
 
-async function saveChangedPreference(api: Parameters<typeof json>[0]) {
+async function saveChangedFacts(api: Parameters<typeof json>[0]) {
   const profile = await json<Profile>(api, "get", "/v1/profile");
   return json<Profile>(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion,
-    profile: { ...profile.profile, experience: { target_work_models: "remote", target_locations: "Synthetic City" } },
+    profile: { ...profile.profile, resume: { ...profile.profile.resume, experience_entries: profile.profile.resume.experience_entries.map((row, index) => index === 0 ? { ...row, summary: "Operated production service recovery with reviewed incident ownership." } : row) } },
   });
 }
 
-test("a new Job initially batches historical and unseen qualifications after a preference edit without refreshing old scores", async ({ api, app }) => {
+test("a new Job initially batches historical and unseen qualifications after a factual role edit without refreshing old scores", async ({ api, app }) => {
   const seed = await createScoredFit(api, app, "historical-initial-old");
   const oldJob = seed.posting as CapturedPosting;
   const oldFit = await json<Fit>(api, "get", fitPath(oldJob));
   const oldHistory = await json(api, "get", `${fitPath(oldJob)}/history`);
   const sharedId = seed.requirements.requirements[0]!.requirement_id;
   const beforeSave = app.external.calls.length;
-  const changed = await saveChangedPreference(api);
+  const changed = await saveChangedFacts(api);
   expect(changed.profileVersion).toBeGreaterThan(seed.profile.profileVersion);
   expect((await json<Fit>(api, "get", fitPath(oldJob))).current).toBe(false);
   await json(api, "get", "/v1/fit/refresh/pending");
@@ -171,7 +171,7 @@ test("a new Job initially batches historical and unseen qualifications after a p
 test("a held initial Job batch cannot replace a concurrently published historical qualification head", async ({ api, app }) => {
   const seed = await createScoredFit(api, app, "historical-head-old");
   const oldHistory = await json(api, "get", `/v1/jobs/${seed.posting.job_id}/fit/history`);
-  await saveChangedPreference(api);
+  await saveChangedFacts(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
   await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0, laneConcurrency: { scoring: 2 } });
   const sharedId = seed.requirements.requirements[0]!.requirement_id;
@@ -209,7 +209,7 @@ for (const defect of ["incomplete", "duplicate", "foreign requirement", "cross-r
     const seed = await createScoredFit(api, app, `batch-guard-${defect.replaceAll(" ", "-")}`, { twoRequirements: true });
     const original = await json<Fit>(api, "get", fitPath(seed.posting as CapturedPosting));
     const profile = await json<Profile>(api, "get", "/v1/profile");
-    await json(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion, profile: { ...profile.profile, personal: { ...profile.profile.personal, full_name: "Synthetic Batch Guard Change" } } });
+    await json(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion, profile: { ...profile.profile, resume: { ...profile.profile.resume, experience_entries: profile.profile.resume.experience_entries.map((row, index) => index === 0 ? { ...row, summary: "Maintained services with reviewed recovery evidence: Synthetic Batch Guard Change." } : row) } } });
     const pending = await json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending");
     const before = app.external.calls.length;
     const run = await startRefresh(api, { ...refreshPayload(pending), prepare_wording: false }, `batch-invalid-${defect}`);
@@ -257,7 +257,7 @@ for (const changedSource of ["Profile", "requirement binding"] as const) {
     const batch = await modelCall(app, "fit.qualification-batch");
     if (changedSource === "Profile") {
       const profile = await json<Profile>(api, "get", "/v1/profile");
-      await json(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion, profile: { ...profile.profile, personal: { ...profile.profile.personal, full_name: "Synthetic In-flight Profile" } } });
+      await json(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion, profile: { ...profile.profile, resume: { ...profile.profile.resume, experience_entries: profile.profile.resume.experience_entries.map((row, index) => index === 0 ? { ...row, summary: "Maintained services with reviewed recovery evidence: Synthetic In-flight Profile." } : row) } } });
     } else {
       const occurrence = seed.snapshot.requirements[0]!;
       const correcting = api.post(`/v1/jobs/${seed.posting.job_id}/requirements/${occurrence.occurrence_id}/binding`, { data: {
@@ -266,7 +266,7 @@ for (const changedSource of ["Profile", "requirement binding"] as const) {
         reason: "Explicitly confirm this occurrence's qualified canonical meaning.",
       } });
       const correction = await modelCall(app, "requirements.correct_binding");
-      expect(correction.body["prompt_version"]).toBe("requirements-binding-correction-v1");
+      expect(correction.body["prompt_version"]).toBe("requirements-v2-binding-correction-v2");
       expect((correction.body["context"] as { posting: { job_id: string } }).posting.job_id).toBe(seed.posting.job_id);
       expect(modelSources(correction).some((row) => row.source_id.startsWith(`posting:${seed.posting.job_id}:`))).toBe(true);
       correction.reply({ decisions: [{ requirement_id: occurrence.requirement_id, requirement_revision: occurrence.requirement_revision, relation: "equivalent", reason: "The exact current posting supports the selected canonical meaning.", citations: citeSources(correction, modelSources(correction).map((row) => row.source_id)) }] });
@@ -297,22 +297,41 @@ test("Fit qualification batch cancellation through the durable public action pub
 
 test("manual Fit batches two selected items within two persisted calls and exact replay adds no work", async ({ api, app }) => {
   const seed = await createScoredFit(api, app, "batch-manual-bounds", { twoRequirements: true });
-  const profile = await json<Profile>(api, "get", "/v1/profile");
-  const revised = structuredClone(profile.profile);
-  revised.resume.experience_entries[0]!.bullets = ["Reviewed service dashboards.", "Recorded routine status updates."];
-  await json(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion, profile: revised });
+  await saveChangedFacts(api);
   const pending = await json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending");
-  const payload = { ...refreshPayload(pending, undefined, { max_model_calls: 2, max_requirements: 2 }), prepare_wording: false };
+  const payload = { ...refreshPayload(pending, undefined, { max_model_calls: 2, max_requirements: 2 }), prepare_wording: false, prepare_coverage: false };
   const before = app.external.calls.length;
+  for (const [index, invalid] of [
+    { prepare_coverage: "false" },
+    { prepare_wording: true },
+    { retry_wording_proposal_ids: ["synthetic-wording-retry"] },
+  ].entries()) {
+    const rejected = await api.post("/v1/actions/fit.refresh", {
+      headers: { "idempotency-key": `score-only-invalid-${index}` }, data: { ...payload, ...invalid },
+    });
+    expect(rejected.status(), await rejected.text()).toBe(422);
+    expect(await rejected.json()).toMatchObject({ error: { code: "fit_invalid_request" } });
+  }
+  expect(app.external.calls).toHaveLength(before);
+  expect((await json<{ runs: unknown[] }>(api, "get", "/v1/action-runs?action=fit.refresh")).runs).toEqual([]);
   const run = await startRefresh(api, payload, "batch-manual-two-calls");
   const selector = await modelCall(app, "fit.catalog-impact");
   selector.reply(impactPartition(selector, Object.fromEntries(seed.requirements.requirements.map((row) => [row.requirement_id, "affected" as const]))));
   const batch = await modelCall(app, "fit.qualification-batch");
   expect((batch.body["context"] as { requirements: unknown[] }).requirements).toHaveLength(2);
-  batch.reply(qualificationBatchDecision(batch, () => ({ kind: "missing" })));
+  batch.reply(qualificationBatchDecision(batch, (binding) => {
+    const index = seed.requirements.requirements.findIndex((row) => row.requirement_id === binding.requirement_id);
+    expect(index).toBeGreaterThanOrEqual(0);
+    const achievement = seed.library.roles[0]!.achievements[index]!;
+    return { achievementIds: [achievement.achievement_id], evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] };
+  }));
   await completed(api, run.runId);
   const result = await json<RefreshOperation>(api, "get", `/v1/fit/refresh/operations/${run.runId}`);
-  expect(result).toMatchObject({ status: "completed", factual_published: true, counters: { model_calls: 2, requirements_assessed: 2 } });
+  expect(result).toMatchObject({ status: "completed", phase: "complete", factual_published: true,
+    prepare_coverage: false, prepare_wording: false,
+    counters: { model_calls: 2, requirements_assessed: 2, wording_proposals: 0 } });
+  expect(await json(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).toMatchObject({ current: true, score: { score: 10, revision: 2 } });
+  expect((await json<{ versions: unknown[] }>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit/history`)).versions[1]).toEqual(seed.fit.score);
   expect((result as RefreshOperation & { limits: unknown }).limits).toEqual(payload.limits);
   expect((await startRefresh(api, payload, "batch-manual-two-calls")).runId).toBe(run.runId);
   expect(await json(api, "get", `/v1/fit/refresh/operations/${run.runId}`)).toEqual(result);
@@ -322,7 +341,7 @@ test("manual Fit batches two selected items within two persisted calls and exact
 test("manual Fit retains its completed batch and fixed allowance across a real worker replacement", async ({ api, app }) => {
   const seed = await createScoredFit(api, app, "batch-retained-restart", { twoRequirements: true });
   const profile = await json<Profile>(api, "get", "/v1/profile");
-  await json(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion, profile: { ...profile.profile, personal: { ...profile.profile.personal, full_name: "Synthetic Batch Checkpoint" } } });
+  await json(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion, profile: { ...profile.profile, resume: { ...profile.profile.resume, experience_entries: profile.profile.resume.experience_entries.map((row, index) => index === 0 ? { ...row, summary: "Maintained services with reviewed recovery evidence: Synthetic Batch Checkpoint." } : row) } } });
   const payload = refreshPayload(await json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending"), undefined, { max_model_calls: 3, max_requirements: 2 });
   const before = app.external.calls.length;
   const run = await startRefresh(api, payload, "batch-retained-before-restart");

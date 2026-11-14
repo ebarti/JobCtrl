@@ -60,7 +60,8 @@ failed refresh preserves the last accepted resume.
 ::: info Accepted transformation target
 The [Python transformation plan](../plans/2026-11-06-python-transformation.md)
 specifies a full-baseline resume: retain every approved role and achievement,
-select one approved wording per achievement, and report layout conflicts rather
+retain the other baseline sections including Language / Proficiency, select one
+approved wording per achievement, and report layout conflicts rather
 than silently dropping content. Person fit remains separate from document
 coverage. The plan specifies mechanical source and approval checks and one
 advisory coherence review, with explicit acceptance available for a mechanically
@@ -68,6 +69,16 @@ valid document despite a review finding or timeout. Baseline-copy mode makes no
 resume model calls. These are accepted target behaviors; implementation and
 integration verification are in progress.
 :::
+
+The `requirements-v2` contract uses reusable Skills/Professional Experience for
+achievement-wording coverage. Direct job-local Education and Languages demands
+do not enter wording matching or generation. Current section-backed evidence
+does not create an achievement-wording gap. Reuse existing approved expression;
+new wording needs an actual unsupported expression need and factual achievement
+support, rather than stylistic variation. Each eligible canonical requirement
+has one internal composition policy point, without attributing importance
+weights or mandatory labels to the posting. Tailoring preserves all baseline
+sections and changes only approved achievement wording.
 
 ## What You Can See And Control
 
@@ -377,8 +388,8 @@ The inputs have intentionally different authority:
 
 | Input | Owner | What it may prove |
 | --- | --- | --- |
-| Candidate facts and achievements | Candidate Profile snapshot | Experience, skills, metrics, dates, titles, employers, and other claims about you. |
-| Job requirements and employer wording | Enrichment snapshot plus canonical employer analysis | What the employer asks for and which language appears in the posting. It is target context, never candidate evidence. |
+| Candidate facts and achievements | Candidate Profile snapshot | Experience, skills, education, Language / Proficiency, metrics, dates, titles, employers, and other claims about you. |
+| Job requirements and employer wording | Requirements snapshot bound to the accepted posting | Reusable Skills/Professional Experience meanings and direct job-local Education/Languages demands. It is target context, never candidate evidence. |
 | Requirement fit | Scoring | Which requirements are matched, transferable, missing, or blocked, with allowed evidence links. It must describe the same posting-analysis generation Tailoring uses. |
 | Tailoring and model policy | Preferences, Settings, and versioned Materials policy | What transformations and gates may run. Policy cannot create a fact. |
 | Accepted output | Materials generation and registered artifacts | The exact text/HTML/PDF selected for review or Apply, plus its audit data. |
@@ -389,26 +400,24 @@ rendered, grounded text and persisted with the generation. The artifact read
 model does not infer a missing list from the job description later, and it
 reports absent audit data as unrecorded rather than as zero coverage.
 
-JobCtrl also records what each posting requirement is for. Technical
-qualifications and responsibilities are `resume` requirements and can enter
-the grounded coverage gate. Work arrangements such as remote/hybrid or office
-attendance are `logistics`; work authorization and screening are
-`eligibility`; salary, benefits, and other employer terms are
-`employer_condition`. Those context-only requirements remain visible for fit
-and Apply Review, but the resume is never required to claim them. An unknown
-office-attendance preference can therefore warn or ask for confirmation; it
-cannot reject a resume candidate or spend Tailor retries.
-
-When summary rewriting is enabled, an old years-of-experience estimate may be
-expressed qualitatively if it lacks supporting achievement evidence. Verified
-metrics and required achievement bullets remain subject to their normal
-preservation checks.
+Typed extraction retains the source's notes, alternatives and original
+occurrence meaning alongside its canonical binding. Personal traits,
+certifications/licenses, job conditions and detailed tenure analysis are outside
+this iteration. They cannot become achievement-coverage failures or consume
+wording retries. Structured Languages support comes only from the Profile's
+Language / Proficiency entries, and an explicit equivalent-experience Education
+route never becomes a degree claim. Other safety, application and preference
+controls keep their own authority.
 
 If requirement-fit evidence is missing or belongs to an older posting-analysis
 generation, JobCtrl shows Tailor as blocked by Score and asks you to rescore the
 job. This prerequisite block does not consume a Tailor retry. It prevents an
 empty coverage plan from being retried as though it were a model-quality
 failure.
+Legacy-generation requirements and Fit results likewise require explicit
+refresh before they establish current composition readiness. Older accepted
+resumes remain available with their original provenance and bytes; a failed
+refresh or incompatible operation cannot replace them.
 
 When rescoring restores missing evidence, JobCtrl returns that retryable Tailor
 block to pending after checking the current score and posting analysis. The

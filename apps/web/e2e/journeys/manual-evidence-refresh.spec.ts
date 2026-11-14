@@ -27,6 +27,7 @@ import {
   catalogMatching,
   citeSources,
   modelSources,
+  typedExtraction,
 } from "./requirements-data.js";
 
 const modelOperations = (app: ApplicationStack, since = 0) =>
@@ -39,13 +40,13 @@ const pendingRefresh = (api: APIRequestContext) =>
 const operation = (api: APIRequestContext, runId: string) =>
   json<RefreshOperation>(api, "get", `/v1/fit/refresh/operations/${runId}`);
 
-async function saveName(api: APIRequestContext, name: string) {
+async function saveRoleSummary(api: APIRequestContext, label: string) {
   const current = await json<Profile>(api, "get", "/v1/profile");
   return json<Profile>(api, "patch", "/v1/profile", {
     expectedProfileVersion: current.profileVersion,
     profile: {
       ...current.profile,
-      personal: { ...current.profile.personal, full_name: name },
+      resume: { ...current.profile.resume, experience_entries: current.profile.resume.experience_entries.map((row, index) => index === 0 ? { ...row, summary: `Maintained services with reviewed recovery evidence: ${label}.` } : row) },
     },
   });
 }
@@ -74,9 +75,13 @@ test("Profile manually updates the previously missing match, reuses unaffected a
   const ownershipId = seed.requirements.requirements[1]!.requirement_id;
   const recoveryAchievement = seed.library.roles[0]!.achievements[0]!;
   const ownershipAchievement = seed.library.roles[0]!.achievements[1]!;
-  const savedRequirements = (await json<{ score: { assessments: { text: string; rationale: string }[] } }>(
+  const savedFit = await json<{ score: { assessments: { text: string; rationale: string }[] }; coverage: { wording_gaps: { requirement_id: string; status: string }[] } }>(
     api, "get", `/v1/jobs/${seed.posting.job_id}/fit`,
-  )).score.assessments;
+  );
+  const savedRequirements = savedFit.score.assessments;
+  expect(savedFit.coverage.wording_gaps.map(({ requirement_id, status }) => ({ requirement_id, status }))).toEqual([
+    { requirement_id: recoveryId, status: "current_wording_not_selected" },
+  ]);
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(`/jobs/${seed.posting.job_id}`);
   const fitPanel = page.getByRole("region", { name: "Person fit", exact: true });
@@ -87,11 +92,10 @@ test("Profile manually updates the previously missing match, reuses unaffected a
   for (const [index, assessment] of savedRequirements.entries())
     await expect(requirementRows.nth(index).getByRole("heading")).toHaveText(assessment.text);
   const unassessedWording = fitPanel.getByText(
-    "No current approved wording coverage is recorded for this result. Wording assessment or selection may still be needed.",
+    "No approved achievement-wording coverage has been recorded for this result. This does not establish a wording gap.",
     { exact: true },
   );
-  await expect(unassessedWording).toHaveCount(1);
-  await expect(unassessedWording).toBeVisible();
+  await expect(unassessedWording).toHaveCount(0);
   await expect(fitPanel.getByText("Current wording not selected", { exact: true })).toBeHidden();
   for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
@@ -108,11 +112,10 @@ test("Profile manually updates the previously missing match, reuses unaffected a
   await expect(coveragePanel.getByText(savedRequirements[0]!.text, { exact: true })).toBeVisible();
   await gapDetails.click();
   const requirement = requirementRows.first();
-  await requirement.locator("summary").filter({ hasText: /^Assessment details$/ }).click();
+  await requirement.locator("summary").filter({ hasText: /^Evidence and assessment details$/ }).click();
   await expect(requirement.locator(".fit-requirement__rationale")).toHaveText(
     savedRequirements[0]!.rationale,
   );
-  await requirement.locator("summary").filter({ hasText: /^Evidence and provenance$/ }).click();
   await expect(requirement).toContainText(recoveryAchievement.source_refs[0]!.source_id);
   await expect(requirement).toContainText(seed.fit.score.assessments[0]!.determination_id);
   await testInfo.attach("person-fit-result-expanded", {
@@ -375,7 +378,7 @@ test("manual cancellation retains accepted scores and distinct keys cannot admit
   app,
 }) => {
   const seed = await createScoredFit(api, app, "manual-cancel");
-  await saveName(api, "Synthetic Changed Candidate");
+  await saveRoleSummary(api, "Synthetic Changed Candidate");
   const pending = await pendingRefresh(api);
   const payload = refreshPayload(pending);
   const before = app.external.calls.length;
@@ -474,7 +477,7 @@ for (const changedSource of ["Profile", "posting", "catalog"] as const) {
       expectedRevision: settings.revision,
       dailyBudgetUsd: 0,
     });
-    await saveName(api, "Synthetic First Saved Change");
+    await saveRoleSummary(api, "Synthetic First Saved Change");
     const payload = refreshPayload(await pendingRefresh(api));
     const before = app.external.calls.length;
     const run = await startRefresh(
@@ -484,7 +487,7 @@ for (const changedSource of ["Profile", "posting", "catalog"] as const) {
     );
     const held = await modelCall(app, "fit.catalog-impact");
     if (changedSource === "Profile")
-      await saveName(api, "Synthetic Later Saved Change");
+      await saveRoleSummary(api, "Synthetic Later Saved Change");
     if (changedSource === "posting")
       await json(api, "patch", `/v1/jobs/${seed.posting.job_id}`, {
         expectedRevision: seed.posting.revision,
@@ -503,27 +506,9 @@ for (const changedSource of ["Profile", "posting", "catalog"] as const) {
       });
       const call = await modelCall(app, "requirements.extract");
       const source = modelSources(call)[0]!;
-      call.reply({
-        status: "complete",
-        requirements: [
-          {
-            local_id: "separate",
-            text: source.text,
-            definition: "Own a separate qualified operational responsibility",
-            qualifiers: [
-              { dimension: "domain", value: "separate synthetic service" },
-            ],
-            scope: "resume",
-            tier: "must_have",
-            weight: 1,
-            support: "supported",
-            spans: [{ source_id: source.source_id, quote: source.text }],
-          },
-        ],
-        reason:
-          "Explicit distinct canonical addition from this current source.",
-        citations: citeSources(call, [source.source_id]),
-      });
+      call.reply(typedExtraction(call, { requirements: [{
+        localId: "separate", text: source.text, definition: "Own a separate qualified operational responsibility",
+      }] }));
       const matching = await modelCall(app, "requirements.match_catalog");
       matching.reply(
         catalogMatching(matching, { separate: { verdict: "new" } }),
@@ -564,7 +549,7 @@ test("a saved change while a manual refresh is queued refuses before any selecto
   });
   const replacement = await app.restartWorker();
   expect(replacement.current).not.toBe(replacement.previous);
-  await saveName(api, "Synthetic Reviewed Queued Change");
+  await saveRoleSummary(api, "Synthetic Reviewed Queued Change");
   const payload = refreshPayload(await pendingRefresh(api));
   const blockerPosting = await createPosting(api, "manual-queue-blocker");
   const before = app.external.calls.length;
@@ -588,13 +573,8 @@ test("a saved change while a manual refresh is queued refuses before any selecto
         ).status,
     )
     .toBe("queued");
-  await saveName(api, "Synthetic Newer Queued Change");
-  held.reply({
-    status: "complete",
-    requirements: [],
-    reason: "Explicit empty inventory for this controlled external boundary.",
-    citations: citeSources(held, [modelSources(held)[0]!.source_id]),
-  });
+  await saveRoleSummary(api, "Synthetic Newer Queued Change");
+  held.reply(typedExtraction(held, {}));
   await completed(api, blocker.runId);
   expect(await terminal(api, queued.runId)).toMatchObject({
     status: "failed",

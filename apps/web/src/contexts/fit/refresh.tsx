@@ -18,7 +18,9 @@ const limitsSchema = z.object({ max_model_calls: z.number().int().nonnegative(),
 const wordingFailureSchema = z.object({ proposal_id: z.string().min(1), achievement_id: z.string().nullable().optional(),
   status: z.string(), failure_code: z.string().nullable(), requirement_ids: z.array(z.string()).optional() }).passthrough();
 const operationSchema = z.object({
+  contract_version: z.string().nullable(), current: z.boolean(), stale_reasons: z.array(z.string()),
   operation_id: z.string().min(1), status: z.enum(["running", "completed", "failed", "cancelled", "stale", "limited"]),
+  prepare_coverage: z.boolean().default(true), prepare_wording: z.boolean().default(true),
   phase: z.enum(["selection", "qualification", "publication", "coverage", "complete"]), job_ids: z.array(z.string()),
   catalog_revision: z.number().int().nonnegative(), requirement_count: z.number().int().nonnegative(),
   selected_requirement_ids: z.array(z.string()).nullable(), limits: limitsSchema,
@@ -28,14 +30,20 @@ const operationSchema = z.object({
   accepted_score_revisions: z.record(z.string(), z.number().int().nonnegative()),
   wording_failures: z.array(wordingFailureSchema),
   created_at: z.string(), deadline_at: z.string(), updated_at: z.string(),
-}).passthrough();
+}).passthrough().superRefine((operation, context) => {
+  const currentContract = operation.contract_version === "requirements-v2";
+  if (operation.current !== currentContract || !currentContract && !operation.stale_reasons.includes("contract_changed")) {
+    context.addIssue({ code: "custom", message: "The operation generation and currentness do not agree." });
+  }
+});
 const pendingSchema = z.object({
+  contract_version: z.literal("requirements-v2"),
   profile_id: z.string(), readiness: z.literal("ready"), pending: z.boolean(), pending_reasons: z.array(z.string()), stale_job_ids: z.array(z.string()),
   available_job_ids: z.array(z.string()), catalog_revision: z.number().int().nonnegative(),
   requirement_count: z.number().int().nonnegative(), expected_input_fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   pending_wording_failures: z.array(wordingFailureSchema), latest_operation: operationSchema.nullable(),
 }).passthrough();
-const profileRequiredSchema = z.object({ profile_id: z.string(), readiness: z.literal("profile_required") }).strict();
+const profileRequiredSchema = z.object({ contract_version: z.literal("requirements-v2"), profile_id: z.string(), readiness: z.literal("profile_required") }).strict();
 const receiptSchema = z.object({ runId: z.string().min(1), workflowId: z.string().min(1),
   status: z.enum(["pending", "queued", "running", "succeeded", "failed", "cancelled", "start_failed"]) }).passthrough();
 const scopeBusySchema = z.object({ error: z.object({ code: z.literal("action_scope_busy"),
@@ -57,6 +65,7 @@ const terminalAction = (status: string | undefined) => status === "succeeded" ||
 const activeAction = (status: string | undefined) => status === "pending" || status === "queued" || status === "running" || status === "start_failed";
 
 function operationMessage(operation: Operation): string {
+  if (!operation.current) return "Historical update: the requirements contract changed. Its recorded results remain available for inspection; this update cannot be resumed under the current contract.";
   if (operation.failure_code === "fit_refresh_retry_stale") return "The wording's sources changed. Update affected matches before requesting another wording retry.";
   switch (operation.status) {
     case "running": return "Update in progress.";
@@ -130,7 +139,7 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
       if (!parsed.success) throw new Error("Pending match changes could not be read safely.");
       return { ...parsed.data, workspace };
     },
-    refetchInterval: (query) => query.state.data?.readiness === "ready" && query.state.data.latest_operation?.status === "running" ? 3000 : false,
+    refetchInterval: (query) => query.state.data?.readiness === "ready" && query.state.data.latest_operation?.current && query.state.data.latest_operation.status === "running" ? 3000 : false,
     meta: { suppressGlobalErrorToast: true },
   });
   const requestStatus = useQuery({
@@ -188,7 +197,7 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
         throw error;
       }
     },
-    refetchInterval: (query) => query.state.data?.status === "running" || (query.state.data === null && activeAction(requestStatus.data?.status)) ? 3000 : false,
+    refetchInterval: (query) => query.state.data?.current && query.state.data.status === "running" || (query.state.data === null && activeAction(requestStatus.data?.status)) ? 3000 : false,
     meta: { suppressGlobalErrorToast: true },
   });
   const availableIds = pendingReady?.available_job_ids ?? [];
@@ -219,14 +228,16 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
     }),
     meta: { suppressGlobalErrorToast: true },
   });
-  const otherActive = latest?.status === "running" && latest.operation_id !== requestStatus.data?.runId;
+  const otherActive = latest?.current && latest.status === "running" && latest.operation_id !== requestStatus.data?.runId;
   const exactKind: StartKind | null = !identity.record ? null : fingerprintQuery.data?.matches === identity.record.fingerprint
     ? "matches" : fingerprintQuery.data?.wording === identity.record.fingerprint ? "wording" : null;
   const exactInputs = exactKind !== null;
-  const mayRetry = Boolean(identity.record && exactInputs && !requestStatus.isFetching && (notRecorded || ["pending", "start_failed"].includes(requestStatus.data?.status ?? "")));
+  const compatibleRequest = notRecorded || operationQuery.isSuccess && operationQuery.data?.current !== false;
+  const mayRetry = Boolean(identity.record && exactInputs && compatibleRequest && !requestStatus.isFetching && (notRecorded || ["pending", "start_failed"].includes(requestStatus.data?.status ?? "")));
 
   const start = useMutation({
     mutationFn: async ({ kind, proposalIds }: { kind: StartKind; proposalIds: readonly string[] }) => {
+      if (identity.record && operationQuery.data?.current === false) throw new Error("The earlier update belongs to a historical requirements contract and cannot be retried. Review its recorded result before starting a new update.");
       if (!identity.ready || !archive.isSuccess || !busyIdentity.isSuccess || !pendingReady || pending.isError) throw new Error("Refresh the saved match state and recovery storage before starting an update.");
       if (kind === "matches" && selectionInvalid) throw new Error("Select between 1 and 100 scored jobs.");
       if (kind === "wording" && (!proposalIds.length || proposalIds.length > 100
@@ -330,7 +341,7 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
   const canStart = availability.available && identity.ready && archive.isSuccess && busyIdentity.isSuccess && Boolean(pendingReady) && !pending.isPending && !pending.isError && !start.isPending && !scopeBlocked
     && !otherActive && (!identity.record || mayRetry) && (exactKind === "wording" || !selectionInvalid);
   const canRetryWording = availability.available && identity.ready && archive.isSuccess && busyIdentity.isSuccess && Boolean(pendingReady) && !pending.isPending
-    && !pending.isError && !start.isPending && !scopeBlocked && !otherActive && !identity.record && operation?.status !== "running"
+    && !pending.isError && !start.isPending && !scopeBlocked && !otherActive && !identity.record && (!operation?.current || operation.status !== "running")
     && retryIds.length > 0 && retryIds.length <= 100;
   const cancellableRun = identity.record && activeAction(status) && !requestStatus.data?.cancellationRequested
     ? requestStatus.data?.runId ? { runId: requestStatus.data.runId, origin: identity.record } : undefined
@@ -343,6 +354,7 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
       : <p>Uses your last saved Profile. An update may use your model and prepare wording proposals for review.</p>}
     <details><summary>Work limits</summary><p>Each update can reserve up to 40 model call attempts over 10 minutes, with at most 100 affected requirements, 100 scored jobs and 20 wording proposals. Attempts are counted before provider and budget checks. This request does not impose a hard monetary cap. Saving or opening this page does not start work. Approved wording and accepted artifacts remain available.</p></details>
     {pending.isPending ? <p>Checking saved match state…</p> : null}
+    {pendingReady?.pending_reasons.includes("contract_changed") ? <p role="status">The requirements contract changed. Earlier results remain historical until requirements and affected matches are refreshed manually.</p> : null}
     {pending.error ? <p role="alert">Match state could not be refreshed: {pending.error.message}{pending.data ? " The last loaded state remains below." : ""} <Button type="button" variant="outline" onClick={() => void pending.refetch()}>Check match state</Button></p> : null}
     {pendingReady ? <p role="status">{pendingReady.pending
       ? `${pendingReady.pending_reasons.some((reason) => ["saved_job_inputs_changed", "catalog_qualification_pending", "saved_catalog_or_wording_changed"].includes(reason)) ? "Saved changes may affect matches." : "Some match work remains unfinished."} ${pendingReady.stale_job_ids.length} scored ${pendingReady.stale_job_ids.length === 1 ? "job is" : "jobs are"} marked out of date.`
@@ -396,7 +408,7 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
     </div> : null}
     {operation ? <div role="status">{identity.record && notRecorded ? <p>Most recent recorded update:</p> : null}<p>{operationMessage(operation)}</p>
       {operation.partial ? <p>Partial result: the qualification stage finished{publishedScores ? ` and ${publishedScores} ${publishedScores === 1 ? "job score was" : "job scores were"} saved` : ""}, but the remaining work stopped. Review the pending changes before updating again.</p> : null}
-      {operation.status === "running" ? <p>{phaseLabel[operation.phase]}.</p> : null}
+      {operation.current && operation.status === "running" ? <p>{phaseLabel[operation.phase]}.</p> : null}
       <p>{operation.counters.requirements_assessed} {operation.counters.requirements_assessed === 1 ? "requirement" : "requirements"} assessed · {operation.counters.qualifications_reused} {operation.counters.qualifications_reused === 1 ? "assessment" : "assessments"} reused · {operation.counters.wording_proposals} wording {operation.counters.wording_proposals === 1 ? "proposal" : "proposals"}.</p>
       <details><summary>Run details</summary><p>{phaseLabel[operation.phase]}{operation.selected_requirement_ids === null ? "" : ` · ${operation.selected_requirement_ids.length} affected ${operation.selected_requirement_ids.length === 1 ? "requirement" : "requirements"} selected`} · {operation.job_ids.length} {operation.job_ids.length === 1 ? "job" : "jobs"} · {operation.counters.model_calls} model call {operation.counters.model_calls === 1 ? "attempt" : "attempts"}.</p>
         <Link to="/runs/$runId" params={{ runId: operation.operation_id }}>View full run</Link></details>

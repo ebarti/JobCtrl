@@ -12,6 +12,21 @@ preferences, the complete authored baseline and wording text/approval. It import
 no Fit or Requirements implementation. Other owners consume immutable public
 snapshots and source/revision guards.
 
+The saved document has `resume.language_entries`, defaulting to `[]`, with
+authored rows `{id, language, proficiency}`. Entry IDs are stable across edits.
+`GET /v1/profile/sources` exposes each as `kind: language`, with
+`path: ["resume", "language_entries", id]`, the literal canonical row text and
+its `record`. Use the returned opaque `source_id` and revision. No Skills group,
+achievement text or attached source is promoted to a Language / Proficiency
+entry. Fit uses only these structured language sources for language demands.
+
+The public baseline document projects the rows as `languages`. Baseline HTML,
+Plate, text, PDF, DOCX and supported locale exports retain nonempty entries.
+Plate gives language and proficiency their own semantic field bindings. Existing
+four-section templates remain valid and render Languages without rewriting the
+saved template. An absent/empty default does not advance an older Profile
+revision or change a prior accepted document projection.
+
 | Route | Contract |
 | --- | --- |
 | `GET /v1/profile` | `{ok, profileVersion, profile, style, templateText}`; initialized profiles also expose `factSemanticsVersion` and `wordingRevision`. |

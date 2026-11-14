@@ -5,12 +5,17 @@ export type QualificationBinding = {
   requirement_id: string;
   requirement_revision: string;
   source_id: string;
+  category: "skill" | "professional_experience" | "education" | "language";
+  permitted_evidence_ids: string[];
 };
 export type QualificationChoice = {
-  kind?: "matched" | "missing";
+  kind?: "matched" | "missing" | "transferable" | "blocked" | "not_assessed";
+  strength?: "direct" | "strong";
   achievementIds?: string[];
   evidenceSourceIds?: string[];
   keywords?: string[];
+  evidenceRoute?: "education" | "equivalent_experience" | null;
+  wordingSupport?: "section" | "achievement" | "none";
 };
 
 /** Current authored choices bind to the request's exact IDs and sources. */
@@ -19,7 +24,7 @@ export function qualificationBatchDecision(
   choose: (binding: QualificationBinding, index: number) => QualificationChoice,
 ) {
   expect(call.body["operation"]).toBe("fit.qualification-batch");
-  expect(call.body["prompt_version"]).toBe("fit-qualification-batch-v1");
+  expect(call.body["prompt_version"]).toBe("fit-qualification-batch-v3");
   expect(call.body["lane"]).toBe("scoring");
   const context = call.body["context"] as { requirements: QualificationBinding[] };
   expect(context.requirements.length).toBeGreaterThan(0);
@@ -28,21 +33,24 @@ export function qualificationBatchDecision(
   expect(new Set(sources.map((row) => row.source_id)).size).toBe(sources.length);
   return { requirements: context.requirements.map((binding, index) => {
     expect(binding.source_id).toBe(`requirement:${binding.requirement_id}`);
-    const { kind = "matched", achievementIds = [], evidenceSourceIds = [], keywords = [] } = choose(binding, index);
+    const { kind = "matched", strength = "direct", achievementIds = [], evidenceSourceIds = [], keywords = [], evidenceRoute = null,
+      wordingSupport = kind === "matched" || kind === "transferable" ? (binding.category === "education" || binding.category === "language" || !achievementIds.length ? "section" : "achievement") : "none" } = choose(binding, index);
     return {
       requirement_id: binding.requirement_id,
       requirement_revision: binding.requirement_revision,
       kind,
-      strength: kind === "matched" ? "direct" : null,
+      strength: kind === "matched" ? strength : null,
       confidence: "high",
-      rationale: kind === "matched"
+      rationale: kind === "matched" || kind === "transferable"
         ? "The explicitly cited current authored facts support this qualification."
         : "The supplied current factual inventory does not establish this qualification.",
       evidence: citeSources(call, evidenceSourceIds),
       requirement_citations: citeSources(call, [binding.source_id]),
       achievement_ids: achievementIds,
       keywords,
-      eligibility: "eligible",
+      evidence_route: evidenceRoute,
+      wording_support: wordingSupport,
+      eligibility: "unknown",
       blocker_category: null,
       warning_category: null,
     };

@@ -7,7 +7,8 @@ from jobctrl.app.errors import NotFoundError
 from .associations import association_view
 from .coverage import variant_fingerprint
 from .current_wording import assignment_view
-from .sources import dto, fact_fingerprint
+from .contract import CONTRACT_VERSION, current_contract
+from .sources import dto, qualification_fingerprint
 
 
 def requirement_library(store, profile_id="default"):
@@ -29,15 +30,15 @@ def requirement_library(store, profile_id="default"):
         selections = {}
         for row in read.current_wording_heads(profile_id):
             selections.setdefault(row["requirement_id"], []).append(assignment_view(row, read, profile))
-        source_hash = fact_fingerprint(profile) if profile is not None else None
         variants = {row["variant_id"]: row for row in profile["approved_variants"]} if profile else {}
         requirements = []
         for meaning in catalog["requirements"]:
             ident = meaning["requirement_id"]
+            source_hash = qualification_fingerprint(profile, meaning) if profile is not None else None
             assessment = (read.latest_assessment(profile_id, ident, meaning["revision"], source_fingerprint=source_hash)
                           if profile is not None else None) or assessments.get(ident)
             if assessment is not None:
-                reasons = []
+                reasons = [] if current_contract(assessment) else ["contract_changed"]
                 if str(assessment["requirement_revision"]) != str(meaning["revision"]):
                     reasons.append("requirement_revised")
                 if profile is None:
@@ -47,7 +48,7 @@ def requirement_library(store, profile_id="default"):
                 assessment = {**assessment, "current": not reasons, "stale_reasons": reasons}
             coverage, seen = [], set()
             for relation in by_requirement.get(ident, []):
-                reasons = []
+                reasons = [] if current_contract(relation) else ["contract_changed"]
                 key = (relation["assessment_id"], relation["variant_id"], str(relation["variant_revision"]))
                 if key in seen:
                     reasons.append("coverage_superseded")
@@ -69,7 +70,7 @@ def requirement_library(store, profile_id="default"):
                 "current_wordings": [row for row in wording_assignments if row["state"] == "active"],
                 "wording_assignments": wording_assignments,
                 "associations": [association_view(row, meaning, profile, wording) for row in associations.get(ident, [])]})
-        return {"profile_id": profile_id, "readiness": "ready" if profile else "profile_required",
+        return {"contract_version": CONTRACT_VERSION, "profile_id": profile_id, "readiness": "ready" if profile else "profile_required",
                 "profile_revision": profile["profile_revision"] if profile else None,
                 "fact_semantics_version": profile["fact_semantics_version"] if profile else None,
                 "wording_revision": profile["wording_revision"] if profile else None,

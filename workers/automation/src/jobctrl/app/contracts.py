@@ -47,3 +47,6 @@ class Feature:
     # Transport terminalization and its owning feature receipt share a commit.
     # The callback is a feature adapter, not a domain/database dependency.
     action_finalizers: dict[str, Callable[[str, str, str | None, Any], None]] = field(default_factory=dict)
+    # Incompatible feature contracts fence durable replay without rewriting
+    # historical payloads, accepted results, or database schemas.
+    action_versions: dict[str, str] = field(default_factory=dict)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from hashlib import sha256
 import json
 from typing import Any
@@ -68,24 +68,30 @@ def variants_for(snapshot: dict) -> tuple[list[dict], dict[str, list[dict]]]:
     return achievements, options
 
 
-def _requirements(coverage: dict) -> list[dict]:
+def _requirements(coverage: dict, *, include_section_supported=False) -> list[dict]:
+    if coverage.get("contract_version") != "requirements-v2":
+        raise ResumeError("requirements_contract_changed")
     by_id = {}
+    section_supported = {row["requirement_id"] for row in coverage.get("section_support", [])}
     for requirement in coverage.get("requirements", []):
+        # Direct Education/Language demands assess person fit and never select
+        # achievement wording. Coefficients belong to composition policy only.
+        if requirement.get("category") not in {"skill", "professional_experience"}:
+            raise ResumeError("invalid_wording_requirement_category")
         identity = (requirement["requirement_id"], requirement.get("revision", requirement.get("requirement_revision")))
         if identity[1] is None:
             raise ResumeError("invalid_requirement_inventory")
-        try:
-            weight = Decimal(str(requirement["weight"]))
-        except (KeyError, InvalidOperation, ValueError):
-            raise ResumeError("invalid_requirement_weight") from None
-        if not weight.is_finite() or weight <= 0:
-            raise ResumeError("invalid_requirement_weight")
         previous = by_id.get(identity[0])
         if previous is not None and previous["revision"] != identity[1]:
             raise ResumeError("invalid_requirement_inventory")
-        if previous is None or weight > Decimal(previous["weight"]):
-            by_id[identity[0]] = {"requirement_id": identity[0], "revision": identity[1], "weight": str(weight)}
-    return sorted(by_id.values(), key=lambda row: (row["requirement_id"], str(row["revision"])))
+        eligible = identity[0] not in section_supported
+        by_id[identity[0]] = {"requirement_id": identity[0], "revision": identity[1],
+                             "category": requirement["category"], "wording_eligible": eligible,
+                             **({"policy_coefficient": 1} if eligible else {})}
+    if section_supported - by_id.keys():
+        raise ResumeError("invalid_section_support_inventory")
+    return sorted((row for row in by_id.values() if include_section_supported or row["wording_eligible"]),
+                  key=lambda row: (row["requirement_id"], str(row["revision"])))
 
 
 def _relations(coverage: dict, requirements: list[dict], options: dict[str, list[dict]]) -> dict[tuple, list[dict]]:
@@ -94,11 +100,14 @@ def _relations(coverage: dict, requirements: list[dict], options: dict[str, list
                    for variants in options.values() for row in variants}
     result: dict[tuple, list[dict]] = {}
     seen = set()
+    section_supported = {row["requirement_id"] for row in coverage.get("section_support", [])}
     maintained = {(row["requirement_id"], str(row["requirement_revision"]), row["achievement_id"],
                    row["variant_id"], str(row["variant_revision"]), row["relation_id"])
                   for row in coverage.get("current_wordings", []) if row.get("current") is True}
     for row in coverage.get("relations", []):
         if row.get("covered") is not True:
+            continue
+        if row.get("requirement_id") in section_supported:
             continue
         requirement = (row["requirement_id"], row.get("requirement_revision", row.get("revision")))
         variant = (row["achievement_id"], row["variant_id"], row.get("variant_revision", row.get("revision")))
@@ -193,24 +202,24 @@ def choose_variants(snapshot: dict, coverage: dict, *, baseline: bool = False,
     options = maintained_options(achievements, options, coverage, requirements)
     relations = _relations(coverage, requirements, options)
     indexes = {(row["requirement_id"], row["revision"]): index for index, row in enumerate(requirements)}
-    weights = [Decimal(row["weight"]) for row in requirements]
+    coefficients = [Decimal(row["policy_coefficient"]) for row in requirements]
     masks = {}
     for key, rows in relations.items():
         masks[key] = sum(1 << indexes[(row["requirement_id"], row["requirement_revision"])] for row in rows)
 
-    weight_cache = {0: Decimal(0)}
+    value_cache = {0: Decimal(0)}
 
     def value(mask: int) -> Decimal:
-        cached = weight_cache.get(mask)
+        cached = value_cache.get(mask)
         if cached is not None:
             return cached
         total = Decimal(0)
         remaining = mask
         while remaining:
             bit = remaining & -remaining
-            total += weights[bit.bit_length() - 1]
+            total += coefficients[bit.bit_length() - 1]
             remaining ^= bit
-        weight_cache[mask] = total
+        value_cache[mask] = total
         return total
 
     limits = limits or CompositionLimits()
@@ -322,8 +331,9 @@ def choose_variants(snapshot: dict, coverage: dict, *, baseline: bool = False,
         union |= mask
         supports += value(mask)
     manifest = coverage_manifest(snapshot, coverage, selected, requirements=requirements, relations=relations)
-    manifest["objective"] = {"weighted_distinct_coverage": str(value(union)),
-                             "weighted_complementary_depth": str(supports - value(union)),
+    manifest["objective"] = {"policy_version": "requirement-wording-v2-equal", "unit_coefficient": 1,
+                             "distinct_coverage_points": str(value(union)),
+                             "complementary_achievement_points": str(supports - value(union)),
                              "tie_break": "ordered_variant_id_and_revision",
                              "algorithm": "exact_independent_components_union_dynamic_program_v2",
                              "work": work, "limits": {"states": limits.max_states, "paths": limits.max_paths,
@@ -340,15 +350,19 @@ def coverage_manifest(snapshot: dict, coverage: dict, selected: list[dict], *, r
     selected_relations = [row for variant in selected for row in relations.get(
         (variant["achievement_id"], variant["variant_id"], variant["revision"]), [])]
     rows = []
-    for requirement in requirements:
+    for requirement in _requirements(coverage, include_section_supported=True):
         supporting = [row for row in selected_relations if row["requirement_id"] == requirement["requirement_id"]]
         rows.append({**requirement, "covered": bool(supporting),
+                     "wording_status": "section_supported" if not requirement["wording_eligible"] else (
+                         "covered" if supporting else "not_covered"),
                      "achievement_ids": sorted({row["achievement_id"] for row in supporting}),
                      "variant_ids": sorted({row["variant_id"] for row in supporting}),
                      "determination_ids": sorted({row["determination_id"] for row in supporting})})
-    return {"status": "recorded", "coverage_snapshot_id": coverage.get("snapshot_id"),
+    return {"status": "recorded", "contract_version": "requirements-v2",
+            "coverage_snapshot_id": coverage.get("snapshot_id"),
             "profile_revision": snapshot["profile_revision"], "requirements": rows,
             "selected_relations": deepcopy(selected_relations), "objective": None,
+            "section_support": deepcopy(coverage.get("section_support", [])),
             "current_wordings_fingerprint": coverage.get("source_binding", {}).get("current_wordings_fingerprint"),
             "current_wordings": [deepcopy(row) for row in coverage.get("current_wordings", []) if any(
                 variant["variant_id"] == row["variant_id"] and str(variant["revision"]) == str(row["variant_revision"])
@@ -400,14 +414,19 @@ def baseline_document(snapshot: dict) -> dict:
     skills = [{"id": row.get("id", f"skills:{index}"), "label": str(row.get("label", "Skills")),
                "items": deepcopy(row.get("items", []))}
               for index, row in enumerate(resume.get("skill_categories", []))]
+    languages = [{"id": row["id"], "language": str(row.get("language", "")),
+                  "proficiency": str(row.get("proficiency", ""))}
+                 for row in resume.get("language_entries", [])]
     summary = resume.get("executive_profile", {})
     return {"personal": {"full_name": str(personal.get("full_name", personal.get("name", ""))),
                          "address": " - ".join(value for value in (address, region) if value),
                          "contact_items": contacts},
             "summary": str(summary.get("baseline_text", "")) if isinstance(summary, dict) else str(summary),
             "experience": experience, "education": education, "skills": skills,
+            **({"languages": languages} if languages else {}),
             "section_labels": {"summary": "Executive Profile", "experience": "Experience",
-                               "education": "Education", "skills": "Skills"}}
+                               "education": "Education", "skills": "Skills",
+                               **({"languages": "Languages"} if languages else {})}}
 
 
 def assemble(snapshot: dict, selected: list[dict]) -> dict:
@@ -513,4 +532,9 @@ def document_lines(document: dict) -> list[dict]:
         add(f"skills:{identity}:label", row.get("label", ""))
         for item, text in enumerate(row.get("items", [])):
             add(f"skills:{identity}:{item}", text)
+    if document.get("languages"):
+        add("heading:languages", labels.get("languages", "Languages"))
+        for row in document["languages"]:
+            for field in ("language", "proficiency"):
+                add(f"language:{row['id']}:{field}", row.get(field, ""))
     return result

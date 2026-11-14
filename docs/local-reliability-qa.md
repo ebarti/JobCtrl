@@ -105,11 +105,25 @@ explicit size/refusal handling without truncation or automatic chunking.
 Person qualification remains independent of approved
 wording and document selection. A completed learning activity proves no skill.
 
+For `requirements-v2`, exercise the source-bound English-language gate before
+extraction: a non-English posting is skipped without translation or a score.
+Verify complete-batch Skills/Professional Experience matching, reuse of ordinary
+facets and separation of materially different capabilities. Education and
+Languages remain direct job-local demands. One missing-qualification batch
+covers all four categories, with section-specific evidence validation and the
+explicit equivalent-experience Education route recorded without claiming a
+degree. Reject language support from Skills, achievements or attachments.
+Current section-backed matches create no achievement-wording gap; supported
+Skills and direct demands must not trigger unnecessary achievement rewrites.
+Inspect `requirement-fit-v3-equal`, equal-item contributions, duplicate-occurrence
+invariance, alternatives counted once and no-score behavior for an empty set.
+
 Post-edit Fit refresh is manually admitted. Prove that saves, approvals, reads
 and the operation's own writes make no additional model calls or queued work.
 Exercise the complete-catalog impact decision, previously unsupported
 requirements made relevant by new evidence, reuse of unaffected decisions,
 and grouped wording preparation. Check fixed input versions and job selection,
+including the selected jobs' exact direct-demand snapshots,
 duplicate admission, persisted call/item/deadline limits, cancellation and real
 worker restart. Changes while queued or running must refuse stale work without
 expanding the operation. Report recorded monetary spend separately from work
@@ -137,9 +151,23 @@ A failed refresh, model result, render, publication or cancellation preserves th
 last accepted version and exact artifact bytes. Rejected candidates and failures
 remain separate audit state. Resume composition retains every authored role and
 achievement and selects exactly one current approved variant for each, with
-stable weighted-coverage selection. Baseline-copy makes zero resume model calls,
+one composition policy point per eligible canonical requirement, complementary
+depth and stable ties. All other baseline sections, including Language /
+Proficiency, survive Profile editing, Plate and supported text/PDF/DOCX/locale
+exports. Existing four-section templates remain usable and empty language
+defaults do not create a factual revision. Baseline-copy makes zero resume model calls,
 including explicit review requests. Advisory coherence findings/timeouts remain
 honest when the user explicitly overrides review.
+
+Exercise the typed-requirement generation upgrade in an owned workspace created
+through the predecessor application's public entrypoints. Start with accepted
+history and artifact bytes, stop predecessor writers, capture a consistent
+workspace backup, then start the candidate. Verify unchanged schema strings,
+history, job revision ordering and accepted bytes; an empty active catalog;
+contract-change refresh status; no automatic model calls; and refusal of
+incompatible operation replay. After new-generation writes, restoring the
+pre-upgrade backup is the rollback proof. An older binary alone does not prove
+safe rollback. Report this synthetic proof separately from a live rollout.
 
 ## Discovery transaction recovery
 

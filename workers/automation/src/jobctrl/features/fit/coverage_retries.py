@@ -5,13 +5,12 @@ from __future__ import annotations
 from jobctrl.app.errors import AppError, ConflictError
 
 from .coverage_groups import GroupedCoverageDecision, owned_support
-from .sources import achievements, dto, fact_fingerprint, fact_sources, fingerprint
+from .sources import achievements, dto, fact_sources, fingerprint, qualification_fingerprint, wording_eligible
 
 
 def prepare_wording_retries(coverage, profile_snapshot, requirements_snapshot, requirements, operation):
     profile = dto(profile_snapshot)
     facts = fact_sources(profile)
-    source_hash = fact_fingerprint(profile, facts)
     inventory = achievements(profile)
     catalog = {row["requirement_id"]: row for row in requirements}
     plans, seen = [], set()
@@ -47,8 +46,8 @@ def prepare_wording_retries(coverage, profile_snapshot, requirements_snapshot, r
                     raise ConflictError("A selected retry's canonical requirement changed. Refresh Fit first.")
                 requirement_ids.add(ident)
                 assessment = read.latest_assessment(profile["profile_id"], ident, requirement["requirement_revision"],
-                                                      source_fingerprint=source_hash)
-                if (assessment is None or assessment["kind"] not in {"matched", "transferable"}
+                                                      source_fingerprint=qualification_fingerprint(profile, requirement, facts))
+                if (assessment is None or not wording_eligible(assessment) or assessment["kind"] not in {"matched", "transferable"}
                         or achievement_id not in assessment["achievement_ids"]
                         or not owned_support(inventory[achievement_id], assessment)
                         or binding["qualification_determination_id"] != assessment["determination_id"]):

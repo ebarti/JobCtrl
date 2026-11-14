@@ -116,7 +116,7 @@ contracts.
 also shows canonical requirement tags, one current wording and its separate
 proposed revision.*
 
-My profile opens on **Experience**. **Skills**, **Education** and **Personal
+My profile opens on **Experience**. **Skills**, **Education**, **Languages** and **Personal
 details** are peer sections alongside **Resume**, **Learning** and **Search
 preferences**. There is no duplicate Overview and no global Advanced mode.
 
@@ -126,6 +126,9 @@ inventory and secondary tools stay nearby. Add/edit/remove controls belong besid
 the record; **Restore removed experience** recovers retained roles or achievements without replacing newer
 Profile edits. Autosave, explicit saves, errors and revision conflicts remain
 visible. Profile edits do not regenerate documents or refresh matches.
+Languages records an authored **Language** and **Proficiency** per stable entry;
+it is separate from Skills. The saved entries remain in the baseline, Plate and
+supported exports, including templates that predate the Languages section.
 
 Each achievement leads with its saved or current wording and **Edit wording**.
 Requirement tags stay visible beside **Link requirement**. **Edit facts** opens
@@ -162,11 +165,19 @@ current correction's implementation/verification state.
 links do not create the factual assessment or coverage shown here.*
 
 Click an achievement's reusable requirement tag, or open **Jobs → Requirements**
-without a selected job. Inspect its definition, scope, qualifiers, version and
+without a selected job. Inspect its category, name, definition, version and
 source occurrences. **Linked achievements** groups by achievement identity;
 **Wordings for this requirement** shows their exact revisions within that group.
 The link back opens the exact Profile role and achievement and retains the
 library return context.
+
+The `requirements-v2` library contains reusable **Skills** and **Professional
+Experience**. **Education** and **Languages** are direct job-local demands shown
+with Fit and their permitted Profile sources; they do not create achievement
+wording requests. Fit gives every distinct canonical meaning and direct demand
+one item of credit under the equal-item policy, with no posting weights or
+must-have multipliers. Inspect the formula version and saved qualification
+coverage beside the result.
 
 Your explicit requirement/achievement/wording links remain **unassessed**.
 They are separate from recorded factual assessment and exact approved-wording
@@ -180,7 +191,8 @@ the complete flow.
 Save the facts, sources or wording you want included, then explicitly choose
 **Update affected matches**. For a selected scored cohort, use the corresponding
 Jobs bulk action. Review scope and work limits before starting. The update sees
-the complete requirement catalog, reuses current authority, reassesses affected
+the complete Skills/Professional Experience catalog and the selected jobs'
+direct Education/Languages demands, reuses current authority, reassesses affected
 support and groups actual expression gaps by achievement. It does not approve
 its own proposal or expand when inputs change.
 
@@ -276,3 +288,8 @@ unavailable provider/durable actions. It is an illustration of the candidate,
 not a connection to your local Profile, a real search, a submitted application or
 proof of live-provider behavior. Reading the walkthrough never grants a network
 or mutation permission. See the [demo data boundary](data-and-safety.md#public-demo).
+Its typed examples distinguish reusable Skills/Professional Experience from
+job-local Education/Languages and keep authored Language / Proficiency entries
+in the synthetic Profile. Those examples and formula displays illustrate source
+behavior; they do not establish a new hosted deployment or real-provider
+assessment quality.

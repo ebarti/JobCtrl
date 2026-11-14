@@ -196,6 +196,7 @@ class ProfileRepository:
                 return {"ok": True, "profileVersion": None, "profile": empty_profile(),
                         "style": deepcopy(DEFAULT_STYLE), "templateText": DEFAULT_TEMPLATE}
             document = json.loads(row["document_json"])
+            document["resume"].setdefault("language_entries", [])
             # Confirmation is derived from saved decisions. Client flags cannot
             # invent authority or clear an unresolved imported confirmation.
             for role in document.get("resume", {}).get("experience_entries", []):
@@ -259,6 +260,10 @@ class ProfileRepository:
             # Raw historical cells remain in owned storage/transfer archives;
             # the public document exposes current recorded authority only.
             document = self.config(profile_id, conn)["profile"]
+            if "language_entries" not in json.loads(row["document_json"])["resume"]:
+                # Editor defaults do not alter an immutable source fingerprint
+                # for a saved document from before Languages was introduced.
+                document["resume"].pop("language_entries", None)
             achievements = [dict(item) for item in conn.execute(
                 "SELECT * FROM profile_achievements WHERE profile_id=? AND active=1 ORDER BY position,achievement_id", (profile_id,))]
             roles = []
@@ -347,6 +352,11 @@ class ProfileRepository:
                             for role in old_document.get("resume", {}).get("experience_entries", [])
                             for item in role.get("achievement_evidence", [])}
             document = deepcopy(document)
+            # An empty form default adds no fact and must not invalidate a
+            # previously accepted Profile or resume on an otherwise empty save.
+            if (before and "language_entries" not in old_document.get("resume", {})
+                    and document.get("resume", {}).get("language_entries") == []):
+                document["resume"].pop("language_entries")
             for role in document.get("resume", {}).get("experience_entries", []):
                 for item in role.get("achievement_evidence", []):
                     previous_item = old_evidence.get((role["id"], item["id"]))
@@ -393,11 +403,15 @@ class ProfileRepository:
                 self.upsert_source(conn, profile_id, profile_identity("field", profile_id, section, key), {"kind": "fact", "origin": "profile", "text": value if isinstance(value, str) else canonical(value), "path": [section, key]})
         resume = document["resume"]
         for key, value in resume.items():
-            if key not in {"experience_entries", "education_entries", "skill_categories", "tailoring_rules"}:
+            if key not in {"experience_entries", "education_entries", "skill_categories", "language_entries", "tailoring_rules"}:
                 self.upsert_source(conn, profile_id, profile_identity("baseline-field", profile_id, key), {"kind": "authored_baseline", "origin": "profile", "text": value if isinstance(value, str) else canonical(value), "path": ["resume", key]})
         for section in ("education_entries", "skill_categories"):
             for item in resume.get(section, []):
                 self.upsert_source(conn, profile_id, profile_identity("entry", profile_id, section, item["id"]), {"kind": "fact", "origin": "profile", "text": canonical(item), "path": ["resume", section, item["id"]]})
+        for item in resume.get("language_entries", []):
+            self.upsert_source(conn, profile_id, profile_identity("entry", profile_id, "language_entries", item["id"]),
+                               {"kind": "language", "origin": "profile", "text": canonical(item),
+                                "path": ["resume", "language_entries", item["id"]], "record": deepcopy(item)})
         old_roles = {item["id"]: item for item in old_document.get("resume", {}).get("experience_entries", [])}
         for role in resume["experience_entries"]:
             role_id = role["id"]

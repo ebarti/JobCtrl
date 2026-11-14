@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
 from jobctrl.app.errors import AppError, ConflictError
 
+from .contract import CONTRACT_VERSION, current_contract, require_contract
 from .sources import achievements, fingerprint
 
 
@@ -67,7 +68,7 @@ def binding_fingerprint(record):
 
 
 def association_stale_reasons(record, requirement, profile, wording_library):
-    reasons = []
+    reasons = [] if current_contract(record) else ["contract_changed"]
     if requirement is None or str(record["requirement_revision"]) != str(requirement["revision"]):
         reasons.append("requirement_revised")
     if profile is None:
@@ -95,9 +96,10 @@ def association_stale_reasons(record, requirement, profile, wording_library):
 
 
 def validate_association(record, requirement, profile, wording_library):
+    require_contract(requirement)
     if profile["profile_revision"] != record["expected_profile_revision"]:
         raise ConflictError("The reviewed Profile changed before the association was saved.")
-    reasons = association_stale_reasons(record, requirement, profile, wording_library)
+    reasons = association_stale_reasons({**record, "contract_version": CONTRACT_VERSION}, requirement, profile, wording_library)
     if reasons:
         raise ConflictError("The selected requirement, achievement or wording changed. Review its current revision.",
                             stale_reasons=reasons)

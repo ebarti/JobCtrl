@@ -40,6 +40,8 @@ export type ApplicationStack = {
   };
   discoveryCheckpoint(runId: string): Promise<{ adapters: { site: string; state: Record<string, unknown>; emittedCount: number; completed: boolean }[]; receipts: Record<string, number> }>;
   restartWorker(): Promise<{ previous: number; current: number }>;
+  upgradeSource(): Promise<{ previous: number; current: number; backup: string; candidateOrigin: string; mode: "source" | "installed" }>;
+  databaseSchemaFingerprint(): Promise<string>;
   failRendering(): Promise<void>;
   restoreRendering(): Promise<void>;
   cli(
@@ -49,6 +51,7 @@ export type ApplicationStack = {
   inspectPdf(
     bytes: Buffer,
   ): Promise<{ pages: number; text: string; images: Buffer[] }>;
+  inspectDocx(bytes: Buffer): Promise<string>;
   file(relative: string): Promise<Buffer>;
   close(options?: { retainState?: boolean }): Promise<void>;
 };
@@ -67,6 +70,7 @@ type Fixtures = {
   features: string | undefined;
   discoveryTransport: "http" | "jobstreaming";
   nativeAccountingPreflight: boolean;
+  sourceRevision: string | undefined;
   expectedTransportFailures: {
     request: Request;
     errorText: "net::ERR_FAILED";
@@ -83,6 +87,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
   features: [undefined, { option: true }],
   discoveryTransport: ["http", { option: true }],
   nativeAccountingPreflight: [false, { option: true }],
+  sourceRevision: [undefined, { option: true }],
   expectedTransportFailures: async ({}, use) => {
     await use([]);
   },
@@ -136,10 +141,10 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     { scope: "worker", timeout: 60_000 },
   ],
   app: [
-    async ({ temporal, features, discoveryTransport, nativeAccountingPreflight }, use, testInfo) => {
+    async ({ temporal, features, discoveryTransport, nativeAccountingPreflight, sourceRevision }, use, testInfo) => {
       const runtime: ApplicationStack = await applicationStack(
         temporal.address,
-        { features, discoveryTransport, nativeAccountingPreflight },
+        { features, discoveryTransport, nativeAccountingPreflight, sourceRevision },
       );
       await testInfo.attach("runtime-setup", {
         contentType: "application/json",

@@ -8,6 +8,7 @@ from pydantic import Field, StrictStr
 
 from jobctrl.app.errors import AppError
 
+from .contract import CONTRACT_VERSION
 from .models import Citation, Decision, WordingCoverageDecision
 from .qualification import now
 from .sources import evidence_refs, fingerprint, requirement_source, source_id, validate_citations
@@ -201,6 +202,7 @@ def validate_group_decision(result, *, achievement_id, entries, variants, facts,
 
 def coverage_record(result, *, profile, requirement, assessment, variant, facts, provenance, variant_fingerprint):
     return {
+        "contract_version": CONTRACT_VERSION,
         "relation_id": "fit-coverage-" + fingerprint({"assessment": assessment["assessment_id"],
             "variant": variant_fingerprint, "receipt": provenance["receipt_id"]}),
         "profile_id": profile["profile_id"], "requirement_id": requirement["requirement_id"],

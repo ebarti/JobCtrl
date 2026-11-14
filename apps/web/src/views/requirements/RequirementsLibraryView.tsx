@@ -134,8 +134,9 @@ function RequirementHistory({ requirementId, kind, filter }: { requirementId: st
     {result?.kind === "occurrences" ? result.rows.length ? <ul className="requirement-history__list">{result.rows.map((row) => <li key={`${row.job_id}:${row.occurrence_id}:${row.snapshot_revision}`}>
       <div className="requirement-history__line"><strong>{row.current ? "Current posting reference" : "Earlier posting reference"}</strong>
         <Link to="/jobs/$jobId" params={{ jobId: row.job_id }} search={(previous) => ({ ...previous, returnRequirement: requirementId, returnRequirementsFilter: filter, jobTab: "fit" })}>Open source job</Link></div>
-      <blockquote>{row.text}</blockquote>
-      <p>Recorded meaning: {row.definition}</p><span>{requirementQualifierText(row)} · {readable(row.tier)} · weight {row.weight}</span>
+      <blockquote>{row.text ?? row.definition}</blockquote>
+      <p>Recorded meaning: {row.definition}</p><span>{requirementQualifierText(row)}{row.contract_version !== "requirements-v2" && row.tier ? ` · historical ${readable(row.tier)}` : ""}{row.contract_version !== "requirements-v2" && row.weight !== undefined ? ` · historical weight ${row.weight}` : ""}</span>
+      {row.source_note ? <p>Posting context: {row.source_note}</p> : null}
       <details><summary>Source and provenance</summary>
         <p>Requirement revision {row.requirement_revision} · posting revision {row.posting_revision} · snapshot {row.snapshot_revision}{row.accepted ? " · accepted snapshot" : " · superseded snapshot"}</p>
         <p>Source {row.source_id} · revision {row.source_revision} · hash {row.source_hash}</p>
@@ -266,13 +267,25 @@ function RequirementDetail({ library, requirement, choices, canLink, onOpenAchie
   ])];
   return <section className="requirements-detail" aria-labelledby="requirement-definition-title" tabIndex={-1}>
     <div className="requirements-definition"><span className="requirements-definition__eyebrow">Reusable requirement · revision {requirement.revision}</span>
-      <h2 id="requirement-definition-title">{requirement.definition}</h2>
+      <h2 id="requirement-definition-title">{requirement.name}</h2>
+      <p>{requirement.definition}</p>
       <p>{requirementQualifierText(requirement)}</p>
       <details><summary>Definition identity</summary><p>Requirement {requirement.requirement_id} · revision {requirement.revision}</p></details>
     </div>
+    {requirement.assessment ? <section className="requirement-assessment" aria-label="Recorded factual support">
+      <h3>Factual support</h3>
+      <p>{requirement.assessment.origin === "bundled_synthetic_example" ? "Authored synthetic illustration" : requirement.assessment.current ? "Current assessment" : "Earlier assessment · needs review"}: {readable(requirement.assessment.kind)}</p>
+      <p>{requirement.assessment.rationale}</p>
+      {requirement.assessment.wording_support === "section" ? <p>Supported by saved Profile section evidence. This support does not need achievement wording.</p> : null}
+      <details><summary>Supporting sources and determination</summary>
+        {requirement.assessment.evidence_refs.map((ref, index) => <blockquote key={`${ref.source_id}:${ref.revision}:${index}`}>{ref.quote}<footer>Source {ref.source_id} · revision {ref.revision}</footer></blockquote>)}
+        <p>Determination {requirement.assessment.determination_id} · confidence {readable(requirement.assessment.confidence)}</p>
+        {requirement.assessment.stale_reasons.length ? <p>Needs review: {requirement.assessment.stale_reasons.map(readable).join("; ")}</p> : null}
+      </details>
+    </section> : null}
     <div className="requirement-section-heading"><h3>Linked achievements <span className="requirement-count">{achievementIds.length}</span></h3>
       {canLink ? <Button type="button" variant="outline" size="sm" onClick={onLinkAchievement}>Link achievement</Button> : null}</div>
-    {!achievementIds.length ? <div className="requirement-empty"><strong>No achievements linked yet.</strong><p>Link a saved achievement, or update affected matches to assess available evidence.</p></div> : null}
+    {!achievementIds.length ? <div className="requirement-empty"><strong>No achievements linked.</strong><p>{requirement.assessment?.wording_support === "section" ? "The recorded support comes from a Profile section. An achievement link is optional." : "You can link a saved achievement. A link remains unassessed until you manually update affected matches."}</p></div> : null}
     <div className="requirements-achievements">{achievementIds.map((achievementId) => <LinkedAchievement key={achievementId} library={library} requirement={requirement} achievementId={achievementId}
       achievement={choices.find((choice) => choice.achievementId === achievementId)} onOpenAchievement={onOpenAchievement}
       onLinkWording={onLinkWording} onEditLink={onEditLink} canLink={canLink} sourceState={sourceState} recordsAligned={recordsAligned} />)}</div>
@@ -310,7 +323,7 @@ export function RequirementsLibraryView({ selectedRequirementId, onSelectRequire
   const requirements = library.data?.requirements ?? [];
   const search = filter ?? localFilter;
   const needle = search.trim().toLocaleLowerCase();
-  const shown = requirements.filter((requirement) => requirement.definition.toLocaleLowerCase().includes(needle));
+  const shown = requirements.filter((requirement) => `${requirement.name}\n${requirement.definition}`.toLocaleLowerCase().includes(needle));
   useEffect(() => {
     if (!selectedRequirementId && !localSelected && requirements.length) {
       const firstId = requirements[0]!.requirement_id;
@@ -331,7 +344,8 @@ export function RequirementsLibraryView({ selectedRequirementId, onSelectRequire
   const canLink = !!library.data && library.data.readiness === "ready" && !library.error && !profile.error && !wording.error
     && library.data.profile_revision === profile.data?.profileVersion && library.data.profile_revision === wording.data?.profileVersion;
   return <>
-    <PageHead eyebrow="Library" title="Requirements library" subtitle="Reusable requirements, linked achievements, and the wording recorded for each." />
+    <PageHead eyebrow="Library" title="Requirements library" subtitle="Reusable Skills and Professional Experience, their recorded support, and approved wording. Education and languages stay with each job." />
+    {library.data?.synthetic ? <p role="note">Synthetic catalog: bundled source examples and your unassessed links. Any illustrated section support is authored teaching content; no model assessment ran.</p> : null}
     <section className="requirements-library" aria-label="Requirements library">
       <div className="requirements-library__toolbar"><label>Find a requirement<Input value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder="Search saved definitions" /></label>
         {search ? <Button type="button" variant="outline" size="sm" onClick={() => setSearch("")}>Clear filter</Button> : null}
@@ -341,13 +355,13 @@ export function RequirementsLibraryView({ selectedRequirementId, onSelectRequire
       {profile.error || wording.error ? <p className="requirement-error" role="alert">Achievement details could not be refreshed. Saved requirement records remain available.</p> : null}
       {mismatch ? <p role="status">The Profile and requirement records are from different revisions. Refresh them before changing links or wording. <Button type="button" variant="outline" size="sm" onClick={() => { void Promise.all([library.refetch(), profile.refetch(), wording.refetch()]); }}>Refresh records</Button></p> : null}
       {library.data?.readiness === "profile_required" ? <p className="muted">Save a Profile to link achievements to requirements.</p> : null}
-      {library.data && !requirements.length ? <div className="requirement-empty"><strong>No requirements recorded yet.</strong><p>Requirements appear here after they are extracted from a saved job.</p></div> : null}
+      {library.data && !requirements.length ? <div className="requirement-empty"><strong>No current requirements recorded yet.</strong><p>Skills and professional experience appear after extraction under the current requirements contract. Earlier job results remain in their history and need a manual refresh.</p></div> : null}
       {requirements.length ? <div className="requirements-library__layout">
         <nav className="requirements-list" aria-label="Saved requirements"><div className="requirement-section-heading"><h2>Requirements</h2><span>{shown.length}</span></div>
           {shown.length ? <ul>{shown.map((requirement) => {
             const count = new Set([...(requirement.assessment?.achievement_ids ?? []), ...requirement.coverage.map((item) => item.achievement_id), ...requirement.current_wordings.map((item) => item.achievement_id), ...requirement.associations.filter((item) => item.state === "active").map((item) => item.achievement_id)]).size;
             return <li key={requirement.requirement_id}><button type="button" aria-pressed={requirement.requirement_id === selected?.requirement_id} onClick={() => select(requirement.requirement_id)}>
-              <strong>{requirement.definition}</strong><span>{requirementQualifierText(requirement)}</span><small>{count} linked {count === 1 ? "achievement" : "achievements"}</small></button></li>;
+              <strong>{requirement.name}</strong><span>{requirementQualifierText(requirement)}</span><small>{count} linked {count === 1 ? "achievement" : "achievements"}{requirement.assessment?.wording_support === "section" ? " · Profile section support" : ""}</small></button></li>;
           })}</ul> : <p>No requirements match this filter.</p>}
         </nav>
         <div className="requirements-library__detail" ref={detailRef} tabIndex={-1}>

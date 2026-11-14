@@ -13,7 +13,7 @@ materials remain available. Matching wording or field values never establishes
 authorship. See [Review legacy confirmations](#review-legacy-confirmations).
 
 A Candidate Profile is JobCtrl's canonical, local record of facts about you:
-your experience, education, skills, evidence, application answers, resume
+your experience, education, skills, languages, evidence, application answers, resume
 baseline, and the preferences that control how those facts may be used. Scoring,
 materials, interview preparation, and Apply consume versioned snapshots of
 this record; they do not rewrite it to suit a job.
@@ -142,7 +142,7 @@ Use the current web routes according to the kind of change you are making:
 | Route | What it owns |
 | --- | --- |
 | `/profile?section=experience` | Default My profile section: editable roles, position summaries, achievements, nearby wording/revision decisions and canonical requirement tags. |
-| `/profile?section=skills`, `education`, `personal` | Peer sections for independent skill, education and personal/application fields, including voluntary EEO data. |
+| `/profile?section=skills`, `education`, `languages`, `personal` | Peer sections for independent skill, education, Language / Proficiency and personal/application fields, including voluntary EEO data. |
 | `/profile?section=resume` | The actual Plate baseline editor, document styling and supported export; Profile facts remain the canonical source. |
 | `/profile/import/upload` | The start of the three-step PDF import flow. You choose whether to import profile data, resume style, or both before confirming. |
 | `/preferences` | **Search preferences** combines saved target roles, career tracks/levels, locations/work arrangements and source/limit controls, alongside retained application/writing/template tools. |
@@ -151,13 +151,19 @@ Use the current web routes according to the kind of change you are making:
 | `/evidence-map` | Retained source/usage inspection reached contextually or through diagnostics; it is not a mandatory editing stop. |
 | `/discovery` | The same connected search task and contextual Discovery/source/schedule tools, reached from Jobs. |
 
-Experience, Skills, Education and Personal details are peer navigation sections,
+Experience, Skills, Education, Languages and Personal details are peer navigation sections,
 not collapsed content under an Overview. Changes retain each entry's stable
 identity and the normal autosave/conflict boundary. Experience leads with the
 role inventory, followed by **Professional summary** and compact secondary tools.
 In **Skills**, edit a group title directly in its heading. Title edits use the
 same autosave, **Save changes**, validation and undo behavior as individual
 skills; adding or removing skills and groups remains nearby.
+In **Languages**, add and edit a **Language** and your authored **Proficiency**
+under a stable entry identity. These records use the same validated autosave,
+undo and conflict handling. JobCtrl does not infer them from Skills groups,
+achievement prose or an attachment. The model may assess a job's language
+demand only against these structured records; it does not write a proficiency
+claim into your Profile.
 Role summaries remain
 editable even when empty or when the role has no achievements. Remove a role or
 achievement deliberately; **Restore removed experience** restores the requested
@@ -219,11 +225,15 @@ the update disabled. You can still browse and manage jobs. In the updated
 source-built demo, **Demo guide** → **Explore matching and wording** opens a
 synthetic walkthrough; the real update remains unavailable.
 
-The update reviews the **complete saved requirement catalog**. When factual
+The update reviews the **complete saved Skills/Professional Experience catalog**
+and freezes the selected jobs' direct Education and Languages demands. When factual
 inputs need review, one model decision identifies affected assessments, including
 requirements that newly saved evidence may now support. Current assessments are
-reused across jobs. Approved-wording coverage is checked separately: an expression
-gap does not reduce factual fit. Remaining meaningful expression gaps are considered together
+reused across jobs for the same canonical meaning; direct demands stay job-local.
+Approved-wording coverage is checked separately: an expression gap does not
+reduce factual fit. Current Skills, Education or Languages support in its own
+Profile section creates no achievement-wording gap. Remaining actual supported
+expression needs are considered together
 for each achievement before a wording proposal is prepared. Proposals stay in
 the [Approved wording library](#approved-wording-library) until you decide what
 to approve, reject or defer.
@@ -280,7 +290,7 @@ deliberately when your experience changes; tailoring does not change Profile as
 a side effect. See the explicitly labeled transformation target in
 [Materials & Tailoring](materials-and-tailoring.md#how-jobctrl-chooses-a-resume).
 
-Adding an experience, education entry or skill category creates its internal
+Adding an experience, education entry, language entry or skill category creates its internal
 identity immediately. You edit its descriptive fields; changing a title or label
 keeps its identity and any **Must appear in final resume** selection intact.
 
@@ -327,6 +337,14 @@ follow the normal Profile save and autosave path. Roles without achievement
 bullets render compactly instead of reserving space for an empty bullet list.
 Education entries place the institution and
 completion year on the first row and the degree directly underneath.
+
+Language / Proficiency entries remain in the authored baseline, Plate document,
+text, PDF, DOCX and supported locale exports. Existing templates with the four
+older section placeholders remain usable: a nonempty Languages section is
+rendered without changing the saved template. An empty Languages default does
+not create a factual edit, advance an old Profile revision or remove earlier
+document content. Tailoring preserves all baseline sections and changes only
+the approved achievement wording selected for that job.
 
 The download is rendered from the document currently mounted in the browser,
 so it includes live text and formatting while preserving the active template's
@@ -536,6 +554,11 @@ then considers remaining supported requirements together for the relevant
 achievement. One coherent proposal can
 address that group's meaningful expression gaps and be reused across jobs.
 This grouping does not merge separate achievements or create a new fact.
+A supported section-backed match does not itself require achievement wording.
+New wording needs an actual unsupported expression need and factual achievement
+support. Existing approved expressions are reused rather than rewritten for
+stylistic variation. Job-local Education and Languages demands never enter
+achievement-wording preparation.
 
 Profile owns the proposal's text, model receipt, source revisions and approval;
 it does not compute requirement matches or person fit. **Approve exact wording**

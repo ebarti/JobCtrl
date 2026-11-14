@@ -6,7 +6,7 @@ const minutes = (offsetMinutes: number) => ({ offsetMinutes }) as const;
 
 const demoSeed = {
   schemaVersion: 1,
-  seedVersion: "2026-11-06.1",
+  seedVersion: "2026-11-13.1",
   title: "JobCtrl product tour",
   artifacts: DEMO_ARTIFACTS,
   readModel: DEMO_READ_MODEL,
@@ -33,14 +33,14 @@ const demoSeed = {
         title: "Platform systems lead",
         state: "accepted",
         at: minutes(-1440),
-        detail: "A bundled illustrative strong-match result with reviewable synthetic materials.",
+        detail: "Authored equal-item example with section-backed Skills, an education alternative, English support and unknown Spanish proficiency. Reviewable synthetic materials remain available.",
       },
       {
         id: "job-contoso-reliability",
         title: "Reliability engineering manager",
-        state: "blocked",
+        state: "evidence_missing",
         at: minutes(-730),
-        detail: "A hard requirement is missing, so tailoring may not invent the claim.",
+        detail: "Authored example: regulated-domain experience is not established by the saved synthetic sources. No eligibility determination was made.",
       },
       {
         id: "job-fabrikam-systems",

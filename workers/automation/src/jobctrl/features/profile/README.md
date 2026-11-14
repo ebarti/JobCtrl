@@ -3,6 +3,15 @@
 Profile owns factual sources, authored achievements, exact wording text and user
 approval. Fit supplies an immutable source-bound authoring brief; Profile never
 discovers requirements, computes person qualification or approves its own text.
+Structured Languages are authored as `resume.language_entries` rows with stable
+`id`, `language` and `proficiency` text. The Languages editor uses the existing
+autosave/recovery flow. Each row publishes its own `kind=language` source at
+`["resume", "language_entries", id]`, with the exact row retained as `record`.
+Only those sources can support a Language demand. A Skills group called
+Languages is retained as authored Skills and is never promoted into this section.
+Missing language entries mean an empty section; this form default does not
+advance an older Profile's fact revision on an otherwise unchanged save.
+
 `request_authoring` retains every origin and returns a prior exact request without
 another model call. Pending wording is separate from approved wording and cannot
 become factual authority.

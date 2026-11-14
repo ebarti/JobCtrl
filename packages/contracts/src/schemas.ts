@@ -634,6 +634,7 @@ export const RESUME_TEMPLATE_SECTIONS = [
   "experience",
   "education",
   "skills",
+  "languages",
 ] as const;
 export type ResumeTemplateSection = (typeof RESUME_TEMPLATE_SECTIONS)[number];
 
@@ -1873,6 +1874,12 @@ const ProfileSkillCategorySchema = z.object({
   items: z.array(z.string()).default([]),
 }).passthrough();
 
+const ProfileLanguageEntrySchema = z.object({
+  id: z.string().min(1),
+  language: z.string().default(""),
+  proficiency: z.string().default(""),
+}).passthrough();
+
 const ProfileTailoringPolicySchema = z
   .object({
     mode: z.enum(TAILORING_MODES).default("balanced"),
@@ -1948,6 +1955,7 @@ const ProfileResumeMasterSchema = z.object({
   }),
   education_entries: z.array(ProfileEducationEntrySchema).default([]),
   skill_categories: z.array(ProfileSkillCategorySchema).default([]),
+  language_entries: z.array(ProfileLanguageEntrySchema).default([]),
   tailoring_rules: ProfileTailoringRulesSchema.default({}),
 }).passthrough();
 

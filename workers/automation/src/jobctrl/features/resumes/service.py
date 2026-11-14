@@ -109,6 +109,8 @@ class ResumesService:
         except Exception:
             reasons.append("profile_unavailable")
         if revision["mode"] != "baseline_copy":
+            if revision.get("contract_version") != "requirements-v2":
+                reasons.append("requirements_contract_changed")
             if revision["requirements_snapshot"] is None or revision["fit_snapshot"] is None:
                 reasons.append("coverage_not_recorded")
             else:
@@ -171,10 +173,13 @@ class ResumesService:
             return None
         if not isinstance(operation_id, str) or not operation_id.strip() or len(operation_id) > 240:
             raise ResumeError("invalid_resume_operation_id")
-        return {"operation_id": operation_id, "input_hash": digest(payload)}
+        return {"operation_id": operation_id,
+                "input_hash": digest({"contract_version": "requirements-v2", **payload})}
 
     def _coverage(self, job_id, snapshot, connection=None):
         requirements = dto(self.requirements.get_job_requirements(job_id, connection=connection))
+        if requirements.get("contract_version") != "requirements-v2":
+            raise ResumeError("requirements_contract_changed")
         if requirements.get("stale") is True:
             raise ResumeError("requirements_source_changed")
         coverage = dto(self.fit.coverage_for(
@@ -255,6 +260,7 @@ class ResumesService:
     def _revision(self, snapshot, prepared, requirements, coverage, theme, *, template=None):
         self.renderer.validate_theme(theme)
         return {"revision_id": str(uuid4()), "number": 1, "created_at": now(),
+                "contract_version": "requirements-v2",
                 "profile_revision": snapshot["profile_revision"], "profile_snapshot": deepcopy(snapshot),
                 "requirements_snapshot": deepcopy(requirements), "fit_snapshot": deepcopy(coverage),
                 **deepcopy(prepared), "theme": deepcopy(theme), "template": deepcopy(template),
@@ -385,8 +391,9 @@ class ResumesService:
                 "invent claims, or request a polishing/repair loop. All recorded approvals remain user-owned."),
             sources=sources, response_schema=review_schema(),
             context={"resume_id": resume_id, "revision_id": revision["revision_id"],
+                     "contract_version": "requirements-v2",
                      "profile_revision": snapshot["profile_revision"], "document_sha256": digest(revision["document"])},
-            prompt_version="resume-coherence-v1", lane="resumes",
+            prompt_version="resume-coherence-requirements-v2", lane="resumes",
         )
         fingerprint = None
         preflight_failure = None
@@ -637,7 +644,7 @@ class ResumesService:
             recorded_source(path=["resume", "executive_profile"])
         for role in pinned["roles"]:
             recorded_source(role_id=role["role_id"])
-        for section in ("education_entries", "skill_categories"):
+        for section in ("education_entries", "skill_categories", "language_entries"):
             for row in resume.get(section, []):
                 recorded_source(path=["resume", section, row["id"]])
         for ident in refs:

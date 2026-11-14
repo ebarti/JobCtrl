@@ -105,10 +105,12 @@ def create_application(workspace: Path | str, *, enabled_features: Collection[st
         # Discovery remains independently removable and acquisition-only on its
         # own; the complete product retains its existing public search identity.
         preparation_finalizer = features[-1].action_finalizers["preparation.run"]
+        preparation_version = features[-1].action_versions["preparation.run"]
         for feature in features:
             if feature.name == "discovery":
                 feature.actions["discovery.search"] = services["preparation"].search
                 feature.action_finalizers["discovery.search"] = preparation_finalizer
+                feature.action_versions["discovery.search"] = preparation_version
     if "jobs" in services:
         jobs = services["jobs"]
         if "fit" in services:

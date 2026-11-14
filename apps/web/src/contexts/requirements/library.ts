@@ -8,13 +8,16 @@ import { useTenantId } from "../../shared/providers/TenantProvider.js";
 const qualifierSchema = z.object({ dimension: z.string(), value: z.string() });
 export const canonicalRequirementSchema = z.object({
   requirement_id: z.string(), revision: z.number().int().positive(), definition: z.string(),
-  scope: z.enum(["resume", "eligibility", "logistics", "employer_condition"]),
-  qualifiers: z.array(qualifierSchema), provenance: z.record(z.string(), z.unknown()).optional(), created_at: z.string().optional(),
+  contract_version: z.string().optional(), category: z.enum(["skill", "professional_experience"]).optional(), name: z.string().optional(),
+  scope: z.enum(["resume", "eligibility", "logistics", "employer_condition"]).optional(),
+  qualifiers: z.array(qualifierSchema).optional(), provenance: z.record(z.string(), z.unknown()).optional(), created_at: z.string().optional(),
 }).passthrough();
 const occurrenceSchema = z.object({
   occurrence_id: z.string(), requirement_id: z.string(), requirement_revision: z.number().int().positive(),
-  job_id: z.string(), posting_revision: z.number().int().positive(), text: z.string(),
-  definition: z.string(), scope: z.string(), qualifiers: z.array(qualifierSchema), tier: z.string(), weight: z.number(),
+  job_id: z.string(), posting_revision: z.number().int().positive(), text: z.string().optional(),
+  definition: z.string(), contract_version: z.string().optional(), category: z.enum(["skill", "professional_experience"]).optional(), name: z.string().optional(),
+  basis: z.enum(["explicit", "inferred", "explicit_and_inferred"]).optional(), rationale: z.string().nullable().optional(), source_note: z.string().nullable().optional(),
+  scope: z.string().optional(), qualifiers: z.array(qualifierSchema).optional(), tier: z.string().optional(), weight: z.number().optional(),
   source_id: z.string(), source_revision: z.number().int().positive(), source_hash: z.string(),
   spans: z.array(z.object({ start: z.number().int().nonnegative(), end: z.number().int().positive(), quote: z.string() })),
   extraction_determination_id: z.string(), equivalence_determination_ids: z.array(z.string()),
@@ -81,8 +84,8 @@ export function useRequirementHistory(requirementId: string, { kind = "revisions
 
 export type RequirementMeaningCorrection = {
   expected_revision: number; job_id: string; expected_posting_revision: number; reason: string;
-  proposed: { local_id: string; definition: string; scope: CanonicalRequirement["scope"]; qualifiers: CanonicalRequirement["qualifiers"];
-    text: string; tier: "must_have" | "nice_to_have"; weight: number; support: "supported";
+  proposed: { local_id: string; category: "skill" | "professional_experience"; name: string; definition: string;
+    basis: "explicit" | "inferred" | "explicit_and_inferred"; rationale: string | null; source_note: string | null; evidence_refs: string[];
     spans: Array<{ start: number; end: number; quote: string }> };
 };
 
