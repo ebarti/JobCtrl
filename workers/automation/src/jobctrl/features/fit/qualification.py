@@ -11,7 +11,7 @@ from jobctrl.app.errors import AppError
 
 from .contract import CONTRACT_VERSION, DIRECT_CATEGORIES, current_contract, require_contract
 from .models import (
-    QUALIFICATION_INSTRUCTIONS, QualificationBatchDecision,
+    QUALIFICATION_INSTRUCTIONS, QUALIFICATION_PROMPT_VERSION, QualificationBatchDecision,
 )
 from .sources import (
     achievement_inventory, achievements, dto, evidence_category, evidence_refs,
@@ -120,7 +120,7 @@ class Qualification:
                 "achievements": [{"achievement_id": ident, "role_id": row["role_id"], "source_refs": row.get("source_refs", [])}
                                  for ident, row in inventory.items()],
             },
-            prompt_version="fit-qualification-batch-v2",
+            prompt_version=QUALIFICATION_PROMPT_VERSION,
         )
         self._verify_batch_receipt(authority_model, result, provenance)
         returned = [row.requirement_id for row in result.requirements]
@@ -139,7 +139,7 @@ class Qualification:
             receipt = model.receipt(provenance["receipt_id"])
             canonical = QualificationBatchDecision.model_validate(receipt["value"])
             valid = (receipt.get("status") == "succeeded" and receipt.get("operation") == "fit.qualification-batch"
-                     and receipt.get("prompt_version") == "fit-qualification-batch-v2"
+                     and receipt.get("prompt_version") == QUALIFICATION_PROMPT_VERSION
                      and all(receipt.get(key) == provenance.get(key) for key in (
                          "provider", "model", "lane", "prompt_version", "input_fingerprint", "created_at"))
                      and canonical.model_dump() == result.model_dump())

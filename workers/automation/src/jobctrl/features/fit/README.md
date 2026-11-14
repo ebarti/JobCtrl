@@ -39,7 +39,7 @@ qualification work.
 `FitService.assess_job` and `Qualification.resolve_many` inspect the entire fixed
 job item set, reuse exact current authority, then submit every pending category
 together in one `fit.qualification-batch` determination, prompt
-`fit-qualification-batch-v2`, in the existing `scoring` lane. The complete Profile
+`fit-qualification-batch-v3`, in the existing `scoring` lane. The complete Profile
 source inventory is supplied once. Each item has its own `requirement:<id>` source,
 category, revision and permitted evidence IDs. There are no chunks, truncated
 inventories, lexical judgments, per-item semantic retries or result replay cache.
@@ -66,6 +66,11 @@ verbatim spans, education alternatives, route/source compatibility and achieveme
 ownership. A source in Skills never proves language proficiency. Requirements and
 user scoring guidance cannot supply candidate facts. Models decide meaning and
 support within those permitted sources; structural guards never infer semantics.
+
+Every Education judgment citing evidence records `evidence_route`, including
+missing/blocked judgments with contrary Education evidence. A supported verdict
+always requires a route; unsupported Education with no citations may leave it
+null. The model supplies this route explicitly; readers never infer it.
 
 Personal traits, certifications/licenses, job conditions and detailed years of
 experience are outside this iteration. The retained compatibility fields are
@@ -173,6 +178,13 @@ source bindings require no semantic call. Unchanged judgments retain their
 original receipt, with an explicit revalidation lineage when sources change.
 Every pending selected item enters one qualification batch; the complete map is
 checkpointed before individual rows. Publication updates only selected job scores.
+
+When every frozen prior assessment is absent, all items require initial
+qualification structurally. That case skips the impact model call, records
+`initial_qualification` with structural `all_prior_assessment_ids_absent`
+provenance and no fabricated selection receipt, then makes the one complete
+qualification batch. Item/call/deadline limits, cancellation and source/head
+guards still apply. Mixed or existing assessment sets retain impact selection.
 
 Reservations precede external I/O and counters/checkpoints survive restart. A lost
 external acknowledgement cannot spend a fresh allowance. Input/catalog/posting/

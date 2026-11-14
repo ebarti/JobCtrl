@@ -374,7 +374,9 @@ class ManualRefresh:
                                and operation.checkpoint_value("qualification:" + row["requirement_id"]) is None]
                     prepared = await self.service.qualification.candidates(profile_snapshot, pending, model=operation.model)
                     batch = {row["requirement_id"]: {**row, "refresh_operation_id": operation_id,
-                             "impact_selection_receipt_id": selection["provenance"]["receipt_id"]} for row in prepared}
+                             "impact_selection_kind": selection.get("kind", "model"),
+                             "impact_selection_provenance": selection["provenance"],
+                             "impact_selection_receipt_id": (selection["provenance"] or {}).get("receipt_id")} for row in prepared}
                     operation.check()
                     operation.checkpoint("qualification_batch", batch)
                 candidates = {}
@@ -430,6 +432,18 @@ class ManualRefresh:
 
     async def _select(self, operation, state, requirements):
         snapshot = state["snapshot"]
+        if requirements and all(snapshot["prior_assessments"][row["requirement_id"]] is None for row in requirements):
+            operation.check()
+            # No prior judgment exists to retain. This selects work, never
+            # meaning/support, and still obeys the frozen scope and item limit.
+            return {"kind": "initial_qualification", "provenance": {
+                "kind": "structural", "contract_version": CONTRACT_VERSION,
+                "basis": "all_prior_assessment_ids_absent",
+            }, "decision": {"requirements": [{
+                "requirement_id": row["requirement_id"], "requirement_revision": str(row["requirement_revision"]),
+                "verdict": "affected", "rationale": "No prior assessment exists; an initial qualification is required.",
+                "citations": [],
+            } for row in requirements]}}
         facts = snapshot["facts"]
         sources = [{**row, "source_id": "current:" + row["source_id"]} for row in facts]
         structure = achievement_inventory(snapshot["profile"])

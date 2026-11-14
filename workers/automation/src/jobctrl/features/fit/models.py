@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 
+QUALIFICATION_PROMPT_VERSION = "fit-qualification-batch-v3"
+
 
 class Decision(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True, hide_input_in_errors=True)
@@ -71,8 +73,12 @@ Only the permitted Profile evidence IDs listed for EACH requirement can prove th
 Skills use structured Skills and factual professional roles/achievements. Professional Experience uses
 factual roles/achievements only. Education uses Education records. ONLY where the demand explicitly offers
 an equivalent-experience alternative may Education use professional experience; return evidence_route
-equivalent_experience and assess the offered route without claiming or inventing a degree. Otherwise use
-evidence_route education for supported Education. For all other categories use evidence_route null.
+equivalent_experience and assess the offered route without claiming or inventing a degree. EVERY Education
+judgment with cited evidence MUST record its evidence_route, including missing, blocked and not_assessed
+judgments citing contrary evidence. Use education for Education records and equivalent_experience only
+for explicitly offered professional-experience alternatives. Never omit or infer the route from citations.
+Unsupported Education without any evidence may use evidence_route null. Supported Education always
+requires its explicit route. For all other categories use evidence_route null.
 Languages use structured Language/Proficiency records ONLY: a Skills category, location, name, narrative,
 role or achievement never proves language proficiency. Never infer permitted categories from source text.
 All evidence citations, including contrary evidence, must belong to the row's permitted source IDs.

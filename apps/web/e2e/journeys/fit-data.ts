@@ -228,7 +228,7 @@ export function refreshPayload(
 
 export async function startRefresh(
   api: APIRequestContext,
-  payload: ReturnType<typeof refreshPayload>,
+  payload: ReturnType<typeof refreshPayload> & { prepare_coverage?: boolean },
   key: string,
 ) {
   const response = await api.post("/v1/actions/fit.refresh", {

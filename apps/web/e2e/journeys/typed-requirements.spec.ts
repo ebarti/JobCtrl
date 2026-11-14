@@ -159,6 +159,46 @@ test("typed qualifications share one batch, use permitted Profile sections and r
   await testInfo.attach("typed-reusable-catalog", { contentType: "image/png", body: await page.screenshot() });
 });
 
+test("negative Education judgments retain explicit contrary-evidence routes without inferring a missing route", async ({ api, app }) => {
+  const seed = await typedJob(api, app, "typed-education-contrary");
+  const original = seed.fit.score;
+  const profile = await json<Profile>(api, "get", "/v1/profile");
+  profile.profile.resume.education_entries[0]!.degree = "General studies certificate";
+  await json(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion, profile: profile.profile });
+  const ids = seed.snapshot.education.map((row) => row.requirement_id);
+  const before = app.external.calls.length;
+  for (const omitRoute of [true, false]) {
+    const pending = await json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending");
+    const run = await startRefresh(api, { ...refreshPayload(pending, [seed.posting.job_id], { max_model_calls: 2, max_requirements: 2 }),
+      prepare_wording: false, prepare_coverage: false }, `typed-education-route-${omitRoute ? "missing" : "explicit"}`);
+    const impact = await modelCall(app, "fit.catalog-impact");
+    const inputs = impact.body["context"] as { requirements: { requirement_id: string }[] };
+    impact.reply(impactPartition(impact, Object.fromEntries(inputs.requirements.map((row) => [row.requirement_id, ids.includes(row.requirement_id) ? "affected" : "unchanged"]))));
+    const batch = await modelCall(app, "fit.qualification-batch");
+    expect((batch.body["context"] as { requirements: QualificationBinding[] }).requirements.map((row) => row.requirement_id).sort()).toEqual(ids.toSorted());
+    batch.reply(qualificationBatchDecision(batch, (binding) => ({
+      kind: binding.requirement_id === ids[0] ? "blocked" : "missing",
+      evidenceRoute: omitRoute && binding.requirement_id === ids[0] ? null : "education",
+      evidenceSourceIds: [`evidence:${seed.evidence.education.source_id}`],
+    })));
+    if (omitRoute) {
+      expect(await terminal(api, run.runId)).toMatchObject({ status: "failed", errorCode: "fit_evidence_route_invalid" });
+      expect((await json<Fit>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).score).toEqual(original);
+    } else {
+      await completed(api, run.runId);
+      const accepted = await json<Fit>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`);
+      expect(accepted).toMatchObject({ current: true, score: { score: 6,
+        summary: { assessed_count: 5, supported_count: 3, qualification_coverage: 0.57 } } });
+      expect(accepted.score!.assessments.filter((row) => row.category === "education").map((row) => ({
+        kind: row.kind, evidence_route: row.evidence_route, wording_support: row.wording_support,
+        evidence_ids: row.evidence_refs.map((ref) => ref.source_id),
+      }))).toEqual(["blocked", "missing"].map((kind) => ({ kind, evidence_route: "education", wording_support: "none",
+        evidence_ids: [seed.evidence.education.source_id] })));
+    }
+  }
+  expect(operations(app, before)).toEqual(["fit.catalog-impact", "fit.qualification-batch", "fit.catalog-impact", "fit.qualification-batch"]);
+});
+
 test("typed qualification refuses cross-section evidence and unoffered education alternatives without replacing accepted scores", async ({ api, app }) => {
   const seed = await typedJob(api, app, "typed-source-fences");
   const profile = await json<Profile>(api, "get", "/v1/profile");

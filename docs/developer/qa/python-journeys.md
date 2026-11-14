@@ -46,11 +46,32 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **100 journeys in 33 project-file groups**:
-**99 Chromium cases in 32 spec files**, plus **one demo case in one file**.
-The all-project JSON listing has no inventory errors. Seven cases in two new
+The current configured inventory is **101 journeys in 33 project-file groups**:
+**100 Chromium cases in 32 spec files**, plus **one demo case in one file**.
+The all-project JSON listing has no inventory errors. Eight cases in two new
 files cover typed requirements and the predecessor-generation upgrade. Listing
 these scenarios is not evidence that the complete current candidate passed.
+
+### Explicit negative Education routes and initial selection — 14 November 2026
+
+`fit-qualification-batch-v3` explicitly requires an Education route whenever
+evidence is cited, including contrary evidence in missing/blocked judgments.
+The validator still refuses omitted routes without inferring or editing model
+output. An initial manual refresh with every prior assessment absent records
+structural selection provenance and skips the impact model; substantive
+qualification remains one complete source-bound batch with the same limits and
+publication guards. Mixed/existing sets retain impact selection.
+
+Focused run `e2e-r8mA9y` passed both affected public journeys: contrary Education
+route refusal/accepted-history preservation followed by explicit-route success,
+and the actual predecessor upgrade's current-generation qualification under a
+one-call budget with no fabricated impact receipt. Build/journeys/total were
+8.669/13.647/23.718 seconds. Frozen Python digest:
+`1f5d2bbbde7fc5a61dc5bfaa724321f839b300f6a0f68692070a68016ac60e1a`;
+source-candidate digest:
+`dd4a613b9c42c53287de66c07b03e390076c8be9d701a0ceb97b8f411f140d8e`.
+The lockfile remained unchanged. Broader Fit, source-fence, manual-operation and
+wording-recovery journeys are verified separately against their recorded source.
 
 ### Typed requirements generation and cumulative source proof — 13 November 2026
 

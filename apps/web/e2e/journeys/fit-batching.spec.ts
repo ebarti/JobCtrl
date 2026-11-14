@@ -52,7 +52,7 @@ test("Fit batches cold requirements once, shares exact receipts and reuses only 
   expect(new Set(first.score!.assessments.map((row) => row.assessment_id)).size).toBe(2);
   for (const row of first.score!.assessments) {
     const decision = response.requirements.find((item) => item.requirement_id === row.requirement_id)!;
-    expect(row.provenance).toMatchObject({ receipt_id: row.determination_id, prompt_version: "fit-qualification-batch-v2", lane: "scoring", accepted_result_fingerprint: fingerprint(response), qualification_result_fingerprint: fingerprint(decision) });
+    expect(row.provenance).toMatchObject({ receipt_id: row.determination_id, prompt_version: "fit-qualification-batch-v3", lane: "scoring", accepted_result_fingerprint: fingerprint(response), qualification_result_fingerprint: fingerprint(decision) });
     expect(row.requirement_revision).toBe(Number(decision.requirement_revision));
     expect(row.requirement_citations).toEqual(decision.requirement_citations);
     expect(row.requirement_citations[0]!.source_id).toBe(`requirement:${row.requirement_id}`);

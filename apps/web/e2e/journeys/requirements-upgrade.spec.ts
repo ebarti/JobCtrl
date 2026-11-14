@@ -129,14 +129,18 @@ test("a real predecessor upgrade preserves history and accepted bytes, starts an
   expect(currentRequirements.requirements[0]!.requirement_id).toMatch(/^requirements-v2:/);
   expect(currentRequirements.requirements[0]!.requirement_id).not.toBe(oldRequirements.requirements[0]!.requirement_id);
   const newPending = await json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending");
-  const newRun = await startRefresh(api, { ...refreshPayload(newPending, [posting.job_id], { max_model_calls: 2, max_requirements: 1 }), prepare_wording: false }, "current-generation-refresh");
-  const newImpact = await modelCall(app, "fit.catalog-impact");
-  newImpact.reply(impactPartition(newImpact, { [currentRequirements.requirements[0]!.requirement_id]: "affected" }));
+  const beforeInitial = app.external.calls.length;
+  const newRun = await startRefresh(api, { ...refreshPayload(newPending, [posting.job_id], { max_model_calls: 1, max_requirements: 1 }), prepare_wording: false, prepare_coverage: false }, "current-generation-refresh");
   const sectionSource = (await json<{ sources: { source_id: string; kind: string }[] }>(api, "get", "/v1/profile/sources")).sources.find((row) => row.kind === "role")!;
   const newAssessment = await modelCall(app, "fit.qualification-batch");
   newAssessment.reply(qualificationBatchDecision(newAssessment, () => ({ evidenceSourceIds: [`evidence:${sectionSource.source_id}`] })));
   await completed(api, newRun.runId);
-  expect(await json(api, "get", `/v1/jobs/${posting.job_id}/fit`)).toMatchObject({ current: true, score: { contract_version: "requirements-v2", revision: oldFit.score.revision + 1, score: 10 } });
+  expect(await json(api, "get", `/v1/jobs/${posting.job_id}/fit`)).toMatchObject({ current: true, score: {
+    contract_version: "requirements-v2", revision: oldFit.score.revision + 1, score: 10,
+    assessments: [{ impact_selection_kind: "initial_qualification", impact_selection_receipt_id: null,
+      impact_selection_provenance: { kind: "structural", basis: "all_prior_assessment_ids_absent" } }],
+  } });
+  expect(app.external.calls.slice(beforeInitial).filter((row) => row.path === "/model").map((row) => row.body["operation"])).toEqual(["fit.qualification-batch"]);
   expect((await getResume(api, acceptedResume.resume_id)).accepted_revision_id).toBe(acceptedResume.accepted_revision_id);
   await testInfo.attach("workspace-generation-upgrade", { contentType: "application/json", body: JSON.stringify({ predecessor: "8ab86e9232d66fff9795906e061d208e7a057d8b", candidateOrigin: replacement.candidateOrigin, candidateMode: replacement.mode, schemaFingerprint: oldSchema, oldRunId: oldRun.runId, oldRequirementId: oldRequirements.requirements[0]!.requirement_id, newRequirementId: currentRequirements.requirements[0]!.requirement_id, oldRevision: oldFit.score.revision, newRevision: oldFit.score.revision + 1, acceptedRevision: acceptedResume.accepted_revision_id, acceptedBytes: acceptedBytes.byteLength }) });
 });

@@ -9,7 +9,7 @@ export type QualificationBinding = {
   permitted_evidence_ids: string[];
 };
 export type QualificationChoice = {
-  kind?: "matched" | "missing" | "transferable";
+  kind?: "matched" | "missing" | "transferable" | "blocked" | "not_assessed";
   strength?: "direct" | "strong";
   achievementIds?: string[];
   evidenceSourceIds?: string[];
@@ -24,7 +24,7 @@ export function qualificationBatchDecision(
   choose: (binding: QualificationBinding, index: number) => QualificationChoice,
 ) {
   expect(call.body["operation"]).toBe("fit.qualification-batch");
-  expect(call.body["prompt_version"]).toBe("fit-qualification-batch-v2");
+  expect(call.body["prompt_version"]).toBe("fit-qualification-batch-v3");
   expect(call.body["lane"]).toBe("scoring");
   const context = call.body["context"] as { requirements: QualificationBinding[] };
   expect(context.requirements.length).toBeGreaterThan(0);
