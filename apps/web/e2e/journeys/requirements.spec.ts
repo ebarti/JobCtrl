@@ -210,7 +210,7 @@ test("quote selections derive canonical Unicode ranges and reuse the exact raw e
   const request = { expected_posting_revision: posting.revision, expected_revision: 0 };
   const first = api.post(`/v1/jobs/${posting.job_id}/requirements`, { data: request });
   const extractionCall = await modelCall(app, "requirements.extract");
-  expect(extractionCall.body["prompt_version"]).toBe("requirements-v2-extract-v1-content-bound");
+  expect(extractionCall.body["prompt_version"]).toBe("requirements-v2-extract-v3-content-bound");
   const schema = extractionCall.body["response_schema"] as { properties: Record<string, unknown> };
   expect(schema.properties).toHaveProperty("quotes");
   expect(schema.properties).toHaveProperty("language");

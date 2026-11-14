@@ -236,7 +236,7 @@ class RequirementsService:
             self._check_cancel(cancelled)
             comparison, receipt = await self.model.determine(
                 kind="requirements.correct_binding", schema=Comparison,
-                prompt_version="requirements-v2-binding-correction-v1", instruction=COMPARISON_INSTRUCTION,
+                prompt_version="requirements-v2-binding-correction-v2", instruction=COMPARISON_INSTRUCTION,
                 sources=[{"source_id": ident, "text": text} for ident, text in source_map.items()],
                 context={"posting": self._posting_identity(posting), "incoming": {key: original[key] for key in (
                     "category", "name", "definition", "basis", "rationale", "source_note", "spans",
@@ -629,7 +629,7 @@ class RequirementsService:
         # truncation, an extra novelty call or partial publication.
         matching, receipt = await self.model.determine(
             kind="requirements.match_catalog", schema=CatalogMatching,
-            prompt_version="requirements-v2-catalog-match-v1-content-bound" if source_binding else "requirements-v2-catalog-match-v1", instruction=CATALOG_MATCHING_INSTRUCTION,
+            prompt_version="requirements-v2-catalog-match-v2-content-bound" if source_binding else "requirements-v2-catalog-match-v2", instruction=CATALOG_MATCHING_INSTRUCTION,
             sources=[{"source_id": ident, "text": text} for ident, text in source_map.items()],
             context={
                 "contract_version": CONTRACT_VERSION,

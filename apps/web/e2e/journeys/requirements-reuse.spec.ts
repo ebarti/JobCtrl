@@ -20,7 +20,7 @@ test("Requirements exact content reuse keeps destination bindings and invalidate
   reusableModelCatalog(app);
   const first = await captureReusePosting(api, "reuse-first", body);
   const accepted = await acceptReuseRequirements(api, app, first, requirement, { recovery: { verdict: "new" } });
-  expect(accepted.extraction!.body["prompt_version"]).toBe("requirements-v2-extract-v1-content-bound");
+  expect(accepted.extraction!.body["prompt_version"]).toBe("requirements-v2-extract-v3-content-bound");
   const context = accepted.extraction!.body["context"] as { posting_content: { source_id: string; text_fingerprint: string }; refresh_binding: unknown };
   const semanticSourceId = context.posting_content.source_id;
   expect(semanticSourceId).toBe(`posting-content:requirements-v2:${context.posting_content.text_fingerprint}`);
@@ -39,7 +39,7 @@ test("Requirements exact content reuse keeps destination bindings and invalidate
   const reusedExtraction = await acceptReuseRequirements(api, app, second, requirement, equivalent, { extract: false });
   expect(app.external.calls.slice(beforeSecond).map((call) => call.body["operation"])).toEqual(["requirements.match_catalog"]);
   expect(reusedExtraction.snapshot.requirements[0]!.extraction_determination_id).toBe(accepted.snapshot.requirements[0]!.extraction_determination_id);
-  expect(reusedExtraction.matching!.body["prompt_version"]).toBe("requirements-v2-catalog-match-v1-content-bound");
+  expect(reusedExtraction.matching!.body["prompt_version"]).toBe("requirements-v2-catalog-match-v2-content-bound");
   assertDestination(reusedExtraction.snapshot, second, semanticSourceId);
 
   const third = await captureReusePosting(api, "reuse-third", body);

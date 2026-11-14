@@ -51,6 +51,13 @@ rules. In particular, implementing a strategy does not by itself establish
 hands-on execution; guide/lead/implement wording or seniority alone cannot
 justify a different identity. Matching compares the actual competence and its
 owned evidence. It cannot invent a scope distinction to justify novelty.
+Equivalence must preserve what the candidate has to demonstrate when either
+complete meaning replaces the other. Shared topics and ordinary-facet wording
+cannot add or drop independently established capabilities or background demands.
+A valid incoming meaning with only broader, narrower or partial catalog
+candidates is new if the complete catalog has no equivalent; invalid extraction
+or genuine ambiguity still refuses acceptance. Binding correction applies the
+same comparison in both directions to its selected target.
 
 Each raw quote is `{evidence_id, source_id, quote}`. Every quote must be nonblank,
 verbatim, contiguous, unique in its exact source, and used by the language
