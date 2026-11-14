@@ -297,22 +297,41 @@ test("Fit qualification batch cancellation through the durable public action pub
 
 test("manual Fit batches two selected items within two persisted calls and exact replay adds no work", async ({ api, app }) => {
   const seed = await createScoredFit(api, app, "batch-manual-bounds", { twoRequirements: true });
-  const profile = await json<Profile>(api, "get", "/v1/profile");
-  const revised = structuredClone(profile.profile);
-  revised.resume.experience_entries[0]!.bullets = ["Reviewed service dashboards.", "Recorded routine status updates."];
-  await json(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion, profile: revised });
+  await saveChangedFacts(api);
   const pending = await json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending");
-  const payload = { ...refreshPayload(pending, undefined, { max_model_calls: 2, max_requirements: 2 }), prepare_wording: false };
+  const payload = { ...refreshPayload(pending, undefined, { max_model_calls: 2, max_requirements: 2 }), prepare_wording: false, prepare_coverage: false };
   const before = app.external.calls.length;
+  for (const [index, invalid] of [
+    { prepare_coverage: "false" },
+    { prepare_wording: true },
+    { retry_wording_proposal_ids: ["synthetic-wording-retry"] },
+  ].entries()) {
+    const rejected = await api.post("/v1/actions/fit.refresh", {
+      headers: { "idempotency-key": `score-only-invalid-${index}` }, data: { ...payload, ...invalid },
+    });
+    expect(rejected.status(), await rejected.text()).toBe(422);
+    expect(await rejected.json()).toMatchObject({ error: { code: "fit_invalid_request" } });
+  }
+  expect(app.external.calls).toHaveLength(before);
+  expect((await json<{ runs: unknown[] }>(api, "get", "/v1/action-runs?action=fit.refresh")).runs).toEqual([]);
   const run = await startRefresh(api, payload, "batch-manual-two-calls");
   const selector = await modelCall(app, "fit.catalog-impact");
   selector.reply(impactPartition(selector, Object.fromEntries(seed.requirements.requirements.map((row) => [row.requirement_id, "affected" as const]))));
   const batch = await modelCall(app, "fit.qualification-batch");
   expect((batch.body["context"] as { requirements: unknown[] }).requirements).toHaveLength(2);
-  batch.reply(qualificationBatchDecision(batch, () => ({ kind: "missing" })));
+  batch.reply(qualificationBatchDecision(batch, (binding) => {
+    const index = seed.requirements.requirements.findIndex((row) => row.requirement_id === binding.requirement_id);
+    expect(index).toBeGreaterThanOrEqual(0);
+    const achievement = seed.library.roles[0]!.achievements[index]!;
+    return { achievementIds: [achievement.achievement_id], evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] };
+  }));
   await completed(api, run.runId);
   const result = await json<RefreshOperation>(api, "get", `/v1/fit/refresh/operations/${run.runId}`);
-  expect(result).toMatchObject({ status: "completed", factual_published: true, counters: { model_calls: 2, requirements_assessed: 2 } });
+  expect(result).toMatchObject({ status: "completed", phase: "complete", factual_published: true,
+    prepare_coverage: false, prepare_wording: false,
+    counters: { model_calls: 2, requirements_assessed: 2, wording_proposals: 0 } });
+  expect(await json(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).toMatchObject({ current: true, score: { score: 10, revision: 2 } });
+  expect((await json<{ versions: unknown[] }>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit/history`)).versions[1]).toEqual(seed.fit.score);
   expect((result as RefreshOperation & { limits: unknown }).limits).toEqual(payload.limits);
   expect((await startRefresh(api, payload, "batch-manual-two-calls")).runId).toBe(run.runId);
   expect(await json(api, "get", `/v1/fit/refresh/operations/${run.runId}`)).toEqual(result);

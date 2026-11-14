@@ -54,6 +54,36 @@ these scenarios is not evidence that the complete current candidate passed.
 
 ### Typed requirements generation and cumulative source proof — 13 November 2026
 
+On 14 November, the existing manual two-call batching journey was strengthened
+to exercise `prepare_coverage: false` with achievement-backed matches. Run
+`e2e-pr3jGt` passed that one public-action scenario: two model calls (catalog
+impact and qualification), a current score of 10, zero expression/authoring
+calls, frozen flag readback, unchanged accepted history and replay without more
+work. Strict-boolean, contradictory-option and wording-retry requests were
+refused before admission. Build/journeys/total were 9.071/5.579/15.895 seconds;
+the Python source digest was
+`3dce0e83867e8ed39d3971473bf4e522b98c159e598746cfe7eb4e974dae35e1`
+and the source-candidate digest was
+`582d065ee28fe0b7d7a6aff4d0361f98e37807c28839c16aa9665c21f9f55d09`.
+The lockfile remained unchanged. This is focused proof for the additive
+score-only refresh option; the earlier cumulative results below retain their
+own source snapshots.
+
+Compatibility follow-up `e2e-2bke3L` passed both existing default-coverage
+journeys: positive grouped wording/authoring and real synthetic worker
+replacement after factual publication. The replacement retained the score,
+three-call allowance/deadline and exact replay identity without repeating the
+interrupted external call. Build/journeys/total were 8.058/41.711/51.204 seconds;
+Python digest
+`2978d024aa107625b70982d420b95d95da9ea2c08bd5e129a499f9a6f5346c3f`,
+source-candidate digest
+`3db578eb02ba6bb7e7d1cb41164a6bcfd480f1ad8c61581b999ef1ca28bda116`;
+the lockfile remained unchanged. Source review confirms unchanged raw payloads
+retain the application's durable hash, while Fit removes the default-enabled
+flag before its feature hash. The existing harness does not exercise a
+pre-flag v2 upgrade or a crash in the synchronous score-only
+publication-to-completion interval; those remain operational proof limits.
+
 The [typed-requirements contract](../../plans/typed-requirements.md) adds six
 [typed-demand journeys](../../../apps/web/e2e/journeys/typed-requirements.spec.ts)
 and one [predecessor-upgrade journey](../../../apps/web/e2e/journeys/requirements-upgrade.spec.ts).

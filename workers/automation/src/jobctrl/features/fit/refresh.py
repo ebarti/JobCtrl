@@ -32,6 +32,7 @@ def public_operation(state):
         "factual_published", "accepted_score_revisions",
     )}} | {"partial": bool(state["factual_published"] and state["status"] not in {"running", "completed"}),
          "hard_monetary_bound": False, "spend_policy": "gateway_lane_and_workspace_budget",
+         "prepare_wording": state.get("prepare_wording", True), "prepare_coverage": state.get("prepare_coverage", True),
          "wording_failures": state.get("wording_failures", []),
          "retry_wording_proposal_ids": state.get("retry_wording_proposal_ids", [])}
 
@@ -296,7 +297,10 @@ class ManualRefresh:
         return selected
 
     def _start(self, operation_id, request):
-        input_hash = fingerprint(request)
+        # The default is the existing operation scope. Do not change the
+        # identity of queued/running requests frozen before this additive flag.
+        input_hash = fingerprint({key: value for key, value in request.items()
+                                  if key != "prepare_coverage" or value is not True})
         existing = self.store.refresh_operation(operation_id)
         if existing is not None:
             require_contract(existing)
@@ -334,6 +338,7 @@ class ManualRefresh:
             "requirement_count": len(admitted), "selected_requirement_ids": None,
             "limits": request["limits"], "counters": {"model_calls": 0, "requirements_assessed": 0,
                 "qualifications_reused": 0, "wording_proposals": 0}, "prepare_wording": request["prepare_wording"],
+            "prepare_coverage": request.get("prepare_coverage", True),
             "failure_code": None, "created_at": created, "updated_at": created,
             "deadline_at": (datetime.fromisoformat(created) + timedelta(seconds=request["limits"]["max_duration_seconds"])).isoformat(),
             "factual_published": False, "accepted_score_revisions": {}, "snapshot": snapshot,
@@ -394,6 +399,9 @@ class ManualRefresh:
                 scores = self._scores(state, candidates)
                 operation.check()
                 state = self.store.publish_refresh(operation_id, candidates, scores, cancelled=cancelled)
+            if not state.get("prepare_coverage", True):
+                operation.check()
+                return public_operation(self.store.finish_refresh(operation_id, "completed"))
             heartbeat({"operationId": operation_id, "phase": "coverage"})
             coverage = Coverage(model=operation.model, profile=operation.profile, store=self.store,
                                 qualification=self.service.qualification)

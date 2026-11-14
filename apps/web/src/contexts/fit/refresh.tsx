@@ -20,6 +20,7 @@ const wordingFailureSchema = z.object({ proposal_id: z.string().min(1), achievem
 const operationSchema = z.object({
   contract_version: z.string().nullable(), current: z.boolean(), stale_reasons: z.array(z.string()),
   operation_id: z.string().min(1), status: z.enum(["running", "completed", "failed", "cancelled", "stale", "limited"]),
+  prepare_coverage: z.boolean().default(true), prepare_wording: z.boolean().default(true),
   phase: z.enum(["selection", "qualification", "publication", "coverage", "complete"]), job_ids: z.array(z.string()),
   catalog_revision: z.number().int().nonnegative(), requirement_count: z.number().int().nonnegative(),
   selected_requirement_ids: z.array(z.string()).nullable(), limits: limitsSchema,

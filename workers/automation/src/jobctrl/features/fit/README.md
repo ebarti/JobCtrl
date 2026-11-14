@@ -159,6 +159,14 @@ freezes the complete active reusable catalog, the selected jobs' direct demands,
 Profile sources and guidance, prior assessment/source heads, approved wording and
 maintained assignments. Unselected jobs' direct demands never expand its scope.
 
+Manual refresh accepts `prepare_coverage` (strict boolean, default `true`). Set
+both `prepare_coverage: false` and `prepare_wording: false` to publish only factual
+qualification and deterministic scores, then complete without coverage or
+authoring calls. Wording retries cannot be selected with coverage disabled.
+The chosen flags remain frozen in operation state and visible in operation reads.
+Missing flags in previously frozen state preserve coverage's existing enabled
+behavior; omitted or explicit `true` does not change the existing request hash.
+
 One complete source-bound impact determination selects affected items, including
 previously unsupported meanings that new facts may support. Exact unaffected
 source bindings require no semantic call. Unchanged judgments retain their

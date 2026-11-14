@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationError, model_validator
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
@@ -38,7 +38,14 @@ class RefreshInput(Input):
     expected_input_fingerprint: StrictStr = Field(min_length=64, max_length=64)
     retry_wording_proposal_ids: list[StrictStr] = Field(default_factory=list, max_length=100)
     prepare_wording: StrictBool = True
+    prepare_coverage: StrictBool = True
     limits: RefreshLimits = Field(default_factory=RefreshLimits)
+
+    @model_validator(mode="after")
+    def preparation_scope(self):
+        if not self.prepare_coverage and (self.prepare_wording or self.retry_wording_proposal_ids):
+            raise ValueError("Disabling coverage requires prepare_wording=false and no wording retries.")
+        return self
 
 
 class CorrectInput(Input):

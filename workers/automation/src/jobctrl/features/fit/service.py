@@ -102,6 +102,11 @@ class FitService:
         return self.manual_refresh.operation(operation_id, allow_pending=allow_pending)
 
     async def refresh(self, *, operation_id, cancelled=lambda: False, heartbeat=lambda details: None, **request):
+        prepare_coverage = request.get("prepare_coverage", True)
+        if type(prepare_coverage) is not bool:
+            raise AppError("fit_invalid_option", "Fit options must be booleans.", 422)
+        if not prepare_coverage and (request["prepare_wording"] or request.get("retry_wording_proposal_ids")):
+            raise AppError("fit_refresh_options_invalid", "Disabling coverage requires prepare_wording=false and no wording retries.", 422)
         if len(request["job_ids"]) != len(set(request["job_ids"])) or any(not value for value in request["job_ids"]):
             raise AppError("fit_refresh_job_scope_invalid", "Select each saved job once.", 422)
         retry_ids = request.get("retry_wording_proposal_ids", [])

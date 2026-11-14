@@ -98,6 +98,15 @@ cannot correct a direct job-local demand. Exact adapters and the
 [Fit reference](../../workers/automation/src/jobctrl/features/fit/README.md)
 remain authoritative for validation and error envelopes.
 
+The durable `fit.refresh` action accepts `prepare_coverage` as a strict boolean,
+defaulting to `true`. For a qualification-and-score-only refresh, explicitly pass
+both `prepare_coverage: false` and `prepare_wording: false`; the action completes
+after factual publication without expression-coverage or authoring calls. A
+coverage-disabled request cannot include wording retries or enable wording
+preparation. Operation reads retain both frozen preparation flags. Previously
+frozen operations without the new flag retain enabled coverage and their existing
+request identity.
+
 ## Requirements Library And Associations
 
 The redesign candidate composes three public owners: Requirements supplies

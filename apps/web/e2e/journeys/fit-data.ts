@@ -43,6 +43,8 @@ export type RefreshOperation = {
   operation_id: string;
   status: string;
   phase: string;
+  prepare_coverage: boolean;
+  prepare_wording: boolean;
   job_ids: string[];
   selected_requirement_ids: string[] | null;
   counters: {
