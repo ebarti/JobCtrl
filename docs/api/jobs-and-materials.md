@@ -66,6 +66,32 @@ silently promoted. Incompatible refresh/resume/replay is refused before new
 publication. Historical ordering and accepted artifact bytes remain available.
 See [generation and rollout](../architecture/scoring.md#generation-history-and-rollout).
 
+`POST /v1/jobs/{job_id}/requirements/corrections` repairs selected reusable
+occurrence interpretations without re-extracting the other demands. The strict
+body is `expected_posting_revision`, accepted `expected_revision` and
+`corrections: [{occurrence_id, reason}]` with 1–20 distinct current occurrence
+IDs. Durable `requirements.correct_occurrences` uses the same body plus `job_id`.
+Reasons are task guidance, never source evidence. The posting and accepted
+snapshot must be current, English and complete.
+
+One source-bound revision batch must return exactly one corrected meaning for
+each selected occurrence. Existing complete-catalog matching resolves only that
+batch. The operation cannot add, split, merge or delete occurrences, change
+direct demands, or revise global catalog meanings. All physical occurrence IDs
+change with `previous_occurrence_id` links; unselected meaning/binding/evidence/
+provenance fields remain exact copies. Selected meanings name their correction
+receipt and result fingerprint as current authority, with earlier provenance
+under `origin`. The original full extraction provenance remains on the snapshot,
+and `correction_history` records the separately accepted correction stage.
+
+Posting/snapshot identity, all original canonical heads, catalog epoch and
+cancellation fence publication atomically. Failure preserves accepted history.
+At most five new call intents are admitted across worker recovery; settled exact
+authority is reused, while a previously reserved unsettled input refuses with
+409 `requirements_correction_call_unsettled`. This action does not start Fit or
+wording work. It differs from binding correction, which preserves the original
+interpretation, and global canonical revision, which can stale other jobs.
+
 ## Typed Fit Results
 
 New Fit JSON carries `contract_version: requirements-v2`. Its `formula_version`

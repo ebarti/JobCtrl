@@ -7,7 +7,7 @@ from contextlib import contextmanager
 
 from jobctrl.app.errors import ConflictError, NotFoundError
 
-from .domain import CONTRACT_VERSION, MEANING_KEYS, RequirementError, canonical_json, current_contract, now
+from .domain import CONTRACT_VERSION, MEANING_KEYS, RequirementError, canonical_json, current_contract, fingerprint, now
 
 
 class SqliteRequirementStore:
@@ -140,6 +140,28 @@ class SqliteRequirementStore:
         if saved is None:
             raise RequirementError("model_cache_binding_invalid")
         return saved
+
+    def reserve_correction_call(self, attempt_id, input_fingerprint, maximum, posting, posting_guard):
+        """Append an admission intent before dispatch; retries cannot reset work."""
+        operation = "requirements.correct_occurrences.call_intent"
+        key = fingerprint({"operation": operation, "attempt_id": attempt_id, "input": input_fingerprint})
+        with self.database.transaction() as connection:
+            posting_guard(posting["job_id"], posting["revision"], posting["source_hash"], connection=connection)
+            if connection.execute("SELECT 1 FROM requirements_model_cache WHERE input_fingerprint=?", (key,)).fetchone():
+                raise RequirementError("requirements_correction_call_unsettled")
+            used = connection.execute(
+                "SELECT count(*) FROM requirements_model_cache WHERE operation=? "
+                "AND json_extract(result_json,'$.attempt_id')=?", (operation, attempt_id),
+            ).fetchone()[0]
+            if used >= maximum:
+                raise RequirementError("requirements_catalog_unavailable", details={"reason": "model_call_bound",
+                                       "maximum_new_model_calls": maximum})
+            connection.execute("INSERT INTO requirements_model_cache VALUES (?,?,?,?,?,?,?,?,?)", (
+                key, operation, posting["job_id"], posting["revision"], posting["source_hash"], None,
+                canonical_json({"contract_version": CONTRACT_VERSION, "attempt_id": attempt_id,
+                                "input_fingerprint": input_fingerprint}), "{}", now(),
+            ))
+            return used + 1
 
     @staticmethod
     def _document(meaning):
@@ -352,6 +374,7 @@ class SqliteRequirementStore:
     def publish(
         self, *, posting, expected_revision, catalog_revision, meanings, occurrences,
         extraction_id, attempt_id, posting_guard, cancelled, extraction, event_type="RequirementsUpdated",
+        previous_snapshot=None,
     ):
         with self.database.transaction() as connection:
             if cancelled():
@@ -360,6 +383,8 @@ class SqliteRequirementStore:
             previous = self.current_snapshot(posting["job_id"], connection)
             if (previous["revision"] if previous else 0) != expected_revision:
                 raise ConflictError("The accepted requirement snapshot changed.")
+            if previous_snapshot is not None:
+                self.assert_snapshot_current(previous_snapshot, connection)
             actual_catalog = connection.execute(
                 "SELECT revision FROM requirements_catalog WHERE singleton=1",
             ).fetchone()[0]

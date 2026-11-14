@@ -135,13 +135,21 @@ generation. Missing contract versions are legacy; older meanings are not
 promoted because they look similar. Historical accepted rows, job revisions and
 resume bytes remain retained, with contract-change refresh status where
 applicable. They cannot establish current ranking or composition readiness.
-Only a successful explicit refresh publishes replacement accepted pointers.
+Only a successful explicit refresh or scoped correction publishes a replacement
+accepted snapshot.
 
 Meaning corrections use the existing source-bound posting correction path;
 this library does not offer arbitrary catalog creation or silently broaden a
 posting's meaning or alternatives. Model-created equivalence, support and coverage require
 the configured provider, budget admission, strict source validation and a
 persisted determination. Unavailable or invalid work remains unavailable.
+
+The API also supports explicitly correcting selected posting occurrences rather
+than interpreting the whole posting again. Each correction must be supported by
+that posting, and your reason guides the review without becoming evidence.
+Other saved meanings, bindings, evidence and their model authority remain
+unchanged; earlier snapshots remain in history. This does not reassess your Fit
+or rewrite achievement wording automatically.
 
 The API ownership and revision fences are documented in
 [Jobs and Materials API](../api/jobs-and-materials.md#requirements-library-and-associations).

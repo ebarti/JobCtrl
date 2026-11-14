@@ -36,6 +36,9 @@ reuse their owned quote. Explicit named-technology expertise remains
 identifiable, while examples and alternatives
 belong in source notes. A generic parent skill requires additional demanded
 competence. Future work alone establishes no prior-background prerequisite.
+An explicitly requested professional track record stays historical in its
+background definition, including its material achievements; a related present
+capability elsewhere cannot replace that record.
 Every distinct in-scope demand must remain in the returned definitions;
 attaching its quote or claiming that it was grouped in rationale or source notes
 cannot preserve omitted meaning. Independently demanded capabilities and
@@ -195,6 +198,39 @@ source-bound receipt authority and explicit user reasons. Public
 `assert_current` and `assert_current_catalog` can join a consumer's transaction.
 Requirements writes emit invalidations; they do not schedule Fit or wording work.
 
+Scoped occurrence correction is `requirements.correct_occurrences` or
+`POST /v1/jobs/{job_id}/requirements/corrections`. It accepts the exact
+`expected_posting_revision`, accepted `expected_revision` and 1–20 distinct
+`corrections: [{occurrence_id, reason}]`; the durable payload also includes
+`job_id`. Reasons guide the task and are never factual evidence. The accepted
+snapshot must be current, English and complete. Direct demands are not selected.
+
+One source-bound model batch returns exactly one corrected reusable meaning per
+selected occurrence ID, using owned verbatim posting quotes. Split, merge,
+deletion, extra/missing IDs, unsupported evidence and ambiguity refuse the
+operation. Only this corrected batch enters the existing whole-active-catalog
+determination. It may reuse an existing meaning or append a new one; it cannot
+rewrite a canonical meaning or reinterpret an unselected occurrence.
+
+Publication rechecks the exact prior snapshot and every original canonical head,
+posting revision/hash, catalog epoch and cancellation in one transaction. All
+occurrences receive new physical IDs and `previous_occurrence_id` because IDs
+are globally unique. Unselected semantic fields, binding, evidence and authority
+are copied exactly. Direct/language arrays are retained. Corrected fields name
+the correction receipt/result fingerprint as their current authority, retaining
+prior extraction under `provenance.origin`. New meanings cite the correction and
+matching receipts. The snapshot retains its full original extraction provenance,
+adds namespaced correction quotes and appends `correction_history`.
+
+The operation permits at most five new call admission intents across its durable
+lifetime: one correction and at most four catalog-race resolutions. Append-only
+intents in the existing owner cache reserve allowance before dispatch. Exact
+accepted cache/settled receipt recovery makes no new call. A reserved input
+without accepted settled authority refuses with
+`requirements_correction_call_unsettled` instead of spending again. Worker
+recovery cannot reset allowance. Races cannot expand the selected set, and a
+changed original head refuses publication. Reads/writes admit no Fit followup.
+
 ## Public entrypoints
 
 | Entry point | Contract |
@@ -207,8 +243,9 @@ Requirements writes emit invalidations; they do not schedule Fit or wording work
 | `GET /v1/requirements/{requirement_id}` | Current or exact historical meaning, original provenance and accepted occurrences. |
 | `GET /v1/requirements/{requirement_id}/history` | Bounded revisions or occurrences with accepted/current/stale reasons. |
 | `POST /v1/jobs/{job_id}/requirements/{occurrence_id}/binding` | Versioned explicit binding correction with selected target and reason. |
+| `POST /v1/jobs/{job_id}/requirements/corrections` | Source-bound one-to-one correction of selected occurrence meanings and bindings. |
 | `POST /v1/requirements/{requirement_id}/revisions` | Versioned source-bound canonical correction. Proposed shape is the extracted requirement plus exact spans. |
-| `requirements.refresh`, `requirements.correct_binding`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2`. |
+| `requirements.refresh`, `requirements.correct_binding`, `requirements.correct_occurrences`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2`. |
 
 Public owner methods also include nullable `find_job_requirements`, required
 `get_job_requirements`, exact/historical `get_requirement`, full

@@ -84,7 +84,7 @@ class RequirementModelAdapter:
                 parsed, provenance = self._checked(accepted, input_fingerprint, kind, schema, validate)
                 return parsed, self._bind(provenance, publication_posting, source_binding)
         if budget is not None:
-            budget.consume()
+            budget.consume(input_fingerprint)
         try:
             result = await self.gateway.determine(**arguments)
         except AppError as failure:
