@@ -46,11 +46,45 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **101 journeys in 33 project-file groups**:
-**100 Chromium cases in 32 spec files**, plus **one demo case in one file**.
-The all-project JSON listing has no inventory errors. Eight cases in two new
-files cover typed requirements and the predecessor-generation upgrade. Listing
-these scenarios is not evidence that the complete current candidate passed.
+The current configured inventory is **115 journeys in 37 project-file groups**:
+**114 Chromium cases in 36 spec files**, plus **one demo case in one file**.
+The all-project listing has no inventory errors. It includes the QA workspaces
+and requirement deletion lifecycle. Listing these scenarios is not evidence
+that the complete current candidate passed.
+
+### QA workspaces and requirement lifecycle — 15 November 2026
+
+Six added journeys exercise Applications task/draft retention, the Requirements
+table's filters/sort/saved views/return navigation, soft deletion and reactivation,
+permanent orphan cleanup with fresh identities on rediscovery, and both leading
+and non-leading removal from a grouped wording request. The latter cases retain
+the surviving requirement's rejected or deferred proposal and prove that its
+next explicit refresh creates no duplicate wording. All mutations use owned
+synthetic workspaces and public application entrypoints.
+
+Existing journeys verify compact Jobs selection dialogs, committed deletion
+events, source-bound associations, readable typed demands, the demo tour and all
+26 primary screens at 1440, 1860, 2943 and 390 pixels. The table checks include
+narrow-pane header separation, keyboard focus and mobile disclosure targets.
+
+Local integrated validation retained these separate run outcomes:
+
+| Run | Observed result | Build / journeys / total |
+| --- | --- | --- |
+| `e2e-PXYxRe` | 92 passed, 2 failed, 20 not run at the unchanged 720-second suite deadline | 8.547 / 720.605 / 730.638 s |
+| `e2e-1qkt1M` | 33 passed, 2 failed; completed remaining inventory and corrected active-library/navigation cases | 8.657 / 439.854 / 450.096 s |
+| `e2e-koLFgo` | 12 passed; final grouped-deletion repair, typed table assertion and demo row selection | 7.923 / 82.805 / 92.213 s |
+
+The earlier failures were assertions for automatic detail selection, retained
+catalog counts in the active list and a hidden mobile copy of a table label.
+Their corrected public journeys passed. The final run used Python digest
+`151929502eba8444d6e7d5ef956edfca63d2c74a8afb94da33a4dfcf35ab5dd0`
+and source-candidate digest
+`c65942ce0152ec95383682048ee4a842ea35787f859ebc93635452190a7f852d`.
+The first two runs used Python digest
+`74391af83e1d12fcb7a087f41563321e140e3c2ec114d1f934185269c31735e5`.
+Lockfiles and each run's built assets remained unchanged. These are cumulative
+results across source snapshots, not one complete final-candidate suite pass.
 
 ### Explicit negative Education routes and initial selection — 14 November 2026
 

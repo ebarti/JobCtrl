@@ -225,6 +225,14 @@ test("demo tour retains local exact wording approval, durable edits and a real a
     await expect(
       page.getByRole("heading", { name: "Requirements library", exact: true }),
     ).toBeVisible();
+    await expect(
+      page.getByRole("region", { name: "Requirement details", exact: true }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("table", { name: "Saved requirements", exact: true })
+      .locator("tbody tr[data-row-id]")
+      .first()
+      .click();
     const definition = (await page
       .locator("#requirement-definition-title")
       .textContent())!;

@@ -167,12 +167,16 @@ class SqliteRequirementStore:
     def _document(meaning):
         return canonical_json({k: meaning[k] for k in MEANING_KEYS})
 
-    def catalog(self, *, limit=50, offset=0, query=""):
-        revision, meanings = self.catalog_snapshot()
-        # q is a literal catalog filter, never equivalence or novelty authority.
-        if query:
-            meanings = [row for row in meanings if query.casefold() in self._document(row).casefold()]
-        return {"contract_version": CONTRACT_VERSION, "catalog_revision": revision, "total": len(meanings), "requirements": meanings[offset:offset + limit]}
+    def accepted_occurrence_jobs(self, connection, requirement_id=None):
+        """Return accepted occurrence roots; Jobs owns whether each job exists."""
+        rows = connection.execute(
+            "SELECT DISTINCT o.requirement_id,o.job_id FROM requirements_occurrences o "
+            "JOIN requirements_accepted a ON a.job_id=o.job_id AND a.revision=o.snapshot_revision "
+            "WHERE json_extract(o.occurrence_json,'$.contract_version')=?"
+            + (" AND o.requirement_id=?" if requirement_id is not None else ""),
+            (CONTRACT_VERSION, requirement_id) if requirement_id is not None else (CONTRACT_VERSION,),
+        ).fetchall()
+        return [(row["requirement_id"], row["job_id"]) for row in rows]
 
     def index_status(self):
         with self.read_session() as connection:
@@ -250,14 +254,39 @@ class SqliteRequirementStore:
         if connection is None:
             with self.database.transaction() as connection:
                 return self.delete_job_data(job_id, connection)
-        # Jobs owns deletion authorization and the enclosing transaction. Only
-        # private per-job requirement state is removed here; reusable catalog
-        # meanings and immutable model authority remain independently owned.
+        # Jobs owns deletion authorization and the enclosing transaction.
         connection.execute("DELETE FROM requirements_occurrences WHERE job_id=?", (job_id,))
         connection.execute("DELETE FROM requirements_accepted WHERE job_id=?", (job_id,))
         connection.execute("DELETE FROM requirements_snapshots WHERE job_id=?", (job_id,))
         connection.execute("DELETE FROM requirements_attempts WHERE job_id=?", (job_id,))
         connection.execute("DELETE FROM requirements_model_cache WHERE job_id=?", (job_id,))
+
+    def orphaned_meaning_ids_for_job(self, job_id, connection):
+        rows = connection.execute(
+            "SELECT DISTINCT o.requirement_id FROM requirements_occurrences o WHERE o.job_id=? "
+            "AND NOT EXISTS(SELECT 1 FROM requirements_occurrences retained "
+            "WHERE retained.requirement_id=o.requirement_id AND retained.job_id<>?) ORDER BY o.requirement_id",
+            (job_id, job_id),
+        ).fetchall()
+        return [row[0] for row in rows]
+
+    def delete_meanings(self, requirement_ids, job_id, connection):
+        if not requirement_ids:
+            return
+        for ident in requirement_ids:
+            connection.execute("DELETE FROM requirements_revision_actions WHERE requirement_id=?", (ident,))
+            connection.execute("DELETE FROM requirements_heads WHERE requirement_id=?", (ident,))
+            connection.execute("DELETE FROM requirements_retrieval WHERE requirement_id=?", (ident,))
+            connection.execute("DELETE FROM requirements_meanings WHERE requirement_id=?", (ident,))
+        connection.execute(
+            "UPDATE requirements_catalog SET revision=revision+?, "
+            "indexed_revision=CASE WHEN indexed_revision=revision THEN indexed_revision+? ELSE indexed_revision END "
+            "WHERE singleton=1", (len(requirement_ids), len(requirement_ids)),
+        )
+        epoch = connection.execute("SELECT revision FROM requirements_catalog WHERE singleton=1").fetchone()[0]
+        self.events.append(connection, "RequirementMeaningsDeleted", {
+            "jobId": job_id, "requirementCount": len(requirement_ids), "catalogRevision": epoch,
+        }, feature="requirements", aggregate_id=job_id)
 
     def latest_attempt(self, job_id, connection=None):
         if connection is None:

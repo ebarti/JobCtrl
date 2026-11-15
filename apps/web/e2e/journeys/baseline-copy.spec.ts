@@ -400,6 +400,12 @@ test("approved baseline copy preserves every role, requires exact edit approval 
     await expect(
       page.getByRole("button", { name: "Prepare resume", exact: true }),
     ).toBeDisabled();
+    await page.getByRole("tab", { name: "Screening answers", exact: true }).click();
+    await expect(page.getByRole("textbox", { name: "Exact screening question", exact: true })).toBeVisible();
+    await page.getByRole("tab", { name: "Resume", exact: true }).click();
+    await expect(applicationEditor).toContainText("— retained application draft");
+    await expect(page.getByLabel("Editable baseline resume page", { exact: true })).toHaveAttribute("data-draft-dirty", "true");
+    await expect(page.getByRole("button", { name: "Prepare resume", exact: true })).toBeDisabled();
     await testInfo.attach("preparation-completion-preserves-plate-focus", {
       contentType: "image/png",
       body: await page.screenshot(),

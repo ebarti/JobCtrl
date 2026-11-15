@@ -10,6 +10,7 @@ import { useCallback } from "react";
 import { JobDetailComposition } from "../views/jobs/JobDetailComposition.js";
 import type { JobWorkspaceTab } from "../views/jobs/JobDetailDrawer.js";
 import type { PreparationResumeMode } from "../contexts/pipeline/index.js";
+import { requirementsReturnSearch } from "../contexts/requirements/index.js";
 
 export const Route = createFileRoute("/jobs/$jobId")({
   component: JobDrawerRoute,
@@ -27,7 +28,7 @@ function JobDrawerRoute() {
   });
   const close = useCallback(() => {
     if (search.returnRequirement) {
-      void navigate({ to: "/requirements", search: { requirement: search.returnRequirement, q: search.returnRequirementsFilter ?? "" } });
+      void navigate({ to: "/requirements", search: requirementsReturnSearch(search.returnRequirement, search.returnRequirementsFilter, search.returnRequirementsTable) });
       return;
     }
     void navigate({ to: "/jobs", search: { ...search, jobTab: undefined } });

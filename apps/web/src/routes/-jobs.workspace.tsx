@@ -7,6 +7,8 @@ import { AffectedMatchesPanel } from "../contexts/fit/index.js";
 import type { JobGridQuery } from "../contexts/jobs/index.js";
 import { PipelineBulkActions } from "../contexts/pipeline/index.js";
 import { useMountedFeatures } from "../contexts/runtime/index.js";
+import { Button } from "../shared/ui/button.js";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "../shared/ui/dialog.js";
 import { JobsView } from "../views/jobs/JobsView.js";
 import { jobsSearchSchema, type JobsSearch } from "./-jobs.search.js";
 
@@ -66,7 +68,23 @@ export function JobsWorkspace({ activeJobId, activeRunId = null }: { readonly ac
     attention={features.has("digest") ? <DigestAttentionPanel /> : null}
     optionalGlobalActions={features.has("compensation") ? <RefreshAllCompensationButton /> : null}
     optionalBulkActions={(jobIds) => <>
-      {features.has("fit") ? <details><summary>Update affected matches for selected jobs</summary><AffectedMatchesPanel jobIds={jobIds} /></details> : null}
-      {features.has("preparation") ? <details><summary>Selected jobs preparation tools</summary><PipelineBulkActions jobIds={jobIds} /></details> : null}
+      {features.has("fit") ? <Dialog>
+        <DialogTrigger render={<Button type="button" variant="outline" size="sm" />}>Update affected matches</DialogTrigger>
+        <DialogContent forceMount className="jobs-selection-dialog">
+          <DialogHeader><DialogTitle>Update affected matches</DialogTitle>
+            <DialogDescription>Review saved changes for {jobIds.length} selected {jobIds.length === 1 ? "job" : "jobs"}, then choose when to start the update.</DialogDescription>
+          </DialogHeader>
+          <div className="jobs-selection-dialog__body jobs-selection-dialog__matches"><AffectedMatchesPanel jobIds={jobIds} /></div>
+        </DialogContent>
+      </Dialog> : null}
+      {features.has("preparation") ? <Dialog>
+        <DialogTrigger render={<Button type="button" variant="outline" size="sm" />}>Preparation tools</DialogTrigger>
+        <DialogContent forceMount className="jobs-selection-dialog">
+          <DialogHeader><DialogTitle>Selected jobs preparation</DialogTitle>
+            <DialogDescription>Choose work for {jobIds.length} selected {jobIds.length === 1 ? "job" : "jobs"}, or review their preparation history.</DialogDescription>
+          </DialogHeader>
+          <div className="jobs-selection-dialog__body"><PipelineBulkActions jobIds={jobIds} /></div>
+        </DialogContent>
+      </Dialog> : null}
     </>} />;
 }

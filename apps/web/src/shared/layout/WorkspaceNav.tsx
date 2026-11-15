@@ -30,6 +30,7 @@ export function WorkspaceNav() {
       {profileTabs.map(([section, label]) => <Link key={section} to="/profile" search={{ section,
         ...(typeof location.search.returnRequirement === "string" ? { returnRequirement: location.search.returnRequirement } : {}),
         ...(typeof location.search.returnRequirementsFilter === "string" ? { returnRequirementsFilter: location.search.returnRequirementsFilter } : {}),
+        ...(typeof location.search.returnRequirementsTable === "string" ? { returnRequirementsTable: location.search.returnRequirementsTable } : {}),
         ...(typeof location.search.returnJobId === "string" ? { returnJobId: location.search.returnJobId } : {}),
         ...(location.search.returnJobs && typeof location.search.returnJobs === "object" ? { returnJobs: location.search.returnJobs } : {}),
         ...(location.search.returnResumeMode === "baseline" || location.search.returnResumeMode === "tailored" ? { returnResumeMode: location.search.returnResumeMode } : {}),

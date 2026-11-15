@@ -411,7 +411,7 @@ class SqliteJobsRepository:
                 }
                 for job in jobs
             ],
-            "retentionNotice": "This removes the selected Jobs and their job-owned records. Independently saved learning plans and cohorts, company research, source-review history, and model audit history remain.",
+            "retentionNotice": "This removes the selected Jobs and their job-owned records. Requirements used only by those Jobs and their links are permanently removed. Shared requirements, Profile facts and approved wording, independently saved learning plans and cohorts, company research, source-review history, and model audit history remain.",
             "retainedIndependentData": [
                 "learning_plans_and_cohorts",
                 "company_research_history",

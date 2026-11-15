@@ -124,6 +124,11 @@ def create_application(workspace: Path | str, *, enabled_features: Collection[st
             after_delete = getattr(feature.service, "after_job_deletion", None)
             if feature.name != "jobs" and after_delete is not None:
                 jobs.register_post_commit_deletion_port(after_delete, feature=feature.name)
+    if "requirements" in services:
+        for feature in features:
+            delete = getattr(feature.service, "delete_requirement_data", None)
+            if feature.name != "requirements" and delete is not None:
+                services["requirements"].register_meaning_deletion_port(delete)
     application = Application(runtime, features)
     if "preparation" in services:
         services["preparation"].bind_run_reader(application.action_run)

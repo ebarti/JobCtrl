@@ -186,9 +186,16 @@ test("scoped occurrence corrections resolve two selected meanings and retain eve
   const newMeaning = await json<{ provenance: { semantic_stage: string; correction: { receipt_id: string }; resolution: { receipt_id: string }[] } }>(api, "get", `/v1/requirements/${newId}`);
   expect(newMeaning.provenance.semantic_stage).toBe("occurrence_correction");
   expect(newMeaning.provenance.correction.receipt_id).toBe(accepted.requirements[1]!.extraction_determination_id);
-  expect((await json<Catalog>(api, "get", "/v1/requirements?limit=200")).total).toBe(value.catalog.total + 1);
+  const retiredIds = new Set(value.snapshot.requirements.slice(0, 2).map((row) => row.requirement_id));
+  const retainedIds = new Set([...value.catalog.requirements.map((row) => row.requirement_id), newId]);
+  const activeIds = new Set([...value.catalog.requirements.filter((row) => !retiredIds.has(row.requirement_id)).map((row) => row.requirement_id), newId]);
+  const activeCatalog = await json<Catalog>(api, "get", "/v1/requirements?limit=200");
+  expect(new Set(activeCatalog.requirements.map((row) => row.requirement_id))).toEqual(activeIds);
+  expect(activeCatalog.total).toBe(activeIds.size);
+  expect(await json(api, "get", "/v1/requirements/index")).toMatchObject({ meaning_count: retainedIds.size, fresh: true });
   for (const original of value.snapshot.requirements) {
-    const history = await json<{ rows: Record<string, unknown>[] }>(api, "get", `/v1/requirements/${original.requirement_id}/history?kind=occurrences`);
+    const history = await json<{ active_in_library: boolean; rows: Record<string, unknown>[] }>(api, "get", `/v1/requirements/${original.requirement_id}/history?kind=occurrences`);
+    expect(history.active_in_library).toBe(!retiredIds.has(original.requirement_id));
     const old = history.rows.find((row) => row["occurrence_id"] === original.occurrence_id)!;
     expect(old).toBeTruthy();
     for (const [key, expected] of Object.entries(original)) expect(old[key]).toEqual(expected);
@@ -198,6 +205,19 @@ test("scoped occurrence corrections resolve two selected meanings and retain eve
   expect((await start(api, payload, "occurrence-positive-original")).runId).toBe(run.runId);
   expect(await json<Snapshot>(api, "get", snapshotPath(value.posting))).toEqual(accepted);
   expect(app.external.calls).toHaveLength(beforeReplay);
+
+  // Superseded-only meanings leave the active library but remain canonical
+  // candidates in the next explicitly admitted full-inventory determination.
+  const beforeRetainedMatching = app.external.calls.length;
+  const later = await captureReusePosting(api, "occurrence-positive-retained-catalog",
+    clauses[0]! + "\nThe role also documents the accepted program context.");
+  const laterResult = await acceptReuseRequirements(api, app, later,
+    [{ localId: "transformation", text: clauses[0]!, definition: corrected[0]!.definition }],
+    { transformation: { verdict: "equivalent", requirementId: value.existingId } });
+  const laterContext = laterResult.matching!.body["context"] as CatalogContext;
+  expect(new Set(laterContext.candidates.map((row) => row.requirement_id))).toEqual(retainedIds);
+  expect(laterResult.snapshot.requirements[0]!.requirement_id).toBe(value.existingId);
+  expect(operations(app, beforeRetainedMatching)).toEqual(["requirements.extract", "requirements.match_catalog"]);
 });
 
 test("scoped occurrence corrections refuse invalid selected IDs evidence and uncertainty atomically", async ({ api, app }) => {

@@ -142,11 +142,30 @@ is a source contract; the [redesign ledger](../plans/2026-11-11-original-app-red
 records integrated verification separately.
 The active library contains Skills/Professional Experience only. Direct
 Education/Languages demands remain in their job snapshot and Fit result.
+Membership requires an accepted occurrence on at least one existing nondeleted
+Job; hidden Jobs count. Both `GET /v1/requirements` and the composed Fit library
+apply this rule before filtering or pagination. Deleting the last such Job
+removes the meaning from those lists; restoring it recovers the same IDs and
+history. Existing support, associations and wording selections remain retained
+but do not independently keep a deleted-only meaning active. Profile capabilities
+and accepted documents are unchanged. These reads and visibility changes make
+no model calls. `catalog_revision` identifies the retained semantic catalog,
+so a visibility change can alter library membership without changing that epoch.
+Reviewed permanent job deletion removes canonical meanings only when no other
+retained Job occurrence references them, including superseded occurrences and
+soft-deleted Jobs. Requirements removes its heads/revisions/index/action links
+and increments the catalog epoch; registered Fit cleanup removes its owned
+requirement relations in the same transaction. Profile facts and approved
+wording, independent model receipts and remaining Jobs' meanings survive.
+Exact detail/history reads for a permanently removed meaning return 404.
+Later identical source extraction creates a different canonical identity after
+purge; it cannot revive removed revision pins or Profile links.
 
 | Route | Contract |
 | --- | --- |
-| `GET /v1/requirements/{requirement_id}/history` | `kind=revisions\|occurrences`, `limit=1..200` (default 50) and nonnegative `offset`; returns `{requirement_id,current_revision,kind,total,limit,offset,rows}`. Occurrences retain exact accepted posting/meaning revisions and report `current`/`stale_reasons`. |
-| `GET /v1/fit/requirement-library?profile_id=default` | Complete current catalog with nullable recorded `assessment`, exact `coverage`, separate unassessed `associations`, active `current_wordings` heads (including stale heads) and all `wording_assignments` heads. Returns Profile/fact/wording/catalog revisions and `readiness: ready\|profile_required`. An absent Profile has null Profile revisions, not invented evidence. |
+| `GET /v1/requirements/{requirement_id}` | Retained current or exact historical meaning and accepted occurrences, including meanings outside the active library. `active_in_library` distinguishes current membership from retention. |
+| `GET /v1/requirements/{requirement_id}/history` | `kind=revisions\|occurrences`, `limit=1..200` (default 50) and nonnegative `offset`; returns `{requirement_id,current_revision,active_in_library,kind,total,limit,offset,rows}`. Occurrences retain exact accepted posting/meaning revisions and report `current`/`stale_reasons`. |
+| `GET /v1/fit/requirement-library?profile_id=default` | Complete active library with nullable recorded `assessment`, exact `coverage`, separate unassessed `associations`, active `current_wordings` heads (including stale heads) and all `wording_assignments` heads. Returns Profile/fact/wording/catalog revisions and `readiness: ready\|profile_required`. An absent Profile has null Profile revisions, not invented evidence. |
 | `POST /v1/fit/associations` | Requires stable `association_id`, `profile_id`, `expected_profile_revision`, `requirement_id`, `requirement_revision`, `achievement_id`, exact `achievement_source_refs`, and `wording: null` or `{variant_id,variant_revision,exact_text,source_refs}`. |
 | `POST /v1/fit/associations/{association_id}/revisions` | The association creation fields plus `expected_revision` revise the optional wording/source pins while retaining the stable Profile/achievement/requirement pair, ID and history. One active manual association exists per pair. |
 | `POST /v1/fit/associations/{association_id}/state` | `{profile_id,expected_revision,state: active\|removed}` performs revision-fenced soft removal/restoration; it preserves original source pins. |

@@ -704,6 +704,10 @@ class FitService:
         """Delete job scores, retaining reusable person/requirement intelligence."""
         self.store.delete_job_data(job_id, connection)
 
+    def delete_requirement_data(self, requirement_ids, connection=None):
+        """Remove relations to meanings permanently deleted by their owner."""
+        self.store.delete_requirement_data(requirement_ids, connection)
+
     def _replay_operation(self, operation_id, input_fingerprint):
         recorded = self.store.operation(operation_id, input_fingerprint)
         if recorded is None:

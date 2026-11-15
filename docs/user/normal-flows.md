@@ -201,7 +201,7 @@ reviewed:
 
 1. Save the inputs you want included.
 2. Choose **Update affected matches** beside Profile/job evidence, or select a
-   scored Jobs cohort and use **Update affected matches for selected jobs**.
+   scored Jobs cohort and open **Update affected matches** in its selection actions.
 3. Review the fixed job scope and **Work limits**, then start the update.
 4. Inspect factual results and grouped wording work separately. Current approved
    links are reused; actual gaps are grouped by achievement. A wording proposal
@@ -222,6 +222,13 @@ action when work is unavailable. Individual maintenance tools remain under
 **Preparation options and history**; ordinary preparation does not need a tour of
 operations pages.
 
+For several selected jobs, open **Preparation tools** in Jobs. Its **Tools** tab
+contains the individual preparation actions and explicit fit-threshold exception;
+**History** shows compact run rows with status, job count and update time. Open a
+row to inspect its stages, retry unfinished work or request cancellation. Technical
+run and job identities remain available in the expanded outcomes. Closing either
+selection dialog keeps the current selection and entered options.
+
 If the task needs a saved Profile, its setup link retains the selected job,
 comparison context and chosen resume mode. Complete the Profile work, then use
 **Return to job**; navigation does not change Settings or start model work.
@@ -241,7 +248,11 @@ available. See [Materials & Tailoring](materials-and-tailoring.md) and
 ## 6. Review An Application And Record Its Outcome
 
 Use the selected job's review/application task, or **Jobs → Applications** for
-the cross-job queue. Inspect the exact outgoing packet, accepted resume,
+the cross-job queue. Filter the queue and select a job, then use the **Resume**,
+**Screening answers** and **Application review** tabs to focus on each task. On a
+narrow screen, **Choose an application** opens the queue. The selected job and tab
+are reflected in the address; unsaved edits remain available while changing tabs
+in the current session. Inspect the exact outgoing packet, accepted resume,
 screening answers, source bindings and rehearsal result. Document acceptance and
 application approval are different decisions. Any changed bound input requires
 fresh review of the exact candidate.

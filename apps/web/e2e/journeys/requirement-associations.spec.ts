@@ -300,8 +300,11 @@ test("manual requirement links preserve many-to-many intent, exact wording pins 
     `/requirements?requirement=${encodeURIComponent(second.requirement_id)}`,
   );
   await expect(
-    page.getByRole("heading", { name: "Requirements", exact: true }),
+    page.getByRole("heading", { name: "Requirements library", level: 1, exact: true }),
   ).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("requirement")).toBe(second.requirement_id);
+  await expect(page.getByRole("region", { name: "Requirement details", exact: true })
+    .getByText(second.definition, { exact: true }).first()).toBeVisible();
   await expect(
     page.getByText("Your link · unassessed", { exact: true }).first(),
   ).toBeVisible();

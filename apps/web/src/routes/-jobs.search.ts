@@ -7,6 +7,7 @@ import { z } from "zod";
 
 import { JobStatesFilterSchema } from "@jobctrl/contracts";
 import { PYTHON_JOBS_SORT_FIELDS } from "../shared/stores/saved-table-views.js";
+import { requirementsReturnTableSchema } from "../contexts/requirements/index.js";
 
 const STAGE_OR_ALL = [...STAGES, "all"] as const;
 const STATE_OR_ALL = [...STAGE_STATES, "all"] as const;
@@ -69,6 +70,7 @@ export const jobsSearchSchema = z.object({
   resumeMode: z.enum(["baseline", "tailored"]).optional(),
   returnRequirement: z.string().min(1).max(200).optional(),
   returnRequirementsFilter: z.string().max(10000).optional(),
+  returnRequirementsTable: requirementsReturnTableSchema,
 }).superRefine((value, context) => {
   if (value.grid === "v1" && (value.offset ?? 0) > 0 && !value.query_revision) {
     context.addIssue({ code: "custom", path: ["query_revision"], message: "Reload the first Jobs page to establish a query revision." });

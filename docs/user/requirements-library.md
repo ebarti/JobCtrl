@@ -9,6 +9,23 @@ selecting a job. A requirement tag in **My profile → Experience** opens the sa
 record. Its category, name, definition and revision explain the saved meaning;
 its source history records where that meaning occurred in actual postings.
 
+The active library contains meanings used by at least one nondeleted job's
+accepted requirements. Moving a job to deleted items removes its unique meanings
+from this list; a meaning shared by another nondeleted job stays. Hidden jobs
+still count. Restoring a job restores the same saved requirement identities and
+history without extracting, assessing or rewriting anything. Profile skills,
+saved links, Fit history and accepted resumes remain retained independently.
+Historical support or a manual link alone does not keep a deleted-only meaning
+in the active list.
+
+Permanently deleting a job also permanently removes its requirement meanings
+when no other retained job references them. A shared meaning remains even when
+the other job is in deleted items. The same transaction removes Fit-owned links,
+coverage, assessments and maintained selections for removed meanings; authored
+Profile skills, facts and approved wording remain. Independent model audit
+receipts retain their historical records. Permanent deletion cannot be undone
+with **Restore**.
+
 The current `requirements-v2` catalog contains **Skills** and **Professional
 Experience** only. **Education** and **Languages** remain direct demands on the
 job's Fit view, bound to that posting and revision. They do not appear in this
@@ -31,8 +48,16 @@ release or hosted deployment.
 *The saved meaning, factual assessment, exact approval and wording coverage keep
 their own identities. Your manual links remain separate unassessed intent.*
 
-Search filters saved definitions literally. It does not discover semantic
-equivalence or assess your evidence. Select a requirement to inspect:
+The library opens as a full-width table. Search filters saved names and
+definitions literally. Column filters and sorting apply to the complete library
+before pagination. Use the column controls to resize, reorder or hide columns,
+then save a named view to keep the filters, sort and layout you use. These
+controls do not discover semantic equivalence or assess your evidence.
+
+Select a row to open its detail alongside the table on a wide screen. On a
+phone, the selected detail takes the workspace; **Back to requirements** restores
+the table with its filters and page. Browser Back and return links from Profile
+or a source job preserve the same table context. Select a requirement to inspect:
 
 - its category, name, exact definition and canonical revision;
 - **Linked achievements**, grouped by saved achievement identity rather than by
@@ -129,6 +154,13 @@ assessment or refresh is separate attempt history; it does not become a new
 accepted requirement or overwrite the last accepted resume. A source-history
 page can be old without implying its original posting is currently available.
 Inspect the recorded revisions and staleness reasons before reuse.
+An exact requirement or history API lookup remains available for a retained
+meaning outside the active list and reports `active_in_library: false`. The
+complete retained canonical inventory remains available to explicit semantic
+matching, so a later equivalent posting can reuse the original meaning. When
+that posting's requirements are accepted, the meaning reappears in the active
+library with the same identity. This reuse includes meanings hidden because all
+their jobs are in deleted items; matching does not filter by library visibility.
 
 The active catalog starts empty for `requirements-v2` and reads only that
 generation. Missing contract versions are legacy; older meanings are not
