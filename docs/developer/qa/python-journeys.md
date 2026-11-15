@@ -107,6 +107,18 @@ case then passed in `e2e-767usR` (**7.820 s** build, **12.209 s** journeys,
 used the unchanged final web digest
 `c2aa4d2afecf9541aaa5163f64a09f65c788c302584eb78f7c42039000d7a157`.
 
+The first full hosted run on `fbae0df4d` reached the unchanged 720-second
+ceiling in shard 1: 35 passed and 12 did not run. Shards 2 and 3 passed 41 and
+40 cases in 695.694 s and 567.385 s, respectively. This is **116 passed and 12
+unrun**, with no individual assertion failure; it is not a complete suite pass.
+
+The hosted matrix now uses four standard Playwright shards. Native JSON
+listings measured **34 / 33 / 37 / 24 cases** in **11 / 9 / 12 / 10 project-file
+groups**. Their disjoint union equals the complete 128-case, 42-group inventory,
+with no missing, duplicate or extra case. One worker, zero retries, 90-second
+case and 720-second suite limits remain unchanged. The stable Browser aggregate
+requires all four jobs; the actual hosted rerun is required to qualify capacity.
+
 ### QA workspaces and requirement lifecycle — 15 November 2026
 
 Six added journeys exercise Applications task/draft retention, the Requirements
