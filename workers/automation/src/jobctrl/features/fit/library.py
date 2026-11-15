@@ -13,7 +13,7 @@ from .sources import dto, qualification_fingerprint
 
 def requirement_library(store, profile_id="default"):
     with store.read_snapshot() as read:
-        catalog = read.catalog_snapshot()
+        catalog = read.library_catalog_snapshot()
         try:
             profile = dto(read.profile_snapshot(profile_id))
         except NotFoundError:

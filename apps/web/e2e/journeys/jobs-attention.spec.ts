@@ -60,7 +60,7 @@ test("Jobs attention follows committed visibility and reviewed deletion events w
   await verifyTransition("unhide", 1, () => json(api, "post", `/v1/jobs/${posting.job_id}/unhide`, {}));
   await expect(table.getByRole("link", { name: revised.title, exact: true })).toBeVisible();
   await table.getByRole("checkbox", { name: `Select ${revised.title}`, exact: true }).check();
-  await verifyTransition("delete", 0, () => page.getByRole("button", { name: "Move selected to deleted", exact: true }).click());
+  await verifyTransition("delete", 0, () => page.getByRole("button", { name: "Delete", exact: true }).click());
   await expect(table.getByRole("link", { name: revised.title, exact: true })).toHaveCount(0);
   await verifyTransition("restore", 1, () => json(api, "post", `/v1/jobs/${posting.job_id}/restore`, {}));
   await verifyTransition("delete", 0, () => json(api, "post", `/v1/jobs/${posting.job_id}/delete`, {}));

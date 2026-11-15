@@ -465,6 +465,51 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
             " AND json_extract(assessment_json,'$.category') IN ('education','language')", (job_id,),
         )
 
+    def delete_requirement_data(self, requirement_ids, connection=None):
+        if connection is None or not connection.in_transaction:
+            raise RuntimeError("Permanent requirement cleanup requires the owner's write transaction.")
+        self._prune_wording_requests(set(requirement_ids), connection)
+        for ident in requirement_ids:
+            for table, field in (("fit_user_association_versions", "association_json"),
+                                 ("fit_current_wording_versions", "assignment_json")):
+                connection.execute(f"DELETE FROM {table} WHERE json_extract({field},'$.requirement_id')=?", (ident,))
+            # Coverage owns the only local FK to assessments, so remove it first.
+            for table in ("fit_coverage_relations", "fit_user_associations",
+                          "fit_current_wordings", "fit_assessments"):
+                connection.execute(f"DELETE FROM {table} WHERE requirement_id=?", (ident,))
+
+    def _prune_wording_requests(self, requirement_ids, connection):
+        """Keep surviving proposal suppression under its original Profile key."""
+        if not requirement_ids:
+            return
+        for row in connection.execute("SELECT origin_key,binding_json FROM fit_wording_requests").fetchall():
+            binding = json.loads(row["binding_json"])
+            members = binding.get("requirements", [binding])
+            surviving = [member for member in members if member["requirement_id"] not in requirement_ids]
+            if len(surviving) == len(members):
+                continue
+            if not surviving:
+                connection.execute("DELETE FROM fit_wording_requests WHERE origin_key=?", (row["origin_key"],))
+                continue
+            # save_wording_request mirrors the first member at the top level.
+            # Remove that old mirror before indexing the first surviving member;
+            # the grouped source inventory and immutable proposal key stay bound.
+            retained = {key: value for key, value in binding.items() if key not in members[0]}
+            retained = {**surviving[0], **retained, "requirements": surviving,
+                        "evidence_refs": binding["evidence_refs"]}
+            for field in ("gap_requirement_ids", "intended_requirement_ids"):
+                if field in binding:
+                    retained[field] = [ident for ident in binding[field] if ident not in requirement_ids]
+            if "gap_requirement_ids" not in retained:
+                proposal = self.profile.get_authoring_proposal(binding["proposal_id"], binding["profile_id"],
+                    connection=connection, include_brief=True)
+                gaps = (proposal or {}).get("brief", {}).get("origin_metadata", {}).get("gap_requirement_ids", [])
+                retained["gap_requirement_ids"] = [ident for ident in gaps if ident not in requirement_ids]
+            connection.execute(
+                "UPDATE fit_wording_requests SET requirement_id=?,requirement_revision=?,binding_json=? WHERE origin_key=?",
+                (retained["requirement_id"], str(retained["requirement_revision"]), encoded(retained), row["origin_key"]),
+            )
+
 
 class SqliteFitReadSession:
     """Typed read operations bound to one private adapter snapshot."""
@@ -530,6 +575,9 @@ class SqliteFitReadSession:
 
     def catalog_snapshot(self):
         return self._store.requirements.catalog_snapshot(connection=self._connection)
+
+    def library_catalog_snapshot(self):
+        return self._store.requirements.library_catalog_snapshot(connection=self._connection)
 
     def wording_library(self, profile_id="default"):
         return self._store.profile.library(profile_id, connection=self._connection)

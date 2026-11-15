@@ -206,6 +206,23 @@ Canonical writes and bounded invalidation events commit in one SQLite transactio
 - Library: `GET /v1/fit/requirement-library` returns the active reusable catalog,
   recorded current/stale assessments, exact relations and maintained assignments.
   Before Profile exists it remains readable as `readiness: profile_required`.
+  Requirements' `library_catalog_snapshot` supplies membership from accepted
+  occurrences on existing nondeleted Jobs. Hidden Jobs count; deleting the last
+  live occurrence removes the row even when stored support or user links exist.
+  Those records remain retained and return under the same identities when a Job
+  is restored. Complete-catalog matching and manual refresh keep using the
+  separate retained `catalog_snapshot`; library reads admit no model work.
+  When Requirements permanently removes an orphaned meaning, its registered
+  deletion port removes Fit's assessment/coverage/request rows, user association
+  heads/history and maintained selection heads/history in the same Jobs write
+  transaction. Profile facts and approved wording stay unchanged; historical
+  wording provenance and immutable group/model receipts remain audit records.
+  Grouped wording requests are pruned by member identity, not their first-member
+  SQL index: surviving members retain the original proposal/origin, revision and
+  evidence pins, with gap/intended IDs pruned and the leading index updated.
+  Only empty groups are removed. A surviving requirement therefore retains its
+  rejected/deferred proposal suppression during the next explicit refresh;
+  immutable Profile proposal provenance is unchanged.
 - User associations: creation/revision/state/history endpoints retain revision-
   bound intent with `origin: user` and `assessment_status: unassessed`. They never
   write qualification, coverage, scores, approval or model work.

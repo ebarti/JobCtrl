@@ -320,10 +320,17 @@ test("Original redesign renders all twenty-six primary workspace surfaces at nor
         await expect(
           page.getByRole("textbox", { name: "Resume editor", exact: true }),
         ).toContainText(currentProfile.profile.personal.full_name);
-      if (route.name === "requirements")
+      if (route.name === "requirements") {
+        await expect(page.getByRole("region", { name: "Requirement details", exact: true })).toHaveCount(0);
+        const requirementRows = viewport.width < 640
+          ? page.getByRole("list", { name: "Saved requirements", exact: true }).getByRole("listitem")
+          : page.getByRole("table", { name: "Saved requirements", exact: true }).locator("tbody tr[data-row-id]");
+        await expect(requirementRows).toHaveCount(2);
+        await requirementRows.first().click();
         await expect(
           page.getByRole("button", { name: "Link achievement", exact: true }),
         ).toBeEnabled();
+      }
       if (route.name === "profile-experience")
         await expect(
           page

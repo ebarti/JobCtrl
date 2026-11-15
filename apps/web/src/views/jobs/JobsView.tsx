@@ -17,6 +17,7 @@ import { SavedTableViewsControl } from "../../shared/ui/saved-table-views-contro
 import { isActiveDataGridFilter, type DataGridFilterState, type DataGridSortState } from "../../shared/ui/filterable-data-grid.js";
 import { ComposedJobsGrid } from "./ComposedJobsGrid.js";
 import { criteriaFromQuery, defaultCriteria, restoreView, savedFilters, type GridCriteria } from "./jobGridState.js";
+import "../../styles/jobs-selection.css";
 
 const captureSchema = z.object({ url: z.string().url(), title: z.string().trim().min(1), company: z.string(), description: z.string().trim().min(1), location: z.string() });
 const urlSchema = z.string().url();
@@ -200,15 +201,17 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
       {unavailable.length ? <p role="status">Unavailable features: {unavailable.map(({ name, state }) => `${name} (${state.enabled ? "unavailable" : "disabled"})`).join(", ")}. Their saved criteria remain in effect and can be cleared.</p> : null}
       {hasLimitedFacets ? <p>Some filter value lists are limited; use the text predicate to search the full result set.</p> : null}
       {presentation.grouping ? <p>Groups organize the current page; sorting and filtering apply to all matching jobs.</p> : null}
-      {selectedRows.length ? <div className="toolbar" aria-label="Selected jobs actions">
-        <span>{selectedRows.length} selected</span>
-        <Button type="button" variant="outline" disabled={pending || selectedRows.some((job) => job.deleted || job.hidden)} onClick={() => onBulk("hide")}>Hide selected</Button>
-        <Button type="button" variant="outline" disabled={pending || selectedRows.some((job) => job.deleted || !job.hidden)} onClick={() => onBulk("unhide")}>Unhide selected</Button>
-        <Button type="button" variant="outline" disabled={pending || selectedRows.some((job) => job.deleted)} onClick={() => onBulk("delete")}>Move selected to deleted</Button>
-        <Button type="button" variant="outline" disabled={pending || selectedRows.some((job) => !job.deleted)} onClick={() => onBulk("restore")}>Restore selected</Button>
-        <Button type="button" variant="outline" disabled={pending || selectedRows.some((job) => !job.deleted)} onClick={() => { setConfirmation(""); setPreviewScope(selectionFingerprint); previewDelete.mutate(selectedIds); }}>Review permanent deletion</Button>
-        {optionalBulkActions?.(selectedIds)}
-        <Button type="button" variant="ghost" disabled={pending} onClick={clearSelection}>Clear selection</Button>
+      {selectedRows.length ? <div className="jobs-selection" role="group" aria-label="Selected jobs actions">
+        <span className="jobs-selection__count" data-typography="label">{selectedRows.length} selected</span>
+        <div className="jobs-selection__actions">
+          <Button type="button" variant="outline" size="sm" disabled={pending || selectedRows.some((job) => job.deleted || job.hidden)} onClick={() => onBulk("hide")}>Hide</Button>
+          <Button type="button" variant="outline" size="sm" disabled={pending || selectedRows.some((job) => job.deleted || !job.hidden)} onClick={() => onBulk("unhide")}>Unhide</Button>
+          <Button type="button" variant="outline" size="sm" title="Move to Deleted. You can restore these jobs later." disabled={pending || selectedRows.some((job) => job.deleted)} onClick={() => onBulk("delete")}>Delete</Button>
+          <Button type="button" variant="outline" size="sm" disabled={pending || selectedRows.some((job) => !job.deleted)} onClick={() => onBulk("restore")}>Restore</Button>
+          <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={clearSelection}>Clear selection</Button>
+          {optionalBulkActions?.(selectedIds)}
+          {selectedRows.some((job) => job.deleted) ? <Button type="button" variant="ghost" size="sm" disabled={pending || selectedRows.some((job) => !job.deleted)} onClick={() => { setConfirmation(""); setPreviewScope(selectionFingerprint); previewDelete.mutate(selectedIds); }}>Review permanent deletion</Button> : null}
+        </div>
       </div> : null}
       {bulk.error || previewDelete.error || permanentDelete.error ? <p role="alert">{(bulk.error ?? previewDelete.error ?? permanentDelete.error)?.message} The saved job selection remains available.</p> : null}
       {preview ? <section aria-label="Review permanent deletion"><h2>Review permanent deletion</h2>

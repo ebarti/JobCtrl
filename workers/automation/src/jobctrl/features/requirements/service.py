@@ -33,6 +33,11 @@ class RequirementsService:
         self.store = store
         self.jobs = jobs
         self.model = model
+        self.meaning_deletion_ports = []
+
+    def register_meaning_deletion_port(self, callback):
+        if callback not in self.meaning_deletion_ports:
+            self.meaning_deletion_ports.append(callback)
 
     def find_job_requirements(self, job_id: str, connection=None) -> dict | None:
         """Read optional acceptance without turning a missing Job into absence.
@@ -144,7 +149,41 @@ class RequirementsService:
             raise ConflictError("The canonical requirement catalog changed or its snapshot is invalid.")
 
     def catalog(self, *, limit=50, offset=0, query=""):
-        return self.store.catalog(limit=limit, offset=offset, query=query)
+        with self.store.read_session() as connection:
+            epoch, meanings = self._library_meanings(connection)
+        # q is a literal user filter, never equivalence or novelty authority.
+        if query:
+            meanings = [row for row in meanings if query.casefold() in canonical_json({key: row[key] for key in MEANING_KEYS}).casefold()]
+        return {"contract_version": CONTRACT_VERSION, "catalog_revision": epoch,
+                "total": len(meanings), "requirements": meanings[offset:offset + limit]}
+
+    def _active_library_requirement_ids(self, connection, requirement_id=None):
+        roots = self.store.accepted_occurrence_jobs(connection, requirement_id)
+        job_ids = list(dict.fromkeys(job_id for _, job_id in roots))
+        live_job_ids = set()
+        for offset in range(0, len(job_ids), 1000):
+            postings = self.jobs.get_job_snapshots(job_ids[offset:offset + 1000], connection=connection)
+            live_job_ids.update(job_id for job_id, posting in postings.items() if not posting.get("deleted"))
+        return {ident for ident, job_id in roots if job_id in live_job_ids}
+
+    def library_catalog_snapshot(self, connection=None) -> dict:
+        """Active library membership, distinct from the retained semantic catalog.
+
+        A nondeleted Job's accepted occurrence is the only membership root.
+        Hidden Jobs still count. Historical Fit/Profile relations retain their
+        identities without keeping a deleted-only meaning in this projection.
+        """
+        if connection is None:
+            with self.store.read_session() as connection:
+                return self.library_catalog_snapshot(connection)
+        epoch, meanings = self._library_meanings(connection)
+        return {"contract_version": CONTRACT_VERSION, "catalog_revision": epoch,
+                "requirements": [{key: meaning[key] for key in ("requirement_id", "revision", *MEANING_KEYS)} for meaning in meanings]}
+
+    def _library_meanings(self, connection):
+        epoch, meanings = self.store.catalog_snapshot(connection)
+        active_ids = self._active_library_requirement_ids(connection)
+        return epoch, [meaning for meaning in meanings if meaning["requirement_id"] in active_ids]
 
     def index_status(self):
         return self.store.index_status()
@@ -155,13 +194,21 @@ class RequirementsService:
         return self.store.rebuild_index(expected_catalog_revision)
 
     def delete_job_data(self, job_id, connection=None):
+        if connection is None or not connection.in_transaction:
+            raise RuntimeError("Permanent requirement deletion requires Jobs' write transaction.")
+        orphaned_ids = self.store.orphaned_meaning_ids_for_job(job_id, connection)
+        if orphaned_ids:
+            for callback in self.meaning_deletion_ports:
+                callback(orphaned_ids, connection=connection)
         self.store.delete_job_data(job_id, connection)
+        self.store.delete_meanings(orphaned_ids, job_id, connection)
 
     def requirement_detail(self, requirement_id, *, revision=None, limit=100, offset=0):
         with self.store.read_session() as connection:
             meaning = self.get_requirement(requirement_id, revision, connection=connection)
             head = self.store.get_meaning(requirement_id, connection=connection)
-            return {**meaning, "current_revision": head["revision"], "occurrences": self.store.occurrences(
+            active = requirement_id in self._active_library_requirement_ids(connection, requirement_id)
+            return {**meaning, "current_revision": head["revision"], "active_in_library": active, "occurrences": self.store.occurrences(
                 requirement_id, limit=limit, offset=offset, connection=connection,
             )}
 
@@ -171,6 +218,7 @@ class RequirementsService:
         with self.store.read_session() as connection:
             head = self.store.get_meaning(requirement_id, connection=connection)
             page = self.store.history(requirement_id, kind=kind, limit=limit, offset=offset, connection=connection)
+            active = requirement_id in self._active_library_requirement_ids(connection, requirement_id)
             postings = self.jobs.get_job_snapshots(list(dict.fromkeys(row["job_id"] for row in page["rows"])),
                                                    connection=connection) if kind == "occurrences" else {}
             for row in page["rows"]:
@@ -187,7 +235,7 @@ class RequirementsService:
                             or posting.get("source_hash") != row["source_hash"]):
                         reasons.append("posting_changed_or_unavailable")
                 row.update(current=not reasons, stale_reasons=reasons)
-            return {"requirement_id": requirement_id, "current_revision": head["revision"],
+            return {"requirement_id": requirement_id, "current_revision": head["revision"], "active_in_library": active,
                     "kind": kind, "limit": limit, "offset": offset, **page}
 
     async def correct_occurrences(
@@ -810,6 +858,9 @@ class RequirementsService:
         return {
             "requirement_id": CONTRACT_VERSION + ":" + str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:requirement:" + fingerprint({
                 "contract_version": CONTRACT_VERSION,
+                # A purged identity must never be recreated as revision 1 over
+                # immutable Profile/audit provenance that names its old ID.
+                "creation_catalog_revision": inventory["catalog_revision"],
                 "semantic_source": source_binding["semantic_source"] if source_binding else cls._content_source(posting.get("text") or posting.get("description") or ""),
                 "local_id": extracted.local_id,
                 "meaning": meaning_data(extracted),

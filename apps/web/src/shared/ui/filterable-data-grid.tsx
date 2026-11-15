@@ -121,7 +121,7 @@ export interface DataGridCellContext<TData> {
 export interface DataGridPaginationState {
   page: number;
   pageSize: number;
-  totalPages: number;
+  totalPages?: number;
   totalRows?: number;
   pageSizeOptions?: TablePagerProps["pageSizeOptions"];
   onPageChange: (page: number) => void;
@@ -148,6 +148,8 @@ export interface FilterableDataGridProps<TData> {
   initialPageSize?: number;
   pageSizeOptions?: TablePagerProps["pageSizeOptions"];
   pagination?: DataGridPaginationState;
+  /** False keeps filtering, sorting and page slicing over the complete data. */
+  manualPagination?: boolean;
   summary?: ReactNode;
   toolbarActions?: ReactNode;
   showColumnFilterMenu?: boolean;
@@ -495,6 +497,7 @@ export function FilterableDataGrid<TData>({
   initialPageSize = 25,
   pageSizeOptions,
   pagination,
+  manualPagination = Boolean(pagination),
   summary,
   toolbarActions,
   showColumnFilterMenu = false,
@@ -630,21 +633,25 @@ export function FilterableDataGrid<TData>({
     }
   }, [filters, localPageSize, pagination, sort]);
 
-  const totalRows = pagination?.totalRows ?? visibleRows.length;
+  const totalRows = manualPagination ? pagination?.totalRows ?? visibleRows.length : visibleRows.length;
   const totalPages =
-    pagination?.totalPages ?? Math.max(1, Math.ceil(totalRows / pageSize));
+    (manualPagination ? pagination?.totalPages : undefined) ?? Math.max(1, Math.ceil(totalRows / pageSize));
   const safePage = Math.min(Math.max(page, 1), totalPages);
 
   useEffect(() => {
-    if (pagination || safePage === localPage) return;
+    if (pagination) {
+      if (!manualPagination && !loading && page !== safePage) pagination.onPageChange(safePage);
+      return;
+    }
+    if (safePage === localPage) return;
     setLocalPage(safePage);
-  }, [localPage, pagination, safePage]);
+  }, [loading, localPage, manualPagination, page, pagination, safePage]);
 
   const pageRows = useMemo(() => {
-    if (!paginationEnabled || pagination) return visibleRows;
+    if (!paginationEnabled || (pagination && manualPagination)) return visibleRows;
     const offset = (safePage - 1) * pageSize;
     return visibleRows.slice(offset, offset + pageSize);
-  }, [pageSize, pagination, paginationEnabled, safePage, visibleRows]);
+  }, [manualPagination, pageSize, pagination, paginationEnabled, safePage, visibleRows]);
   const pageRowIndexById = useMemo(() => {
     const next = new Map<string, number>();
     pageRows.forEach((row, index) => {
@@ -969,7 +976,7 @@ export function FilterableDataGrid<TData>({
     moveColumn(column.id, target.id, delta < 0 ? "before" : "after");
   };
 
-  const summaryText = pagination
+  const summaryText = pagination && manualPagination
     ? `${data.length} shown / ${totalRows ?? data.length} total`
     : paginationEnabled
       ? `${pageRows.length} shown / ${visibleRows.length} filtered / ${data.length} loaded`
@@ -1397,6 +1404,7 @@ export function FilterableDataGrid<TData>({
                   return (
                     <tr
                       key={rowId}
+                      data-row-id={rowId}
                       className={effectiveRowClassName}
                       aria-selected={rowAriaSelected?.(row)}
                       onClick={

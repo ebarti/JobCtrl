@@ -689,6 +689,80 @@ test("Jobs sorts and facets the complete set, then restores a source-bound filte
   expect((await json<Query>(api, "get", "/v1/jobs/query")).total).toBe(51);
 });
 
+test("Jobs keeps selected actions compact while secondary workflows preserve the selection", async ({ api, app, page }, testInfo) => {
+  const first = await capture(api, "selection-first", "Synthetic Selection Engineer");
+  const second = await capture(api, "selection-second", "Synthetic Selection Lead");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/jobs");
+  const table = page.getByRole("table", { name: "Jobs table", exact: true });
+  for (const job of [first, second]) await table.getByRole("checkbox", { name: `Select ${job.title}`, exact: true }).check();
+  const actions = page.getByRole("group", { name: "Selected jobs actions", exact: true });
+  await expect(actions.getByText("2 selected", { exact: true })).toBeVisible();
+  for (const label of ["Hide", "Unhide", "Delete", "Restore", "Clear selection"]) {
+    await expect(actions.getByRole("button", { name: label, exact: true })).toBeVisible();
+  }
+  await expect(actions.getByRole("button", { name: "Delete", exact: true })).toHaveAttribute("title", "Move to Deleted. You can restore these jobs later.");
+
+  for (const width of [1440, 1024, 768, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const geometry = await actions.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      const buttons = Array.from(element.querySelectorAll("button")).map((button) => {
+        const rect = button.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, height: rect.height };
+      });
+      return { left: box.left, right: box.right, viewport: document.documentElement.clientWidth, buttons };
+    });
+    expect(geometry.left).toBeGreaterThanOrEqual(0);
+    expect(geometry.right).toBeLessThanOrEqual(geometry.viewport);
+    for (const [index, button] of geometry.buttons.entries()) {
+      expect(button.left).toBeGreaterThanOrEqual(geometry.left);
+      expect(button.right).toBeLessThanOrEqual(geometry.right);
+      if (width === 390) expect(button.height).toBeGreaterThanOrEqual(44);
+      for (const other of geometry.buttons.slice(index + 1)) {
+        expect(button.left >= other.right || other.left >= button.right || button.top >= other.bottom || other.top >= button.bottom).toBe(true);
+      }
+    }
+  }
+
+  const toolbar = page.locator(".jobs-selection");
+  const before = await toolbar.boundingBox();
+  const matchesTrigger = actions.getByRole("button", { name: "Update affected matches", exact: true });
+  await matchesTrigger.click();
+  const matches = page.getByRole("dialog", { name: "Update affected matches", exact: true });
+  await expect(matches).toBeVisible();
+  await expect(matches).toContainText("2 selected jobs");
+  await expect(matches.getByRole("region", { name: "Affected matches", exact: true })).toBeVisible();
+  expect((await toolbar.boundingBox())?.height).toBe(before?.height);
+  await page.keyboard.press("Escape");
+  await expect(matches).not.toBeVisible();
+  await expect(matchesTrigger).toBeFocused();
+
+  const preparationTrigger = actions.getByRole("button", { name: "Preparation tools", exact: true });
+  await preparationTrigger.click();
+  const preparation = page.getByRole("dialog", { name: "Selected jobs preparation", exact: true });
+  await expect(preparation).toBeVisible();
+  const override = preparation.getByRole("checkbox", { name: "Prepare selected jobs below the saved fit threshold", exact: true });
+  await override.check();
+  await preparation.getByRole("tab", { name: "History", exact: true }).click();
+  await expect(preparation.getByText("No preparation runs recorded.", { exact: true })).toBeVisible();
+  await expect(override).not.toBeVisible();
+  await preparation.getByRole("tab", { name: "Tools", exact: true }).click();
+  await expect(override).toBeChecked();
+  expect((await toolbar.boundingBox())?.height).toBe(before?.height);
+  await testInfo.attach("jobs-selected-preparation-mobile", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
+  await preparation.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(preparationTrigger).toBeFocused();
+  await preparationTrigger.click();
+  await expect(override).toBeChecked();
+  await page.keyboard.press("Escape");
+  for (const job of [first, second]) await expect(table.getByRole("checkbox", { name: `Select ${job.title}`, exact: true })).toBeChecked();
+  await actions.getByRole("button", { name: "Clear selection", exact: true }).click();
+  await expect(actions).toHaveCount(0);
+  for (const job of [first, second]) await expect(table.getByRole("checkbox", { name: `Select ${job.title}`, exact: true })).not.toBeChecked();
+  expect(app.external.calls).toHaveLength(0);
+});
+
 test.describe("Jobs without optional read owners", () => {
   test.use({ features: "profile,jobs" });
 
@@ -791,13 +865,13 @@ test.describe("Jobs without optional read owners", () => {
         name: "Review permanent deletion",
         exact: true,
       }),
-    ).toBeDisabled();
+    ).toHaveCount(0);
     await json(api, "post", `/v1/jobs/${peer.job_id}/hide`, {});
     const stale = page.waitForResponse(
       (response) => new URL(response.url()).pathname === "/v1/jobs/bulk-delete",
     );
     await page
-      .getByRole("button", { name: "Move selected to deleted", exact: true })
+      .getByRole("button", { name: "Delete", exact: true })
       .click();
     const staleSelection = await stale;
     expect(staleSelection.request().postDataJSON()).toEqual({
@@ -838,7 +912,7 @@ test.describe("Jobs without optional read owners", () => {
       .getByRole("checkbox", { name: `Select ${target.title}`, exact: true })
       .check();
     await page
-      .getByRole("button", { name: "Move selected to deleted", exact: true })
+      .getByRole("button", { name: "Delete", exact: true })
       .click();
     await expect(
       table.getByRole("link", { name: target.title, exact: true }),
@@ -869,7 +943,7 @@ test.describe("Jobs without optional read owners", () => {
     });
     await expect(review).toContainText(target.title);
     await expect(review).not.toContainText(peer.title);
-    await expect(review).toContainText("Independently saved learning plans");
+    await expect(review).toContainText(/Independently saved learning plans/i);
     const confirm = review.getByRole("button", {
       name: "Permanently delete reviewed jobs",
       exact: true,

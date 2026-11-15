@@ -254,9 +254,30 @@ Public owner methods also include nullable `find_job_requirements`, required
 (including job-local direct IDs) and explicit stale reasons. Missing/deleted Jobs
 remain 404. Returned JSON is detached and reads make no provider calls.
 
+`library_catalog_snapshot` is a separate read projection: accepted reusable
+occurrences count only while their Job exists and is not soft-deleted. Jobs'
+public batched snapshots supply liveness in the same read transaction; hidden
+Jobs still count. `/v1/requirements` filters this membership before its literal
+query and pagination. Fit uses the same projection for its complete library.
+Deleting the last live root retires a meaning from both lists, while restore
+recovers its existing identity, links and history with no inference. Direct
+detail/history reads retain the meaning and report `active_in_library`.
+Soft deletion retains the complete `catalog_snapshot`, canonical heads,
+retrieval index and semantic matching inventory; old Fit support, user links and
+accepted documents do not independently establish active-library membership.
+
 Permanent deletion participates in Jobs' authorized transaction and deletes
-only that job's snapshots, occurrences, attempts and owned cache rows. Neutral
-catalog meanings and independent immutable model receipts remain retained.
+that job's snapshots, occurrences, attempts and owned cache rows. Meanings with
+no occurrence on any other retained Job are physically removed, including their
+heads, revisions, retrieval rows and revision-action links; shared meanings
+survive even when their other Job is soft-deleted or its occurrence is historical.
+Registered public owner deletion ports remove dependent Fit relations before
+canonical meanings are removed, in the same transaction. Catalog revision
+advances, and an already stale retrieval index stays stale. Profile facts,
+approved wording and independent immutable model receipts remain retained.
+Direct detail/history reads for a permanently removed meaning return 404.
+Creation IDs bind the monotonic catalog epoch, so a later identical extraction
+after purge cannot reuse a deleted ID/revision and revive old provenance.
 Errors expose safe codes without posting/model prose. Source/schema failures
 are 422, contract/revision/cancellation conflicts are 409, and complete-input
 catalog refusal is 503 `requirements_catalog_unavailable` with safe metadata.

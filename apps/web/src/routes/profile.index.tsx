@@ -3,6 +3,7 @@ import { useCallback, useEffect } from "react";
 
 import { AffectedMatchesPanel } from "../contexts/fit/index.js";
 import { ProfileEditor } from "../contexts/profile/index.js";
+import { requirementsReturnSearch } from "../contexts/requirements/index.js";
 import { prefetchProfileEditor } from "../contexts/profile/readQueries.js";
 import { useMountedFeatures } from "../contexts/runtime/index.js";
 import { PageHead } from "../shared/ui/page-head.js";
@@ -37,8 +38,8 @@ function ProfilePage() {
   }, [location.hash, section]);
   const navigate = useNavigate();
   const openRequirement = useCallback((requirement: string) => {
-    void navigate({ to: "/requirements", search: { requirement, q: search.returnRequirementsFilter ?? "" } });
-  }, [navigate, search.returnRequirementsFilter]);
+    void navigate({ to: "/requirements", search: requirementsReturnSearch(requirement, search.returnRequirementsFilter, search.returnRequirementsTable) });
+  }, [navigate, search.returnRequirementsFilter, search.returnRequirementsTable]);
   const achievementContent = useCallback((achievementId: string, roleId: string) =>
     <AchievementRequirementTags achievementId={achievementId} roleId={roleId} onSelectRequirement={openRequirement} />,
   [openRequirement]);
@@ -52,7 +53,7 @@ function ProfilePage() {
         {search.returnJobId ? <Link className="tab" to="/jobs/$jobId" params={{ jobId: search.returnJobId }}
           search={{ ...(search.returnJobs ?? jobsSearchSchema.parse({})), resumeMode: search.returnResumeMode ?? search.returnJobs?.resumeMode }}>← Return to job</Link> : null}
         {search.returnRequirement ? <Link className="tab" to="/requirements"
-          search={{ requirement: search.returnRequirement, q: search.returnRequirementsFilter ?? "" }}>← Back to requirements</Link> : null}
+          search={requirementsReturnSearch(search.returnRequirement, search.returnRequirementsFilter, search.returnRequirementsTable)}>← Back to requirements</Link> : null}
         {section === "resume" && features.has("resumes") ? <Link className="tab" to="/artifacts">Accepted materials</Link> : null}
       </>} />
     <ProfileEditor activeSection={section}

@@ -16,6 +16,9 @@ export { useRequirementCatalog, useRequirementDetail, useRequirementHistory, use
   requirementLibraryKeys, canonicalRequirementSchema } from "./library.js";
 export type { CanonicalRequirement, RequirementDetail, RequirementHistory, RequirementHistoryKind,
   RequirementOccurrence, RequirementCatalog, RequirementMeaningCorrection } from "./library.js";
+export { requirementsLibrarySearchSchema, requirementsReturnTableSchema, requirementTableReturnState,
+  requirementsReturnSearch } from "./library-navigation.js";
+export type { RequirementsLibrarySearch, RequirementsTableState } from "./library-navigation.js";
 
 const requirementSchema = z.object({
   occurrence_id: z.string(), requirement_id: z.string(), requirement_revision: z.number(),

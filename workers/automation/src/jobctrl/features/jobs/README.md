@@ -67,7 +67,11 @@ Permanent deletion requires a reviewed, expiring selection containing exact IDs,
 posting revisions and visibility revisions. A restore or changed source makes
 the selection stale. Public owner callbacks remove job-owned records in the
 same transaction. Independent learning cohorts, company history, source reviews
-and model audit history remain and are disclosed in the preview. File retirement
+and model audit records remain. Requirements also removes canonical meanings
+with no occurrence on another retained Job, including soft-deleted and historical
+occurrences, and invokes owner callbacks for their Fit links in that same
+transaction. Shared meanings, authored Profile facts and approved wording remain;
+the preview discloses removal and retention. File retirement
 uses owner journals and post-commit callbacks. The response distinguishes
 committed deletion from pending cleanup; exact acknowledgement replay never
 deletes twice or pretends a cleanup failure rolled back committed data.

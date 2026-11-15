@@ -85,6 +85,12 @@ export const DISCOVERY_SOURCE_COLUMN_IDS = [
 export const DISCOVERY_SOURCE_SORT_COLUMN_IDS =
   DISCOVERY_SOURCE_COLUMN_IDS.filter((columnId) => columnId !== "actions");
 
+export const REQUIREMENTS_TABLE_ID = "requirements" satisfies TableId;
+export const REQUIREMENTS_TABLE_COLUMN_IDS = [
+  "name", "category", "definition", "support", "achievements", "wordings", "revision",
+] as const;
+export const DEFAULT_REQUIREMENTS_HIDDEN_COLUMN_IDS = ["definition", "revision"] as const;
+
 const STAGE_OR_ALL = [...STAGES, "all"] as const;
 const STATE_OR_ALL = [...STAGE_STATES, "all"] as const;
 const JOB_DELETED_VIEW_FILTERS = [
@@ -140,6 +146,15 @@ const TABLE_CONFIGS: Record<string, KnownTableConfig> = {
       },
     },
     sortableColumnIds: DISCOVERY_SOURCE_SORT_COLUMN_IDS,
+  },
+  [REQUIREMENTS_TABLE_ID]: {
+    tableId: REQUIREMENTS_TABLE_ID,
+    columnIds: REQUIREMENTS_TABLE_COLUMN_IDS,
+    fixedLeadingColumnIds: [],
+    defaultHiddenColumnIds: DEFAULT_REQUIREMENTS_HIDDEN_COLUMN_IDS,
+    defaultSort: { columnId: "name", direction: "asc" },
+    defaultUrlFilters: { q: "", pageSize: 25 },
+    sortableColumnIds: REQUIREMENTS_TABLE_COLUMN_IDS,
   },
 };
 
@@ -833,3 +848,4 @@ function createSavedTableViewsStore(storageName: string) { return create<SavedTa
 export const useSavedTableViewsStore = createSavedTableViewsStore("jh:saved-table-views");
 /** Python-cutover Jobs views begin fresh; this key never reads legacy Jobs state. */
 export const usePythonJobsTableViewsStore = createSavedTableViewsStore("jh:python-jobs-table-views:v1");
+export const useRequirementsTableViewsStore = createSavedTableViewsStore("jh:requirements-table-views:v1");

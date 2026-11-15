@@ -1,13 +1,17 @@
 import { useForm } from "@tanstack/react-form";
 import { type ReactNode, useEffect, useId, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
+import { IconChevronDown } from "@tabler/icons-react";
 import { z } from "zod";
 
 import { Button } from "../../../shared/ui/button.js";
+import { StatusBadge } from "../../../shared/ui/status-badge.js";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../shared/ui/tabs.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { getApiCapabilityAvailability } from "../../../shared/lib/apiCapabilityAvailability.js";
 import { useRuntimeHealth } from "../../runtime/index.js";
 import { recipeSchema, type PreparationRecipe, type PreparationRequest, type PreparationResumeMode, type PreparationRun, usePreparationCommands, usePreparationExecution, usePreparationRun, usePreparationRuns } from "../client.js";
+import "../../../styles/jobs-selection.css";
 
 const labels: Record<PreparationRecipe, string> = {
   run: "Run Discovery and preparation", discover: "Discover", enrich: "Enrich postings",
@@ -18,6 +22,39 @@ const formSchema = z.object({ recipe: recipeSchema, limit: z.coerce.number().int
   minFitScore: z.union([z.literal(""), z.coerce.number().int().min(1).max(10)]), force: z.boolean(), override: z.boolean() });
 
 type PreparationCommands = ReturnType<typeof usePreparationCommands>;
+
+function PreparationStatus({ status }: { readonly status: string }) {
+  const tone = status === "failed" || status === "blocked" ? "danger" : status === "partial" ? "warn"
+    : status === "succeeded" ? "ok" : ["running", "queued", "pending"].includes(status) ? "info" : "muted";
+  const label = status.replaceAll("_", " ");
+  return <StatusBadge tone={tone}>{label.charAt(0).toUpperCase() + label.slice(1)}</StatusBadge>;
+}
+
+function PreparationRunOutcomes({ run }: { readonly run: PreparationRun }) {
+  return <div className="preparation-run-outcomes">
+    {run.steps.length ? <ul className="preparation-run-outcomes__steps">{run.steps.map((step, index) => {
+      const jobIndex = step.jobId ? run.jobIds.indexOf(step.jobId) : -1;
+      return <li key={`${step.jobId ?? "run"}:${step.stage}:${index}`}>
+        <div className="preparation-run-outcomes__stage">
+          <span data-typography="label">{step.stage.replaceAll("_", " ")}</span>
+          <PreparationStatus status={step.status} />
+        </div>
+        <p data-typography="metadata">{step.jobId ? jobIndex < 0 ? "Job outcome" : `Job ${jobIndex + 1}` : "Run outcome"}
+          {step.result?.score !== undefined ? ` · fit ${String(step.result.score)}` : ""}
+          {step.result?.review_status ? ` · review ${String(step.result.review_status).replaceAll("_", " ")}` : ""}
+          {step.result?.skip ? ` · ${String(step.result.skip).replaceAll("_", " ")}` : ""}
+        </p>
+        {step.errorCode ? <p className="preparation-run-outcomes__error" data-typography="body">{step.errorCode.replaceAll("_", " ")}</p> : null}
+      </li>;
+    })}</ul> : <p>Waiting for the worker to record a stage.</p>}
+    <details className="preparation-run-outcomes__identity"><summary>Technical details</summary>
+      <dl><div><dt>Run</dt><dd>{run.runId}</dd></div>
+        {run.parentRunId ? <div><dt>Previous run</dt><dd>{run.parentRunId}</dd></div> : null}
+        {run.jobIds.map((jobId, index) => <div key={jobId}><dt>Job {index + 1}</dt><dd><Link to="/jobs/$jobId" params={{ jobId }} search={(previous) => previous}>{jobId}</Link></dd></div>)}
+      </dl>
+    </details>
+  </div>;
+}
 
 function PreparationRecoveryNotice({ recovery }: { readonly recovery: PreparationCommands["recovery"] }) {
   if (!recovery.ready) return <p role="alert">{recovery.error ? "Preparation recovery storage is unavailable or invalid. Restore it before starting work." : "Checking preparation recovery storage…"}</p>;
@@ -39,46 +76,49 @@ export function PreparationRunDetail({ runId }: { readonly runId: string }) {
   if (!run.data) return run.isError
     ? <p role="alert">{run.error.message} <Button type="button" variant="outline" onClick={() => void run.refetch()}>Retry</Button></p>
     : <p>Preparation details have not been recorded yet. <Button type="button" variant="outline" onClick={() => void run.refetch()}>Check again</Button></p>;
-  return <section aria-label="Preparation outcomes" className="grid gap-2">
+  return <section aria-label="Preparation outcomes" className="preparation-run-detail">
     <PreparationRecoveryNotice recovery={recovery} />
     {run.isError ? <p role="alert">{run.error.message} Showing the last recorded outcomes. <Button type="button" variant="outline" onClick={() => void run.refetch()}>Check again</Button></p> : null}
-    <h3>{runLabels[run.data.recipe]} · {run.data.status}</h3>
-    {run.data.steps.length ? <ul>{run.data.steps.map((step, index) => <li key={`${step.jobId ?? "run"}:${step.stage}:${index}`}>
-      {step.jobId ? `${step.jobId} · ` : ""}{step.stage}: {step.status}{step.errorCode ? ` (${step.errorCode})` : ""}
-      {step.result?.score !== undefined ? ` · fit ${String(step.result.score)}` : ""}
-      {step.result?.review_status ? ` · review ${String(step.result.review_status)}` : ""}
-      {step.result?.skip ? ` · ${String(step.result.skip)}` : ""}
-    </li>)}</ul> : <p>Waiting for the worker to record a stage.</p>}
+    <div className="preparation-run-detail__heading"><h3>{runLabels[run.data.recipe]}</h3><PreparationStatus status={run.data.status} /></div>
+    <PreparationRunOutcomes run={run.data} />
     {["running", "queued", "pending"].includes(run.data.status) ? <Button type="button" variant="outline" disabled={cancel.isPending || run.isError} onClick={() => cancel.mutate(runId)}>Cancel run</Button> : null}
     {["failed", "partial", "cancelled"].includes(run.data.status) ? <Button type="button" variant="outline" disabled={submit.isPending || run.isError || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: runId } })}>Retry all unfinished jobs</Button> : null}
     {submit.isError ? <p role="alert">{submit.error.message} Retry unchanged to reconcile an uncertain acknowledgement.</p> : null}
-    {submit.isSuccess ? <p role="status">Queued retry {submit.data.runId}.</p> : null}
+    {submit.isSuccess ? <p role="status">Retry queued. Follow its progress in preparation history.</p> : null}
     {cancel.isError ? <p role="alert">{cancel.error.message}</p> : null}
   </section>;
 }
 
 function PreparationRunListContent({ jobIds, commands }: { readonly jobIds?: readonly string[]; readonly commands: PreparationCommands }) {
   const runs = usePreparationRuns();
+  const id = useId();
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const { submit, cancel, recovery } = commands;
   const visible = (runs.data ?? []).filter(run => !jobIds || run.jobIds.some(id => jobIds.includes(id)));
-  return <section aria-label="Preparation runs" className="grid gap-3">
+  return <section aria-label="Preparation runs" className="preparation-run-list">
     <h3>Preparation runs</h3>
     {runs.isLoading ? <p>Loading preparation runs…</p> : null}
     {runs.isError ? <p role="alert">{runs.error.message} <Button type="button" variant="outline" onClick={() => void runs.refetch()}>Retry</Button></p> : null}
     {!runs.isLoading && !runs.isError && visible.length === 0 ? <p>No preparation runs recorded.</p> : null}
-    {visible.map(run => <article key={run.runId} className="rounded border p-3">
-      <div><strong>{runLabels[run.recipe]}</strong> · {run.status} · <time dateTime={run.updatedAt}>{new Date(run.updatedAt).toLocaleString()}</time></div>
-      <details><summary>Show job and stage outcomes</summary>
-        {run.steps.length ? <ul>{run.steps.map((step, index) => <li key={`${step.jobId ?? "run"}:${step.stage}:${index}`}>
-          {step.jobId ? `${step.jobId} · ` : ""}{step.stage}: {step.status}{step.errorCode ? ` (${step.errorCode})` : ""}
-          {step.result?.score !== undefined ? ` · fit ${String(step.result.score)}` : ""}
-          {step.result?.review_status ? ` · review ${String(step.result.review_status)}` : ""}
-          {step.result?.skip ? ` · ${String(step.result.skip)}` : ""}
-        </li>)}</ul> : <p>Waiting for the worker to record a stage.</p>}
-      </details>
-      {["running", "queued", "pending"].includes(run.status) ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(run.runId)}>Cancel run</Button> : null}
-      {["failed", "partial", "cancelled"].includes(run.status) ? <Button type="button" variant="outline" disabled={submit.isPending || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: run.runId } })}>Retry all unfinished jobs</Button> : null}
-    </article>)}
+    <div className="preparation-run-list__rows">{visible.map((run, index) => {
+      const expanded = expandedRunId === run.runId;
+      const outcomesId = `${id}-outcomes-${index}`;
+      return <article key={run.runId} className="preparation-run-row">
+        <div className="preparation-run-row__summary">
+          <Button type="button" variant="ghost" className="preparation-run-row__toggle" aria-expanded={expanded} aria-controls={expanded ? outcomesId : undefined}
+            onClick={() => setExpandedRunId(expanded ? null : run.runId)}>
+            <span className="preparation-run-row__name"><span data-typography="label">{runLabels[run.recipe]}</span>
+              <span className="preparation-run-row__metadata" data-typography="metadata">{run.jobIds.length} {run.jobIds.length === 1 ? "job" : "jobs"} · <time dateTime={run.updatedAt}>{new Date(run.updatedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time></span>
+            </span>
+            <IconChevronDown aria-hidden="true" data-icon="inline-end" />
+          </Button>
+          <PreparationStatus status={run.status} />
+          {["running", "queued", "pending"].includes(run.status) ? <Button type="button" variant="outline" size="sm" disabled={cancel.isPending} onClick={() => cancel.mutate(run.runId)}>Cancel run</Button> : null}
+          {["failed", "partial", "cancelled"].includes(run.status) ? <Button type="button" variant="outline" size="sm" disabled={submit.isPending || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: run.runId } })}>Retry unfinished</Button> : null}
+        </div>
+        {expanded ? <div id={outcomesId} className="preparation-run-row__outcomes"><PreparationRunOutcomes run={run} /></div> : null}
+      </article>;
+    })}</div>
     {submit.isError ? <p role="alert">{submit.error.message} Retry the same action to reconcile an uncertain acknowledgement.</p> : null}
     {cancel.isError ? <p role="alert">{cancel.error.message}</p> : null}
   </section>;
@@ -95,22 +135,31 @@ function RecipeButtons({ jobIds, commands }: { readonly jobIds: readonly string[
   const availability = getApiCapabilityAvailability(featureFlags, "runJobStage");
   const [allowBelow, setAllowBelow] = useState(false);
   const recipes: PreparationRecipe[] = ["prepare", "enrich", "analyze", "score", "tailor"];
-  return <div role="group" aria-label="Preparation actions" className="flex flex-wrap gap-2">
-    {recipes.map(recipe => <Button key={recipe} type="button" variant="outline" size="sm" disabled={!availability.available || !jobIds.length || submit.isPending || !recovery.permits("preparation.run")}
-      onClick={() => submit.mutate({ action: "preparation.run", body: { recipe, job_ids: jobIds, scope: "selected", force: recipe === "tailor", allow_below_threshold: allowBelow } })}>
-      {labels[recipe]}
-    </Button>)}
+  return <div className="preparation-actions">
+    <div role="group" aria-label="Preparation actions" className="preparation-actions__buttons">
+      {recipes.map(recipe => <Button key={recipe} type="button" variant="outline" size="sm" disabled={!availability.available || !jobIds.length || submit.isPending || !recovery.permits("preparation.run")}
+        onClick={() => submit.mutate({ action: "preparation.run", body: { recipe, job_ids: jobIds, scope: "selected", force: recipe === "tailor", allow_below_threshold: allowBelow } })}>
+        {labels[recipe]}
+      </Button>)}
+    </div>
     {!availability.available ? <p>{availability.reason}</p> : null}
-    <label><input type="checkbox" checked={allowBelow} disabled={submit.isPending} onChange={event => setAllowBelow(event.target.checked)} /> Prepare selected jobs below the saved fit threshold</label>
+    <label className="preparation-actions__option"><input type="checkbox" checked={allowBelow} disabled={submit.isPending} onChange={event => setAllowBelow(event.target.checked)} /> Prepare selected jobs below the saved fit threshold</label>
     {submit.isError ? <p role="alert">{submit.error.message} Retry the same action to reconcile an uncertain acknowledgement.</p> : null}
-    {submit.isSuccess ? <p role="status">Queued preparation run {submit.data.runId}. <Button type="button" variant="outline" size="sm" disabled={cancel.isPending} onClick={() => cancel.mutate(submit.data.runId)}>Cancel queued run</Button></p> : null}
+    {submit.isSuccess ? <p role="status">Preparation queued. Follow its progress in history. <Button type="button" variant="outline" size="sm" disabled={cancel.isPending} onClick={() => cancel.mutate(submit.data.runId)}>Cancel queued run</Button></p> : null}
     {cancel.isError ? <p role="alert">{cancel.error.message}</p> : null}
   </div>;
 }
 
 export function PipelineBulkActions({ jobIds }: { readonly jobIds: readonly string[] }) {
   const commands = usePreparationCommands();
-  return <section aria-label="Selected jobs preparation"><PreparationRecoveryNotice recovery={commands.recovery} /><RecipeButtons jobIds={jobIds} commands={commands} /><PreparationRunListContent jobIds={jobIds} commands={commands} /></section>;
+  return <section aria-label="Selected jobs preparation" className="selected-job-preparation">
+    <PreparationRecoveryNotice recovery={commands.recovery} />
+    <Tabs defaultValue="tools">
+      <TabsList aria-label="Preparation workspace"><TabsTrigger value="tools">Tools</TabsTrigger><TabsTrigger value="history">History</TabsTrigger></TabsList>
+      <TabsContent value="tools" forceMount><RecipeButtons jobIds={jobIds} commands={commands} /></TabsContent>
+      <TabsContent value="history" forceMount><PreparationRunListContent jobIds={jobIds} commands={commands} /></TabsContent>
+    </Tabs>
+  </section>;
 }
 
 export function JobPreparationActions({ jobId, defaultMode = null, initialMode = null, onModeChange, renderProfileSetup, profileVersion = null, blockedByDraft = false, onReviewReady }: {

@@ -149,7 +149,7 @@ export const ACTIVITY_SORT_FIELDS = [
 export type ActivitySortField = (typeof ACTIVITY_SORT_FIELDS)[number];
 
 export const SortDirectionSchema = z.enum(["asc", "desc"]).default("desc").catch("desc");
-export const TableIdSchema = z.enum(["jobs", "discovery-sources"]);
+export const TableIdSchema = z.enum(["jobs", "discovery-sources", "requirements"]);
 export type TableId = z.infer<typeof TableIdSchema>;
 
 export const SavedTableViewDensitySchema = z.enum(["compact", "regular", "comfy"]);

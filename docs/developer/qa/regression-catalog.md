@@ -11,6 +11,7 @@ unit, component, snapshot, Fastify/RPC and isolated fixture commands are retired
 | --- | --- |
 | Sources and approvals | Exact canonical IDs, source revisions, text/payload hashes and explicit user authority survive round trips; a stale save or approval cannot replace newer accepted work |
 | Meaning and fit | Only source-bound model decisions or explicit user corrections determine meaning/support; factual person fit never falls because wording is missing |
+| Requirements library lifecycle | Only accepted occurrences on existing nondeleted Jobs keep a reusable meaning active; shared/hidden Jobs retain it, soft delete hides it, and restore or an equivalent new Job recovers its identity without automatic inference. Reviewed permanent deletion removes only meanings with no retained Job occurrence and their owner-managed Fit links, preserving authored Profile facts/wording and independent audit receipts |
 | Resume composition | Every baseline section, role and achievement is retained, including Language / Proficiency; exactly one current approved variant per achievement; one point per eligible canonical requirement then complementary depth and stable ties; no implicit brevity penalty |
 | Accepted artifacts | Failed model/render/publication/refresh/cancellation preserves the accepted pointer and exact bytes; a failed candidate stays separate |
 | Durable work | Actual Temporal acceptance, committed state/events, cancellation and real worker replacement keep one run identity and recover honestly |

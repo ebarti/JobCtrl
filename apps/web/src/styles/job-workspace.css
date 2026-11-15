@@ -15,7 +15,7 @@
 
 .jobs-grid-pane[hidden] { display: none; }
 
-.jobs-list-workspace:focus { outline: none; }
+.jobs-list-workspace:focus { outline: 2px solid var(--ring); outline-offset: 4px; }
 .jobs-list-workspace .page-head { margin-block-end: 0; }
 .jobs-table-tools { display: grid; gap: 12px; padding: 16px; }
 .jobs-table-tools:empty { display: none; }

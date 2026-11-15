@@ -1,20 +1,49 @@
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import type { SavedTableView } from "@jobctrl/contracts";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   AssociationStateAction, RequirementAssociationPicker, requirementQualifierText, achievementChoices,
   useCurrentWordingActions, useCurrentWordingHistory, useRequirementAssociationHistory, useRequirementLibrary,
   type AchievementChoice, type LibraryRequirement, type UserAssociation,
 } from "../../contexts/fit/index.js";
-import { useRequirementHistory } from "../../contexts/requirements/index.js";
+import { requirementTableReturnState, requirementsLibrarySearchSchema, useRequirementHistory,
+  type RequirementsTableState } from "../../contexts/requirements/index.js";
 import { useProfileQuery, useWordingHistory, useWordingLibrary } from "../../contexts/profile/index.js";
+import { useJobsReturnSearch } from "../../contexts/jobs/index.js";
+import { DEFAULT_REQUIREMENTS_HIDDEN_COLUMN_IDS, REQUIREMENTS_TABLE_COLUMN_IDS, REQUIREMENTS_TABLE_ID,
+  useRequirementsTableViewsStore, type SavedTablePresentation, type SavedTableViewSnapshot } from "../../shared/stores/saved-table-views.js";
 import { Button } from "../../shared/ui/button.js";
+import { FilterableDataGrid, isActiveDataGridFilter, type DataGridColumn } from "../../shared/ui/filterable-data-grid.js";
 import { Input } from "../../shared/ui/input.js";
 import { PageHead } from "../../shared/ui/page-head.js";
+import { SavedTableViewsControl } from "../../shared/ui/saved-table-views-control.js";
 
 type Coverage = LibraryRequirement["coverage"][number];
 type Assignment = LibraryRequirement["wording_assignments"][number];
 type Library = NonNullable<ReturnType<typeof useRequirementLibrary>["data"]>;
+const DEFAULT_TABLE_PRESENTATION: SavedTablePresentation = {
+  columns: { order: [...REQUIREMENTS_TABLE_COLUMN_IDS], hidden: [...DEFAULT_REQUIREMENTS_HIDDEN_COLUMN_IDS], widths: {} },
+  density: null, grouping: null, colorRules: [],
+};
+
+function linkedAchievementIds(requirement: LibraryRequirement) {
+  return [...new Set([
+    ...(requirement.assessment?.achievement_ids ?? []),
+    ...requirement.coverage.map((item) => item.achievement_id),
+    ...requirement.current_wordings.map((item) => item.achievement_id),
+    ...requirement.associations.filter((item) => item.state === "active").map((item) => item.achievement_id),
+  ])];
+}
+
+function categoryLabel(requirement: LibraryRequirement) {
+  return requirement.category === "skill" ? "Skill" : "Professional experience";
+}
+
+function supportLabel(requirement: LibraryRequirement) {
+  if (!requirement.assessment) return "Not assessed";
+  return `${requirement.assessment.current ? "" : "Earlier · "}${readable(requirement.assessment.kind)}`;
+}
 
 function readable(value: string) {
   const text = value.replaceAll("_", " ");
@@ -119,8 +148,9 @@ function HistoryPagination({ total, offset, limit, onOffset }: { total: number; 
   </div>;
 }
 
-function RequirementHistory({ requirementId, kind, filter }: { requirementId: string; kind: "revisions" | "occurrences"; filter: string }) {
+function RequirementHistory({ requirementId, kind, filter, returnTable }: { requirementId: string; kind: "revisions" | "occurrences"; filter: string; returnTable: string }) {
   const [offset, setOffset] = useState(0);
+  const jobsSearch = useJobsReturnSearch();
   const query = useRequirementHistory(requirementId, { kind, limit: 20, offset });
   const result = query.data;
   return <div className="requirement-history__content">
@@ -133,7 +163,7 @@ function RequirementHistory({ requirementId, kind, filter }: { requirementId: st
     </li>)}</ul> : <p>No revisions recorded.</p> : null}
     {result?.kind === "occurrences" ? result.rows.length ? <ul className="requirement-history__list">{result.rows.map((row) => <li key={`${row.job_id}:${row.occurrence_id}:${row.snapshot_revision}`}>
       <div className="requirement-history__line"><strong>{row.current ? "Current posting reference" : "Earlier posting reference"}</strong>
-        <Link to="/jobs/$jobId" params={{ jobId: row.job_id }} search={(previous) => ({ ...previous, returnRequirement: requirementId, returnRequirementsFilter: filter, jobTab: "fit" })}>Open source job</Link></div>
+        <Link to="/jobs/$jobId" params={{ jobId: row.job_id }} search={{ ...jobsSearch, returnRequirement: requirementId, returnRequirementsFilter: filter, returnRequirementsTable: returnTable, jobTab: "fit" }}>Open source job</Link></div>
       <blockquote>{row.text ?? row.definition}</blockquote>
       <p>Recorded meaning: {row.definition}</p><span>{requirementQualifierText(row)}{row.contract_version !== "requirements-v2" && row.tier ? ` · historical ${readable(row.tier)}` : ""}{row.contract_version !== "requirements-v2" && row.weight !== undefined ? ` · historical weight ${row.weight}` : ""}</span>
       {row.source_note ? <p>Posting context: {row.source_note}</p> : null}
@@ -149,10 +179,10 @@ function RequirementHistory({ requirementId, kind, filter }: { requirementId: st
   </div>;
 }
 
-function HistoryDisclosure({ requirementId, kind, title, filter }: { requirementId: string; kind: "revisions" | "occurrences"; title: string; filter: string }) {
+function HistoryDisclosure({ requirementId, kind, title, filter, returnTable }: { requirementId: string; kind: "revisions" | "occurrences"; title: string; filter: string; returnTable: string }) {
   const [open, setOpen] = useState(false);
   return <details className="requirement-history" onToggle={(event) => setOpen(event.currentTarget.open)}><summary>{title}</summary>
-    {open ? <RequirementHistory requirementId={requirementId} kind={kind} filter={filter} /> : null}
+    {open ? <RequirementHistory requirementId={requirementId} kind={kind} filter={filter} returnTable={returnTable} /> : null}
   </details>;
 }
 
@@ -252,19 +282,13 @@ function LinkedAchievement({ library, requirement, achievementId, achievement, o
   </article>;
 }
 
-function RequirementDetail({ library, requirement, choices, canLink, onOpenAchievement, onLinkAchievement, onLinkWording, onEditLink, filter, sourceState, recordsAligned }: {
-  library: Library; requirement: LibraryRequirement; choices: AchievementChoice[]; canLink: boolean; filter: string; sourceState: "loading" | "error" | "ready"; recordsAligned: boolean;
+function RequirementDetail({ library, requirement, choices, canLink, onOpenAchievement, onLinkAchievement, onLinkWording, onEditLink, filter, returnTable, sourceState, recordsAligned }: {
+  library: Library; requirement: LibraryRequirement; choices: AchievementChoice[]; canLink: boolean; filter: string; returnTable: string; sourceState: "loading" | "error" | "ready"; recordsAligned: boolean;
   onOpenAchievement?: ((roleId: string, achievementId: string) => void) | undefined;
   onLinkAchievement: () => void; onLinkWording: (achievementId: string) => void; onEditLink: (achievementId: string) => void;
 }) {
-  const active = requirement.associations.filter((association) => association.state === "active");
   const removed = requirement.associations.filter((association) => association.state === "removed");
-  const achievementIds = [...new Set([
-    ...(requirement.assessment?.achievement_ids ?? []),
-    ...requirement.coverage.map((item) => item.achievement_id),
-    ...requirement.current_wordings.map((item) => item.achievement_id),
-    ...active.map((item) => item.achievement_id),
-  ])];
+  const achievementIds = linkedAchievementIds(requirement);
   return <section className="requirements-detail" aria-labelledby="requirement-definition-title" tabIndex={-1}>
     <div className="requirements-definition"><span className="requirements-definition__eyebrow">Reusable requirement · revision {requirement.revision}</span>
       <h2 id="requirement-definition-title">{requirement.name}</h2>
@@ -300,78 +324,132 @@ function RequirementDetail({ library, requirement, choices, canLink, onOpenAchie
         <p>Previously selected wording revision {assignment.variant_revision} · {assignment.current ? "source pins current" : "needs review"}</p>
         <WordingAssignmentRecord assignment={assignment} /></div>)}
     </div></details> : null}
-    <HistoryDisclosure requirementId={requirement.requirement_id} kind="revisions" title="Definition history" filter={filter} />
-    <HistoryDisclosure requirementId={requirement.requirement_id} kind="occurrences" title="Source history and posting references" filter={filter} />
+    <HistoryDisclosure requirementId={requirement.requirement_id} kind="revisions" title="Definition history" filter={filter} returnTable={returnTable} />
+    <HistoryDisclosure requirementId={requirement.requirement_id} kind="occurrences" title="Source history and posting references" filter={filter} returnTable={returnTable} />
   </section>;
 }
 
-export function RequirementsLibraryView({ selectedRequirementId, onSelectRequirement, onOpenAchievement, filter, onFilterChange }: {
+export function RequirementsLibraryView({ selectedRequirementId, onSelectRequirement, onOpenAchievement, tableState, onTableStateChange }: {
   selectedRequirementId?: string | null;
   onSelectRequirement?: ((id: string | null) => void) | undefined;
   onOpenAchievement?: ((roleId: string, achievementId: string) => void) | undefined;
-  filter?: string;
-  onFilterChange?: ((value: string) => void) | undefined;
+  tableState?: RequirementsTableState;
+  onTableStateChange?: ((state: RequirementsTableState) => void) | undefined;
 }) {
   const library = useRequirementLibrary();
   const profile = useProfileQuery();
   const wording = useWordingLibrary();
   const choices = achievementChoices(profile.data?.profile, wording.data);
-  const [localFilter, setLocalFilter] = useState("");
+  const [localTableState, setLocalTableState] = useState<RequirementsTableState>(() => requirementsLibrarySearchSchema.parse({}));
   const [localSelected, setLocalSelected] = useState<string | null>(null);
   const [picker, setPicker] = useState<{ achievementId?: string; requireWording?: boolean } | null>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLDivElement>(null);
+  const previousSelection = useRef<string | null>(null);
+  const presentation = useRequirementsTableViewsStore((state) => state.presentationByTable[REQUIREMENTS_TABLE_ID]) ?? DEFAULT_TABLE_PRESENTATION;
+  const setPresentation = useRequirementsTableViewsStore((state) => state.setTablePresentation);
   const requirements = library.data?.requirements ?? [];
-  const search = filter ?? localFilter;
+  const navigation = tableState ?? localTableState;
+  const search = navigation.q;
   const needle = search.trim().toLocaleLowerCase();
   const shown = requirements.filter((requirement) => `${requirement.name}\n${requirement.definition}`.toLocaleLowerCase().includes(needle));
+  const selectedId = selectedRequirementId === undefined ? localSelected : selectedRequirementId;
+  const selected = selectedId ? requirements.find((item) => item.requirement_id === selectedId) : undefined;
+  const filters = navigation.column_filters ?? {};
+  const sort = { columnId: navigation.sort, direction: navigation.dir };
+  const hasFilters = Boolean(needle) || Object.values(filters).some(isActiveDataGridFilter);
+  const returnTable = requirementTableReturnState(navigation);
   useEffect(() => {
-    if (!selectedRequirementId && !localSelected && requirements.length) {
-      const firstId = requirements[0]!.requirement_id;
-      setLocalSelected(firstId);
-      onSelectRequirement?.(firstId);
+    if (selectedId && !library.isPending && selectedId !== previousSelection.current) detailRef.current?.focus();
+    if (!selectedId && previousSelection.current) {
+      const row = [...(tableRef.current?.querySelectorAll<HTMLElement>("[data-row-id]") ?? [])]
+        .find((item) => item.dataset["rowId"] === previousSelection.current && item.getClientRects().length > 0);
+      const activation = row?.querySelector<HTMLButtonElement>("[data-grid-control='row-activation']");
+      if (activation) activation.focus({ preventScroll: true });
+      else tableRef.current?.focus({ preventScroll: true });
     }
-  }, [selectedRequirementId, localSelected, requirements, onSelectRequirement]);
-  const selectedId = selectedRequirementId || localSelected;
-  const selected = selectedId ? requirements.find((item) => item.requirement_id === selectedId) : requirements[0];
-  const select = (id: string) => {
-    setLocalSelected(id); onSelectRequirement?.(id);
-    detailRef.current?.focus();
+    if (!library.isPending) previousSelection.current = selectedId;
+  }, [selectedId, library.isPending]);
+  const select = (id: string | null) => {
+    setPicker(null); setLocalSelected(id); onSelectRequirement?.(id);
   };
-  const setSearch = (value: string) => { setLocalFilter(value); onFilterChange?.(value); };
+  const changeTable = (next: RequirementsTableState) => {
+    const normalized = requirementsLibrarySearchSchema.parse(next);
+    setLocalTableState(normalized); onTableStateChange?.(normalized);
+  };
+  const setSearch = (q: string) => changeTable({ ...navigation, q, page: 1 });
+  const applyView = (view: SavedTableView) => {
+    changeTable(requirementsLibrarySearchSchema.parse({ q: view.urlFilters.q ?? "", sort: view.sort.columnId,
+      dir: view.sort.direction, pageSize: view.urlFilters.pageSize ?? 25, column_filters: view.gridFilters }));
+  };
+  const columns = useMemo<Array<DataGridColumn<LibraryRequirement>>>(() => [
+    { id: "name", label: "Requirement", rowHeader: true, width: 260, minWidth: 180,
+      getSortValue: (row) => row.name, getFilterValue: (row) => row.name,
+      render: (row) => <strong className="requirements-table__name">{row.name}</strong> },
+    { id: "category", label: "Category", width: 200, minWidth: 160, getSortValue: categoryLabel, getFilterValue: categoryLabel,
+      render: (row) => categoryLabel(row) },
+    { id: "definition", label: "Definition", width: 340, minWidth: 200,
+      getSortValue: (row) => row.definition, getFilterValue: (row) => row.definition,
+      render: (row) => <span className="requirements-table__definition">{row.definition}</span> },
+    { id: "support", label: "Factual support", width: 190, minWidth: 160, getSortValue: supportLabel, getFilterValue: supportLabel,
+      render: (row) => <span>{supportLabel(row)}{row.assessment?.wording_support === "section" ? <small className="requirements-table__secondary">Profile section support</small> : null}</span> },
+    { id: "achievements", label: "Linked achievements", width: 170, minWidth: 150,
+      getSortValue: (row) => linkedAchievementIds(row).length, getFilterValue: (row) => String(linkedAchievementIds(row).length),
+      render: (row) => linkedAchievementIds(row).length },
+    { id: "wordings", label: "Current wordings", width: 160, minWidth: 140,
+      getSortValue: (row) => row.current_wordings.length, getFilterValue: (row) => String(row.current_wordings.length),
+      render: (row) => <span>{row.current_wordings.length}{row.current_wordings.some((item) => !item.current) ? <small className="requirements-table__secondary">Needs review</small> : null}</span> },
+    { id: "revision", label: "Revision", width: 120, minWidth: 100,
+      getSortValue: (row) => row.revision, getFilterValue: (row) => String(row.revision), render: (row) => row.revision },
+  ], []);
+  const snapshot: SavedTableViewSnapshot = { ...presentation, sort, urlFilters: { q: search, pageSize: navigation.pageSize }, gridFilters: filters };
   const sourceState = profile.isPending || wording.isPending ? "loading" : profile.error || wording.error ? "error" : "ready";
   const mismatch = !!library.data && library.data.readiness === "ready" && !!profile.data && !!wording.data
     && (library.data.profile_revision !== profile.data.profileVersion || library.data.profile_revision !== wording.data.profileVersion);
   const canLink = !!library.data && library.data.readiness === "ready" && !library.error && !profile.error && !wording.error
     && library.data.profile_revision === profile.data?.profileVersion && library.data.profile_revision === wording.data?.profileVersion;
-  return <>
+  return <div className={`requirements-workspace${selectedId ? " requirements-workspace--selected" : ""}`}>
     <PageHead eyebrow="Library" title="Requirements library" subtitle="Reusable Skills and Professional Experience, their recorded support, and approved wording. Education and languages stay with each job." />
     {library.data?.synthetic ? <p role="note">Synthetic catalog: bundled source examples and your unassessed links. Any illustrated section support is authored teaching content; no model assessment ran.</p> : null}
     <section className="requirements-library" aria-label="Requirements library">
-      <div className="requirements-library__toolbar"><label>Find a requirement<Input value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder="Search saved definitions" /></label>
-        {search ? <Button type="button" variant="outline" size="sm" onClick={() => setSearch("")}>Clear filter</Button> : null}
-        {library.data ? <span className="muted">{shown.length} of {requirements.length} requirements</span> : null}</div>
-      {library.isPending ? <p role="status">Loading saved requirements…</p> : null}
       {library.error ? <div className="requirement-error" role="alert"><p>{library.error.message}{library.data ? " Showing the last available data." : ""}</p><Button type="button" variant="outline" size="sm" onClick={() => void library.refetch()}>Retry</Button></div> : null}
       {profile.error || wording.error ? <p className="requirement-error" role="alert">Achievement details could not be refreshed. Saved requirement records remain available.</p> : null}
       {mismatch ? <p role="status">The Profile and requirement records are from different revisions. Refresh them before changing links or wording. <Button type="button" variant="outline" size="sm" onClick={() => { void Promise.all([library.refetch(), profile.refetch(), wording.refetch()]); }}>Refresh records</Button></p> : null}
       {library.data?.readiness === "profile_required" ? <p className="muted">Save a Profile to link achievements to requirements.</p> : null}
-      {library.data && !requirements.length ? <div className="requirement-empty"><strong>No current requirements recorded yet.</strong><p>Skills and professional experience appear after extraction under the current requirements contract. Earlier job results remain in their history and need a manual refresh.</p></div> : null}
-      {requirements.length ? <div className="requirements-library__layout">
-        <nav className="requirements-list" aria-label="Saved requirements"><div className="requirement-section-heading"><h2>Requirements</h2><span>{shown.length}</span></div>
-          {shown.length ? <ul>{shown.map((requirement) => {
-            const count = new Set([...(requirement.assessment?.achievement_ids ?? []), ...requirement.coverage.map((item) => item.achievement_id), ...requirement.current_wordings.map((item) => item.achievement_id), ...requirement.associations.filter((item) => item.state === "active").map((item) => item.achievement_id)]).size;
-            return <li key={requirement.requirement_id}><button type="button" aria-pressed={requirement.requirement_id === selected?.requirement_id} onClick={() => select(requirement.requirement_id)}>
-              <strong>{requirement.name}</strong><span>{requirementQualifierText(requirement)}</span><small>{count} linked {count === 1 ? "achievement" : "achievements"}{requirement.assessment?.wording_support === "section" ? " · Profile section support" : ""}</small></button></li>;
-          })}</ul> : <p>No requirements match this filter.</p>}
-        </nav>
-        <div className="requirements-library__detail" ref={detailRef} tabIndex={-1}>
-          {selected && needle && !shown.some((item) => item.requirement_id === selected.requirement_id) ? <p className="muted" role="status">The selected requirement is outside the current filter.</p> : null}
-          {selected ? <RequirementDetail key={selected.requirement_id} library={library.data!} requirement={selected} choices={choices} canLink={canLink} filter={search} sourceState={sourceState} recordsAligned={sourceState === "ready" && !mismatch} onOpenAchievement={onOpenAchievement}
-            onLinkAchievement={() => setPicker({})} onLinkWording={(achievementId) => setPicker({ achievementId, requireWording: true })} onEditLink={(achievementId) => setPicker({ achievementId })} />
-            : <div className="requirement-empty"><strong>Requirement unavailable.</strong><p>Select another saved definition from the list.</p></div>}
+      <div className="requirements-library__layout">
+        <div className="requirements-library__table" ref={tableRef} tabIndex={-1}>
+          <FilterableDataGrid title="Saved requirements" data={shown} columns={columns} getRowId={(row) => row.requirement_id}
+            loading={library.isPending} loadingMessage="Loading saved requirements…"
+            emptyMessage={library.error && !library.data ? "Saved requirements could not be loaded." : hasFilters ? "No requirements match these filters." : "No current requirements recorded yet. Extract requirements from a saved job to add its Skills and Professional Experience."}
+            initialSort={{ columnId: "name", direction: "asc" }} sort={sort}
+            onSortChange={(next) => changeTable(requirementsLibrarySearchSchema.parse({ ...navigation, sort: next.columnId, dir: next.direction, page: 1 }))}
+            filters={filters} onFiltersChange={(column_filters) => changeTable({ ...navigation, column_filters, page: 1 })}
+            pagination={{ page: navigation.page, pageSize: navigation.pageSize, pageSizeOptions: [25, 50, 100, 200],
+              onPageChange: (page) => changeTable({ ...navigation, page }), onPageSizeChange: (pageSize) => changeTable({ ...navigation, pageSize, page: 1 }) }} manualPagination={false}
+            columnOrder={presentation.columns.order} columnVisibility={Object.fromEntries(presentation.columns.hidden.map((id) => [id, false]))}
+            onColumnOrderChange={(order) => setPresentation(REQUIREMENTS_TABLE_ID, { ...presentation, columns: { ...presentation.columns, order: [...order] } })}
+            columnWidths={presentation.columns.widths} onColumnWidthsChange={(widths) => setPresentation(REQUIREMENTS_TABLE_ID, { ...presentation, columns: { ...presentation.columns, widths } })}
+            density={presentation.density} grouping={presentation.grouping} colorRules={presentation.colorRules} showColumnFilterMenu
+            tableClassName="requirements-data-grid-table" rowAriaSelected={(row) => row.requirement_id === selectedId}
+            onRowActivate={(row) => select(row.requirement_id)} rowActivationLabel={(row) => `Open ${row.name}`}
+            mobileLayout="cards" mobileListLabel="Saved requirements"
+            renderMobileRow={(row) => <><strong className="requirements-table__name">{row.name}</strong><span className="requirements-table__secondary">{categoryLabel(row)}</span>
+              <dl className="requirements-table__mobile-facts"><div><dt>Factual support</dt><dd>{supportLabel(row)}</dd></div><div><dt>Linked achievements</dt><dd>{linkedAchievementIds(row).length}</dd></div><div><dt>Current wordings</dt><dd>{row.current_wordings.length}{row.current_wordings.some((item) => !item.current) ? " · Needs review" : ""}</dd></div></dl></>}
+            toolbarActions={<><label className="requirements-table-search"><span className="sr-only">Find a requirement</span><Input value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder="Filter saved requirements" /></label>
+              {hasFilters ? <Button type="button" variant="ghost" size="sm" onClick={() => changeTable({ ...navigation, q: "", column_filters: {}, page: 1 })}>Clear all filters</Button> : null}
+              <SavedTableViewsControl tableId={REQUIREMENTS_TABLE_ID} useViewsStore={useRequirementsTableViewsStore} columnOptions={columns.map((column) => ({ id: column.id, label: column.label }))}
+                snapshot={snapshot} onApplyView={applyView} onPresentationChange={(next) => setPresentation(REQUIREMENTS_TABLE_ID, next)} /></>}
+          />
         </div>
-      </div> : null}
+        {selectedId ? <div className="requirements-library__detail" ref={detailRef} tabIndex={-1} role="region" aria-label="Requirement details">
+          <div className="requirements-detail__navigation"><Button type="button" variant="ghost" size="sm" onClick={() => select(null)}>← Back to requirements</Button></div>
+          {selected && needle && !shown.some((row) => row.requirement_id === selectedId) ? <p className="requirements-detail__filter-note" role="status">The selected requirement is outside the current search filter.</p> : null}
+          {selected ? <RequirementDetail key={selected.requirement_id} library={library.data!} requirement={selected} choices={choices} canLink={canLink} filter={search} returnTable={returnTable} sourceState={sourceState} recordsAligned={sourceState === "ready" && !mismatch} onOpenAchievement={onOpenAchievement}
+            onLinkAchievement={() => setPicker({})} onLinkWording={(achievementId) => setPicker({ achievementId, requireWording: true })} onEditLink={(achievementId) => setPicker({ achievementId })} />
+            : library.isPending ? <p role="status">Loading the selected requirement…</p> : <div className="requirement-empty"><strong>Requirement unavailable in the current library.</strong><p>Select another saved definition from the table.</p></div>}
+        </div> : null}
+      </div>
     </section>
     {picker && selected && library.data ? <RequirementAssociationPicker library={library.data} choices={choices} profileVersion={profile.data?.profileVersion} wordingProfileVersion={wording.data?.profileVersion} sourceLoading={profile.isPending || wording.isPending} sourceError={profile.error?.message ?? wording.error?.message} requirementId={selected.requirement_id} achievementId={picker.achievementId} requireWording={picker.requireWording} onClose={() => setPicker(null)} /> : null}
-  </>;
+  </div>;
 }

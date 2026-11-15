@@ -167,7 +167,9 @@ test("typed qualifications share one batch, use permitted Profile sections and r
   expect((await json<Fit>(api, "get", `/v1/jobs/${duplicate.job_id}/fit`)).score).toEqual(duplicateFit.score);
   expect(operations(app, beforeSave)).toEqual(["fit.catalog-impact", "fit.qualification-batch"]);
   await page.goto("/requirements");
-  await expect(page.getByText("Python programming", { exact: true }).first()).toBeVisible();
+  const requirementsTable = page.getByRole("table", { name: "Saved requirements", exact: true });
+  await expect(requirementsTable.locator("tbody tr[data-row-id]")).toHaveCount(2);
+  await expect(requirementsTable.getByText("Python programming", { exact: true })).toBeVisible();
   await expect(page.getByText("English", { exact: true })).toHaveCount(0);
   await testInfo.attach("typed-reusable-catalog", { contentType: "image/png", body: await page.screenshot() });
 });

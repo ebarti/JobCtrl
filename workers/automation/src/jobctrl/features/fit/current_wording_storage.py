@@ -48,6 +48,9 @@ class CurrentWordingStorage:
         required = set(provenance.get("intended_requirement_ids", []))
         required.update(row["requirement_id"] for row in heads if row["state"] == "active"
                         and (row["variant_id"], str(row["variant_revision"])) in prior)
+        # Approved wording keeps its immutable provenance after an orphaned
+        # meaning is permanently removed. Only retained meanings need repinning.
+        required.intersection_update(row["requirement_id"] for row in read.catalog_snapshot()["requirements"])
         for ident in required - {request["requirement_id"]}:
             requirement = read.requirement(ident)
             if not current_contract(requirement):

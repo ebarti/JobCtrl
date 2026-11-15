@@ -530,7 +530,13 @@
   background: transparent;
 }
 
+.filterable-data-grid {
+  container-name: data-grid;
+  container-type: inline-size;
+}
+
 .data-grid-toolbar {
+  flex-wrap: wrap;
   min-height: 48px;
   gap: 16px;
   padding: 9px 16px;
@@ -538,6 +544,9 @@
 }
 
 .data-grid-view-title {
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  max-inline-size: 100%;
   gap: var(--jh-internal-gap);
   font-size: var(--jh-type-component-title-size);
   font-weight: var(--jh-type-component-title-weight);
@@ -546,10 +555,18 @@
 }
 
 .data-grid-view-title > svg {
+  flex: 0 0 auto;
   color: var(--muted-foreground);
 }
 
+.data-grid-view-title > strong {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
 .data-grid-view-title .meta {
+  flex: 0 1 auto;
+  max-inline-size: 100%;
   padding-left: var(--jh-internal-gap);
   border-left: 1px solid var(--border);
   color: var(--muted-foreground);
@@ -559,7 +576,29 @@
 }
 
 .data-grid-tools {
+  flex: 1 1 420px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-inline-size: 100%;
   gap: 5px;
+}
+
+@container data-grid (max-width: 760px) {
+  .data-grid-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .data-grid-tools {
+    inline-size: 100%;
+    justify-content: flex-start;
+  }
+
+  .saved-table-views-control {
+    flex-wrap: wrap;
+    max-inline-size: 100%;
+  }
 }
 
 .data-grid-filter-chips {
@@ -968,6 +1007,11 @@
   border-radius: var(--radius);
   background: transparent;
   box-shadow: none;
+}
+
+.data-table-views button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
 }
 
 .data-table-views button:hover:not(:disabled),
@@ -1461,10 +1505,6 @@
   .data-grid-toolbar {
     gap: 8px;
     padding-inline: 12px;
-  }
-
-  .data-grid-view-title .meta {
-    display: none;
   }
 
   .data-grid-filter-chips {

@@ -1,5 +1,6 @@
 import { Outlet, createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
+import { requirementsReturnTableSchema } from "../contexts/requirements/index.js";
 import { jobsSearchSchema } from "./-jobs.search.js";
 
 const profileSearchSchema = z.object({
@@ -11,6 +12,7 @@ const profileSearchSchema = z.object({
   achievementId: z.string().min(1).optional().catch(undefined),
   returnRequirement: z.string().min(1).optional().catch(undefined),
   returnRequirementsFilter: z.string().optional().catch(undefined),
+  returnRequirementsTable: requirementsReturnTableSchema,
   returnJobId: z.string().min(1).max(200).optional().catch(undefined),
   returnJobs: jobsSearchSchema.optional().catch(undefined),
   returnResumeMode: z.enum(["baseline", "tailored"]).optional().catch(undefined),

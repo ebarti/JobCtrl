@@ -179,6 +179,25 @@ publication identity and guards. No lexical fallback, truncation, chunks or
 rewritten shared receipt may establish authority. See the
 [batching and reuse decision](decisions.md#_2026-11-13-batch-missing-qualifications-and-separate-exact-reuse-from-publication).
 
+Active Requirements library clarification (2026-11-15): a reusable canonical
+meaning appears in the active library only while at least one accepted
+occurrence belongs to an existing nondeleted Job. Hidden Jobs count. Soft
+deleting its last live Job removes the meaning from both ordinary and composed
+library lists; restoring the Job recovers the same identity and history without
+model work. Retain canonical semantic inventory, source history, user links,
+Profile capabilities, Fit records and accepted resume bytes independently.
+Historical support and user links alone do not keep a deleted-only meaning
+active. Semantic matching still considers the full retained catalog regardless
+of library visibility; a new accepted occurrence can reactivate the same
+meaning. Exact retained-meaning/history lookups distinguish active membership
+from storage retention. See the [library contract](api/jobs-and-materials.md#requirements-library-and-associations).
+Reviewed permanent job deletion physically removes only meanings with no other
+retained Job occurrence, including soft-deleted and historical occurrences.
+Owner callbacks remove dependent Fit links in the same transaction while
+preserving authored Profile facts/wording and independent immutable audit
+receipts. A later explicit extraction can establish a new meaning after that
+removal; deleted history cannot be restored.
+
 ## Technical Requirements
 
 ### Product Surface And Runtime
