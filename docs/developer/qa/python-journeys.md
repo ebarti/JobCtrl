@@ -46,8 +46,8 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **133 journeys in 43 project-file groups**:
-**132 Chromium cases in 42 spec files**, plus **one demo case in one file**.
+The current configured inventory is **134 journeys in 44 project-file groups**:
+**133 Chromium cases in 43 spec files**, plus **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts and keyboard-driven Profile saves. Listing
@@ -96,6 +96,18 @@ quotes must refuse while accepted state stays exact. Short citation handles
 retain real canonical/job IDs and unchanged persisted model results. Its Python
 digest was `f891a3519752d5076db1228eede9889b303b0cfd9591af500d74423f27c5b8bd`;
 the unchanged web digest remains the one above.
+
+The separately versioned citation-selection transport is exercised through the
+same public normalization journeys and a real
+[`6e4131061` predecessor upgrade](../../../apps/web/e2e/journeys/requirements-citation-upgrade.spec.ts).
+The new case preserves the earlier raw decision, receipt, snapshots and PDF,
+refuses incompatible durable replay without another model call, then publishes
+one selection response and joins a retained-family citation to its exact
+historical ID and revision. The existing refusal controls include foreign and
+wrong-source segments, legacy quote fields and stale catalog inputs. A read-only
+inspector in the owned synthetic workspace compares the immutable raw selection
+and gateway receipt with the separately stored exact-quote projection and source
+index; it neither seeds state nor replaces a determination.
 
 ### Expanded screens and Profile editing — 15 November 2026
 

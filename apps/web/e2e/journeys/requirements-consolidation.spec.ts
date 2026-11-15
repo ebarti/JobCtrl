@@ -1,7 +1,7 @@
 import type { Page, TestInfo } from "@playwright/test";
 import { test, expect, json, modelCall, action, completed, terminal, type ExternalCall } from "../harness/fixtures.js";
 import { createBaseline, acceptBaseline, getResume } from "./core-data.js";
-import { catalogMatching, catalogOccurrenceEvidence, citeSources, modelSources, typedExtraction, type CatalogContext } from "./requirements-data.js";
+import { catalogMatching, catalogOccurrenceEvidence, citationSelections, CITATION_BINDER_VERSION, modelSources, normalizationFingerprint, NORMALIZATION_PROMPT_VERSION, typedExtraction, type CatalogContext } from "./requirements-data.js";
 import { qualificationBatchDecision, legacyQualificationBatchDecision } from "./qualification-data.js";
 import { createScoredFit, legacyGroupedCoverageDecision, refreshPayload, startRefresh, type PendingRefresh } from "./fit-data.js";
 import { acceptReuseRequirements, captureReusePosting, type RequirementSnapshot } from "./reuse-data.js";
@@ -220,7 +220,7 @@ test.describe("retained public predecessor capability authority", () => {
     expect(runs.runs).toHaveLength(1);
     const completedRun = await completed(api, runs.runs[0]!.runId);
     const report = completedRun["result"] as ReconciliationReport;
-    expect(report).toMatchObject({ input_member_count: 3, root_count: 2, receipt: { prompt_version: NORMALIZATION_VERSION, lane: "requirements" } });
+    expect(report).toMatchObject({ input_member_count: 3, root_count: 2, receipt: { prompt_version: NORMALIZATION_PROMPT_VERSION, lane: "requirements" } });
     const root = [saved[0]!.id, saved[1]!.id].sort()[0]!;
     const alias = [saved[0]!.id, saved[1]!.id].find((id) => id !== root)!;
     expect(report.mapping).toMatchObject({ [saved[0]!.id]: root, [saved[1]!.id]: root, [saved[2]!.id]: saved[2]!.id });
@@ -313,13 +313,11 @@ test.describe("retained public predecessor capability authority", () => {
         { groupId: "access", definition: accessDefinition, jobIds: [accessJob.job_id] }]);
       const primaryCitations = [obsoleteId, accessId].map((id) => {
         const member = input.members.find((row) => row.member_id === id)!;
-        const source = modelSources(request).find((row) => row.source_id === member.source_id)!;
-        const original = JSON.parse(source.text) as { canonical: { spans: { quote: string }[] } };
-        return { source_id: member.source_id, quote: original.canonical.spans[0]!.quote };
+        return { sourceId: member.source_id, valuePath: ["canonical", "spans", 0, "quote"] };
       });
       result.corrections = [{ member_id: obsoleteId, retained_group_id: "notes", unsupported_claim: "operate access controls",
         represented_by_group_id: "access", reason: "The historical source establishes release note preparation only; access operation is independently preserved from its own current source.",
-        citations: [...citeSources(request, [input.catalog_inventory_source_id]), ...primaryCitations] }];
+        citations: citationSelections(request, [{ sourceId: input.catalog_inventory_source_id }, ...primaryCitations]) }];
       return result;
     };
     const callsBeforeUpgrade = app.external.calls.length;
@@ -358,11 +356,22 @@ test.describe("retained public predecessor capability authority", () => {
     expect(response.status(), await response.text()).toBe(200);
     const report = await response.json() as ReconciliationReport;
     const notesRoot = [obsoleteId, notesId].sort()[0]!;
-    expect(report).toMatchObject({ input_member_count: 3, root_count: 2, corrections: decision.corrections,
+    const { citations: _rawReferences, ...witness } = decision.corrections[0]!;
+    expect(report).toMatchObject({ input_member_count: 3, root_count: 2, corrections: [witness],
       mapping: { [obsoleteId]: notesRoot, [notesId]: notesRoot, [accessId]: accessId } });
-    const root = await json<{ provenance: { normalization: { corrections: unknown[]; receipt: { receipt_id: string } } } }>(api, "get", `/v1/requirements/${notesRoot}`);
-    expect(root.provenance.normalization).toMatchObject({ corrections: decision.corrections,
-      receipt: { receipt_id: report.receipt.receipt_id } });
+    const positiveContext = positive.body["context"] as CatalogContext;
+    expect(report.corrections[0]!.citations).toEqual([
+      { source_id: positiveContext.catalog_inventory_source_id, quote: `"catalog_revision":${positiveContext.catalog_revision}` },
+      { source_id: positiveContext.members.find((row) => row.member_id === obsoleteId)!.source_id, quote: notesDefinition },
+      { source_id: positiveContext.members.find((row) => row.member_id === accessId)!.source_id, quote: accessDefinition },
+    ]);
+    const root = await json<{ provenance: { normalization: { corrections: unknown[]; receipt: { receipt_id: string };
+      reconciliation_id: string; citation_binding: { selection_fingerprint: string; derived_fingerprint: string; source_context_fingerprint: string } } } }>(api, "get", `/v1/requirements/${notesRoot}`);
+    expect(root.provenance.normalization).toMatchObject({ corrections: report.corrections,
+      receipt: { receipt_id: report.receipt.receipt_id }, reconciliation_id: report.reconciliation_id,
+      citation_binding: { selection_fingerprint: report.citation_binding.selection_fingerprint,
+        derived_fingerprint: report.citation_binding.derived_fingerprint,
+        source_context_fingerprint: report.citation_binding.source_context_fingerprint } });
     const retainedOriginal = await json<Record<string, unknown>>(api, "get", `/v1/requirements/${obsoleteId}?revision=1`);
     for (const key of ["requirement_id", "revision", "contract_version", "category", "name", "definition", "provenance", "created_at"])
       expect(retainedOriginal[key]).toEqual(oldMeaning[key]);
@@ -437,10 +446,11 @@ test.describe("retained public predecessor capability authority", () => {
       // The literal newline, quotes and backslash belong to one decoded value;
       // their JSON transport escaping is not the original source quotation.
       expect(container.text).not.toContain(clauses[0]);
-      return { sourceId: reference.source_id, original: source.original };
+      const selection = citationSelections(request, [{ sourceId: reference.source_id, valuePath: ["original", "spans", 0, "quote"] }])[0]!;
+      return { sourceId: reference.source_id, original: source.original, selection };
     };
     const faults = ["omitted member", "foreign member", "omitted occurrence", "foreign occurrence", "schema", "uncertain", "blank normalized definition", "active correction",
-      "non-verbatim occurrence quote", "joined source fields"] as const;
+      "foreign occurrence segment", "wrong-source occurrence segment", "legacy quote field", "stale catalogue"] as const;
     for (const fault of faults) {
       const attempt = api.post("/v1/requirements/consolidate", { data: { expected_catalog_revision: catalogBefore.catalog_revision } });
       const call = await modelCall(app, "requirements.match_catalog");
@@ -450,14 +460,17 @@ test.describe("retained public predecessor capability authority", () => {
       if (fault === "foreign member") invalid.capabilities[0]!.member_ids[0] = "foreign:unrecorded-member";
       if (fault === "omitted occurrence") invalid.demands.shift();
       if (fault === "foreign occurrence") invalid.demands[0]!.bindings[0]!.occurrence_ids[0] = "foreign:unrecorded-occurrence";
-      if (fault === "non-verbatim occurrence quote" || fault === "joined source fields") {
+      if (fault === "foreign occurrence segment" || fault === "wrong-source occurrence segment") {
         const source = multilineSource(call);
         const citation = invalid.demands.flatMap((demand) => demand.citations).find((row) => row.source_id === source.sourceId)!;
         expect(citation).toBeTruthy();
-        citation.quote = fault === "non-verbatim occurrence quote"
-          ? "Improve engineering process outputs using an invented method."
-          : source.original.name + "\n" + source.original.definition;
+        if (fault === "foreign occurrence segment") citation.segment_id = "unowned:occurrence-segment";
+        else {
+          const other = (call.body["context"] as CatalogContext).occurrences.find((row) => row.occurrence_id !== accepted.requirements[0]!.occurrence_id)!;
+          citation.segment_id = citationSelections(call, [{ sourceId: other.source_id, valuePath: ["original", "spans", 0, "quote"] }])[0]!.segment_id;
+        }
       }
+      if (fault === "stale catalogue") invalid.catalog_revision -= 1;
       if (fault === "blank normalized definition") invalid.capabilities[0]!.definition = " \n\t ";
       if (fault === "active correction") {
         const context = call.body["context"] as CatalogContext;
@@ -465,29 +478,35 @@ test.describe("retained public predecessor capability authority", () => {
         const represented = invalid.capabilities[1]!;
         const primaryCitations = [retained.member_ids[0]!, represented.member_ids[0]!].map((id) => {
           const member = context.members.find((row) => row.member_id === id)!;
-          const source = modelSources(call).find((row) => row.source_id === member.source_id)!;
-          const original = JSON.parse(source.text) as { canonical: { spans: { quote: string }[] } };
-          return { source_id: member.source_id, quote: original.canonical.spans[0]!.quote };
+          return { sourceId: member.source_id, valuePath: ["canonical", "spans", 0, "quote"] };
         });
         invalid.corrections = [{ member_id: retained.member_ids[0]!, retained_group_id: retained.group_id,
           unsupported_claim: core, represented_by_group_id: represented.group_id,
           reason: "Explicit invalid witness: a current accepted occurrence cannot be rewritten through a historical-only correction.",
-          citations: [...citeSources(call, [context.catalog_inventory_source_id]), ...primaryCitations] }];
+          citations: citationSelections(call, [{ sourceId: context.catalog_inventory_source_id }, ...primaryCitations]) }];
       }
       if (fault === "uncertain") {
         invalid.status = "needs_review";
         invalid.unresolved = [{ member_ids: invalid.capabilities[0]!.member_ids, reason: "The supplied sources do not establish a complete normalized partition.", citations: invalid.capabilities[0]!.citations }];
       }
       if (fault === "schema") call.reply({ ...invalid, invented_authority: true });
+      else if (fault === "legacy quote field") {
+        const source = multilineSource(call);
+        call.reply({ ...invalid, demands: invalid.demands.map((demand) => ({ ...demand,
+          citations: demand.citations.map((ref) => ref.source_id === source.sourceId
+            ? { ...ref, quote: source.original.name + "\n" + source.original.definition } : ref),
+        })) });
+      }
       else call.reply(invalid);
       const response = await attempt;
-      expect(response.status(), `${fault}: ${await response.text()}`).toBe(fault === "schema" ? 502 : 422);
+      expect(response.status(), `${fault}: ${await response.text()}`).toBe(fault === "schema" || fault === "legacy quote field" ? 502 : fault === "stale catalogue" ? 409 : 422);
       expect(await response.json()).toMatchObject({ error: { code: {
         "omitted member": "requirements_consolidation_partition_invalid", "foreign member": "requirements_consolidation_partition_invalid",
         "omitted occurrence": "requirements_demand_partition_invalid", "foreign occurrence": "requirements_demand_partition_invalid",
         schema: "model_schema_violation", uncertain: "requirements_consolidation_uncertain",
         "blank normalized definition": "blank_requirement_field", "active correction": "requirements_correction_witness_invalid",
-        "non-verbatim occurrence quote": "non_verbatim_quote", "joined source fields": "non_verbatim_quote",
+        "foreign occurrence segment": "foreign_citation_segment_id", "wrong-source occurrence segment": "foreign_source_id",
+        "legacy quote field": "model_schema_violation", "stale catalogue": "stale_catalog_revision",
       }[fault] } });
       const retained = await json<RequirementSnapshot>(api, "get", requirementsPath(posting.job_id));
       expect(retained.requirements).toEqual(before.requirements);
@@ -503,14 +522,56 @@ test.describe("retained public predecessor capability authority", () => {
     const root = retainedCapability(merging, ids[0]!, "process");
     const normalized = authoredPartition(merging, [{ ...root, memberIds: ids }], [{ groupId: "process", definition: completeDemand, jobIds: [posting.job_id] }]);
     const source = multilineSource(merging);
-    const multilineCitation = normalized.demands[0]!.citations.find((row) => row.source_id === source.sourceId)!;
-    expect(multilineCitation).toBeTruthy();
-    multilineCitation.quote = source.original.spans[0]!.quote;
+    expect(normalized.demands[0]!.citations).toEqual(expect.arrayContaining([source.selection]));
     merging.reply(normalized);
     const published = await success;
     expect(published.status(), await published.text()).toBe(200);
     const report = await published.json() as ReconciliationReport;
     expect(report.roots).toHaveLength(1);
+    const input = merging.body["context"] as CatalogContext;
+    const inventoryCitation = { source_id: input.catalog_inventory_source_id, quote: `"catalog_revision":${input.catalog_revision}` };
+    const expectedDerived = { ...normalized,
+      capabilities: [{ ...normalized.capabilities[0]!, citations: [inventoryCitation, ...ids.map((id) => ({
+        source_id: input.members.find((member) => member.member_id === id)!.source_id, quote: core,
+      }))] }],
+      demands: [{ ...normalized.demands[0]!, citations: [inventoryCitation,
+        ...normalized.demands[0]!.bindings.flatMap((binding) => binding.occurrence_ids.map((id) => ({
+          source_id: input.occurrences.find((occurrence) => occurrence.occurrence_id === id)!.source_id,
+          quote: accepted.requirements.find((occurrence) => occurrence.occurrence_id === id)!.spans[0]!.quote,
+        }))),
+      ] }],
+    };
+    expect(report.receipt).toMatchObject({ prompt_version: NORMALIZATION_PROMPT_VERSION,
+      accepted_result_fingerprint: normalizationFingerprint(normalized) });
+    const sourceDocuments = Object.fromEntries(modelSources(merging).map((item) => [item.source_id, item.text]));
+    expect(report.citation_binding).toMatchObject({ binder_version: CITATION_BINDER_VERSION,
+      selection_fingerprint: normalizationFingerprint(normalized), derived_fingerprint: normalizationFingerprint(expectedDerived),
+      segment_catalog_fingerprint: input.citation_catalog_fingerprint,
+      source_fingerprint: normalizationFingerprint(sourceDocuments), source_context_fingerprint: input.citation_source_context_fingerprint,
+      source_fingerprints: input.citation_source_fingerprints, segment_catalog: input.citation_segments,
+    });
+    expect(report.citation_binding.selection_fingerprint).not.toBe(report.citation_binding.derived_fingerprint);
+    expect(normalizationFingerprint(report.citation_binding.source_context)).toBe(input.citation_source_context_fingerprint);
+    expect(report.citation_binding.source_context.snapshot_heads).toEqual(input.source_snapshot_heads);
+    for (const original of accepted.requirements) {
+      const recorded = report.citation_binding.source_context.occurrences.find((item) => item.occurrence_id === original.occurrence_id)!;
+      expect(recorded).toMatchObject({ requirement_id: original.requirement_id, requirement_revision: original.requirement_revision,
+        job_id: posting.job_id, posting_revision: posting.revision, posting_hash: posting.source_hash,
+        source_kind: "accepted_snapshot", snapshot_revision: accepted.revision, base_snapshot_revision: accepted.revision,
+        source_identity: { source_id: original.source_id, source_revision: original.source_revision, source_hash: original.source_hash,
+          evidence_refs: original.evidence_refs, extraction_determination_id: original.extraction_determination_id } });
+      expect(report.citation_binding.source_fingerprints[recorded.source_id]).toBe(normalizationFingerprint(sourceDocuments[recorded.source_id]));
+    }
+    expect(report.citation_binding.source_context.posting_sources).toEqual(expect.arrayContaining([expect.objectContaining({
+      job_id: posting.job_id, revision: posting.revision, source_hash: posting.source_hash,
+      posting_source_id: posting.source_id, source_revision: posting.source_revision,
+    })]));
+    const audit = await app.requirementsReconciliation(report.reconciliation_id);
+    expect(audit).toMatchObject({ operation_id: report.reconciliation_id, input_fingerprint: report.input_fingerprint });
+    expect(audit.selection).toEqual(normalized);
+    expect(audit.authority_receipt).toMatchObject({ receipt_id: report.receipt.receipt_id, value: normalized });
+    expect(audit.stored_report).toMatchObject({ storage_version: CITATION_BINDER_VERSION, report,
+      derived_decision: expectedDerived, citation_binding: report.citation_binding });
     // The survivor's name/definition/revision stay exact. Its older positive
     // outcomes and approved wording still cannot acquire the new demand pins.
     expect(report.roots[0]).toMatchObject({ requirement_id: ids[0], revision: 1, definition: core });
@@ -519,6 +580,12 @@ test.describe("retained public predecessor capability authority", () => {
     expect(currentRequirements.requirements[0]!.spans).toEqual(accepted.requirements[0]!.spans);
     for (const occurrence of currentRequirements.requirements) {
       expect(occurrence.normalized_demand.definition).toBe(completeDemand);
+      expect(occurrence.normalized_demand.provenance.reconciliation_id).toBe(report.reconciliation_id);
+      expect(occurrence.normalized_demand.provenance.citation_binding).toMatchObject({
+        selection_fingerprint: report.citation_binding.selection_fingerprint,
+        derived_fingerprint: report.citation_binding.derived_fingerprint,
+        source_context_fingerprint: report.citation_binding.source_context_fingerprint,
+      });
       expect(occurrence.normalized_demand.provenance.citations).toEqual(expect.arrayContaining([
         { source_id: source.sourceId, quote: clauses[0] },
       ]));

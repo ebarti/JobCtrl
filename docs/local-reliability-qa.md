@@ -141,6 +141,17 @@ historical. No read/save starts repair or downstream work. Controlled boundary
 choices prove authority, not semantic accuracy; run the configured provider on
 the reported source-bound failure separately.
 
+For the separately versioned normalization citation-selection wire, exercise
+model-selected supplied segment references with exact multiline, quotation-mark
+and backslash source bytes. Require raw selection equality with the immutable
+receipt/cache independently of the derived quote projection. Check binder,
+selection, segment-catalog and derived-result fingerprints, same-source segment
+resolution, and unchanged semantic fields. Foreign references, wrong-source
+references, stale inputs and incompatible earlier wire versions must preserve
+accepted state. No reference may join source values, generate an offset, change
+whitespace or silently fall back to a literal quote. Retain old citation history
+and the one-call allowance through actual predecessor/recovery entrypoints.
+
 Post-edit Fit refresh is manually admitted. Prove that saves, approvals, reads
 and the operation's own writes make no additional model calls or queued work.
 Exercise the complete-catalog impact decision, previously unsupported

@@ -193,6 +193,27 @@ aliases. Exact historical revision reads preserve their original identity;
 current navigation may follow a recorded alias. Old typed job snapshots report
 `consolidation_required` staleness and cannot supply new assessment authority.
 
+Consolidation retains semantic policy `requirements-capability-demand-v2` and uses
+citation wire/prompt `requirements-capability-demand-citation-v3`. Its raw model
+result selects supplied `{source_id,segment_id}` references. The owner derives
+exact quotes from one source value/range using `requirements-citation-binding-v1`;
+the model never copies a quotation or calculates offsets. Full source evidence
+remains in the one complete request. Generic extraction, Fit and other feature
+citation formats are unchanged.
+
+The report's `citation_binding` contains `binder_version`, `selection_fingerprint`,
+`derived_fingerprint`, `segment_catalog_fingerprint`, `source_fingerprint`,
+`source_context_fingerprint`, complete structural `source_context`, per-source
+`source_fingerprints` and the supplied `segment_catalog`. These pin real meaning
+and ordered family revisions, occurrence/snapshot IDs, extraction/correction and
+lineage references, and immutable posting revisions. Raw model selection/cache/
+gateway authority is retained unchanged; derived quotes and binding evidence are
+stored separately in the existing reconciliation's JSON envelope. No SQL schema,
+capability identity policy or normalized-demand fingerprint changes are implied
+by the citation format. Durable Requirements action versions and idempotent input
+hashes include the citation wire so an old raw-quote action cannot resume as a
+current selection action.
+
 Reusable occurrences retain their original extracted definition and exact source
 evidence plus `normalized_demand` containing its definition, fingerprint, policy
 version and source-bound provenance. The assessment adapter exposes canonical

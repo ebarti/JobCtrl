@@ -44,6 +44,13 @@ export type ApplicationStack = {
   upgradeSource(): Promise<{ previous: number; current: number; backup: string; candidateOrigin: string; mode: "source" | "installed" }>;
   databaseSchemaFingerprint(): Promise<string>;
   databaseSchemaInventory(): Promise<{ type: string; name: string; table: string; sql: string | null }[]>;
+  requirementsReconciliation(operationId: string): Promise<{
+    operation_id: string; action_fingerprint: string; input_fingerprint: string;
+    captured_catalog_revision: number; published_catalog_revision: number; selection: unknown;
+    authority_receipt: { value?: unknown; [key: string]: unknown };
+    stored_report: { storage_version?: string; report?: unknown; derived_decision?: unknown;
+      citation_binding?: unknown; [key: string]: unknown };
+  }>;
   failRendering(): Promise<void>;
   restoreRendering(): Promise<void>;
   cli(

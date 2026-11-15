@@ -1,6 +1,10 @@
+import { createHash } from "node:crypto";
 import { expect, type ExternalCall } from "../harness/fixtures.js";
 
 export type ModelSource = { source_id: string; text: string };
+export const NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-citation-v3";
+export const LEGACY_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-v2";
+export const CITATION_BINDER_VERSION = "requirements-citation-binding-v1";
 export const modelSources = (call: ExternalCall) =>
   call.body["sources"] as ModelSource[];
 
@@ -104,14 +108,48 @@ export type CatalogContext = {
   incoming: { local_id: string; model_source_id: string; occurrence_id: string; job_id: string; member_id: string }[];
   candidates: { requirement_id: string; revision: number }[];
   members: { member_id: string; source_id: string; requirement_id: string | null; revision: number | null }[];
-  occurrences: { job_id: string; occurrence_id: string; member_id: string; source_id: string; posting_revision: number; posting_hash: string }[];
+  occurrences: { job_id: string; occurrence_id: string; member_id: string; source_id: string; posting_revision: number; posting_hash: string;
+    requirement_id: string; requirement_revision: number; source_kind: "proposed" | "accepted_snapshot";
+    snapshot_revision: number | null; base_snapshot_revision: number; correction_determination_id: string | null;
+    previous_occurrence_id: string | null; resolution_determination_ids: string[] }[];
   accepted_demands: { group_member_ids: string[]; source_id: string; demand_fingerprint: string; normalization_version: string }[];
   accepted_occurrence_counts: Record<string, number>;
   posting_sources: { job_id: string; revision: number; source_hash: string; source_id: string }[];
+  citation_segments: Record<string, Record<string, (string | number)[] | {
+    source_format?: "json_string" | "serialized"; value_path: (string | number)[];
+    start: number; end: number; preview?: string }>>;
+  citation_catalog_fingerprint: string;
+  citation_source_fingerprints: Record<string, string>;
+  citation_source_context_fingerprint: string;
+  source_snapshot_heads: { job_id: string; revision: number; posting_revision: number; posting_hash: string;
+    contract_version?: string; snapshot_fingerprint?: string }[];
 };
 
+export type CitationSelection = { source_id: string; segment_id: string };
+type CitationReference = { sourceId: string; valuePath?: (string | number)[] };
+
+/** Select only owner-supplied references at explicitly authored DTO paths.
+ * The helper neither invents quote text/ranges nor searches prose for meaning. */
+export function citationSelections(call: ExternalCall, references: CitationReference[]): CitationSelection[] {
+  const context = call.body["context"] as CatalogContext;
+  expect(context.citation_catalog_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+  expect(normalizationFingerprint(context.citation_segments)).toBe(context.citation_catalog_fingerprint);
+  return references.map(({ sourceId, valuePath }) => {
+    const offered = Object.entries(context.citation_segments[sourceId] ?? {}).filter(([, segment]) =>
+      valuePath === undefined || JSON.stringify(Array.isArray(segment) ? segment : segment.value_path) === JSON.stringify(valuePath));
+    expect(offered, "Select one explicitly provided source field reference").toHaveLength(1);
+    expect(modelSources(call).some((source) => source.source_id === sourceId)).toBe(true);
+    return { source_id: sourceId, segment_id: offered[0]![0] };
+  });
+}
+
+const canonicalValue = (value: unknown): unknown => Array.isArray(value) ? value.map(canonicalValue)
+  : value !== null && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([key, item]) => [key, canonicalValue(item)])) : value;
+export const normalizationFingerprint = (value: unknown) => createHash("sha256").update(JSON.stringify(canonicalValue(value))).digest("hex");
+
 type CatalogMeaning = { category: "skill" | "professional_experience"; name: string; definition: string };
-type OccurrenceEvidence = CatalogContext["occurrences"][number] & {
+type OccurrenceEvidence = Omit<CatalogContext["occurrences"][number],
+  "correction_determination_id" | "previous_occurrence_id" | "resolution_determination_ids"> & {
   original: CatalogMeaning & { spans: { quote: string }[] };
   canonical: CatalogMeaning;
   normalized_demand: { normalization_version: string; demand_fingerprint: string } | null;
@@ -146,7 +184,10 @@ export function catalogOccurrenceEvidence(call: ExternalCall, occurrenceId: stri
   const occurrence = (call.body["context"] as CatalogContext).occurrences.find((row) => row.occurrence_id === occurrenceId);
   expect(occurrence).toBeTruthy();
   const source = catalogSource<OccurrenceEvidence>(call, occurrence!.source_id);
-  expect(source).toMatchObject(occurrence!);
+  // These lineage fields belong to context and its persisted source_context;
+  // the source document carries the remaining shared identity/evidence pins.
+  const { correction_determination_id, previous_occurrence_id, resolution_determination_ids, ...sourcePins } = occurrence!;
+  expect(source).toMatchObject(sourcePins);
   return source;
 }
 
@@ -173,14 +214,28 @@ export type DemandChoice = {
   groupId: string; definition: string; reuseDemandFingerprint?: string | null;
   bindings: { jobId: string; occurrenceIds: string[] }[];
 };
-export type CorrectionWitness = { member_id: string; retained_group_id: string; unsupported_claim: string;
-  represented_by_group_id: string; reason: string; citations: ReturnType<typeof citeSources> };
+type NormalizationCorrection<Citation> = { member_id: string; retained_group_id: string; unsupported_claim: string;
+  represented_by_group_id: string; reason: string; citations: Citation[] };
+export type CorrectionWitness = NormalizationCorrection<CitationSelection>;
+export type BoundCorrectionWitness = NormalizationCorrection<ReturnType<typeof citeSources>[number]>;
 
 /** Authors supply the complete semantic partition. This binds only live IDs,
  * exhaustive inventory accounting and verbatim citations, never meaning. */
 export function catalogNormalization(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]) {
   expect(call.body["operation"]).toBe("requirements.match_catalog");
-  expect(call.body["prompt_version"]).toBe("requirements-capability-demand-v2");
+  expect(call.body["prompt_version"]).toBe(NORMALIZATION_PROMPT_VERSION);
+  return normalizationResponse(call, capabilities, demands, (references) => citationSelections(call, references));
+}
+
+/** Exact predecessor contract, used only before an actual source upgrade. */
+export function legacyCatalogNormalizationV2(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]) {
+  expect(call.body["operation"]).toBe("requirements.match_catalog");
+  expect(call.body["prompt_version"]).toBe(LEGACY_NORMALIZATION_PROMPT_VERSION);
+  return normalizationResponse(call, capabilities, demands, (references) => citeSources(call, references.map((row) => row.sourceId)));
+}
+
+function normalizationResponse<Citation>(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[],
+  citations: (references: CitationReference[]) => Citation[]) {
   const context = call.body["context"] as CatalogContext;
   const members = capabilities.flatMap((group) => group.memberIds);
   expect(members.length).toBe(new Set(members).size);
@@ -195,23 +250,23 @@ export function catalogNormalization(call: ExternalCall, capabilities: Capabilit
       group_id: group.groupId, member_ids: group.memberIds, category: group.category,
       name: group.name, definition: group.definition, reuse_requirement_id: group.reuseRequirementId ?? null,
       reason: "Explicit capability identity choice for this synthetic journey.",
-      citations: citeSources(call, [context.catalog_inventory_source_id, ...group.memberIds.map((id) => {
+      citations: citations([{ sourceId: context.catalog_inventory_source_id }, ...group.memberIds.map((id) => {
         const member = context.members.find((row) => row.member_id === id);
         expect(member, "Every authored member belongs to the complete live catalog input").toBeTruthy();
-        return member!.source_id;
+        return { sourceId: member!.source_id, valuePath: member!.requirement_id === null ? ["definition"] : ["canonical", "definition"] };
       })]),
     })),
     demands: demands.map((demand) => ({
       group_id: demand.groupId, definition: demand.definition, reuse_demand_fingerprint: demand.reuseDemandFingerprint ?? null,
       bindings: demand.bindings.map((binding) => ({ job_id: binding.jobId, occurrence_ids: binding.occurrenceIds })),
-      citations: citeSources(call, [context.catalog_inventory_source_id, ...demand.bindings.flatMap((binding) => binding.occurrenceIds.map((id) => {
+      citations: citations([{ sourceId: context.catalog_inventory_source_id }, ...demand.bindings.flatMap((binding) => binding.occurrenceIds.map((id) => {
         const occurrence = context.occurrences.find((row) => row.occurrence_id === id);
         expect(occurrence?.job_id).toBe(binding.jobId);
-        return occurrence!.source_id;
+        return { sourceId: occurrence!.source_id, valuePath: ["original", "spans", 0, "quote"] };
       }))]),
     })),
-    corrections: [] as CorrectionWitness[],
-    unresolved: [] as { member_ids: string[]; reason: string; citations: ReturnType<typeof citeSources> }[],
+    corrections: [] as NormalizationCorrection<Citation>[],
+    unresolved: [] as { member_ids: string[]; reason: string; citations: Citation[] }[],
   };
 }
 
@@ -300,7 +355,9 @@ export function catalogMatching(call: ExternalCall, choices: Record<string, Cata
   const uncertain = context.incoming.filter((row) => choices[row.local_id]!.verdict === "uncertain");
   if (uncertain.length) {
     result.status = "needs_review";
-    result.unresolved = uncertain.map((row) => ({ member_ids: [row.member_id], reason: "Explicit uncertain source-bound choice; preserve accepted state.", citations: citeSources(call, [row.model_source_id, context.catalog_inventory_source_id]) }));
+    result.unresolved = uncertain.map((row) => ({ member_ids: [row.member_id], reason: "Explicit uncertain source-bound choice; preserve accepted state.", citations: citationSelections(call, [
+      { sourceId: row.model_source_id, valuePath: ["definition"] }, { sourceId: context.catalog_inventory_source_id },
+    ]) }));
   }
   return result;
 }

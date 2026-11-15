@@ -131,8 +131,9 @@ judgment and does not mutate the accepted snapshot.
 
 ## Complete matching and exact reuse
 
-One `requirements.match_catalog` determination, versioned
-`requirements-capability-demand-v2`, sees the complete incoming Skills/Experience
+One `requirements.match_catalog` determination uses semantic policy
+`requirements-capability-demand-v2` and citation wire/prompt
+`requirements-capability-demand-citation-v3`. It sees the complete incoming Skills/Experience
 inventory and retained current-generation catalog, including hidden meanings.
 Canonical sources contain their definitions, original extraction and quoted
 posting evidence; accepted occurrences and available posting sources establish
@@ -141,7 +142,7 @@ authority. There is no top-k selection, paging, chunking, lexical fallback or
 separate novelty judgment. Existing-only repair and every semantic ingestion or
 correction use this mandatory gate.
 
-`CatalogNormalization` contains `status`, exact `catalog_revision`,
+The immutable model result, `CatalogNormalizationSelection`, contains `status`, exact `catalog_revision`,
 `capabilities`, `demands` and explicit `unresolved` entries. Capabilities partition
 every supplied existing/incoming member once and carry normalized category,
 name/core definition, reason, citations and nullable exact reuse authority.
@@ -150,8 +151,36 @@ Demands account for every occurrence once and combine each job/capability into
 one source-established demand. Equivalent jobs may share an exact normalized
 signature; materially different demands remain separate under the same capability.
 Each group cites the inventory and all its members; demands cite the inventory
-and all bound occurrences. Unknown/duplicate/missing IDs, invalid exact reuse,
-non-verbatim sources, stale targets or uncertainty refuse the complete result.
+and all bound occurrences. Citations contain only supplied `{source_id,segment_id}`
+selections. Unknown/duplicate/missing IDs, invalid exact reuse, foreign segment
+references, stale targets or uncertainty refuse the complete result.
+
+The input's `citation_segments[source_id][segment_id]` catalog selects exact
+locations in the source, without duplicating full prose. A path array means one
+complete decoded JSON string value. An object supplies `value_path` and explicit
+`start`/`end`; `source_format` defaults to `json_string`. Only values longer than
+the existing 4,000-character quotation bound are losslessly subdivided at physical
+newline or fixed character boundaries. The full source remains supplied once in
+the same request; there is no semantic paging or call fanout. A short literal
+preview locates a long-value segment. Inventory citations use an exact serialized
+epoch fragment. Models select offered segment IDs, never calculate offsets,
+copy/paraphrase quotes, or join fields.
+
+The deterministic `requirements-citation-binding-v1` binder validates the source,
+path, range and catalog fingerprints, then derives exact `Citation` quote fields
+in a separate `CatalogNormalization` projection. Generic extraction and other
+features keep their existing citation contracts. Raw selection, gateway receipt
+and accepted cache remain unchanged and equal; `accepted_result_fingerprint`
+always refers to the raw selection. The reconciliation stores that raw decision
+separately from the derived projection and binder evidence in a versioned JSON
+report envelope, without changing frozen SQL schemas. The public report exposes
+`citation_binding` fingerprints, the complete structural `source_context`,
+per-source fingerprints and the exact segment catalog. Context pins recorded
+meaning IDs/revisions, ordered retained families, occurrence/snapshot identities,
+extraction/correction receipts, previous-occurrence lineage and immutable posting
+revisions. Readers join these recorded identities rather than infer earlier heads
+from a hash or current order. Root/occurrence provenance keeps binding digests and
+the reconciliation ID alongside its derived exact quotes.
 
 The response also retains explicit source-correction witnesses. Original posting
 evidence outranks previous extracted definitions. A witness can remove an
@@ -290,7 +319,7 @@ writes admit no Fit followup.
 | `POST /v1/jobs/{job_id}/requirements/{occurrence_id}/binding` | Versioned explicit binding correction with selected target and reason. |
 | `POST /v1/jobs/{job_id}/requirements/corrections` | Source-bound one-to-one correction of selected occurrence meanings and bindings. |
 | `POST /v1/requirements/{requirement_id}/revisions` | Versioned source-bound canonical correction. Proposed shape is the extracted requirement plus exact spans. |
-| `requirements.consolidate`, `requirements.refresh`, `requirements.correct_binding`, `requirements.correct_occurrences`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2:requirements-capability-demand-v2`. Durable consolidation uses the run identity and accepts `expected_catalog_revision`. |
+| `requirements.consolidate`, `requirements.refresh`, `requirements.correct_binding`, `requirements.correct_occurrences`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2:requirements-capability-demand-v2:requirements-capability-demand-citation-v3`. Durable consolidation uses the run identity and accepts `expected_catalog_revision`. |
 
 Public owner methods also include nullable `find_job_requirements`, required
 `get_job_requirements`, exact/historical `get_requirement`, full
