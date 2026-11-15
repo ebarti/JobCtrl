@@ -421,7 +421,7 @@ for (const defect of [
   "unknown field",
   "unknown category",
   "foreign source",
-  "non-verbatim quote",
+  "foreign segment",
   "uncertain",
   "stale revision",
   "provider unavailable",
@@ -486,7 +486,7 @@ for (const defect of [
           },
         ],
       });
-    if (defect === "non-verbatim quote")
+    if (defect === "foreign segment")
       matching.reply({
         ...value,
         capabilities: [
@@ -495,8 +495,7 @@ for (const defect of [
             citations: [
               {
                 ...capability.citations[0]!,
-                quote:
-                  "Invented source statement absent from the saved posting.",
+                segment_id: "unrecorded:foreign-segment",
               },
               ...capability.citations.slice(1),
             ],

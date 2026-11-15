@@ -17,7 +17,7 @@ from .domain import (
 )
 from .ports import PostingReader, RequirementModel, RequirementStore
 from .normalization import CatalogNormalizationService
-from .normalization_domain import NORMALIZATION_VERSION
+from .normalization_domain import NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION
 
 
 MAX_POSTING_BYTES = 192000
@@ -279,7 +279,7 @@ class RequirementsService(CatalogNormalizationService):
         identifiers = [row["occurrence_id"] for row in corrections]
         if len(set(identifiers)) != len(identifiers):
             raise RequirementError("invalid_correction_selection")
-        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "operation": "correct_occurrences",
+        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": NORMALIZATION_PROMPT_VERSION, "operation": "correct_occurrences",
             "job_id": job_id, "expected_revision": expected_revision,
             "expected_posting_revision": expected_posting_revision, "corrections": corrections})
         replay = self._replay_snapshot(operation_id, action_fingerprint)
@@ -378,7 +378,7 @@ class RequirementsService(CatalogNormalizationService):
             raise RequirementError("correction_reason_required")
         if type(requirement_revision) is not int or requirement_revision < 1:
             raise RequirementError("invalid_revision")
-        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION,
+        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": NORMALIZATION_PROMPT_VERSION,
             "operation": "correct_binding", "job_id": job_id, "occurrence_id": occurrence_id,
             "expected_revision": expected_revision, "expected_posting_revision": expected_posting_revision,
             "requirement_id": requirement_id, "requirement_revision": requirement_revision, "reason": reason})
@@ -446,7 +446,7 @@ class RequirementsService(CatalogNormalizationService):
         self._validate_versions(expected_posting_revision, expected_revision)
         if not reason.strip():
             raise RequirementError("correction_reason_required")
-        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "operation": "revise", "requirement_id": requirement_id,
+        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": NORMALIZATION_PROMPT_VERSION, "operation": "revise", "requirement_id": requirement_id,
                                           "expected_revision": expected_revision, "job_id": job_id,
                                           "expected_posting_revision": expected_posting_revision,
                                           "proposed": proposed.model_dump(), "reason": reason})
@@ -550,7 +550,7 @@ class RequirementsService(CatalogNormalizationService):
         if type(force) is not bool:
             raise RequirementError("invalid_force")
         action_fingerprint = fingerprint({
-            "contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "operation": "refresh", "job_id": job_id, "expected_posting_revision": expected_posting_revision,
+            "contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": NORMALIZATION_PROMPT_VERSION, "operation": "refresh", "job_id": job_id, "expected_posting_revision": expected_posting_revision,
             "expected_revision": expected_revision, "force": force,
         })
         replay = self._replay_snapshot(operation_id, action_fingerprint)

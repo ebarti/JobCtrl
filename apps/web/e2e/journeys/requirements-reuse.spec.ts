@@ -1,6 +1,6 @@
 import { test, expect, json, modelCall, action, completed, type ExternalCall } from "../harness/fixtures.js";
 import { captureReusePosting, acceptReuseRequirements, reusableModelCatalog, type CapturedPosting, type RequirementSnapshot } from "./reuse-data.js";
-import { citeSources, modelSources, type CatalogContext } from "./requirements-data.js";
+import { citeSources, modelSources, NORMALIZATION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
 
 const requirement = [{ localId: "recovery", text: "Implement durable workflow recovery." }];
 const body = requirement[0]!.text;
@@ -15,7 +15,7 @@ function assertDestination(snapshot: RequirementSnapshot, posting: CapturedPosti
   expect(occurrence.provenance.resolution).toHaveLength(1);
   expect(occurrence.equivalence_determination_ids).toEqual(occurrence.provenance.resolution.map((receipt) => receipt.receipt_id));
   for (const receipt of occurrence.provenance.resolution) {
-    expect(receipt).toMatchObject({ prompt_version: "requirements-capability-demand-v2",
+    expect(receipt).toMatchObject({ prompt_version: NORMALIZATION_PROMPT_VERSION,
       input_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
       accepted_result_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
   }
@@ -57,7 +57,7 @@ test("Requirements exact content reuse keeps extraction destination bindings and
   const reusedExtraction = await acceptReuseRequirements(api, app, second, requirement, equivalent, { extract: false });
   expect(app.external.calls.slice(beforeSecond).map((call) => call.body["operation"])).toEqual(["requirements.match_catalog"]);
   expect(reusedExtraction.snapshot.requirements[0]!.extraction_determination_id).toBe(accepted.snapshot.requirements[0]!.extraction_determination_id);
-  expect(reusedExtraction.matching!.body["prompt_version"]).toBe("requirements-capability-demand-v2");
+  expect(reusedExtraction.matching!.body["prompt_version"]).toBe(NORMALIZATION_PROMPT_VERSION);
   assertDestination(reusedExtraction.snapshot, second, semanticSourceId);
   assertNormalizationDestination(reusedExtraction.matching!, second);
 

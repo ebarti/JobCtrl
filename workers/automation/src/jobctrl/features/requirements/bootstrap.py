@@ -11,7 +11,7 @@ from .model import RequirementModelAdapter
 from .repository import SqliteRequirementStore
 from .schema import SCHEMA
 from .normalization_schema import SCHEMA as NORMALIZATION_SCHEMA
-from .normalization_domain import NORMALIZATION_VERSION
+from .normalization_domain import NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION
 from .service import RequirementsService
 
 
@@ -105,7 +105,7 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         name="requirements", service=service, routes=routes(service),
         actions={"requirements.consolidate": consolidate, "requirements.refresh": refresh, "requirements.revise": revise, "requirements.correct_binding": correct_binding,
                  "requirements.correct_occurrences": correct_occurrences},
-        action_versions={name: CONTRACT_VERSION + ":" + NORMALIZATION_VERSION for name in (
+        action_versions={name: CONTRACT_VERSION + ":" + NORMALIZATION_VERSION + ":" + NORMALIZATION_PROMPT_VERSION for name in (
             "requirements.consolidate",
             "requirements.refresh", "requirements.revise", "requirements.correct_binding",
             "requirements.correct_occurrences",

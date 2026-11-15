@@ -8,6 +8,7 @@ from jobctrl.app.errors import ConflictError
 
 from .domain import RequirementError, canonical_json, current_contract, fingerprint, now
 from .normalization_domain import NORMALIZATION_VERSION
+from .normalization_citations import CITATION_BINDER_VERSION, citation_binding_summary
 
 
 class NormalizationStore:
@@ -118,7 +119,12 @@ class NormalizationStore:
                 return None
             if row["action_fingerprint"] != input_fingerprint:
                 raise ConflictError("The consolidation operation ID belongs to another input.")
-            return json.loads(row["report_json"])
+            stored = json.loads(row["report_json"])
+            if "storage_version" in stored:
+                if stored["storage_version"] != CITATION_BINDER_VERSION:
+                    raise RequirementError("requirements_citation_wire_changed")
+                return stored["report"]
+            return stored
 
     def normalization_model_call(self, input_fingerprint):
         with self.read_session() as connection:
@@ -153,7 +159,12 @@ class NormalizationStore:
         return self.normalization_model_call(input_fingerprint)
 
     def publish_normalization(self, *, captured, meanings, aliases, replacements, operation_id, input_fingerprint,
-                              decision, receipt, authority_receipt, report, guard, cancelled, revision_action=None):
+                              decision, selection, citation_binding, receipt, authority_receipt, report, guard, cancelled, revision_action=None):
+        if (canonical_json(authority_receipt["value"]) != canonical_json(selection)
+                or fingerprint(selection) != citation_binding["selection_fingerprint"]
+                or fingerprint(decision) != citation_binding["derived_fingerprint"]
+                or receipt["accepted_result_fingerprint"] != citation_binding["selection_fingerprint"]):
+            raise RequirementError("model_cache_receipt_invalid")
         with self.database.transaction() as connection:
             if cancelled():
                 raise RequirementError("cancelled")
@@ -207,11 +218,14 @@ class NormalizationStore:
                       "normalization_version": NORMALIZATION_VERSION, "reconciliation_id": operation_id,
                       "input_fingerprint": receipt["input_fingerprint"], "receipt": receipt}
             authority = {"member_roots": aliases, "root_heads": report["roots"],
-                         "decision_fingerprint": fingerprint(decision), "receipt": receipt,
+                         "decision_fingerprint": fingerprint(selection), "derived_fingerprint": fingerprint(decision),
+                         "citation_binding": citation_binding_summary(citation_binding), "receipt": receipt,
                          "corrections": decision["corrections"]}
+            stored_report = {"storage_version": CITATION_BINDER_VERSION, "report": report,
+                             "derived_decision": decision, "citation_binding": citation_binding}
             connection.execute("INSERT INTO requirements_reconciliations VALUES (?,?,?,?,?,?,?,?,?)",
-                (operation_id, input_fingerprint, receipt["input_fingerprint"], captured["catalog_revision"], epoch, canonical_json(decision),
-                 canonical_json(authority_receipt), canonical_json(report), now()))
+                (operation_id, input_fingerprint, receipt["input_fingerprint"], captured["catalog_revision"], epoch, canonical_json(selection),
+                 canonical_json(authority_receipt), canonical_json(stored_report), now()))
             connection.execute("INSERT INTO requirements_reconciliation_certificate VALUES (1,?,?,?,?,?) "
                                "ON CONFLICT(singleton) DO UPDATE SET catalog_revision=excluded.catalog_revision,"
                                "normalization_version=excluded.normalization_version,input_fingerprint=excluded.input_fingerprint,"

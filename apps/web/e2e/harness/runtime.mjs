@@ -417,7 +417,7 @@ export async function applicationStack(
   }
   try {
     if (sourceRevision) {
-      if (!["8ab86e9232d66fff9795906e061d208e7a057d8b", "5b9db7ddfa20fa2d618687da1b311e2287286679"].includes(sourceRevision))
+      if (!["8ab86e9232d66fff9795906e061d208e7a057d8b", "5b9db7ddfa20fa2d618687da1b311e2287286679", "6e4131061fb41aab4743701084a7c74a19fa21f3"].includes(sourceRevision))
         throw new Error("The source upgrade journey requires its exact fixed predecessor.");
       const resolved = await execFile("git", ["rev-parse", "--verify", `${sourceRevision}^{commit}`], { cwd: repo, timeout: 5_000 });
       if (resolved.stdout.trim() !== sourceRevision)
@@ -571,6 +571,30 @@ with sqlite3.connect(file.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
     rows = conn.execute("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").fetchall()
 print(json.dumps([dict(zip(("type", "name", "table", "sql"), row)) for row in rows], sort_keys=True))
 `, workspace], { env, timeout: 5_000, maxBuffer: 200_000 });
+        return JSON.parse(inspected.stdout);
+      },
+      async requirementsReconciliation(operationId) {
+        const inspected = await execFile(pythonExecutable, ["-c", `
+import json, os, pathlib, sqlite3, sys
+root = pathlib.Path(sys.argv[1])
+assert root.is_dir() and root.resolve() == root
+marker = root / ".jobctrl-e2e-owned.json"
+assert not marker.is_symlink()
+owner = json.loads(marker.read_text())
+assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
+operation_id = sys.argv[2]
+assert 0 < len(operation_id) <= 240
+file = root / "jobctrl.db"
+assert file.is_file() and not file.is_symlink() and file.parent.resolve() == root
+with sqlite3.connect(file.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
+    conn.execute("PRAGMA query_only=ON")
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT operation_id,action_fingerprint,input_fingerprint,captured_catalog_revision,published_catalog_revision,decision_json,receipt_json,report_json FROM requirements_reconciliations WHERE operation_id=?", (operation_id,)).fetchone()
+    assert row is not None
+    result = {key: row[key] for key in ("operation_id", "action_fingerprint", "input_fingerprint", "captured_catalog_revision", "published_catalog_revision")}
+    result.update(selection=json.loads(row["decision_json"]), authority_receipt=json.loads(row["receipt_json"]), stored_report=json.loads(row["report_json"]))
+print(json.dumps(result, sort_keys=True))
+`, workspace, operationId], { env, timeout: 5_000, maxBuffer: 2_000_000 });
         return JSON.parse(inspected.stdout);
       },
       async failRendering() {
