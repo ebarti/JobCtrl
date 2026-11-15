@@ -1,4 +1,4 @@
-import { errors, type Dialog } from "@playwright/test";
+import { errors, type Dialog, type Locator } from "@playwright/test";
 import { test, expect, json } from "../harness/fixtures.js";
 import { browserStorage } from "../harness/browser-storage.js";
 import { createBaseline, type Library, type Profile } from "./core-data.js";
@@ -810,4 +810,168 @@ test("Profile peer sections save complete role, summary, skills, education and l
       )
     ).runs,
   ).toEqual([]);
+});
+
+test("expanded Profile transfer import coaching and source tools keep readable insets and unchanged canonical data on desktop and mobile", async ({ api, app, page }, testInfo) => {
+  await createBaseline(api);
+  const saved = await json<Profile>(api, "get", "/v1/profile");
+  const callsBefore = app.external.calls.length;
+  const writes: string[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.origin === app.baseURL && url.pathname.startsWith("/v1/profile")
+      && ["POST", "PUT", "PATCH", "DELETE"].includes(request.method())) writes.push(`${request.method()} ${url.pathname}`);
+  });
+  const expectInsets = async (panel: Locator, title: Locator) => {
+    const outer = (await panel.boundingBox())!;
+    const heading = (await title.boundingBox())!;
+    expect(heading.x - outer.x).toBeGreaterThanOrEqual(16);
+    expect(outer.x + outer.width - heading.x - heading.width).toBeGreaterThanOrEqual(16);
+    expect(heading.y - outer.y).toBeGreaterThanOrEqual(16);
+    expect(await panel.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  };
+
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/profile?section=education");
+    await expect(page.getByRole("heading", { name: "Education", level: 1, exact: true })).toBeVisible();
+    const transferDisclosure = page.locator(".profile-transfer-tools");
+    await transferDisclosure.locator("summary").click();
+    const transfer = page.getByRole("region", { name: "Transfer browser-held Profile sources", exact: true });
+    const transferTitle = transfer.getByRole("heading", { name: "Transfer browser-held Profile sources", exact: true });
+    await expect(transferTitle).toBeVisible();
+    await expectInsets(transfer, transferTitle);
+    const actions = transfer.locator(".profile-transfer-panel__actions");
+    expect(await actions.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return Number.parseFloat(style.borderTopWidth) + Number.parseFloat(style.borderBottomWidth);
+    })).toBe(0);
+    const beforeInspection = await browserStorage(page);
+    await transfer.getByRole("button", { name: "Inspect browser sources", exact: true }).click();
+    await expect(transfer.getByRole("status")).toContainText("0 attachment(s) found");
+    await expect(transfer.getByRole("button", { name: "Export browser source bundle", exact: true })).toBeEnabled();
+    expect(await browserStorage(page)).toBe(beforeInspection);
+    await expectInsets(transfer, transferTitle);
+    const actionBounds = (await actions.boundingBox())!;
+    const titleBounds = (await transferTitle.boundingBox())!;
+    expect(Math.abs(actionBounds.x - titleBounds.x)).toBeLessThan(1);
+    await testInfo.attach(`profile-transfer-expanded-${viewport.width}`, { contentType: "image/png", body: await transferDisclosure.screenshot() });
+
+    await page.getByRole("navigation", { name: "My profile sections", exact: true }).getByRole("link", { name: "Experience", exact: true }).click();
+    const secondary = page.locator(".profile-secondary-tools");
+    await secondary.locator("summary").click();
+    const coaching = secondary.locator(".profile-coaching-panel");
+    await expect(coaching.getByText("Required bullet coaching", { exact: true })).toBeVisible();
+    await expect(secondary.getByRole("link", { name: "Import resume", exact: true })).toBeVisible();
+    await expectInsets(coaching, coaching.locator("[data-slot='card-title']"));
+    const coachingHeader = coaching.locator("[data-slot='card-header']");
+    const descriptionBounds = (await coachingHeader.locator("[data-slot='card-description']").boundingBox())!;
+    const inspectBounds = (await coachingHeader.getByRole("button", { name: "Inspect Required bullets", exact: true }).boundingBox())!;
+    expect(inspectBounds.x >= descriptionBounds.x + descriptionBounds.width
+      || inspectBounds.y >= descriptionBounds.y + descriptionBounds.height).toBe(true);
+    await testInfo.attach(`profile-coaching-expanded-${viewport.width}`, { contentType: "image/png", body: await secondary.screenshot() });
+    await secondary.getByRole("link", { name: "Import resume", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Choose your source resume", exact: true })).toBeVisible();
+    const upload = page.locator(".resume-import-step--upload");
+    await expectInsets(upload, upload.getByRole("heading", { name: "Choose your source resume", exact: true }));
+
+    await page.goto("/profile?section=resume");
+    const templates = page.locator(".profile-resume-template-tools");
+    await templates.locator("summary").click();
+    await expect(templates.getByRole("group", { name: "Template settings", exact: true })).toBeVisible();
+    const templateBounds = (await templates.boundingBox())!;
+    const settingsBounds = (await templates.getByRole("group", { name: "Template settings", exact: true }).boundingBox())!;
+    expect(settingsBounds.x - templateBounds.x).toBeGreaterThanOrEqual(16);
+    expect(templateBounds.x + templateBounds.width - settingsBounds.x - settingsBounds.width).toBeGreaterThanOrEqual(16);
+
+    await page.getByRole("button", { name: "Document and Profile data", exact: true }).click();
+    const dataPane = page.locator(".profile-peer-data");
+    const career = dataPane.getByRole("navigation", { name: "Career roles", exact: true });
+    const selectedRole = dataPane.locator(".profile-selected-experience");
+    await expect(career).toBeVisible();
+    await expect(selectedRole).toBeVisible();
+    const careerBounds = (await career.boundingBox())!;
+    const selectedBounds = (await selectedRole.boundingBox())!;
+    expect(selectedBounds.y).toBeGreaterThanOrEqual(careerBounds.y + careerBounds.height);
+    // Other roles stay mounted with `hidden` to preserve their editor state.
+    // Expand the selected role's histories without targeting retained editors.
+    const activeRole = selectedRole.locator(".experience-repeat-section:not([hidden])");
+    await expect(activeRole).toHaveCount(1);
+    const savedWording = activeRole.getByRole("article", { name: "Saved wording", exact: true });
+    await expect(savedWording).toHaveCount(saved.profile.resume.experience_entries[0]!.bullets.length);
+    for (const wording of await savedWording.all()) {
+      const history = wording.locator(".profile-wording-audit");
+      await expect(history.locator("summary")).toBeVisible();
+      await history.locator("summary").click();
+      await expect(history).toHaveAttribute("open", "");
+    }
+    await expect(activeRole.getByText("Loading revisions…", { exact: true })).toHaveCount(0);
+    const clipped = await dataPane.evaluate((pane) => {
+      const outer = pane.getBoundingClientRect();
+      return Array.from(pane.querySelectorAll<HTMLElement>(".profile-selected-experience .profile-achievement, .profile-selected-experience .profile-wording-card, .profile-selected-experience .profile-wording-text, .profile-selected-experience .profile-wording-audit"))
+        .filter((element) => {
+          const box = element.getBoundingClientRect();
+          return box.width > 0 && (element.scrollWidth > element.clientWidth + 1 || box.left < outer.left - 1 || box.right > outer.right + 1);
+        }).map((element) => ({ className: element.className, text: element.textContent?.trim().slice(0, 80) }));
+    });
+    expect(clipped, "Expanded wording and history fit the Profile data pane independently of the paper canvas").toEqual([]);
+    await testInfo.attach(`profile-split-inner-pane-${viewport.width}`, { contentType: "image/png", body: await dataPane.screenshot() });
+
+    await page.goto("/evidence-map");
+    const sources = page.getByRole("region", { name: "Profile sources", exact: true });
+    await expectInsets(sources, sources.getByRole("heading", { name: "Profile sources", exact: true }));
+    await sources.locator("summary").filter({ hasText: /^Add supporting source$/ }).click();
+    const sourceText = sources.getByRole("textbox", { name: "Source text", exact: true });
+    await expect(sourceText).toBeVisible();
+    await expect(sourceText).toHaveValue("");
+    await expect(sources.getByRole("button", { name: "Add source", exact: true })).toBeVisible();
+    await expectInsets(sources, sources.getByRole("heading", { name: "Profile sources", exact: true }));
+    await testInfo.attach(`profile-source-form-expanded-${viewport.width}`, { contentType: "image/png", body: await sources.screenshot() });
+    for (const title of ["Evidence connections across jobs", "Role-specific evidence"]) {
+      const panel = page.getByRole("region", { name: title, exact: true });
+      await expectInsets(panel, panel.getByRole("heading", { name: title, exact: true }));
+    }
+  }
+  // User-selected density must govern reused panels in each consuming route.
+  // Exercise the public Appearance control rather than editing theme attributes.
+  for (const [density, label, inset, gap] of [
+    ["compact", "Compact", 16, 8], ["regular", "Regular", 20, 12], ["comfy", "Comfy", 24, 16],
+  ] as const) {
+    await page.goto("/settings/appearance");
+    await page.getByRole("combobox", { name: "Density", exact: true }).click();
+    await page.getByRole("option", { name: label, exact: true }).click();
+    await expect(page.locator(".app-shell")).toHaveAttribute("data-density", density);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      for (const route of ["/profile?section=education", "/evidence-map"]) {
+        await page.goto(route);
+        if (route.startsWith("/profile")) await page.locator(".profile-transfer-tools > summary").click();
+        const panels = page.locator(".main .panel-inset");
+        await expect(panels).toHaveCount(route.startsWith("/profile") ? 1 : 3);
+        for (const panel of await panels.all()) {
+          await expect(panel.getByRole("heading").first()).toBeVisible();
+          const geometry = await panel.evaluate((element) => {
+            const style = getComputedStyle(element);
+            const outer = element.getBoundingClientRect();
+            const title = element.querySelector("h2")!.getBoundingClientRect();
+            return {
+              padding: [style.paddingTop, style.paddingRight, style.paddingBottom, style.paddingLeft].map(Number.parseFloat),
+              gap: Number.parseFloat(style.rowGap), headingInset: title.left - outer.left,
+              contained: element.scrollWidth <= element.clientWidth + 1,
+            };
+          });
+          expect(geometry.padding).toEqual([inset, inset, inset, inset]);
+          expect(geometry.gap).toBe(gap);
+          expect(geometry.headingInset).toBeGreaterThanOrEqual(inset);
+          expect(geometry.contained).toBe(true);
+        }
+        await testInfo.attach(`panel-density-${density}-${width}-${route.startsWith("/profile") ? "transfer" : "evidence"}`, {
+          contentType: "image/png", body: await page.screenshot({ fullPage: true, animations: "disabled" }),
+        });
+      }
+    }
+  }
+  expect(await json<Profile>(api, "get", "/v1/profile")).toEqual(saved);
+  expect(writes).toEqual([]);
+  expect(app.external.calls.length).toBe(callsBefore);
 });

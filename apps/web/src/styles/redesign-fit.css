@@ -2,6 +2,7 @@
   display: grid;
   min-width: 0;
   gap: 18px;
+  overflow-wrap: anywhere;
 }
 .person-fit-panel > :is(h3, p),
 .fit-wording-coverage > :is(h4, p) {

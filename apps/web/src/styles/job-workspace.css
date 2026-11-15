@@ -50,6 +50,18 @@
 .job-workspace-inspection > summary,
 .job-preparation-inspection > summary { cursor: pointer; font-weight: 500; }
 .jobs-intake .card { margin-block: 12px 0; }
+.jobs-capture { container-type: inline-size; display: grid; min-width: 0; gap: 16px; padding: 20px; }
+.jobs-capture > h2, .jobs-capture > p { margin: 0; }
+.jobs-capture summary { cursor: pointer; }
+.jobs-capture form { display: grid; min-width: 0; gap: 12px; margin-block-start: 12px; }
+.jobs-capture label { display: grid; min-width: 0; gap: 6px; }
+.jobs-capture :is(input, textarea) { width: 100%; min-width: 0; max-width: 100%; }
+.jobs-capture textarea { min-height: 120px; resize: vertical; }
+.jobs-capture form > button { justify-self: start; max-width: 100%; }
+.jobs-capture__wide { grid-column: 1 / -1; }
+@container (min-width: 480px) {
+  .jobs-capture__manual { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .jobs-first-use { padding: 20px; border: 1px solid var(--border); background: var(--muted); }
 .jobs-first-use h2 { margin: 0 0 8px; }
 .jobs-first-use p { margin: 0 0 14px; }
@@ -70,6 +82,8 @@
 .job-preparation-task__controls select { inline-size: 190px; max-inline-size: 100%; min-block-size: 36px; }
 .job-preparation-task__scope { max-inline-size: 72ch; color: var(--muted-foreground); font-size: 12px; margin-block: 6px 0; }
 .job-workspace-header .job-preparation-inspection { padding-block: 8px; }
+.job-workspace-header .job-preparation-inspection > label { display: flex; align-items: flex-start; gap: 8px; }
+.job-workspace-header .job-preparation-inspection > label > input { flex: 0 0 auto; margin-block-start: 4px; }
 .job-preparation-task > [role="status"],
 .job-preparation-task > [role="alert"] { font-size: 13px; }
 .job-workspace-tabs__list { display: flex; max-inline-size: 100%; overflow-x: auto; block-size: auto; min-block-size: 40px; }

@@ -1,7 +1,11 @@
-import { useEffect, useMemo, useRef, type MutableRefObject, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type MutableRefObject, type RefObject } from "react";
 
 const AUTOSAVE_DELAY_MS = 5_000;
 const MAX_UNDO_DEPTH = 50;
+
+export interface AutosaveUndoControllerHandle {
+  requestSave(): void;
+}
 
 export interface AutosaveUndoControllerProps<TValues> {
   readonly formRef: RefObject<HTMLFormElement | null>;
@@ -10,7 +14,10 @@ export interface AutosaveUndoControllerProps<TValues> {
   readonly resetToken: number;
   readonly restoreValues: (values: TValues) => void;
   readonly setStatusMessage: (message: string) => void;
-  readonly submit: () => Promise<void>;
+  /** Optional explicit requests share this controller's attempt and timer policy. */
+  readonly onControllerChange?: (controller: AutosaveUndoControllerHandle | null) => void;
+  /** Explicit false means no confirmed save authority; existing void callers retain their policy. */
+  readonly submit: () => Promise<void | boolean>;
   readonly values: TValues;
 }
 
@@ -21,6 +28,7 @@ export function AutosaveUndoController<TValues>({
   resetToken,
   restoreValues,
   setStatusMessage,
+  onControllerChange,
   submit,
   values,
 }: AutosaveUndoControllerProps<TValues>) {
@@ -34,6 +42,60 @@ export function AutosaveUndoController<TValues>({
   const restoreValuesRef = useRef(restoreValues);
   const setStatusMessageRef = useRef(setStatusMessage);
   const submitRef = useRef(submit);
+  const latestSerializedRef = useRef(serializedValues);
+  latestSerializedRef.current = serializedValues;
+  const submittingRef = useRef(isSubmitting);
+  submittingRef.current = isSubmitting;
+  const submissionPendingRef = useRef(false);
+  const queuedExplicitSaveRef = useRef(false);
+  const mountedRef = useRef(true);
+  const [submissionEpoch, setSubmissionEpoch] = useState(0);
+  const runSubmitRef = useRef<() => void>(() => undefined);
+  runSubmitRef.current = () => {
+    if (submissionPendingRef.current || submittingRef.current) return;
+    clearAutosaveTimer(timerRef);
+    lastSubmittedValuesRef.current = latestSerializedRef.current;
+    submissionPendingRef.current = true;
+    void (async () => {
+      let confirmed = false;
+      let outcomeReported = false;
+      try {
+        const result = await submitRef.current();
+        outcomeReported = typeof result === "boolean";
+        confirmed = result !== false;
+      }
+      catch {
+        if (mountedRef.current) setStatusMessageRef.current("Could not autosave changes. Your draft is still unsaved; try again.");
+      } finally {
+        submissionPendingRef.current = false;
+        if (!mountedRef.current) return;
+        if (!confirmed) {
+          // A failure cannot authorize a queued write. Confirmed-outcome
+          // owners also suppress delayed retry of the latest retained draft;
+          // legacy void callers keep their pre-submit attempt marker on throw.
+          queuedExplicitSaveRef.current = false;
+          if (outcomeReported || onControllerChange !== undefined) {
+            lastSubmittedValuesRef.current = latestSerializedRef.current;
+          }
+          clearAutosaveTimer(timerRef);
+        }
+        setSubmissionEpoch((epoch) => epoch + 1);
+      }
+    })();
+  };
+  const controller = useMemo<AutosaveUndoControllerHandle>(() => ({
+    requestSave() {
+      if (!mountedRef.current) return;
+      queuedExplicitSaveRef.current = true;
+      clearAutosaveTimer(timerRef);
+      setSubmissionEpoch((epoch) => epoch + 1);
+    },
+  }), []);
+
+  useEffect(() => {
+    onControllerChange?.(controller);
+    return () => onControllerChange?.(null);
+  }, [controller, onControllerChange]);
 
   useEffect(() => {
     restoreValuesRef.current = restoreValues;
@@ -45,6 +107,7 @@ export function AutosaveUndoController<TValues>({
     clearAutosaveTimer(timerRef);
     undoStackRef.current = [];
     lastSubmittedValuesRef.current = null;
+    queuedExplicitSaveRef.current = false;
     currentSerializedRef.current = serializedValues;
     currentValuesRef.current = cloneValues(values);
   }, [resetToken]);
@@ -61,11 +124,18 @@ export function AutosaveUndoController<TValues>({
     }
 
     clearAutosaveTimer(timerRef);
+    if (isSubmitting || submissionPendingRef.current) return undefined;
     if (!isDirty) {
       lastSubmittedValuesRef.current = null;
+      queuedExplicitSaveRef.current = false;
       return undefined;
     }
-    if (isSubmitting || serializedValues === lastSubmittedValuesRef.current) {
+    if (queuedExplicitSaveRef.current) {
+      queuedExplicitSaveRef.current = false;
+      runSubmitRef.current();
+      return undefined;
+    }
+    if (serializedValues === lastSubmittedValuesRef.current) {
       return undefined;
     }
 
@@ -73,15 +143,12 @@ export function AutosaveUndoController<TValues>({
       // The form may handle a failed submit without rejecting its promise.
       // Attempt each unchanged draft only once automatically; explicit Save
       // remains available and a different draft may schedule another attempt.
-      lastSubmittedValuesRef.current = serializedValues;
       setStatusMessageRef.current("autosaving changes");
-      void submitRef.current().catch(() => {
-        setStatusMessageRef.current("Could not autosave changes. Your draft is still unsaved; try again.");
-      });
+      runSubmitRef.current();
     }, AUTOSAVE_DELAY_MS);
 
     return () => clearAutosaveTimer(timerRef);
-  }, [isDirty, isSubmitting, serializedValues, values]);
+  }, [isDirty, isSubmitting, serializedValues, values, submissionEpoch]);
 
   useEffect(() => {
     const formElement = formRef.current;
@@ -91,7 +158,7 @@ export function AutosaveUndoController<TValues>({
     const onSubmit = (event: Event) => {
       if (event.target !== formElement) return;
       clearAutosaveTimer(timerRef);
-      lastSubmittedValuesRef.current = currentSerializedRef.current;
+      lastSubmittedValuesRef.current = latestSerializedRef.current;
     };
     formElement.addEventListener("submit", onSubmit);
     return () => formElement.removeEventListener("submit", onSubmit);
@@ -125,7 +192,10 @@ export function AutosaveUndoController<TValues>({
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [formRef]);
 
-  useEffect(() => () => clearAutosaveTimer(timerRef), []);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; queuedExplicitSaveRef.current = false; clearAutosaveTimer(timerRef); };
+  }, []);
 
   return null;
 }

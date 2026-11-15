@@ -161,6 +161,50 @@
   color: var(--muted-foreground);
 }
 
+/* Preparation is the only unpadded child beside the independently inset resume. */
+.application-resume-workspace > .job-preparation-task {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  padding: 20px 24px 0;
+}
+.application-resume-workspace > .job-preparation-task > p,
+.application-resume-workspace > .job-preparation-task > [role="alert"] {
+  max-width: 72ch;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.application-resume-workspace > .job-preparation-task > div[role="alert"] {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+.application-resume-workspace .job-preparation-inspection {
+  min-width: 0;
+  padding-block: 12px 0;
+}
+.application-resume-workspace .job-preparation-inspection summary {
+  cursor: pointer;
+}
+.application-resume-workspace .job-preparation-inspection > label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.application-resume-workspace .job-preparation-inspection > label > input {
+  flex: 0 0 auto;
+  margin-block-start: 4px;
+}
+.application-resume-workspace
+  .job-preparation-inspection
+  > details
+  > .preparation-actions {
+  margin-block-start: 12px;
+}
+.application-resume-workspace .preparation-run-list__rows:empty {
+  display: none;
+}
+
 .screening-library-heading {
   align-items: center;
   flex-wrap: wrap;
@@ -264,6 +308,16 @@
   }
   .application-selected-header {
     padding: 18px 16px 14px;
+  }
+  .application-resume-workspace > .job-preparation-task {
+    padding: 16px 16px 0;
+  }
+  .application-resume-workspace .job-preparation-task__controls > button {
+    max-width: 100%;
+    height: auto;
+    min-height: 44px;
+    white-space: normal;
+    text-align: center;
   }
   .screening-library-content {
     padding: 18px 16px 20px;

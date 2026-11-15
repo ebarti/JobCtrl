@@ -2,6 +2,7 @@ import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { z } from "zod";
+import "../../styles/posting-requirements.css";
 
 import type { DomainEventEnvelope } from "../../shared/ports/EventStreamPort.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
@@ -97,7 +98,7 @@ function BindingCorrection({ jobId, postingRevision, snapshot, occurrenceId }: {
     if (!parsed.success || !meaning) { setValidation("Choose a catalog meaning and enter a reason."); return; }
     setValidation(""); correct.mutate({ requirement_id: meaning.requirement_id, requirement_revision: meaning.revision, reason: parsed.data.reason });
   } });
-  return <details onToggle={(event) => setOpen(event.currentTarget.open)}><summary>Correct catalog binding</summary>
+  return <details className="requirement-binding-correction" onToggle={(event) => setOpen(event.currentTarget.open)}><summary>Correct catalog binding</summary>
     <p>Select an existing meaning after reviewing its category and definition. The correction records your reason and preserves the previous snapshot.</p>
     {!availability.available ? <p>{availability.reason}</p> : null}
     <form onSubmit={(event) => { event.preventDefault(); if (availability.available) setSearch(draftSearch); }}><label>Search catalog<input value={draftSearch} onChange={(event) => setDraftSearch(event.currentTarget.value)} disabled={!availability.available} /></label><Button type="submit" variant="outline" disabled={!availability.available}>Search catalog</Button></form>
@@ -151,7 +152,7 @@ export function RequirementsPanel({ jobId, postingRevision }: { jobId: string; p
   const revision = postingRevision ?? snapshot?.posting_revision ?? null;
   const historical = Boolean(snapshot && snapshot.contract_version !== "requirements-v2");
   const directDemands = [...(snapshot?.education ?? []), ...(snapshot?.languages ?? [])];
-  return <section className="section" aria-labelledby="requirements-title">
+  return <section className="section posting-requirements-panel" aria-labelledby="requirements-title">
     <h3 id="requirements-title">Posting requirements</h3>
     <p>Skills and professional experience use the reusable catalog. Education and languages stay with this job and use their matching Profile sections.</p>
     {query.isPending ? <p>Loading requirements…</p> : null}

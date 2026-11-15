@@ -38,11 +38,14 @@
 .requirements-table__mobile-facts > div:first-child { grid-column: 1 / -1; }
 .requirements-table__mobile-facts dt { color: var(--muted-foreground); font-size: 12px; }
 .requirements-table__mobile-facts dd { margin: 4px 0 0; font-size: 14px; }
-.requirements-library__detail { min-width: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.requirements-library__detail { min-width: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--card); overflow-wrap: anywhere; }
 .requirements-library__detail:focus { outline: 2px solid var(--ring); outline-offset: 3px; }
 .requirements-detail__navigation { padding: 12px 16px; border-bottom: 1px solid var(--border); }
 .requirements-detail__filter-note { margin: 0; padding: 12px 20px 0; color: var(--muted-foreground); font-size: 12px; }
 .requirements-detail { padding: clamp(18px, 2vw, 28px); }
+.requirements-detail :is(details, p, blockquote, footer, pre) { min-inline-size: 0; max-inline-size: 100%; overflow-wrap: anywhere; }
+.requirements-detail > .requirement-assessment { margin-bottom: 24px; }
+.requirements-detail blockquote footer { margin-top: 6px; font-size: 12px; line-height: 1.5; }
 .requirement-history__list { list-style: none; padding: 0; margin: 0; }
 .requirements-definition { padding-bottom: 22px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
 .requirements-definition h2 { margin: 8px 0 10px; font-size: 22px; line-height: 1.35; overflow-wrap: anywhere; }
@@ -86,6 +89,20 @@
 .requirement-error { color: var(--destructive-text); overflow-wrap: anywhere; }
 .achievement-requirements { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; line-height: 1.5; }
 .achievement-requirements > :is(.requirement-error, .muted) { flex-basis: 100%; margin: 0; }
+.achievement-requirements:has(> details[open]) { flex-basis: 100%; }
+.achievement-requirements__disclosure { min-inline-size: 0; max-inline-size: 100%; color: var(--muted-foreground); }
+.achievement-requirements__disclosure[open] { inline-size: 100%; }
+.achievement-requirements__disclosure > summary { inline-size: fit-content; max-inline-size: 100%; min-block-size: 32px; padding-block: 6px; cursor: pointer; font-size: 12px; line-height: 20px; }
+.achievement-requirements__disclosure > summary:hover { color: var(--foreground); }
+.achievement-requirements__disclosure > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; border-radius: 3px; }
+.achievement-requirements__content { display: grid; gap: 12px; margin-block-start: 6px; padding-block-start: 8px; border-block-start: 1px solid var(--border); }
+.achievement-requirements__content > button { justify-self: start; }
+.achievement-requirements__list { display: grid; grid-template-columns: minmax(0, 1fr); margin: 0; padding: 0; list-style: none; max-block-size: 24rem; overflow-y: auto; overscroll-behavior: contain; }
+.achievement-requirements__list > li + li { border-block-start: 1px solid var(--border); }
+.achievement-requirements__list button { display: grid; gap: 4px; inline-size: 100%; min-block-size: 44px; padding: 10px 8px; border: 0; border-radius: 3px; background: transparent; color: var(--foreground); text-align: left; font-size: 13px; font-weight: 400; line-height: 1.5; overflow-wrap: anywhere; cursor: pointer; }
+.achievement-requirements__list button:hover { background: var(--accent); }
+.achievement-requirements__list button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.achievement-requirements__list small { color: var(--muted-foreground); font-size: 12px; }
 .achievement-requirements__tags { display: flex; flex-wrap: wrap; gap: 8px; }
 .achievement-requirements__tag { display: inline-grid; gap: 2px; max-width: 100%; padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--muted); color: var(--foreground); text-align: left; line-height: 1.4; overflow-wrap: anywhere; }
 .achievement-requirements__tag:hover { border-color: var(--primary); }
@@ -113,6 +130,7 @@
   .requirement-history__pagination span { flex-basis: 100%; }
 }
 @media (max-width: 640px) {
+  .achievement-requirements__disclosure > summary { min-block-size: 44px; padding-block: 12px; }
   .requirements-table-search { flex: 1 1 100%; }
   .requirements-table-search input { width: 100%; }
   .requirements-library .data-grid-tools > :is(button, select) { min-height: 44px; }

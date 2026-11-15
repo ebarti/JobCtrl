@@ -299,7 +299,7 @@ export function DiscoveryRuntimeSettingsForm({ initial, includeSearchSettings = 
         </form.Field>
         <form.Field name="schedulingEnabled">
           {(field) => (
-            <Field className="field" orientation="horizontal">
+            <Field className="field check" orientation="horizontal">
               <Checkbox
                 id="discovery-scheduling-enabled"
                 checked={Boolean(field.state.value)}

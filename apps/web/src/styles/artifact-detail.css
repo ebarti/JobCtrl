@@ -1,0 +1,33 @@
+/* Saved audit values can contain long identifiers and source snapshots. */
+.artifact-detail-page {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  overflow-wrap: anywhere;
+}
+
+.artifact-detail-page :is(.grid, .section) {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.artifact-detail-page :is(.grid, .section) > * {
+  min-width: 0;
+}
+
+.artifact-detail-page pre {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.artifact-detail-page iframe {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.artifact-detail-page .pdf-preview-toolbar {
+  flex-wrap: wrap;
+}
+
+.artifact-detail-page .pdf-preview-toolbar > * {
+  max-width: 100%;
+}

@@ -147,6 +147,10 @@
   border-bottom: 1px solid var(--border);
 }
 
+.contacts-list {
+  margin-top: 20px;
+}
+
 .contacts-filter-disclosure > summary,
 .runs-filter-disclosure > summary,
 .debug-filter-disclosure > summary {

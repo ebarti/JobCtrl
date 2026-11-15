@@ -46,11 +46,78 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **116 journeys in 38 project-file groups**:
-**115 Chromium cases in 37 spec files**, plus **one demo case in one file**.
+The current configured inventory is **128 journeys in 42 project-file groups**:
+**127 Chromium cases in 41 spec files**, plus **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
-and requirement deletion lifecycle, plus shared event-stream recovery. Listing
+and requirement deletion lifecycle, shared event-stream recovery, expanded
+screen layouts and keyboard-driven Profile saves. Listing
 these scenarios is not evidence that the complete current candidate passed.
+
+### Expanded screens and Profile editing — 15 November 2026
+
+The primary [surface inventory](../../../apps/web/e2e/journeys/redesign-surfaces.spec.ts)
+now includes Languages: 27 views at four viewport sizes, or 108 settled captures.
+The [expanded workspace cases](../../../apps/web/e2e/journeys/expanded-layout.spec.ts),
+[auxiliary screens](../../../apps/web/e2e/journeys/auxiliary-layout.spec.ts),
+[operational screens](../../../apps/web/e2e/journeys/operational-layout.spec.ts)
+and existing job-run journey extend the route review to 39 distinct product
+screens and task views. They open available disclosures, capture desktop and
+phone layouts, and measure insets, overlapping controls and horizontal overflow.
+Image inspection remains necessary: page-width assertions alone do not detect
+inner clipping, touching rounded borders or excessive empty space.
+
+The expanded reads preserve the full action-run identity set, model-call count,
+canonical Profile and accepted resume pointers after synthetic setup. Import
+preview uses an actual accepted synthetic PDF and stops before import submission.
+Its artifact-source frame retains its script-free sandbox. Only that journey
+disables Playwright DOM trace snapshots, whose injected script is refused by
+the sandbox; screenshot/source traces and strict browser-console checks remain.
+
+Four [Skills journeys](../../../apps/web/e2e/journeys/profile-skills.spec.ts)
+exercise Enter save/add/focus, local empty rows, held keys and input-method
+composition, edits during acknowledgements, structural row changes, genuine
+revision conflicts and an accepted write whose response is lost. The exact
+submitted row and confirmed save determine whether a new row becomes authored.
+Failed or uncertain writes retain the draft and stop queued or automatic retries.
+Existing Profile concurrency and Settings journeys cover the shared save boundary.
+
+The [Profile workspace](../../../apps/web/e2e/journeys/profile-workspace.spec.ts)
+also checks expanded transfer/import/coaching controls and the narrow Resume
+editor pane. Public Appearance controls exercise compact, regular and comfy
+insets for the reused Transfer, Profile sources and Evidence panels at desktop
+and phone widths. Applications, interview preparation, Learning and requirement-link
+journeys retain their existing actions while checking their revised spacing and
+closed-by-default metadata.
+
+The integrated local run `e2e-MAAtUe` passed **28/28** affected Chromium and demo
+journeys: **7.850 s** web build, **321.525 s** journeys and **330.861 s** total.
+It includes the 108 primary captures, expanded route checks, all four Skills
+save cases, Profile concurrency, Settings, application uncertainty and the demo.
+The web build digest was
+`7557ca64fc2be80900d32fa95032bb2e457c6e9dddce541fd178911746e31423`
+and remained unchanged throughout the run. This is targeted validation; it does
+not claim that all 128 configured journeys ran locally on this candidate.
+
+The final shared-inset density and Dashboard-divider checks passed in
+`e2e-O47pSm`. Its auxiliary case exposed Playwright input listeners executing
+inside the deliberately script-free source frame. That instrumentation path
+was corrected without changing the sandbox or console policy; the auxiliary
+case then passed in `e2e-767usR` (**7.820 s** build, **12.209 s** journeys,
+**21.390 s** total), including actual native horizontal scrolling. Both runs
+used the unchanged final web digest
+`c2aa4d2afecf9541aaa5163f64a09f65c788c302584eb78f7c42039000d7a157`.
+
+The first full hosted run on `fbae0df4d` reached the unchanged 720-second
+ceiling in shard 1: 35 passed and 12 did not run. Shards 2 and 3 passed 41 and
+40 cases in 695.694 s and 567.385 s, respectively. This is **116 passed and 12
+unrun**, with no individual assertion failure; it is not a complete suite pass.
+
+The hosted matrix now uses four standard Playwright shards. Native JSON
+listings measured **34 / 33 / 37 / 24 cases** in **11 / 9 / 12 / 10 project-file
+groups**. Their disjoint union equals the complete 128-case, 42-group inventory,
+with no missing, duplicate or extra case. One worker, zero retries, 90-second
+case and 720-second suite limits remain unchanged. The stable Browser aggregate
+requires all four jobs; the actual hosted rerun is required to qualify capacity.
 
 ### QA workspaces and requirement lifecycle — 15 November 2026
 

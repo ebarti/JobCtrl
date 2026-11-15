@@ -157,7 +157,13 @@ identity and the normal autosave/conflict boundary. Experience leads with the
 role inventory, followed by **Professional summary** and compact secondary tools.
 In **Skills**, edit a group title directly in its heading. Title edits use the
 same autosave, **Save changes**, validation and undo behavior as individual
-skills; adding or removing skills and groups remains nearby.
+skills; adding or removing skills and groups remains nearby. Press **Enter** in
+an individual skill to save the current edits and focus one new skill field.
+The empty field is not saved as a skill; Enter on an empty field does not add
+another. Held Enter and input-method composition do not add duplicate fields.
+Typing and clearing a new skill before it is saved leaves an empty editing
+field without adding a blank skill to the saved Profile.
+Skills and Education remain included in every resume.
 In **Languages**, add and edit a **Language** and your authored **Proficiency**
 under a stable entry identity. These records use the same validated autosave,
 undo and conflict handling. JobCtrl does not infer them from Skills groups,
@@ -170,8 +176,12 @@ achievement deliberately; **Restore removed experience** restores the requested
 original identity into the current Profile and retains associated wording and
 source history. Restore the parent role before its removed achievement.
 
-Each achievement leads with its saved resume wording and linked requirement
-tags. **Edit wording** starts a proposed revision; it preserves the earlier
+Each achievement leads with its saved resume wording. **Linked requirements**
+shows a compact count; open it to inspect the exact matching definitions,
+recorded status and links to the Requirements library. These links are editing
+metadata and are not included in your resume. Wording-specific links and
+requirements needing review use the same closed-by-default disclosure.
+**Edit wording** starts a proposed revision; it preserves the earlier
 approved text until you review the replacement. **Edit facts** opens the
 underlying achievement record: use it to correct what happened, your ownership,
 scope or results. Changing that record can make dependent wording need review;
@@ -180,8 +190,15 @@ keeps coaching, ordering and removal together. Exact source references, approval
 and earlier text remain available under **Approval and history**.
 
 The [complete synthetic Experience capture](/assets/screenshots/original-profile-wording.png)
-shows the role editor, canonical requirement tags, maintained current wording,
-separate proposed revision and retained history in the implemented candidate.
+shows the role editor, maintained current wording,
+compact requirement disclosures, separate proposed revision and retained history
+in the implemented candidate. It uses synthetic Profile data.
+
+Secondary tools sit below the section fields. **Import and writing suggestions**
+opens the PDF import link and, in Experience, opt-in Required bullet coaching.
+**Profile export and transfer** opens browser-source inspection and export;
+inspection reads the retained records without changing them. In Resume,
+**Resume template and style** opens the template controls alongside the document.
 
 If this browser retains an unfinished Profile/Plate draft, editing pauses until
 you explicitly restore or discard that copy. A recovery read/schema failure also
@@ -362,9 +379,13 @@ but setting it as the default fails, the saved version remains selectable.
 
 Profile and preference forms validate before saving. After five seconds without
 an edit, they attempt to autosave the current draft; the explicit **Save
-changes** button uses the same mutation path. If a save fails, the draft and
-error remain visible. An unchanged draft is not automatically submitted again;
-choose **Save changes** to retry, or edit the draft to schedule another attempt.
+changes** button uses the same mutation path. Enter in a skill requests that
+same save immediately, waiting for any current save to finish before submitting
+newer edits. If a save fails, the draft and error remain visible. An unchanged
+draft is not automatically submitted again. A rejected or unconfirmed save
+also stops queued Enter requests; check the saved state and rebase when needed
+before retrying.
+Choose **Save changes** to retry, or edit the draft to schedule another attempt.
 The [Profile & Settings API](../api/profile-and-settings.md) owns the field and
 version contract.
 

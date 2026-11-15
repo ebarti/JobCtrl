@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { ProfileTransferPort } from "../../../shared/ports/ProfileTransferPort.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { Button } from "../../../shared/ui/button.js";
+import "../../../styles/panel-inset.css";
 
 const uploadState = z.object({ filename: z.string(), pdfBase64: z.string(), importProfile: z.boolean(), importStyle: z.boolean() }).passthrough();
 const selectedRecord = z.object({ version: z.literal(2), revision: z.number(), state: uploadState }).passthrough();
@@ -91,12 +92,12 @@ export function ProfileTransferExport() {
     } catch { setResult({ complete: false, known_attachments: [], unavailable_refs: [], errors: ["Browser sources could not be inspected. No browser data was changed."] }); }
     finally { setPending(false); }
   };
-  return <section className="card" aria-labelledby="browser-sources-title">
+  return <section className="profile-transfer-panel panel-inset" aria-labelledby="browser-sources-title">
     <h2 id="browser-sources-title">Transfer browser-held Profile sources</h2>
     <p>The Profile transfer also needs source PDFs and import review records stored by this browser. Inspect and export them from the original browser before transferring your Profile.</p>
-    <div className="toolbar"><Button type="button" variant="outline" disabled={pending} onClick={() => void inspect(false)}>Inspect browser sources</Button>
+    <div className="profile-transfer-panel__actions"><Button type="button" variant="outline" disabled={pending} onClick={() => void inspect(false)}>Inspect browser sources</Button>
       <Button type="button" disabled={pending} onClick={() => void inspect(true)}>Export browser source bundle</Button></div>
-    {result ? <div role="status"><p>{result.complete ? "All identified browser-held attachment bytes were included in this inspection." : "Browser-held attachment inspection is incomplete; the transfer must not proceed until the issues below are resolved."} {result.known_attachments.length} attachment(s) found{result.unavailable_refs.length ? `; ${result.unavailable_refs.length} review reference(s) have no verified PDF linkage` : ""}.</p>
+    {result ? <div className="profile-transfer-panel__status" role="status"><p>{result.complete ? "All identified browser-held attachment bytes were included in this inspection." : "Browser-held attachment inspection is incomplete; the transfer must not proceed until the issues below are resolved."} {result.known_attachments.length} attachment(s) found{result.unavailable_refs.length ? `; ${result.unavailable_refs.length} review reference(s) have no verified PDF linkage` : ""}.</p>
       {result.known_attachments.map((item) => <p key={item.record_id}>{item.filename}: {item.is_pdf ? "PDF" : "non-PDF bytes retained"}, SHA-256 {item.sha256}</p>)}
       {result.unavailable_refs.map((item) => <p key={item.record_id}>Unresolved review reference {item.record_id}{item.filename ? ` (${item.filename})` : ""}: {item.reason}</p>)}
       {result.errors.map((error) => <p key={error}>{error}</p>)}
