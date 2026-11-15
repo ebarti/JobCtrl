@@ -46,11 +46,11 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **115 journeys in 37 project-file groups**:
-**114 Chromium cases in 36 spec files**, plus **one demo case in one file**.
+The current configured inventory is **116 journeys in 38 project-file groups**:
+**115 Chromium cases in 37 spec files**, plus **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
-and requirement deletion lifecycle. Listing these scenarios is not evidence
-that the complete current candidate passed.
+and requirement deletion lifecycle, plus shared event-stream recovery. Listing
+these scenarios is not evidence that the complete current candidate passed.
 
 ### QA workspaces and requirement lifecycle — 15 November 2026
 
@@ -85,6 +85,14 @@ The first two runs used Python digest
 `74391af83e1d12fcb7a087f41563321e140e3c2ec114d1f934185269c31735e5`.
 Lockfiles and each run's built assets remained unchanged. These are cumulative
 results across source snapshots, not one complete final-candidate suite pass.
+
+The shared-transport follow-up adds an eight-page journey observing the actual
+SharedWorker and native EventSource. It verifies one upstream, peer updates,
+worker termination and canonical recovery, later events, and zero remaining
+upstreams after all pages unsubscribe. That case passed in `e2e-1qkt1M` in
+27.2 seconds. Existing application-boundary and committed-event attention
+journeys now observe the worker transport and passed in `e2e-PXYxRe`. No internal
+stream replacement or fabricated first-party response was used.
 
 ### Explicit negative Education routes and initial selection — 14 November 2026
 
