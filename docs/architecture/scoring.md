@@ -130,6 +130,11 @@ score and preserves history; it rewrites no other
 job's score. Updating qualification for a previously scored job after saved-input
 changes still requires explicit manual refresh. Saves start neither operation.
 
+Normalization's separately versioned citation-selection wire does not itself
+change capability/demand semantics or these qualification pins. Raw source
+reference selections and their deterministic quote-display binding keep separate
+fingerprints; a display projection cannot replace the model's recorded decision.
+
 The entire missing set across all four categories enters one
 `fit.qualification-batch` request in the scoring lane, with the complete factual inventory supplied once and a distinct
 source for each exact capability/demand binding. There is no per-requirement call

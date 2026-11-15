@@ -3569,6 +3569,23 @@ stores reconciliation authority; previously registered schema strings are not
 edited. The normalization policy participates in action, cache and currentness
 bindings, so an old accepted snapshot cannot masquerade as normalized authority.
 
+**Citation selection.** Normalization's citation transport has its own explicit
+prompt/wire version. It does not change the capability/demand semantic policy.
+The single determination selects supplied source-segment references rather than
+generating evidence text. The complete sources and structural segment catalog
+are part of the fingerprinted input. Locations and lossless subdivisions follow
+source format and size boundaries; they do not classify meaning or omit text.
+
+The raw selection remains unchanged in the gateway receipt and feature cache.
+A separate deterministic binding derives the existing quote display from exact
+same-source segments and records binder version, selection fingerprint,
+segment-catalog fingerprint and derived-result fingerprint. It cannot alter a
+semantic decision, join fields or repair a paraphrased quote. Required-source,
+allowed-source, correction-witness, complete-partition and publication fences
+remain. Unknown, foreign or incompatible references refuse publication. A failed
+literal-citation receipt remains historical; it is not edited, partially accepted
+or repaired through another model call within the same operation.
+
 **Fit and wording.** Qualification reuse binds Profile, capability ID/revision,
 normalized demand, permitted factual sources and qualification-policy/prompt
 version. The existing complete missing-item batch handles all applicable demands;
