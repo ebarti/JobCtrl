@@ -290,13 +290,42 @@ test("demo tour retains local exact wording approval, durable edits and a real a
     const savedRequirements = page.getByRole("table", { name: "Saved requirements", exact: true });
     await expect(savedRequirements.locator("tbody tr[data-row-id]")).toHaveCount(5);
     const platformRow = savedRequirements.getByRole("row").filter({
-      has: page.getByRole("cell", { name: "Platform delivery leadership", exact: true }),
+      has: page.getByRole("button", { name: "Open Platform delivery leadership: View details", exact: true }),
     });
     await expect(platformRow.getByRole("cell", { name: "Varies by job", exact: true })).toBeVisible();
     await platformRow.click();
     const demands = page.getByRole("region", { name: "Job-specific demands", exact: true });
     const demandDetails = demands.locator("ol.requirement-demands__list > li > details");
     await expect(demandDetails).toHaveCount(2);
+    const resetDemandViewport = async () => {
+      const selectedDetail = page.getByRole("region", { name: "Requirement details", exact: true });
+      for (const scroller of [savedRequirements.locator(".."), selectedDetail]) {
+        await scroller.scrollIntoViewIfNeeded();
+        const box = await scroller.boundingBox();
+        expect(box).not.toBeNull();
+        const size = await scroller.evaluate((node) => ({ width: node.scrollWidth, height: node.scrollHeight }));
+        await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+        await page.mouse.wheel(-size.width, -size.height);
+        await expect.poll(() => scroller.evaluate((node) => [node.scrollLeft, node.scrollTop])).toEqual([0, 0]);
+      }
+      const heading = page.getByRole("heading", { name: "Requirements library", exact: true });
+      await heading.scrollIntoViewIfNeeded();
+      const box = await heading.boundingBox();
+      expect(box).not.toBeNull();
+      const height = await heading.evaluate((node) => {
+        let height = document.documentElement.scrollHeight;
+        for (let parent = node.parentElement; parent; parent = parent.parentElement) height = Math.max(height, parent.scrollHeight);
+        return height;
+      });
+      await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+      await page.mouse.wheel(0, -height);
+      await expect.poll(() => heading.evaluate((node) => {
+        for (let parent = node.parentElement; parent; parent = parent.parentElement) if (parent.scrollTop !== 0) return false;
+        return true;
+      })).toBe(true);
+    };
+    await resetDemandViewport();
+    await testInfo.attach("demo-authored-distinct-job-demands-initial", { contentType: "image/png", body: await page.screenshot() });
     const authoredDemands = [
       { definition: "Guide reliable platform delivery.", jobId: "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35", outcome: "Matched" },
       { definition: "Guide a reliability engineering team.", jobId: "job-contoso-reliability", outcome: "Missing" },
@@ -316,7 +345,10 @@ test("demo tour retains local exact wording approval, durable edits and a real a
     }
     await expect(page.getByRole("status", { name: "Public demo data boundary", exact: true })).toContainText("synthetic browser-local data");
     expect(productRequests).toHaveLength(requestsBeforeDemandReads);
-    await testInfo.attach("demo-authored-distinct-job-demands", { contentType: "image/png", body: await page.screenshot({ fullPage: true }) });
+    await resetDemandViewport();
+    await testInfo.attach("demo-authored-distinct-job-demands", { contentType: "image/png", body: await page.screenshot() });
+    await demandDetails.nth(1).locator(":scope > summary").scrollIntoViewIfNeeded();
+    await testInfo.attach("demo-authored-expanded-demand-source", { contentType: "image/png", body: await page.screenshot() });
 
     await page
       .getByRole("button", { name: "Open demo guide", exact: true })

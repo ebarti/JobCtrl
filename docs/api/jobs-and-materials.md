@@ -184,7 +184,7 @@ These writes make no model call, qualification, coverage, score, wording approva
 resume change or automatic refresh. Readers join recorded IDs and revisions;
 they do not infer links from labels or text similarity.
 
-The `requirements-capability-demand-v1` policy makes complete retained-catalog
+The `requirements-capability-demand-v2` policy makes complete retained-catalog
 consolidation mandatory for semantic publication. Its report contains captured
 and published catalog epochs, input member count, canonical roots, complete
 member-to-root mapping, affected jobs, reconciliation identity and model receipt.
@@ -210,6 +210,13 @@ become global support. Qualification, coverage, refresh checkpoints and
 publication fences retain the exact demand and policy version. Maintained common
 wording heads retain per-demand assessment/relation bindings under one exact
 approved variant; an uncovered demand remains a gap.
+
+Normalization's explicit correction witness is bounded to a retained historical
+member with no accepted occurrence, including deleted jobs. It pins the exact
+unsupported prior claim, original source, retained group and preserved demand
+group. Original definitions stay immutable history; active occurrence splitting
+and invented subtype/scope are refused. The same complete determination and
+atomic source fences apply—there is no separate per-member correction call.
 
 Incomplete/uncertain partitions, invalid reuse/citations, cancellation, stale
 catalog/posting/snapshot heads and payload/provider refusal preserve accepted

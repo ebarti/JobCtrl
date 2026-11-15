@@ -106,6 +106,7 @@ export type CatalogContext = {
   members: { member_id: string; source_id: string; requirement_id: string | null; revision: number | null }[];
   occurrences: { job_id: string; occurrence_id: string; member_id: string; source_id: string; posting_revision: number; posting_hash: string }[];
   accepted_demands: { group_member_ids: string[]; source_id: string; demand_fingerprint: string; normalization_version: string }[];
+  accepted_occurrence_counts: Record<string, number>;
 };
 
 type CatalogMeaning = { category: "skill" | "professional_experience"; name: string; definition: string };
@@ -171,12 +172,14 @@ export type DemandChoice = {
   groupId: string; definition: string; reuseDemandFingerprint?: string | null;
   bindings: { jobId: string; occurrenceIds: string[] }[];
 };
+export type CorrectionWitness = { member_id: string; retained_group_id: string; unsupported_claim: string;
+  represented_by_group_id: string; reason: string; citations: ReturnType<typeof citeSources> };
 
 /** Authors supply the complete semantic partition. This binds only live IDs,
  * exhaustive inventory accounting and verbatim citations, never meaning. */
 export function catalogNormalization(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]) {
   expect(call.body["operation"]).toBe("requirements.match_catalog");
-  expect(call.body["prompt_version"]).toBe("requirements-capability-demand-v1");
+  expect(call.body["prompt_version"]).toBe("requirements-capability-demand-v2");
   const context = call.body["context"] as CatalogContext;
   const members = capabilities.flatMap((group) => group.memberIds);
   expect(members.length).toBe(new Set(members).size);
@@ -206,6 +209,7 @@ export function catalogNormalization(call: ExternalCall, capabilities: Capabilit
         return occurrence!.source_id;
       }))]),
     })),
+    corrections: [] as CorrectionWitness[],
     unresolved: [] as { member_ids: string[]; reason: string; citations: ReturnType<typeof citeSources> }[],
   };
 }

@@ -39,7 +39,7 @@ export function legacyQualificationBatchDecision(
   return qualificationResponse(call, choose, false);
 }
 
-export const qualificationKey = (binding: Pick<QualificationBinding, "requirement_id" | "requirement_revision" | "demand_fingerprint">) =>
+export const qualificationKey = (binding: { requirement_id: string; requirement_revision: string | number; demand_fingerprint: string | null }) =>
   JSON.stringify([binding.requirement_id, String(binding.requirement_revision), binding.demand_fingerprint]);
 
 function qualificationResponse(call: ExternalCall, choose: (binding: QualificationBinding, index: number) => QualificationChoice, withDemand: boolean) {

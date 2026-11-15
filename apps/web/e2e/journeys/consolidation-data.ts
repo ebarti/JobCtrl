@@ -1,11 +1,11 @@
 import type { APIRequestContext } from "@playwright/test";
 import { expect, json, modelCall, type ApplicationStack, type ExternalCall } from "../harness/fixtures.js";
 import { catalogNormalization, catalogMemberMeaning, legacyCatalogMatching, typedExtraction,
-  type CapabilityChoice, type CatalogChoice, type CatalogContext, type ReusableDemand } from "./requirements-data.js";
+  type CapabilityChoice, type CatalogChoice, type CatalogContext, type CorrectionWitness, type ReusableDemand } from "./requirements-data.js";
 import type { CapturedPosting, RequirementSnapshot } from "./reuse-data.js";
 
 export const CONSOLIDATION_PREDECESSOR = "5b9db7ddfa20fa2d618687da1b311e2287286679";
-export const NORMALIZATION_VERSION = "requirements-capability-demand-v1";
+export const NORMALIZATION_VERSION = "requirements-capability-demand-v2";
 
 export type Meaning = { requirement_id: string; revision: number; category: "skill" | "professional_experience"; name: string; definition: string };
 export type Catalog = { catalog_revision: number; total: number; requirements: Meaning[];
@@ -23,13 +23,14 @@ export type NormalizedSnapshot = Omit<SourceSnapshot, "requirements"> & {
   })[];
 };
 export type ReconciliationReport = { input_member_count: number; root_count: number; catalog_revision: number;
-  mapping: Record<string, string>; roots: Meaning[]; receipt: { receipt_id: string; prompt_version: string; lane: string } };
+  mapping: Record<string, string>; roots: Meaning[]; corrections: CorrectionWitness[];
+  receipt: { receipt_id: string; prompt_version: string; lane: string } };
 
 /** A real predecessor accepts these explicitly authored older identity choices.
  * No repository/database state or determination implementation is replaced. */
 export async function acceptLegacyRequirements(api: APIRequestContext, app: ApplicationStack, posting: CapturedPosting,
-  definitions: ReusableDemand[], choices: Record<string, CatalogChoice>) {
-  const pending = api.post(`/v1/jobs/${posting.job_id}/requirements`, { data: { expected_posting_revision: posting.revision, expected_revision: 0 } });
+  definitions: ReusableDemand[], choices: Record<string, CatalogChoice>, { expectedRevision = 0, force = false } = {}) {
+  const pending = api.post(`/v1/jobs/${posting.job_id}/requirements`, { data: { expected_posting_revision: posting.revision, expected_revision: expectedRevision, force } });
   const extracting = await modelCall(app, "requirements.extract");
   extracting.reply(typedExtraction(extracting, { requirements: definitions }));
   const matching = await modelCall(app, "requirements.match_catalog");

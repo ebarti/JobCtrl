@@ -337,6 +337,7 @@ class RequirementsService(CatalogNormalizationService):
                     continue
                 row = self._proposed_occurrence(selected[ident], posting, correction_receipt, source_binding, attempt_id)
                 row.update(local_id=original["local_id"],
+                    previous_occurrence_id=ident,
                     evidence_refs=[quote_ids[ref] for ref in row["evidence_refs"]],
                     correction_determination_id=correction_receipt["receipt_id"])
                 row["provenance"].update(semantic_stage="occurrence_correction", origin=original["provenance"],
@@ -412,6 +413,7 @@ class RequirementsService(CatalogNormalizationService):
                 source_binding, attempt_id, member_id="incoming:" + occurrence_id)
             replacement["correction"] = {"reason": reason, "previous_requirement_id": original["requirement_id"],
                                          "previous_requirement_revision": original["requirement_revision"]}
+            replacement["previous_occurrence_id"] = occurrence_id
             proposal = {**previous, "requirements": [replacement if row["occurrence_id"] == occurrence_id else dict(row)
                 for row in previous["requirements"]], "_attempt_id": attempt_id}
             await self._normalize_catalog(captured=captured, proposals={job_id: proposal}, incoming=self._incoming_members([replacement]),

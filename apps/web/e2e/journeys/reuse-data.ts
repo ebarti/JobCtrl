@@ -14,7 +14,7 @@ export type RequirementSnapshot = {
     extraction_determination_id: string; equivalence_determination_ids: string[];
     provenance: {
       extraction: Record<string, unknown> & { receipt_id: string; source_binding: Record<string, unknown> };
-      resolution: (Record<string, unknown> & { receipt_id: string; source_binding: Record<string, unknown> })[];
+      resolution: (Record<string, unknown> & { receipt_id: string })[];
     };
   }[];
 };

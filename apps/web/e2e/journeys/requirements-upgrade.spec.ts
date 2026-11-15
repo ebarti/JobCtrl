@@ -77,7 +77,7 @@ test("a real predecessor upgrade preserves history and accepted bytes, starts an
   const originalSchemaKeys = new Set(oldSchema.map(schemaKey));
   expect(upgradedSchema.filter((row) => originalSchemaKeys.has(schemaKey(row)))).toEqual(oldSchema);
   const additions = upgradedSchema.filter((row) => !originalSchemaKeys.has(schemaKey(row)));
-  const normalizationTables = ["requirements_aliases", "requirements_reconciliations", "requirements_reconciliation_certificate", "requirements_normalization_cache"];
+  const normalizationTables = ["requirements_aliases", "requirements_reconciliations", "requirements_reconciliation_certificate", "requirements_normalization_cache", "requirements_normalization_intents"];
   expect(additions.every((row) => normalizationTables.includes(row.table))).toBe(true);
   expect(additions.filter((row) => row.type === "table").map((row) => row.name).sort()).toEqual([...normalizationTables].sort());
   const currentProfile = await json<Profile>(api, "get", "/v1/profile");

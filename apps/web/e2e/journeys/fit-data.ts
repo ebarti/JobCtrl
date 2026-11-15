@@ -105,7 +105,7 @@ type CoverageRelationBinding = {
 export type GroupedCoverageContext = {
   binding: {
     achievement_id: string;
-    requirements: { requirement_id: string; requirement_revision: string; demand_fingerprint: string; assessment_id: string }[];
+    requirements: { requirement_id: string; requirement_revision: string | number; demand_fingerprint: string; assessment_id: string }[];
     approved_variants: { variant_id: string }[];
   };
   missing_relations: CoverageRelationBinding[];
@@ -149,7 +149,7 @@ function coverageResponse(
     const matches = context.binding.requirements.filter((row) => row.requirement_id === id);
     expect(matches, "Author exact gapDemandBindings when a capability has several source demands").toHaveLength(1);
     const { requirement_id, requirement_revision, demand_fingerprint } = matches[0]!;
-    return { requirement_id, requirement_revision, demand_fingerprint };
+    return { requirement_id, requirement_revision: String(requirement_revision), demand_fingerprint };
   }) : [];
   return {
     achievement_id: context.binding.achievement_id,

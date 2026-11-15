@@ -207,7 +207,8 @@ class NormalizationStore:
                       "normalization_version": NORMALIZATION_VERSION, "reconciliation_id": operation_id,
                       "input_fingerprint": receipt["input_fingerprint"], "receipt": receipt}
             authority = {"member_roots": aliases, "root_heads": report["roots"],
-                         "decision_fingerprint": fingerprint(decision), "receipt": receipt}
+                         "decision_fingerprint": fingerprint(decision), "receipt": receipt,
+                         "corrections": decision["corrections"]}
             connection.execute("INSERT INTO requirements_reconciliations VALUES (?,?,?,?,?,?,?,?,?)",
                 (operation_id, input_fingerprint, receipt["input_fingerprint"], captured["catalog_revision"], epoch, canonical_json(decision),
                  canonical_json(authority_receipt), canonical_json(report), now()))

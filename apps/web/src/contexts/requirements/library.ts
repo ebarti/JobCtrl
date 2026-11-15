@@ -24,7 +24,7 @@ const occurrenceSchema = z.object({
   provenance: z.record(z.string(), z.unknown()),
 }).passthrough();
 const normalizationSchema = z.object({
-  normalization_version: z.literal("requirements-capability-demand-v1"), ready: z.boolean(),
+  normalization_version: z.literal("requirements-capability-demand-v2"), ready: z.boolean(),
   catalog_revision: z.number().int().nonnegative(), reconciliation_id: z.string().nullable(),
   certificate_catalog_revision: z.number().int().nonnegative().nullable(),
 });

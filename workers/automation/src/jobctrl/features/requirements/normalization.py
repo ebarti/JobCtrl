@@ -117,6 +117,12 @@ class CatalogNormalizationService:
 
         sources = {}
         members = []
+        accepted_occurrence_counts = {ident: 0 for ident in roots}
+        for snapshot in captured["snapshots"]:
+            for occurrence in snapshot["requirements"]:
+                root_id = root_of(occurrence["requirement_id"])
+                if root_id in accepted_occurrence_counts:
+                    accepted_occurrence_counts[root_id] += 1
 
         def meaning_source(row):
             provenance = row["provenance"]
@@ -189,6 +195,7 @@ class CatalogNormalizationService:
         context = {"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION,
                    "catalog_revision": captured["catalog_revision"], "catalog_inventory_source_id": inventory_id,
                    "members": members, "occurrences": occurrences, "incoming": incoming_context,
+                   "accepted_occurrence_counts": accepted_occurrence_counts,
                    "candidates": [{"requirement_id": row["requirement_id"], "revision": row["revision"]} for row in roots.values()],
                    "accepted_demands": list(accepted.values()), "guidance": guidance}
         context["posting_sources"] = [{"job_id": job_id, "revision": posting["revision"], "source_hash": posting["source_hash"],
@@ -267,7 +274,8 @@ class CatalogNormalizationService:
         replacements = self._normalization_replacements(captured, effective, proposals, mappings, roots, decision, receipt, operation_id)
         report = {"captured_catalog_revision": captured["catalog_revision"],
                   "input_member_count": len(context["members"]), "root_count": len(roots),
-                  "mapping": mappings, "roots": [{"requirement_id": row["requirement_id"], "revision": row["revision"],
+                  "mapping": mappings, "corrections": [row.model_dump() for row in decision.corrections],
+                  "roots": [{"requirement_id": row["requirement_id"], "revision": row["revision"],
                       "category": row["category"], "name": row["name"], "definition": row["definition"]} for row in roots.values()]}
         old_aliases = {row["requirement_id"]: row["root_requirement_id"] for row in captured["aliases"]}
         aliases = {}
@@ -292,13 +300,14 @@ class CatalogNormalizationService:
         existing = {row["requirement_id"]: row for row in captured["roots"]}
         mappings, roots, new_meanings = {}, {}, []
         for group in decision.capabilities:
+            corrections = [row.model_dump() for row in decision.corrections if row.retained_group_id == group.group_id]
             prior = sorted(set(group.member_ids).intersection(existing))
             root_id = prior[0] if prior else CONTRACT_VERSION + ":" + str(uuid.uuid5(uuid.NAMESPACE_URL,
                 "jobctrl:capability:" + fingerprint({"normalization_version": NORMALIZATION_VERSION,
                     "catalog_revision": captured["catalog_revision"], "members": sorted(group.member_ids), "operation_id": operation_id})))
             previous = existing.get(root_id)
             fields = {"contract_version": CONTRACT_VERSION, **{key: getattr(group, key) for key in ("category", "name", "definition")}}
-            unchanged = previous is not None and all(previous[key] == fields[key] for key in MEANING_KEYS)
+            unchanged = previous is not None and not corrections and all(previous[key] == fields[key] for key in MEANING_KEYS)
             if unchanged:
                 meaning = previous
             else:
@@ -316,7 +325,7 @@ class CatalogNormalizationService:
                     "resolution": [receipt]}
                 provenance["normalization"] = {"normalization_version": NORMALIZATION_VERSION,
                     "reconciliation_id": operation_id, "receipt": receipt, "member_ids": group.member_ids,
-                    "reason": group.reason, "citations": [row.model_dump() for row in group.citations]}
+                    "reason": group.reason, "citations": [row.model_dump() for row in group.citations], "corrections": corrections}
                 if previous is None and original_row and provenance.get("semantic_stage") == "occurrence_correction":
                     provenance["correction"] = original_row["provenance"]["correction"]["receipt"]
                 meaning = {"requirement_id": root_id, "revision": previous["revision"] + 1 if previous else 1,
@@ -341,6 +350,7 @@ class CatalogNormalizationService:
                 for occurrence_id in binding.occurrence_ids:
                     demands[occurrence_id] = (root_id, normalized)
         previous_heads = {row["job_id"]: row["revision"] for row in captured.get("accepted_heads", captured["snapshots"])}
+        accepted_occurrences = {row["job_id"]: {item["occurrence_id"] for item in row["requirements"]} for row in captured["snapshots"]}
         replacements = []
         for job_id, snapshot in sorted(effective.items()):
             rows = []
@@ -370,7 +380,10 @@ class CatalogNormalizationService:
             for row in rows:
                 old_id = row["occurrence_id"]
                 row["occurrence_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, canonical_json([operation_id, job_id, old_id])))
-                row["previous_occurrence_id"] = old_id
+                if old_id in accepted_occurrences.get(job_id, set()):
+                    row["previous_occurrence_id"] = old_id
+                elif row.get("previous_occurrence_id") not in accepted_occurrences.get(job_id, set()):
+                    row.pop("previous_occurrence_id", None)
             replacement = {**snapshot, "requirements": rows, "revision": previous_heads.get(job_id, 0) + 1,
                 "normalization_version": NORMALIZATION_VERSION, "normalization_provenance": {"receipt": receipt,
                     "reconciliation_id": operation_id}, "created_at": now(),

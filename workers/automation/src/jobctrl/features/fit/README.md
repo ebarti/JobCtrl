@@ -37,7 +37,7 @@ qualification work.
 
 ## One complete qualification batch
 
-Requirements' mandatory `requirements-capability-demand-v1` consolidation owns
+Requirements' mandatory `requirements-capability-demand-v2` consolidation owns
 one capability identity plus the normalized complete demand for each job. Fit
 uses that demand's definition, fingerprint and provenance, retaining the core
 separately. Qualification semantics `fit-qualification-demand-v1`, the exact

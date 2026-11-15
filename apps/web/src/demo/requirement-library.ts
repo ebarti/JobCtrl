@@ -71,11 +71,11 @@ const meanings: Omit<DemoCanonicalRequirement, "created_at" | "provenance">[] = 
 // do not represent a model determination or consolidation certificate.
 export const DEMO_PLATFORM_DEMANDS = [
   { jobId: "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35", definition: "Guide reliable platform delivery.",
-    fingerprint: "cf95637789a64b8c5ad23e63f21f19c3f4b6f02d880bd5b38facc7378e02aba6", index: 0, kind: "matched" },
+    fingerprint: "65c1d89cc761d191e118a1f51785cd2d2f05618a8207a59c90cf673a59a62585", index: 0, kind: "matched" },
   { jobId: "job-contoso-reliability", definition: "Guide a reliability engineering team.",
-    fingerprint: "b690de7ac054ee49916ac052cb673cd05ca88dee7d5d5e016a90701a75047568", index: 1, kind: "missing" },
+    fingerprint: "2efa2238506960d8236ab7aacad6ff39e0158248140e4a282b883cbd11875cc5", index: 1, kind: "missing" },
 ] as const;
-export const DEMO_NORMALIZATION_VERSION = "requirements-capability-demand-v1";
+export const DEMO_NORMALIZATION_VERSION = "requirements-capability-demand-v2";
 const DEMO_PLATFORM_REQUIREMENT = "requirement:v2:demo:platform";
 
 /** An authored per-job example; it never infers support from visitor edits. */

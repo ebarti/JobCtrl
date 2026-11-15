@@ -117,7 +117,7 @@ are job-local. Direct fields never enter catalog equivalence, the reusable
 library or achievement-wording authoring.
 
 The public `snapshot_items(snapshot)` adapter requires this generation, a complete
-extraction and `normalization_version: requirements-capability-demand-v1`.
+extraction and `normalization_version: requirements-capability-demand-v2`.
 It returns detached per-occurrence assessment rows retaining `original`.
 Canonical ID/revision/category/name identify the capability; `capability_definition`
 retains its core. `definition`, `demand_fingerprint` and `demand_provenance` bind
@@ -132,7 +132,7 @@ judgment and does not mutate the accepted snapshot.
 ## Complete matching and exact reuse
 
 One `requirements.match_catalog` determination, versioned
-`requirements-capability-demand-v1`, sees the complete incoming Skills/Experience
+`requirements-capability-demand-v2`, sees the complete incoming Skills/Experience
 inventory and retained current-generation catalog, including hidden meanings.
 Canonical sources contain their definitions, original extraction and quoted
 posting evidence; accepted occurrences and available posting sources establish
@@ -152,6 +152,16 @@ signature; materially different demands remain separate under the same capabilit
 Each group cites the inventory and all its members; demands cite the inventory
 and all bound occurrences. Unknown/duplicate/missing IDs, invalid exact reuse,
 non-verbatim sources, stale targets or uncertainty refuse the complete result.
+
+The response also retains explicit source-correction witnesses. Original posting
+evidence outranks previous extracted definitions. A witness can remove an
+unsupported attribution from a retained historical member only when that member
+has no accepted occurrence, including on deleted jobs. It pins the exact old
+claim, its own original source, retained group, separately represented demand and
+reason. All genuine current demands still participate in the complete partition;
+the witness cannot split current occurrences or invent a technical subtype.
+Reconciliation/certificate and root-revision provenance retain the correction,
+including when the surviving core text is otherwise unchanged.
 
 The feature cache binds the entire sent request: operation, prompt/instructions,
 strict schema, every source/context value and one frozen provider/model/effort/
@@ -179,6 +189,10 @@ description remains bounded to 192,000
 bytes and the gateway enforces its complete serialized input limit before
 provider admission. Size, context, lane, capacity, budget and provider refusals
 preserve accepted state without smaller requests or automatic repair calls.
+An unsupported-language, empty or direct-only extraction with no reusable items
+uses a narrow extraction-authorized snapshot publication instead: it makes no
+canonical, alias or certificate changes and no normalization call. Its original
+posting and accepted-head fences still apply.
 
 ## Generations, history and publication
 
@@ -266,7 +280,7 @@ writes admit no Fit followup.
 | `POST /v1/jobs/{job_id}/requirements/{occurrence_id}/binding` | Versioned explicit binding correction with selected target and reason. |
 | `POST /v1/jobs/{job_id}/requirements/corrections` | Source-bound one-to-one correction of selected occurrence meanings and bindings. |
 | `POST /v1/requirements/{requirement_id}/revisions` | Versioned source-bound canonical correction. Proposed shape is the extracted requirement plus exact spans. |
-| `requirements.consolidate`, `requirements.refresh`, `requirements.correct_binding`, `requirements.correct_occurrences`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2:requirements-capability-demand-v1`. Durable consolidation uses the run identity and accepts `expected_catalog_revision`. |
+| `requirements.consolidate`, `requirements.refresh`, `requirements.correct_binding`, `requirements.correct_occurrences`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2:requirements-capability-demand-v2`. Durable consolidation uses the run identity and accepts `expected_catalog_revision`. |
 
 Public owner methods also include nullable `find_job_requirements`, required
 `get_job_requirements`, exact/historical `get_requirement`, full

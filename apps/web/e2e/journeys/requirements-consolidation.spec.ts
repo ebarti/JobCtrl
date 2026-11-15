@@ -1,7 +1,7 @@
 import type { Page, TestInfo } from "@playwright/test";
-import { test, expect, json, modelCall, action, completed, terminal } from "../harness/fixtures.js";
+import { test, expect, json, modelCall, action, completed, terminal, type ExternalCall } from "../harness/fixtures.js";
 import { createBaseline, acceptBaseline, getResume } from "./core-data.js";
-import { catalogMatching, typedExtraction, type CatalogContext } from "./requirements-data.js";
+import { catalogMatching, citeSources, modelSources, typedExtraction, type CatalogContext } from "./requirements-data.js";
 import { qualificationBatchDecision, legacyQualificationBatchDecision } from "./qualification-data.js";
 import { createScoredFit, legacyGroupedCoverageDecision, refreshPayload, startRefresh, type PendingRefresh } from "./fit-data.js";
 import { acceptReuseRequirements, captureReusePosting, type RequirementSnapshot } from "./reuse-data.js";
@@ -177,16 +177,19 @@ test.describe("retained public predecessor capability authority", () => {
   test("existing-only consolidation includes hidden retained meanings, merges ordinary facets and preserves independent technology and aliases", async ({ api, app, page }, testInfo) => {
     const { profile } = await createBaseline(api);
     const authored = [
-      { localId: "improve", text: "Improve engineering processes through outcome measures.", name: "Engineering process improvement", definition: "Improve engineering processes through outcome measures." },
-      { localId: "assess", text: "Assess engineering workflows to improve delivery.", name: "Engineering workflow assessment", definition: "Assess engineering workflows to improve delivery." },
-      { localId: "temporal", text: "Orchestrate production workflows using Temporal.", name: "Temporal workflow orchestration", definition: "Orchestrate workflows using Temporal." },
+      { localId: "improve", text: "Improve engineering processes through outcome measures.", name: "Engineering process improvement", definition: "Improve engineering processes through outcome measures.", category: "skill" as const },
+      { localId: "assess", text: "Assess engineering workflows to improve delivery.", name: "Engineering workflow assessment", definition: "Assess engineering workflows to improve delivery.", category: "skill" as const },
+      { localId: "temporal", text: "Orchestrate production workflows using Temporal.", name: "Temporal workflow orchestration", definition: "Orchestrate workflows using Temporal.", category: "professional_experience" as const },
     ];
-    const saved = [];
+    const saved: { posting: Awaited<ReturnType<typeof captureReusePosting>>;
+      snapshot: Awaited<ReturnType<typeof acceptLegacyRequirements>>; id: string }[] = [];
     for (const row of authored) {
       const posting = await captureReusePosting(api, `legacy-${row.localId}`, row.text);
-      const snapshot = await acceptLegacyRequirements(api, app, posting, [{ ...row, category: "skill" }], { [row.localId]: { verdict: "new" } });
+      const snapshot = await acceptLegacyRequirements(api, app, posting, [row], { [row.localId]: { verdict: "new" } });
       saved.push({ posting, snapshot, id: snapshot.requirements[0]!.requirement_id });
     }
+    const originalTechnology = await json<Record<string, unknown>>(api, "get", `/v1/requirements/${saved[2]!.id}?revision=1`);
+    expect(originalTechnology["category"]).toBe("professional_experience");
     await json(api, "post", `/v1/jobs/${saved[1]!.posting.job_id}/delete`, {});
     const beforeUpgrade = app.external.calls.length;
     await app.upgradeSource();
@@ -207,7 +210,8 @@ test.describe("retained public predecessor capability authority", () => {
     const processDefinition = "Improve engineering processes.";
     call.reply(authoredPartition(call, [
       { groupId: "process", memberIds: [saved[0]!.id, saved[1]!.id], category: "skill", name: "Engineering process improvement", definition: processDefinition },
-      retainedCapability(call, saved[2]!.id, "temporal"),
+      { groupId: "temporal", memberIds: [saved[2]!.id], category: "skill", name: authored[2]!.name,
+        definition: authored[2]!.definition },
     ], [
       { groupId: "process", definition: processDefinition, jobIds: [saved[0]!.posting.job_id, saved[1]!.posting.job_id] },
       { groupId: "temporal", definition: authored[2]!.definition, jobIds: [saved[2]!.posting.job_id] },
@@ -224,6 +228,23 @@ test.describe("retained public predecessor capability authority", () => {
     expect(catalog).toMatchObject({ total: 2, normalization: { ready: true, normalization_version: NORMALIZATION_VERSION } });
     expect(catalog.aliases[alias]).toBe(root);
     expect(catalog.requirements.map((row) => row.requirement_id).sort()).toEqual([root, saved[2]!.id].sort());
+    expect(catalog.requirements.find((row) => row.requirement_id === saved[2]!.id)).toMatchObject({
+      category: "skill", revision: 2, name: authored[2]!.name, definition: authored[2]!.definition,
+    });
+    const composed = await json<{ requirements: { requirement_id: string; category: string; revision: number }[] }>(api, "get", "/v1/fit/requirement-library");
+    expect(composed.requirements.find((row) => row.requirement_id === saved[2]!.id)).toMatchObject({ category: "skill", revision: 2 });
+    const historicalTechnology = await json<Record<string, unknown>>(api, "get", `/v1/requirements/${saved[2]!.id}?revision=1`);
+    for (const key of ["requirement_id", "revision", "contract_version", "category", "name", "definition", "provenance", "created_at"])
+      expect(historicalTechnology[key]).toEqual(originalTechnology[key]);
+    const technology = await json<NormalizedSnapshot>(api, "get", requirementsPath(saved[2]!.posting.job_id));
+    expect(technology.requirements[0]).toMatchObject({ requirement_id: saved[2]!.id, requirement_revision: 2,
+      category: "professional_experience", canonical: { category: "skill" }, definition: authored[2]!.definition,
+      job_id: saved[2]!.posting.job_id, posting_revision: saved[2]!.posting.revision,
+      source_id: saved[2]!.posting.source_id, source_revision: saved[2]!.posting.source_revision,
+      source_hash: saved[2]!.posting.source_hash,
+      previous_occurrence_id: saved[2]!.snapshot.requirements[0]!.occurrence_id,
+      normalized_demand: { definition: authored[2]!.definition, normalization_version: NORMALIZATION_VERSION } });
+    expect(technology.requirements[0]!.spans).toEqual(saved[2]!.snapshot.requirements[0]!.spans);
     const current = await json<NormalizedSnapshot>(api, "get", requirementsPath(saved[0]!.posting.job_id));
     expect(current.requirements[0]).toMatchObject({ requirement_id: root, definition: authored[0]!.definition,
       previous_occurrence_id: saved[0]!.snapshot.requirements[0]!.occurrence_id,
@@ -260,6 +281,112 @@ test.describe("retained public predecessor capability authority", () => {
     await json(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion, profile: profile.profile });
     expect(app.external.calls).toHaveLength(callsBeforeReads);
     expect(app.external.calls.slice(beforeUpgrade).map((row) => row.body["operation"])).toEqual(["requirements.match_catalog"]);
+  });
+
+  test("a historical correction witness publishes complete source-bound capabilities without losing current independent demands", async ({ api, app }) => {
+    const notesDefinition = "Prepare release notes.";
+    const accessDefinition = "Operate access controls.";
+    const compositeDefinition = "Prepare release notes and operate access controls.";
+    const notesJob = await captureReusePosting(api, "historical-witness-notes", notesDefinition);
+    const obsolete = await acceptLegacyRequirements(api, app, notesJob, [{ localId: "obsolete", text: notesDefinition,
+      category: "skill", name: "Release notes and access operation", definition: compositeDefinition }], { obsolete: { verdict: "new" } });
+    const obsoleteId = obsolete.requirements[0]!.requirement_id;
+    // The real predecessor refresh supersedes its unsupported composite head.
+    // Its original record remains retained; only the corrected source meaning
+    // owns the current accepted occurrence for this Job.
+    const notes = await acceptLegacyRequirements(api, app, notesJob, [{ localId: "notes", text: notesDefinition,
+      category: "skill", name: "Release note preparation", definition: notesDefinition }], { notes: { verdict: "new" } },
+    { expectedRevision: obsolete.revision, force: true });
+    const notesId = notes.requirements[0]!.requirement_id;
+    expect(notesId).not.toBe(obsoleteId);
+    const accessJob = await captureReusePosting(api, "historical-witness-access", accessDefinition);
+    const access = await acceptLegacyRequirements(api, app, accessJob, [{ localId: "access", text: accessDefinition,
+      category: "skill", name: "Access control operation", definition: accessDefinition }], { access: { verdict: "new" } });
+    const accessId = access.requirements[0]!.requirement_id;
+    const oldMeaning = await json<Record<string, unknown>>(api, "get", `/v1/requirements/${obsoleteId}?revision=1`);
+    const witnessResponse = (request: ExternalCall) => {
+      const input = request.body["context"] as CatalogContext;
+      const result = authoredPartition(request, [
+        { ...retainedCapability(request, notesId, "notes"), memberIds: [obsoleteId, notesId] },
+        retainedCapability(request, accessId, "access"),
+      ], [{ groupId: "notes", definition: notesDefinition, jobIds: [notesJob.job_id] },
+        { groupId: "access", definition: accessDefinition, jobIds: [accessJob.job_id] }]);
+      const primaryCitations = [obsoleteId, accessId].map((id) => {
+        const member = input.members.find((row) => row.member_id === id)!;
+        const source = modelSources(request).find((row) => row.source_id === member.source_id)!;
+        const original = JSON.parse(source.text) as { canonical: { spans: { quote: string }[] } };
+        return { source_id: member.source_id, quote: original.canonical.spans[0]!.quote };
+      });
+      result.corrections = [{ member_id: obsoleteId, retained_group_id: "notes", unsupported_claim: "operate access controls",
+        represented_by_group_id: "access", reason: "The historical source establishes release note preparation only; access operation is independently preserved from its own current source.",
+        citations: [...citeSources(request, [input.catalog_inventory_source_id]), ...primaryCitations] }];
+      return result;
+    };
+    const callsBeforeUpgrade = app.external.calls.length;
+    await app.upgradeSource();
+    expect(app.external.calls).toHaveLength(callsBeforeUpgrade);
+    const catalog = await readCatalog(api);
+    const payload = { expected_catalog_revision: catalog.catalog_revision, operation_id: "synthetic-historical-correction-witness" };
+    const invalidPublishing = api.post("/v1/requirements/consolidate", { data: { ...payload, operation_id: "synthetic-uncorrected-historical-witness" } });
+    const call = await modelCall(app, "requirements.match_catalog");
+    const context = call.body["context"] as CatalogContext;
+    expect(context.incoming).toEqual([]);
+    expect(context.members.map((row) => row.member_id).sort()).toEqual([obsoleteId, notesId, accessId].sort());
+    expect(context.accepted_occurrence_counts).toMatchObject({ [obsoleteId]: 0, [notesId]: 1, [accessId]: 1 });
+    expect(context.occurrences.map((row) => row.occurrence_id).sort()).toEqual([
+      notes.requirements[0]!.occurrence_id, access.requirements[0]!.occurrence_id,
+    ].sort());
+    const uncorrected = witnessResponse(call);
+    const retainedGroup = uncorrected.capabilities.find((group) => group.group_id === "notes")!;
+    Object.assign(retainedGroup, { category: "skill", name: "Release notes and access operation", definition: compositeDefinition,
+      reuse_requirement_id: obsoleteId });
+    call.reply(uncorrected);
+    const invalid = await invalidPublishing;
+    expect(invalid.status(), await invalid.text()).toBe(422);
+    expect(await invalid.json()).toMatchObject({ error: { code: "requirements_correction_witness_invalid" } });
+    expect((await readCatalog(api)).catalog_revision).toBe(catalog.catalog_revision);
+    for (const [posting, original] of [[notesJob, notes], [accessJob, access]] as const) {
+      const current = await json<RequirementSnapshot>(api, "get", requirementsPath(posting.job_id));
+      expect(current.requirements).toEqual(original.requirements);
+      expect(current.revision).toBe(original.revision);
+    }
+    const publishing = api.post("/v1/requirements/consolidate", { data: payload });
+    const positive = await modelCall(app, "requirements.match_catalog");
+    const decision = witnessResponse(positive);
+    positive.reply(decision);
+    const response = await publishing;
+    expect(response.status(), await response.text()).toBe(200);
+    const report = await response.json() as ReconciliationReport;
+    const notesRoot = [obsoleteId, notesId].sort()[0]!;
+    expect(report).toMatchObject({ input_member_count: 3, root_count: 2, corrections: decision.corrections,
+      mapping: { [obsoleteId]: notesRoot, [notesId]: notesRoot, [accessId]: accessId } });
+    const root = await json<{ provenance: { normalization: { corrections: unknown[]; receipt: { receipt_id: string } } } }>(api, "get", `/v1/requirements/${notesRoot}`);
+    expect(root.provenance.normalization).toMatchObject({ corrections: decision.corrections,
+      receipt: { receipt_id: report.receipt.receipt_id } });
+    const retainedOriginal = await json<Record<string, unknown>>(api, "get", `/v1/requirements/${obsoleteId}?revision=1`);
+    for (const key of ["requirement_id", "revision", "contract_version", "category", "name", "definition", "provenance", "created_at"])
+      expect(retainedOriginal[key]).toEqual(oldMeaning[key]);
+    const historical = await json<{ rows: { occurrence_id: string; definition: string; accepted: boolean }[] }>(api, "get", `/v1/requirements/${obsoleteId}/history?kind=occurrences`);
+    expect(historical.rows).toEqual(expect.arrayContaining([expect.objectContaining({ occurrence_id: obsolete.requirements[0]!.occurrence_id,
+      definition: compositeDefinition, accepted: false })]));
+    for (const [posting, original, requirementId, definition] of [
+      [notesJob, notes, notesRoot, notesDefinition], [accessJob, access, accessId, accessDefinition],
+    ] as const) {
+      const current = await json<NormalizedSnapshot>(api, "get", requirementsPath(posting.job_id));
+      expect(current.requirements).toHaveLength(1);
+      expect(current.requirements[0]).toMatchObject({ requirement_id: requirementId, definition,
+        job_id: posting.job_id, posting_revision: posting.revision, source_id: posting.source_id,
+        source_revision: posting.source_revision, source_hash: posting.source_hash,
+        previous_occurrence_id: original.requirements[0]!.occurrence_id,
+        normalized_demand: { definition, normalization_version: NORMALIZATION_VERSION } });
+      expect(current.requirements[0]!.spans).toEqual(original.requirements[0]!.spans);
+    }
+    const currentCatalog = await readCatalog(api);
+    expect(currentCatalog).toMatchObject({ total: 2, normalization: { ready: true } });
+    const callsBeforeReplay = app.external.calls.length;
+    expect(await json(api, "post", "/v1/requirements/consolidate", payload)).toEqual({ ...report, reused_action: true });
+    expect(app.external.calls).toHaveLength(callsBeforeReplay);
+    expect(app.external.calls.slice(callsBeforeUpgrade).map((row) => row.body["operation"])).toEqual(["requirements.match_catalog", "requirements.match_catalog"]);
   });
 
   test("redirects never inherit legacy approved coverage or scores and refused partitions preserve accepted snapshots and PDF bytes", async ({ api, app, page }, testInfo) => {
@@ -299,7 +426,7 @@ test.describe("retained public predecessor capability authority", () => {
     expect(app.external.calls).toHaveLength(callsBeforeUpgrade);
     const before = await json<RequirementSnapshot>(api, "get", requirementsPath(posting.job_id));
     const catalogBefore = await readCatalog(api);
-    const faults = ["omitted member", "foreign member", "omitted occurrence", "foreign occurrence", "schema", "uncertain"] as const;
+    const faults = ["omitted member", "foreign member", "omitted occurrence", "foreign occurrence", "schema", "uncertain", "blank normalized definition", "active correction"] as const;
     for (const fault of faults) {
       const attempt = api.post("/v1/requirements/consolidate", { data: { expected_catalog_revision: catalogBefore.catalog_revision } });
       const call = await modelCall(app, "requirements.match_catalog");
@@ -309,6 +436,22 @@ test.describe("retained public predecessor capability authority", () => {
       if (fault === "foreign member") invalid.capabilities[0]!.member_ids[0] = "foreign:unrecorded-member";
       if (fault === "omitted occurrence") invalid.demands.shift();
       if (fault === "foreign occurrence") invalid.demands[0]!.bindings[0]!.occurrence_ids[0] = "foreign:unrecorded-occurrence";
+      if (fault === "blank normalized definition") invalid.capabilities[0]!.definition = " \n\t ";
+      if (fault === "active correction") {
+        const context = call.body["context"] as CatalogContext;
+        const retained = invalid.capabilities[0]!;
+        const represented = invalid.capabilities[1]!;
+        const primaryCitations = [retained.member_ids[0]!, represented.member_ids[0]!].map((id) => {
+          const member = context.members.find((row) => row.member_id === id)!;
+          const source = modelSources(call).find((row) => row.source_id === member.source_id)!;
+          const original = JSON.parse(source.text) as { canonical: { spans: { quote: string }[] } };
+          return { source_id: member.source_id, quote: original.canonical.spans[0]!.quote };
+        });
+        invalid.corrections = [{ member_id: retained.member_ids[0]!, retained_group_id: retained.group_id,
+          unsupported_claim: core, represented_by_group_id: represented.group_id,
+          reason: "Explicit invalid witness: a current accepted occurrence cannot be rewritten through a historical-only correction.",
+          citations: [...citeSources(call, [context.catalog_inventory_source_id]), ...primaryCitations] }];
+      }
       if (fault === "uncertain") {
         invalid.status = "needs_review";
         invalid.unresolved = [{ member_ids: invalid.capabilities[0]!.member_ids, reason: "The supplied sources do not establish a complete normalized partition.", citations: invalid.capabilities[0]!.citations }];
@@ -317,6 +460,12 @@ test.describe("retained public predecessor capability authority", () => {
       else call.reply(invalid);
       const response = await attempt;
       expect(response.status(), `${fault}: ${await response.text()}`).toBe(fault === "schema" ? 502 : 422);
+      expect(await response.json()).toMatchObject({ error: { code: {
+        "omitted member": "requirements_consolidation_partition_invalid", "foreign member": "requirements_consolidation_partition_invalid",
+        "omitted occurrence": "requirements_demand_partition_invalid", "foreign occurrence": "requirements_demand_partition_invalid",
+        schema: "model_schema_violation", uncertain: "requirements_consolidation_uncertain",
+        "blank normalized definition": "blank_requirement_field", "active correction": "requirements_correction_witness_invalid",
+      }[fault] } });
       const retained = await json<RequirementSnapshot>(api, "get", requirementsPath(posting.job_id));
       expect(retained.requirements).toEqual(before.requirements);
       expect(retained.revision).toBe(before.revision);

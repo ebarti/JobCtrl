@@ -226,7 +226,7 @@ for (const defect of ["incomplete", "duplicate", "foreign requirement", "cross-r
     if (defect === "non-verbatim evidence") response.requirements[1]!.evidence[0]!.quote = "This factual quote never occurred in any supplied source.";
     if (defect === "stale revision") response.requirements[1]!.requirement_revision = "999";
     batch.reply(response);
-    const expectedCode = { incomplete: "fit_qualification_partition_invalid", duplicate: "fit_qualification_partition_invalid", "foreign requirement": "fit_qualification_partition_invalid", "cross-row citation": "fit_foreign_source_id", "non-verbatim evidence": "fit_non_verbatim_quote", "stale revision": "fit_requirement_binding_invalid" }[defect];
+    const expectedCode = { incomplete: "fit_qualification_partition_invalid", duplicate: "fit_qualification_partition_invalid", "foreign requirement": "fit_qualification_partition_invalid", "cross-row citation": "fit_foreign_source_id", "non-verbatim evidence": "fit_non_verbatim_quote", "stale revision": "fit_qualification_partition_invalid" }[defect];
     expect(await terminal(api, run.runId)).toMatchObject({ status: "failed", errorCode: expectedCode });
     const retained = await json<Fit>(api, "get", fitPath(seed.posting as CapturedPosting));
     expect(retained.score).toEqual(original.score);

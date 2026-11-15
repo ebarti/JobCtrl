@@ -3531,6 +3531,17 @@ independently demanded expertise and named technologies remain distinct. Technic
 practice remains a Skill even when the posting calls it experience. There is no
 target catalog size or name-based merge rule.
 
+Original posting evidence outranks fallible derived definitions. Policy
+`requirements-capability-demand-v2` records an explicit correction witness when
+a retained historical member attributes an unsupported scope or relationship.
+This bounded correction requires no accepted occurrence of that member,
+including on deleted jobs; an exact prior claim, its own original source
+authority, its retained group and a valid group preserving the separately
+established demand remain pinned. The witness and receipt survive in
+reconciliation and root-revision provenance. It cannot split current occurrences,
+create a one-to-many alias, invent an unspecified subtype or remove a genuine
+job demand. Cases needing a broader source correction remain explicit review.
+
 An explicit repair and every semantic ingestion/correction path use the same
 mandatory whole-catalog consolidation gate. One determination sees the complete
 retained current-generation catalog, including hidden meanings, their original

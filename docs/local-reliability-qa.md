@@ -118,7 +118,7 @@ Skills and direct demands must not trigger unnecessary achievement rewrites.
 Inspect `requirement-fit-v3-equal`, equal-item contributions, duplicate-occurrence
 invariance, alternatives counted once and no-score behavior for an empty set.
 
-For `requirements-capability-demand-v1`, exercise existing-only consolidation
+For `requirements-capability-demand-v2`, exercise existing-only consolidation
 from a real predecessor-created catalog and the same mandatory gate during
 ingestion/correction. Include hidden retained members, complete existing-existing
 and incoming partitions, original-source preservation, stable aliases and exact

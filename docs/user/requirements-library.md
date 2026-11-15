@@ -72,7 +72,8 @@ or a source job preserve the same table context. Select a requirement to inspect
 
 - its category, name, exact definition and canonical revision;
 - **Linked achievements**, grouped by saved achievement identity rather than by
-  the number of wording revisions;
+  the number of wording revisions. The count includes recorded relationships
+  that need review; it does not assert current factual support;
 - **Wordings for this requirement** within each achievement, with the exact text,
   approval and recorded coverage shown separately;
 - maintained current wording separately from proposed revisions, old selections
@@ -87,8 +88,8 @@ evidence and freshness. Linked achievements include those recorded across the
 demands; their presence does not turn a job-specific assessment into a global
 judgment. When consolidation is required, any demands shown may be incomplete.
 **Earlier links and assessments** retains records bound to an older identity or
-source context for inspection; they do not count as current support or current
-links for the consolidated requirement.
+source context for inspection. Those records are excluded from the linked-achievement
+count and do not establish current support for the consolidated requirement.
 
 A requirement can link to several achievements, and an achievement can serve
 several requirements. One exact wording can cover several requirements. Missing
@@ -200,9 +201,12 @@ persisted determination. Unavailable or invalid work remains unavailable.
 The API also supports explicitly correcting selected posting occurrences rather
 than interpreting the whole posting again. Each correction must be supported by
 that posting, and your reason guides the review without becoming evidence.
-Other saved meanings, bindings, evidence and their model authority remain
-unchanged; earlier snapshots remain in history. This does not reassess your Fit
-or rewrite achievement wording automatically.
+The corrected batch passes through the complete retained-catalog consolidation,
+which can also reconcile other existing meanings and job-demand bindings.
+Unselected occurrences retain their original semantic fields and evidence, and
+earlier snapshots remain in history. The correction does not automatically
+reassess your Fit or rewrite achievement wording; changed bindings can require
+review.
 
 The API ownership and revision fences are documented in
 [Jobs and Materials API](../api/jobs-and-materials.md#requirements-library-and-associations).

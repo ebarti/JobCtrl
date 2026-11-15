@@ -77,7 +77,7 @@ not arbitrary job IDs. Direct demands have job-local identities and exact source
 revisions, so they cannot accidentally reuse another job's assessment.
 
 Source follow-up [#1488](https://github.com/ebarti/JobCtrl/issues/1488) adds
-`requirements-capability-demand-v1` authority within this generation. Older typed
+`requirements-capability-demand-v2` authority within this generation. Older typed
 snapshots remain readable but require explicit consolidation before new Fit or
 tailored composition. Reusable qualification binds the exact normalized demand
 and qualification-policy version; one capability still contributes one item per

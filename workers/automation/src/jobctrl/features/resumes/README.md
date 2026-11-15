@@ -15,7 +15,7 @@ remain outside achievement selection. Fit supplies persisted, source-bound cover
 relation stays unknown/uncovered. Resumes performs no meaning judgment and does
 not write a person score.
 
-Requirements additionally supplies `requirements-capability-demand-v1` source-
+Requirements additionally supplies `requirements-capability-demand-v2` source-
 established demands. Fit coverage binds exact capability revision, normalized
 demand and assessment alongside wording revision/approval. Resumes consumes the
 binding applicable to its job; a sibling demand's positive coverage or shared

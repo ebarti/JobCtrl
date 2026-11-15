@@ -324,7 +324,11 @@ test("scoped occurrence corrections refuse a catalog race after one complete rec
   // The held correction made one correction call and one complete catalog
   // call. The other two calls belong to the independently accepted winner.
   expect(operations(app, before)).toEqual([ACTION, "requirements.match_catalog", "requirements.extract", "requirements.match_catalog"]);
-  expect(app.external.calls.slice(before).filter((row) => row === call || row === held)).toHaveLength(2);
+  const selectedIds = value.snapshot.requirements.slice(0, 2).map((row) => row.occurrence_id).sort();
+  const ownCalls = app.external.calls.slice(before).filter((row) => row.body["operation"] === ACTION ||
+    row.body["operation"] === "requirements.match_catalog" &&
+    JSON.stringify((row.body["context"] as CatalogContext).incoming.map((incoming) => incoming.local_id).sort()) === JSON.stringify(selectedIds));
+  expect(ownCalls.map((row) => row.body["operation"])).toEqual([ACTION, "requirements.match_catalog"]);
   const beforeReplay = app.external.calls.length;
   expect((await start(api, payload, "occurrence-call-bound")).runId).toBe(run.runId);
   expect(app.external.calls).toHaveLength(beforeReplay);
@@ -341,7 +345,7 @@ test("scoped occurrence corrections retain settled revision authority and refuse
   const replacement = await app.restartWorker();
   expect(replacement.current).not.toBe(replacement.previous);
   await expect.poll(() => held.closed).toBe(true);
-  expect(await terminal(api, run.runId)).toMatchObject({ status: "failed", errorCode: "requirements_correction_call_unsettled" });
+  expect(await terminal(api, run.runId)).toMatchObject({ status: "failed", errorCode: "requirements_consolidation_call_unsettled" });
   await retained(api, value);
   expect((await json<Catalog>(api, "get", "/v1/requirements?limit=200")).requirements).toEqual(value.catalog.requirements);
   expect(operations(app, before)).toEqual([ACTION, "requirements.match_catalog"]);

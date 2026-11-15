@@ -160,6 +160,16 @@ starts empty while accepted history and bytes remain retained. After new writes,
 rollback restores that backup with compatible application/workflow state; an
 older binary alone is insufficient. See the
 [typed upgrade boundary](user/data-and-safety.md#typed-requirements-upgrade).
+The later capability-consolidation policy adds its own schema extension within
+that generation; it does not empty the retained catalog. Stop the owned writers
+and verify a paired workspace backup before adopting the new source. Starting
+it registers the extension but does not run semantic repair. **Jobs →
+Requirements → Consolidate skills** explicitly admits one complete retained
+catalog determination. Failed or cancelled work preserves the accepted catalog,
+scores and resume bytes. After successful publication, use the compatible
+backup and workflow state for rollback rather than starting an older checkout
+against the changed workspace. See the
+[consolidation contract](user/requirements-library.md).
 Updating a checkout does not publish or update an installed release. For ordinary development that does not need personal data, use a
 separate owned synthetic `JOBCTRL_DIR`, with synthetic credentials and sources;
 setting that path alone does not isolate inherited environment credentials.
