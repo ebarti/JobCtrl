@@ -133,9 +133,13 @@ classifies the evidence for each posting requirement; versioned, deterministic
 code turns those classifications into the persisted 1–10 score.
 
 Each saved job retains its occurrences, direct demands and score. Jobs that
-reference the same canonical requirement may reuse a current person assessment
-against the same saved facts. Similar text alone does not establish shared
-identity. Direct Education/Languages assessments remain bound to their own job
+reference the same capability may reuse a current person assessment only when
+the normalized job demand, capability revision, saved facts and qualification
+policy are also current. One skill can serve jobs with different genuine demands;
+those assessments remain separate. Similar text alone does not establish shared
+identity. Consolidation groups ordinary facets before acceptance and counts a
+capability once per job; it does not select the most favorable earlier assessment.
+Direct Education/Languages assessments remain bound to their own job
 and posting revision.
 
 Before requesting qualification, Fit checks all four categories for current

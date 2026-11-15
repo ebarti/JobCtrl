@@ -5,34 +5,33 @@ from __future__ import annotations
 from jobctrl.app.errors import ConflictError
 
 from .coverage_groups import owned_support
-from .contract import current_contract
+from .contract import current_contract, qualification_key
 from .sources import fingerprint, qualification_fingerprint, wording_eligible
 
 
 def expand_groups(read, profile, groups, inventory, source_hash):
     """Join accepted catalog IDs, including supported bindings outside this job."""
-    catalog = read.catalog_snapshot()
-    meanings = {row["requirement_id"]: {**row, "requirement_revision": row["revision"]}
-                for row in catalog["requirements"]}
+    catalog = read.demand_catalog_snapshot(active_only=True)
+    meanings = {qualification_key(row): row for row in catalog["demands"]}
     heads = [row for row in read.current_wordings(profile["profile_id"], achievement_ids=list(groups)) if current_contract(row)]
-    for head in heads:
-        if head["requirement_id"] not in meanings:
-            raise ConflictError("A maintained wording's canonical requirement is unavailable.")
+    # Old alias heads remain inspectable history. Only exact active root/demand
+    # tuples can join the new group; an alias never supplies positive coverage.
     for ident, entries in groups.items():
-        indexed = {row["requirement_id"]: (row, assessment) for row, assessment in entries}
-        retained = {row["requirement_id"] for row in heads if row["achievement_id"] == ident}
-        for requirement_id, requirement in meanings.items():
-            if requirement_id in indexed:
+        indexed = {qualification_key(row): (row, assessment) for row, assessment in entries}
+        retained = {qualification_key({**row, **binding}) for row in heads if row["achievement_id"] == ident
+                    for binding in row.get("demand_bindings", [])}
+        for key, requirement in meanings.items():
+            if key in indexed:
                 continue
-            assessment = read.latest_assessment(profile["profile_id"], requirement_id,
+            assessment = read.latest_assessment(profile["profile_id"], requirement["requirement_id"],
                 requirement["requirement_revision"], source_fingerprint=qualification_fingerprint(profile, requirement))
             if assessment is None:
-                if requirement_id in retained:
+                if key in retained:
                     raise ConflictError("A maintained wording needs current qualification before grouped refresh.")
                 continue
             if (wording_eligible(assessment) and assessment["kind"] in {"matched", "transferable"} and ident in assessment["achievement_ids"]
                     and owned_support(inventory[ident], assessment)):
-                indexed[requirement_id] = (requirement, assessment)
+                indexed[key] = (requirement, assessment)
         groups[ident] = list(indexed.values())
     return catalog, heads
 
@@ -60,16 +59,24 @@ def current_mapping(entries, variants, relations, heads):
     if len(by_requirement) != len(heads):
         return False
     approved = {row["variant_id"]: row for row in variants}
-    for requirement, _ in entries:
+    expected = set()
+    for requirement, assessment in entries:
+        key = qualification_key(requirement)
+        expected.add(key)
         head = by_requirement.get(requirement["requirement_id"])
         variant = approved.get(head["variant_id"]) if head else None
-        relation = relations.get((requirement["requirement_id"], head["variant_id"])) if head else None
+        relation = relations.get((key, head["variant_id"])) if head else None
+        binding = next((row for row in head.get("demand_bindings", [])
+                        if row["demand_fingerprint"] == requirement["demand_fingerprint"]), None) if head else None
         if (variant is None or relation is None or not relation["covered"]
                 or str(head["requirement_revision"]) != str(requirement["requirement_revision"])
                 or str(head["variant_revision"]) != str(variant["revision"])
-                or head["approval_id"] != variant["approval_id"] or head["relation_id"] != relation["relation_id"]):
+                or head["approval_id"] != variant["approval_id"] or binding is None
+                or binding["relation_id"] != relation["relation_id"] or binding["assessment_id"] != assessment["assessment_id"]):
             return False
     if set(by_requirement) != {row["requirement_id"] for row, _ in entries}:
+        return False
+    if {qualification_key({**head, **binding}) for head in heads for binding in head.get("demand_bindings", [])} != expected:
         return False
     if len({row["variant_id"] for row in heads}) > 1:
         # Separate exact user choices cannot authorize unnecessary alternatives.
@@ -87,32 +94,38 @@ def rebind_mapping(coverage, *, profile, entries, variants, relations, heads, pr
                    requirements_snapshot, achievement_id, expected_fingerprint, cancelled, operation):
     """Follow literal revalidation ancestors; this preserves a recorded choice."""
     rebound, changed = [], []
-    stable = ("profile_id", "requirement_id", "requirement_revision", "achievement_id", "variant_id",
+    stable = ("profile_id", "requirement_id", "requirement_revision", "demand_fingerprint", "achievement_id", "variant_id",
               "variant_revision", "approval_id", "variant_fingerprint", "qualification_determination_id")
     for head in heads:
-        relation = relations.get((head["requirement_id"], head["variant_id"]))
-        if relation is None or relation["relation_id"] == head["relation_id"]:
-            rebound.append(head)
-            continue
         history = {row["relation_id"]: row for row in coverage.store.prior_coverage(
             profile["profile_id"], head["requirement_id"], head["requirement_revision"],
             head["variant_id"], head["variant_revision"])}
-        ancestor = history.get(head["relation_id"])
-        if ancestor is None:
-            return False
-        cursor, seen = relation, set()
-        while cursor["relation_id"] != head["relation_id"]:
-            if (cursor["relation_id"] in seen or not cursor.get("covered")
-                    or any(str(cursor[key]) != str(ancestor[key]) for key in stable)):
+        bindings = []
+        for binding in head.get("demand_bindings", []):
+            relation = relations.get((qualification_key({**head, **binding}), head["variant_id"]))
+            if relation is None:
                 return False
-            seen.add(cursor["relation_id"])
-            cursor = history.get(cursor.get("revalidated_from"))
-            if cursor is None:
+            if relation["relation_id"] == binding["relation_id"]:
+                bindings.append(binding)
+                continue
+            ancestor = history.get(binding["relation_id"])
+            if ancestor is None:
                 return False
-        changed.append({"requirement_id": head["requirement_id"], "previous_relation_id": head["relation_id"],
-                        "relation_id": relation["relation_id"],
-                        "qualification_determination_id": relation["qualification_determination_id"]})
-        rebound.append({**head, "relation_id": relation["relation_id"]})
+            cursor, seen = relation, set()
+            while cursor["relation_id"] != binding["relation_id"]:
+                if (cursor["relation_id"] in seen or not cursor.get("covered")
+                        or any(str(cursor.get(key)) != str(ancestor.get(key)) for key in stable)):
+                    return False
+                seen.add(cursor["relation_id"])
+                cursor = history.get(cursor.get("revalidated_from"))
+                if cursor is None:
+                    return False
+            changed.append({"requirement_id": head["requirement_id"], "demand_fingerprint": binding["demand_fingerprint"],
+                            "previous_relation_id": binding["relation_id"], "relation_id": relation["relation_id"],
+                            "assessment_id": relation["assessment_id"],
+                            "qualification_determination_id": relation["qualification_determination_id"]})
+            bindings.append({key: relation[key] for key in ("demand_fingerprint", "assessment_id", "relation_id")})
+        rebound.append({**head, "demand_bindings": bindings, "relation_id": bindings[0]["relation_id"] if bindings else head["relation_id"]})
     if not changed or not current_mapping(entries, variants, relations, rebound):
         return False
     authorities = {}
@@ -134,7 +147,7 @@ def rebind_mapping(coverage, *, profile, entries, variants, relations, heads, pr
     coverage._check_cancelled(cancelled, operation)
     coverage.store.publish_current_wordings([{key: row[key] for key in (
         "profile_id", "achievement_id", "requirement_id", "requirement_revision", "variant_id",
-        "variant_revision", "approval_id", "relation_id")} for row in rebound],
+        "variant_revision", "approval_id", "relation_id", "demand_bindings")} for row in rebound],
         expected_assignments_fingerprint=expected_fingerprint, profile_snapshot=profile_snapshot,
         requirements_snapshot=requirements_snapshot, selection_provenance=provenance,
         achievement_ids=[achievement_id], cancelled=cancelled)
@@ -147,13 +160,13 @@ def publish_selection(coverage, *, result, record, profile, profile_snapshot, re
         # A proposed merge is not authority to install an unnecessary temporary
         # set of alternatives. Keep the exact prior heads (or baseline fallback).
         return False
-    selections = ({row["requirement_id"]: result.reusable_variant_id for row, _ in entries}
+    selections = ({qualification_key(row): result.reusable_variant_id for row, _ in entries}
                   if result.action == "reuse_approved" else
-                  {row.requirement_id: row.variant_id for row in result.selected_relations})
+                  {qualification_key(row.model_dump()): row.variant_id for row in result.selected_relations})
     by_variant = {row["variant_id"]: row for row in variants}
-    selected = []
+    aggregates = {}
     for requirement, assessment in entries:
-        variant_id = selections.get(requirement["requirement_id"])
+        variant_id = selections.get(qualification_key(requirement))
         if variant_id is None:
             continue
         variant = by_variant[variant_id]
@@ -161,12 +174,19 @@ def publish_selection(coverage, *, result, record, profile, profile_snapshot, re
             requirement["requirement_revision"], assessment["assessment_id"], variant_id, variant["revision"])
         if relation is None or not relation["covered"]:
             raise ConflictError("The maintained wording selection has no exact positive coverage receipt.")
-        selected.append({key: relation[key] for key in ("profile_id", "achievement_id", "requirement_id",
-            "requirement_revision", "variant_id", "variant_revision", "approval_id", "relation_id")})
+        pins = {key: relation[key] for key in ("profile_id", "achievement_id", "requirement_id",
+            "requirement_revision", "variant_id", "variant_revision", "approval_id", "relation_id")}
+        aggregate = aggregates.setdefault(requirement["requirement_id"], {**pins, "demand_bindings": []})
+        if any(str(aggregate[key]) != str(pins[key]) for key in ("requirement_revision", "variant_id", "variant_revision", "approval_id")):
+            raise ConflictError("A canonical capability must retain one common maintained wording.")
+        aggregate["demand_bindings"].append({key: relation[key] for key in ("demand_fingerprint", "assessment_id", "relation_id")})
+    selected = [{**row, "demand_bindings": sorted(row["demand_bindings"], key=lambda item: item["demand_fingerprint"])}
+                for row in aggregates.values()]
 
     # An approved revision is a proposal until every prior replacement binding
     # and every intended requirement has positive coverage under that SAME text.
-    selected_pairs = {(row["requirement_id"], row["variant_id"]) for row in selected}
+    selected_pairs = {(qualification_key({**row, **binding}), row["variant_id"]) for row in selected
+                      for binding in row["demand_bindings"]}
     for variant in pending_replacements(variants, heads):
         if not any(row["variant_id"] == variant["variant_id"] for row in selected):
             continue
@@ -177,7 +197,8 @@ def publish_selection(coverage, *, result, record, profile, profile_snapshot, re
         # The current qualification owns whether achievement expression is
         # needed. Historical authoring intent cannot recreate a section gap.
         required.intersection_update(row["requirement_id"] for row, _ in entries)
-        if any((ident, variant["variant_id"]) not in selected_pairs for ident in required):
+        if any((qualification_key(row), variant["variant_id"]) not in selected_pairs
+               for row, _ in entries if row["requirement_id"] in required):
             return False
     if not selected and not heads:
         return False

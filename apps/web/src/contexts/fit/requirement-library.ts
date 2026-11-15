@@ -23,6 +23,7 @@ const assessmentSchema = z.object({ assessment_id: z.string(), requirement_id: z
   origin: z.enum(["model", "manual", "revalidated", "bundled_synthetic_example"]), rationale: z.string(), confidence: z.string(),
   category: z.enum(["skill", "professional_experience", "education", "language"]).optional(), name: z.string().optional(),
   wording_support: z.enum(["section", "achievement", "none"]).optional(),
+  demand_fingerprint: z.string().min(1).optional(), qualification_semantics_version: z.string().min(1).optional(),
   determination_id: z.string(), provenance: z.record(z.string(), z.unknown()), ...freshness,
 }).passthrough();
 const coverageSchema = z.object({ relation_id: z.string(), requirement_id: z.string(),
@@ -38,11 +39,62 @@ const currentWordingSchema = z.object({ assignment_id: z.string(), revision: z.n
   achievement_source_refs: z.array(sourceSchema), selection_provenance: z.record(z.string(), z.unknown()),
   created_at: z.string(), updated_at: z.string(), ...freshness,
 }).passthrough();
+const demandAssessmentSchema = z.object({
+  demand_fingerprint: z.string().min(1), definition: z.string(), capability_definition: z.string(),
+  normalization_version: z.string().min(1), job_ids: z.array(z.string().min(1)).min(1),
+  assessment: assessmentSchema.nullable(), state: z.enum(["current", "stale", "not_assessed", "profile_required"]),
+  current: z.boolean(), stale_reasons: z.array(z.string()),
+}).passthrough();
+const assessmentSummarySchema = z.object({ demand_count: z.number().int().nonnegative(),
+  assessed_count: z.number().int().nonnegative(), current_count: z.number().int().nonnegative() });
+// Earlier records are retained verbatim and may predate the current Fit contract.
+// Only fields used to identify and inspect them are required here.
+const historicalAssociationSchema = z.object({ association_id: z.string().min(1), profile_id: z.string().min(1),
+  requirement_id: z.string().min(1), achievement_id: z.string().min(1), revision: z.number().int().positive(), state: z.string() }).passthrough();
+const historicalWordingSchema = z.object({ assignment_id: z.string().min(1), profile_id: z.string().min(1),
+  requirement_id: z.string().min(1), achievement_id: z.string().min(1), revision: z.number().int().positive(), state: z.string() }).passthrough();
+const historicalAssessmentSchema = z.object({ assessment_id: z.string().min(1), requirement_id: z.string().min(1),
+  kind: z.string().optional(), rationale: z.string().optional(), achievement_ids: z.array(z.string()).optional(),
+  evidence_refs: z.array(evidenceSchema).optional(), determination_id: z.string().optional() }).passthrough();
+const historicalCoverageSchema = z.object({ relation_id: z.string().min(1), requirement_id: z.string().min(1),
+  assessment_id: z.string().min(1), achievement_id: z.string().min(1), status: z.string(),
+  rationale: z.string().optional(), source_refs: z.array(evidenceSchema).optional(), determination_id: z.string().optional(),
+  variant_id: z.string().optional(), variant_revision: z.union([z.number(), z.string()]).optional(), approval_id: z.string().optional() }).passthrough();
+const historicalAliasRecordsSchema = z.object({ requirement_id: z.string().min(1), root_requirement_id: z.string().min(1),
+  current: z.literal(false), stale_reasons: z.array(z.string()).min(1),
+  associations: z.array(historicalAssociationSchema), wording_assignments: z.array(historicalWordingSchema),
+  assessments: z.array(historicalAssessmentSchema), coverage: z.array(historicalCoverageSchema) }).passthrough();
 const entrySchema = z.object({ requirement_id: z.string(), revision: z.number().int().positive(), definition: z.string(),
   contract_version: z.literal("requirements-v2"), category: z.enum(["skill", "professional_experience"]), name: z.string(),
   assessment: assessmentSchema.nullable(), coverage: z.array(coverageSchema), associations: z.array(associationSchema),
   current_wordings: z.array(currentWordingSchema), wording_assignments: z.array(currentWordingSchema),
-}).passthrough();
+  assessment_scope: z.enum(["single_demand", "varies_by_job", "not_applicable", "consolidation_required"]).optional(),
+  assessment_summary: assessmentSummarySchema.optional(), demand_assessments: z.array(demandAssessmentSchema).optional(),
+  historical_alias_records: z.array(historicalAliasRecordsSchema).optional(),
+}).passthrough().superRefine((entry, context) => {
+  if (entry.historical_alias_records?.some((group) => group.root_requirement_id !== entry.requirement_id
+    || [...group.associations, ...group.wording_assignments, ...group.assessments, ...group.coverage]
+      .some((record) => record.requirement_id !== group.requirement_id))) {
+    context.addIssue({ code: "custom", message: "The earlier relationship records do not match their recorded identities." });
+  }
+  const { assessment_scope: scope, assessment_summary: summary, demand_assessments: demands } = entry;
+  if (scope === undefined && summary === undefined && demands === undefined && entry.historical_alias_records === undefined) return;
+  if (scope === undefined || summary === undefined || demands === undefined || entry.historical_alias_records === undefined) {
+    context.addIssue({ code: "custom", message: "The job-specific assessment inventory is incomplete." });
+    return;
+  }
+  const consistentScope = scope === "single_demand" ? demands.length === 1
+    : scope === "varies_by_job" ? demands.length > 1 && entry.assessment === null
+    : scope === "consolidation_required" ? entry.assessment === null
+    : demands.length === 0 && entry.assessment === null;
+  const uniqueDemands = new Set(demands.map((demand) => demand.demand_fingerprint)).size === demands.length;
+  const matchingPins = demands.every((demand) => !demand.assessment || demand.assessment.demand_fingerprint === demand.demand_fingerprint);
+  const singleMatches = scope !== "single_demand"
+    || (demands[0]!.assessment?.assessment_id ?? null) === (entry.assessment?.assessment_id ?? null);
+  if (!consistentScope || !uniqueDemands || !matchingPins || !singleMatches || summary.demand_count !== demands.length) {
+    context.addIssue({ code: "custom", message: "The job-specific assessments do not match their recorded scope." });
+  }
+});
 const librarySchema = z.object({ profile_id: z.string(), readiness: z.enum(["ready", "profile_required"]),
   contract_version: z.string().optional(), synthetic: z.boolean().optional(),
   profile_revision: z.number().int().positive().nullable(), fact_semantics_version: z.number().int().positive().nullable(),

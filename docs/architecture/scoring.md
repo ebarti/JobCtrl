@@ -37,18 +37,33 @@ every task. An alternatives group represents one demand.
 
 ## Requirements catalog matching
 
-Requirements extracts the posting's typed demands, then sends the complete
-incoming Skills/Professional Experience batch and every current canonical catalog
-category, name and definition to one source-bound matching determination. The
-same response decides
-equivalence, genuine novelty or uncertainty. Incoming paraphrases share an
-explicitly selected representative; each posting occurrence remains recorded.
-Ordinary facets of one competence can reuse one meaning; materially different
-capabilities remain distinct. Education and Languages do not enter this catalog
-or matching request and cannot enter achievement-wording authoring.
-There are no retrieval subsets, catalog pages, chunk loops or separate novelty
-judge. Citations, full incoming-ID cardinality, exact canonical revisions and
-the catalog epoch are validated before an atomic publication.
+Requirements extracts the posting's typed demands, then passes every semantic
+publication through one mandatory capability/demand consolidation determination.
+It sees the complete retained current-generation catalog, including meanings
+hidden by soft-deleted jobs, original source authority, incoming entries and
+accepted occurrence bindings. Existing catalog entries are reconciled with one
+another as well as with new entries. Ordinary phases, audiences, checks and
+outcomes share one capability identity; materially different expertise and
+independently demanded named technologies remain distinct. There is no target
+count, retrieval subset, catalog paging, chunk loop or separate novelty judge.
+
+The result exhaustively partitions capability members and binds every occurrence
+to one combined source-established demand per job/capability. The capability's
+core definition is separate from this demand. Equivalent demands reuse an exact
+model-normalized signature; different genuine demands do not create extra skill
+identities or impose their conditions on other jobs. Original extraction and
+exact source evidence remain intact. Education and Languages remain job-local
+and absent from this catalog and achievement-wording authoring.
+
+Publication validates complete partitions, source citations, revision/epoch and
+all affected accepted snapshot/posting heads. One transaction appends capability
+revisions, recorded aliases, the reconciliation certificate and replacement
+Requirements snapshots. Historical IDs/revisions remain exact history; alias
+navigation never makes their previous assessments current. An uncertain,
+incomplete, cancelled, stale or refused result publishes no partial change.
+The separately versioned normalization policy fences old operations and
+unnormalized accepted snapshots. Explicit existing-only repair uses the same
+gate; ordinary reads perform no model work.
 
 Extraction's quote-selection model wire selects exact source IDs and unique verbatim quotes.
 Requirements derives their numeric character ranges from the frozen posting;
@@ -100,11 +115,13 @@ Requirements' private tables to assemble or validate that inventory.
 
 Fit first resolves accepted person qualifications for the complete job
 requirement set, including direct Education and Languages demands. Reuse of
-catalog qualification is keyed by Profile ID, canonical requirement ID and
-revision, and the complete factual source/achievement fingerprint. An accepted
-qualification retains its original model or user authority across jobs; a new
-posting occurrence or model selection does not manufacture a new
-assessment. If every qualification is current, this stage makes zero model
+catalog qualification is keyed by Profile ID, canonical capability ID/revision,
+the normalized job-demand fingerprint, permitted factual sources and the
+qualification semantic/prompt version. The canonical capability definition alone
+cannot substitute for the demand being assessed. Identical current demands can
+reuse accepted authority across jobs; genuinely different demands cannot reuse
+one another's assessment. Changing only model selection does not manufacture
+new authority. If every qualification is current, this stage makes zero model
 calls. A job with no prior score may resolve its fixed requirement set during
 explicitly authorized initial preparation, including new current authority where
 older shared qualifications predate saved changes. Publication compares the
@@ -115,9 +132,9 @@ changes still requires explicit manual refresh. Saves start neither operation.
 
 The entire missing set across all four categories enters one
 `fit.qualification-batch` request in the scoring lane, with the complete factual inventory supplied once and a distinct
-`requirement:<id>` source for each meaning. There is no per-requirement call
+source for each exact capability/demand binding. There is no per-requirement call
 loop, chunking, truncation or lexical fallback. The response must partition the
-exact requested IDs and revisions once each. Each row must cite its own
+exact requested IDs, revisions and demand fingerprints once each. Each row must cite its own
 requirement; no requirement can prove a candidate fact or substitute for another
 row's meaning. All rows pass schema, evidence and immutable gateway-receipt
 validation before the new assessments publish together in one transaction.
@@ -126,6 +143,9 @@ revision. They cannot reuse another job's qualification or gain reusable catalog
 identity from similar fields.
 
 Each accepted row keeps its own assessment identity and canonical revision.
+Its demand fingerprint and qualification policy remain explicit. All lookup,
+head, replay and publication guards use that same demand binding; adding a hash
+only to the initial cache lookup would not establish safe reuse.
 Rows share the batch determination/receipt ID and
 `provenance.accepted_result_fingerprint` for the complete raw result;
 `provenance.qualification_result_fingerprint` separately identifies the exact
@@ -149,6 +169,12 @@ The independent library composes Requirements' current canonical Skills and
 Professional Experience meanings, Profile's immutable achievement/wording snapshots and Fit's recorded assessments
 and exact coverage. It groups by achievement identity and shows original posting
 occurrences separately. Missing or stale relationships remain explicit.
+One capability can have several source-established demands. The library exposes
+their assessments separately, showing **Varies by job** instead of choosing the
+strongest/latest assessment. A missing or stale demand remains visible. Exact
+wording coverage binds its demand and assessment, not merely their shared model
+batch receipt. A common maintained variant may retain multiple demand bindings;
+uncovered demands stay explicit gaps without automatic editorial alternatives.
 
 Fit also owns revisioned manual associations between a requirement, achievement
 and optional exact wording. They retain their original meaning/source/wording

@@ -9,26 +9,26 @@ from collections.abc import Callable
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 
 from .domain import (
-    CATALOG_MATCHING_INSTRUCTION, COMPARISON_INSTRUCTION, CONTRACT_VERSION, EXTRACTION_INSTRUCTION, MEANING_KEYS,
+    CONTRACT_VERSION, EXTRACTION_INSTRUCTION, MEANING_KEYS,
     OCCURRENCE_CORRECTION_INSTRUCTION, OccurrenceCorrectionSelection,
-    CatalogMatching, Comparison, ExtractedRequirement, ExtractionSelection, ModelCallBudget, RequirementError, RevisionDecision,
-    bind_extraction, bind_occurrence_correction, canonical_json, current_contract, fingerprint, meaning_data, now,
-    validate_catalog_matching, validate_citations,
-    validate_comparison, validate_extraction_selection,
+    ExtractedRequirement, ExtractionSelection, ModelCallBudget, RequirementError, RevisionDecision,
+    bind_extraction, bind_occurrence_correction, canonical_json, current_contract, fingerprint, meaning_data, validate_citations,
+    validate_extraction_selection,
 )
 from .ports import PostingReader, RequirementModel, RequirementStore
+from .normalization import CatalogNormalizationService
+from .normalization_domain import NORMALIZATION_VERSION
 
 
 MAX_POSTING_BYTES = 192000
-MAX_CONSOLIDATION_ATTEMPTS = 4
-MAX_NEW_MODEL_CALLS_PER_REFRESH = 1 + MAX_CONSOLIDATION_ATTEMPTS
+MAX_NEW_MODEL_CALLS_PER_REFRESH = 2
 
 
 def _never_cancelled() -> bool:
     return False
 
 
-class RequirementsService:
+class RequirementsService(CatalogNormalizationService):
     def __init__(self, store: RequirementStore, jobs: PostingReader, model: RequirementModel):
         self.store = store
         self.jobs = jobs
@@ -66,6 +66,9 @@ class RequirementsService:
         except (ConflictError, NotFoundError):
             stale = True
         reasons = ["contract_changed"] if not current_contract(snapshot) else (["source_or_requirement_changed"] if stale else [])
+        if current_contract(snapshot) and snapshot.get("normalization_version") != NORMALIZATION_VERSION:
+            stale = True
+            reasons = ["consolidation_required"]
         return {**snapshot, "stale": stale, "stale_reasons": reasons, "latest_attempt": self.store.latest_attempt(job_id, connection)}
 
     def job_bindings(self, job_ids, connection=None, *, postings=None) -> dict:
@@ -106,6 +109,8 @@ class RequirementsService:
             with self.store.read_session() as connection:
                 return self.assert_current(snapshot, connection)
         self.store.assert_snapshot_current(snapshot, connection)
+        if snapshot.get("normalization_version") != NORMALIZATION_VERSION:
+            raise ConflictError("The accepted requirement snapshot needs complete catalog consolidation.", reason="consolidation_required")
         self.jobs.assert_posting_current(
             snapshot["job_id"], snapshot["posting_revision"], snapshot["posting_hash"], connection=connection,
         )
@@ -117,9 +122,12 @@ class RequirementsService:
         meaning = self.store.get_meaning(requirement_id, revision, connection)
         head = self.store.get_meaning(requirement_id, connection=connection)
         reasons = [] if current_contract(meaning) else ["contract_changed"]
+        root_id = self.store.alias_root(requirement_id, connection)
+        if root_id != requirement_id:
+            reasons.append("requirement_consolidated")
         if meaning["revision"] != head["revision"]:
             reasons.append("requirement_revised")
-        return {**meaning, "stale": bool(reasons), "stale_reasons": reasons}
+        return {**meaning, "stale": bool(reasons), "stale_reasons": reasons, "resolved_requirement_id": root_id}
 
     def catalog_snapshot(self, connection=None) -> dict:
         """Complete canonical semantic inventory from one transaction.
@@ -151,11 +159,14 @@ class RequirementsService:
     def catalog(self, *, limit=50, offset=0, query=""):
         with self.store.read_session() as connection:
             epoch, meanings = self._library_meanings(connection)
+            normalization = self.normalization_status(connection)
+            aliases = self.store.aliases(connection)
         # q is a literal user filter, never equivalence or novelty authority.
         if query:
             meanings = [row for row in meanings if query.casefold() in canonical_json({key: row[key] for key in MEANING_KEYS}).casefold()]
         return {"contract_version": CONTRACT_VERSION, "catalog_revision": epoch,
-                "total": len(meanings), "requirements": meanings[offset:offset + limit]}
+                "total": len(meanings), "requirements": meanings[offset:offset + limit],
+                "normalization": normalization, "aliases": aliases}
 
     def _active_library_requirement_ids(self, connection, requirement_id=None):
         roots = self.store.accepted_occurrence_jobs(connection, requirement_id)
@@ -177,8 +188,14 @@ class RequirementsService:
             with self.store.read_session() as connection:
                 return self.library_catalog_snapshot(connection)
         epoch, meanings = self._library_meanings(connection)
+        demand_catalog = self.demand_catalog_snapshot(connection, active_only=True)
         return {"contract_version": CONTRACT_VERSION, "catalog_revision": epoch,
-                "requirements": [{key: meaning[key] for key in ("requirement_id", "revision", *MEANING_KEYS)} for meaning in meanings]}
+                "requirements": [{key: meaning[key] for key in ("requirement_id", "revision", *MEANING_KEYS)} for meaning in meanings],
+                "normalization": self.normalization_status(connection),
+                "normalization_version": NORMALIZATION_VERSION,
+                "aliases": self.store.aliases(connection),
+                "demands": demand_catalog["demands"],
+                "consolidation_required_job_ids": demand_catalog["consolidation_required_job_ids"]}
 
     def _library_meanings(self, connection):
         epoch, meanings = self.store.catalog_snapshot(connection)
@@ -205,10 +222,14 @@ class RequirementsService:
 
     def requirement_detail(self, requirement_id, *, revision=None, limit=100, offset=0):
         with self.store.read_session() as connection:
+            requested_id = requirement_id
+            if revision is None:
+                requirement_id = self.store.alias_root(requirement_id, connection)
             meaning = self.get_requirement(requirement_id, revision, connection=connection)
             head = self.store.get_meaning(requirement_id, connection=connection)
             active = requirement_id in self._active_library_requirement_ids(connection, requirement_id)
-            return {**meaning, "current_revision": head["revision"], "active_in_library": active, "occurrences": self.store.occurrences(
+            return {**meaning, "requested_requirement_id": requested_id, "resolved_requirement_id": requirement_id,
+                "current_revision": head["revision"], "active_in_library": active, "occurrences": self.store.occurrences(
                 requirement_id, limit=limit, offset=offset, connection=connection,
             )}
 
@@ -217,12 +238,15 @@ class RequirementsService:
             raise AppError("invalid_history_kind", "Choose revisions or occurrences.")
         with self.store.read_session() as connection:
             head = self.store.get_meaning(requirement_id, connection=connection)
+            resolved_id = self.store.alias_root(requirement_id, connection)
             page = self.store.history(requirement_id, kind=kind, limit=limit, offset=offset, connection=connection)
             active = requirement_id in self._active_library_requirement_ids(connection, requirement_id)
             postings = self.jobs.get_job_snapshots(list(dict.fromkeys(row["job_id"] for row in page["rows"])),
                                                    connection=connection) if kind == "occurrences" else {}
             for row in page["rows"]:
                 reasons = [] if current_contract(row) else ["contract_changed"]
+                if row["requirement_id"] != resolved_id:
+                    reasons.append("requirement_consolidated")
                 recorded = row["revision"] if kind == "revisions" else row["requirement_revision"]
                 if recorded != head["revision"]:
                     reasons.append("requirement_revised")
@@ -235,7 +259,8 @@ class RequirementsService:
                             or posting.get("source_hash") != row["source_hash"]):
                         reasons.append("posting_changed_or_unavailable")
                 row.update(current=not reasons, stale_reasons=reasons)
-            return {"requirement_id": requirement_id, "current_revision": head["revision"], "active_in_library": active,
+            return {"requirement_id": requirement_id, "resolved_requirement_id": resolved_id,
+                    "current_revision": head["revision"], "active_in_library": active,
                     "kind": kind, "limit": limit, "offset": offset, **page}
 
     async def correct_occurrences(
@@ -254,7 +279,7 @@ class RequirementsService:
         identifiers = [row["occurrence_id"] for row in corrections]
         if len(set(identifiers)) != len(identifiers):
             raise RequirementError("invalid_correction_selection")
-        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "operation": "correct_occurrences",
+        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "operation": "correct_occurrences",
             "job_id": job_id, "expected_revision": expected_revision,
             "expected_posting_revision": expected_posting_revision, "corrections": corrections})
         replay = self._replay_snapshot(operation_id, action_fingerprint)
@@ -266,7 +291,8 @@ class RequirementsService:
             raise NotFoundError("This job has no accepted requirements yet.")
         if previous["revision"] != expected_revision:
             raise ConflictError("The accepted requirement snapshot changed.")
-        self.assert_current(previous)
+        with self.store.read_session() as connection:
+            self.store.assert_snapshot_current(previous, connection)
         if previous.get("status") != "complete" or previous.get("language", {}).get("classification") != "english":
             raise RequirementError("unsupported_language")
         originals = {row["occurrence_id"]: row for row in previous["requirements"]}
@@ -299,69 +325,38 @@ class RequirementsService:
             corrected = bind_occurrence_correction(selection, source_id=source_id, text=source_text,
                                                     occurrence_ids=identifiers)
             reasons = {row["occurrence_id"]: row["reason"] for row in corrections}
-            for consolidation_attempt in range(MAX_CONSOLIDATION_ATTEMPTS):
-                self._check_cancel(cancelled)
-                self.assert_current(previous)
-                epoch, catalog = self.store.catalog_snapshot()
-                try:
-                    meanings, resolved = await self._resolve_inventory(
-                        corrected, posting=posting, source_text=source_text, catalog=catalog, epoch=epoch,
-                        extraction_receipt=correction_receipt, budget=budget, cancelled=cancelled, heartbeat=heartbeat,
-                        source_binding=source_binding, refresh_binding={"correction_operation_id": attempt_id,
-                            "expected_snapshot_fingerprint": fingerprint(previous), "corrections": corrections},
-                        correction_guidance={
-                            "authority": "Reasons identify issues to review, never evidence or a forced target. Independently "
-                                "compare complete meanings and their owned posting evidence in both directions, including "
-                                "material role and duty obligations. Neither accept a critique as proof nor repeat a prior "
-                                "binding merely because the corrected wording is unchanged. Consider the complete catalog.",
-                            "selected_bindings": [{"occurrence_id": ident, "requirement_id": originals[ident]["requirement_id"],
-                                "requirement_revision": originals[ident]["requirement_revision"],
-                                "canonical": originals[ident]["canonical"], "reason": reasons[ident]}
-                                for ident in identifiers],
-                        },
-                    )
-                    by_id = {row["local_id"]: row for row in resolved}
-                    quote_ids = {quote.evidence_id: "correction:" + fingerprint({"receipt": correction_receipt["receipt_id"],
-                                 "evidence_id": quote.evidence_id}) for quote in corrected.quotes}
-                    occurrences = []
-                    for original in previous["requirements"]:
-                        ident = original["occurrence_id"]
-                        if ident in by_id:
-                            replacement = by_id[ident]
-                            row = {**replacement, "local_id": original["local_id"],
-                                   "evidence_refs": [quote_ids[ref] for ref in replacement["evidence_refs"]],
-                                   "correction_determination_id": correction_receipt["receipt_id"],
-                                   "provenance": {**replacement["provenance"], "semantic_stage": "occurrence_correction",
-                                       "origin": original["provenance"], "correction": {"reason": reasons[ident],
-                                           "previous_occurrence_id": ident, "receipt": correction_receipt,
-                                           "result_fingerprint": correction_receipt["accepted_result_fingerprint"],
-                                           "evidence_ids": quote_ids}}}
-                        else:
-                            row = {**original}
-                        occurrences.append({**row, "occurrence_id": str(uuid.uuid4()), "previous_occurrence_id": ident})
-                    for meaning in meanings:
-                        ident = meaning["provenance"]["matching_local_id"]
-                        meaning["provenance"].update(semantic_stage="occurrence_correction",
-                            origin=originals[ident]["provenance"], correction=correction_receipt)
-                    fields = {key: previous[key] for key in (
-                        "status", "language", "quotes", "education", "languages", "unresolved", "extraction_provenance",
-                    )}
-                    fields["quotes"] = [*previous["quotes"], *[
-                        {**quote.model_dump(), "evidence_id": quote_ids[quote.evidence_id]} for quote in corrected.quotes]]
-                    fields["correction_history"] = [*previous.get("correction_history", []), {
-                        "contract_version": CONTRACT_VERSION, "previous_revision": previous["revision"],
-                        "corrections": corrections, "receipt": correction_receipt,
-                        "result_fingerprint": correction_receipt["accepted_result_fingerprint"],
-                    }]
-                    self.store.publish(posting=posting, expected_revision=expected_revision, catalog_revision=epoch,
-                        meanings=meanings, occurrences=occurrences, extraction_id=previous["extraction_determination_id"],
-                        attempt_id=attempt_id, posting_guard=self.jobs.assert_posting_current, cancelled=cancelled,
-                        extraction=fields, previous_snapshot=previous)
-                    return self.get_job_requirements(job_id)
-                except RequirementError as failure:
-                    if failure.code != "catalog_changed" or consolidation_attempt + 1 == MAX_CONSOLIDATION_ATTEMPTS:
-                        raise
-            raise RequirementError("catalog_changed")
+            reasons = {row["occurrence_id"]: row["reason"] for row in corrections}
+            quote_ids = {quote.evidence_id: "correction:" + fingerprint({"receipt": correction_receipt["receipt_id"],
+                         "evidence_id": quote.evidence_id}) for quote in corrected.quotes}
+            selected = {row.local_id: row for row in corrected.requirements}
+            occurrences = []
+            for original in previous["requirements"]:
+                ident = original["occurrence_id"]
+                if ident not in selected:
+                    occurrences.append(dict(original))
+                    continue
+                row = self._proposed_occurrence(selected[ident], posting, correction_receipt, source_binding, attempt_id)
+                row.update(local_id=original["local_id"],
+                    evidence_refs=[quote_ids[ref] for ref in row["evidence_refs"]],
+                    correction_determination_id=correction_receipt["receipt_id"])
+                row["provenance"].update(semantic_stage="occurrence_correction", origin=original["provenance"],
+                    correction={"reason": reasons[ident], "previous_occurrence_id": ident,
+                        "receipt": correction_receipt, "result_fingerprint": correction_receipt["accepted_result_fingerprint"],
+                        "evidence_ids": quote_ids})
+                occurrences.append(row)
+            proposal = {**previous, "requirements": occurrences, "_attempt_id": attempt_id,
+                "quotes": [*previous["quotes"], *[{**quote.model_dump(), "evidence_id": quote_ids[quote.evidence_id]}
+                    for quote in corrected.quotes]],
+                "correction_history": [*previous.get("correction_history", []), {"contract_version": CONTRACT_VERSION,
+                    "previous_revision": previous["revision"], "corrections": corrections, "receipt": correction_receipt,
+                    "result_fingerprint": correction_receipt["accepted_result_fingerprint"]}]}
+            with self.store.read_session() as connection:
+                self.store.assert_snapshot_current(previous, connection)
+                captured = self.store.normalization_capture(connection)
+            await self._normalize_catalog(captured=captured, proposals={job_id: proposal}, incoming=self._incoming_members(occurrences),
+                operation_id=attempt_id, action_fingerprint=action_fingerprint, cancelled=cancelled,
+                heartbeat=heartbeat, budget=budget, guidance={"occurrence_corrections": corrections})
+            return self.get_job_requirements(job_id)
         except asyncio.CancelledError:
             self.store.finish_attempt(attempt_id, "cancelled", "cancelled")
             raise
@@ -376,81 +371,54 @@ class RequirementsService:
         reason: str, cancelled: Callable[[], bool] = _never_cancelled,
         operation_id: str | None = None,
     ) -> dict:
-        """Record an explicit, source-checked correction as a new snapshot.
-
-        Existing occurrences and accepted snapshots remain immutable. The
-        independent model checks the chosen target rather than trusting a UI ID
-        as equivalence authority, and publication fences source/catalog versions.
-        """
+        """Validate an explicit binding inside the mandatory complete partition."""
         self._validate_versions(expected_posting_revision, expected_revision)
         if not isinstance(reason, str) or not 0 < len(reason.strip()) <= 2000:
             raise RequirementError("correction_reason_required")
         if type(requirement_revision) is not int or requirement_revision < 1:
             raise RequirementError("invalid_revision")
-        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "operation": "correct_binding", "job_id": job_id,
-                                          "posting_revision": expected_posting_revision, "expected_revision": expected_revision,
-                                          "occurrence_id": occurrence_id, "target": [requirement_id, requirement_revision], "reason": reason})
+        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION,
+            "operation": "correct_binding", "job_id": job_id, "occurrence_id": occurrence_id,
+            "expected_revision": expected_revision, "expected_posting_revision": expected_posting_revision,
+            "requirement_id": requirement_id, "requirement_revision": requirement_revision, "reason": reason})
         replay = self._replay_snapshot(operation_id, action_fingerprint)
         if replay is not None:
             return replay
         posting = self.jobs.assert_posting_current(job_id, expected_posting_revision)
-        previous = self.get_job_requirements(job_id)
-        if previous["revision"] != expected_revision or previous["stale"]:
-            raise ConflictError("Refresh changed requirements before correcting their binding.")
+        with self.store.read_session() as connection:
+            previous = self.store.current_snapshot(job_id, connection)
+            if previous is None:
+                raise NotFoundError("This job has no accepted requirements yet.")
+            if previous["revision"] != expected_revision:
+                raise ConflictError("The accepted requirement snapshot changed.")
+            self.store.assert_snapshot_current(previous, connection)
+            captured = self.store.normalization_capture(connection)
         original = next((row for row in previous["requirements"] if row["occurrence_id"] == occurrence_id), None)
         if original is None:
             raise NotFoundError("The occurrence is not in the accepted job snapshot.")
-        epoch, catalog = self.store.catalog_snapshot()
-        target = next((row for row in catalog if row["requirement_id"] == requirement_id), None)
+        target = next((row for row in captured["roots"] if row["requirement_id"] == requirement_id), None)
         if target is None or target["revision"] != requirement_revision:
             raise ConflictError("The selected requirement revision changed.")
         if target["category"] != original["category"]:
             raise RequirementError("requirement_category_mismatch")
-        source_text = posting.get("text") or posting.get("description") or ""
-        source_id = self._model_source_id(posting)
-        canonical_id = f"requirement:{requirement_id}:{requirement_revision}"
-        source_map = {source_id: source_text, canonical_id: canonical_json(self._catalog_source(target))}
         attempt_id = operation_id or str(uuid.uuid4())
-        self.store.start_attempt({"attempt_id": attempt_id, "job_id": job_id,
-                                  "posting_revision": posting["revision"], "expected_revision": expected_revision,
-                                  "input_fingerprint": action_fingerprint})
+        self.store.start_attempt({"attempt_id": attempt_id, "job_id": job_id, "posting_revision": posting["revision"],
+                                  "expected_revision": expected_revision, "input_fingerprint": action_fingerprint})
         try:
-            self._check_cancel(cancelled)
-            comparison, receipt = await self.model.determine(
-                kind="requirements.correct_binding", schema=Comparison,
-                prompt_version="requirements-v2-binding-correction-v2", instruction=COMPARISON_INSTRUCTION,
-                sources=[{"source_id": ident, "text": text} for ident, text in source_map.items()],
-                context={"posting": self._posting_identity(posting), "incoming": {key: original[key] for key in (
-                    "category", "name", "definition", "basis", "rationale", "source_note", "spans",
-                )},
-                         "catalog_revision": epoch,
-                         "candidates": [{"requirement_id": requirement_id, "revision": requirement_revision}],
-                         "user_correction": {"reason": reason, "from_requirement_id": original["requirement_id"]}},
-                entity_id=job_id,
-                validate=lambda result: validate_comparison(result, candidates=[target], sources=source_map, incoming=source_id),
-            )
-            if comparison.decisions[0].relation != "equivalent":
-                raise RequirementError("binding_not_equivalent")
-            occurrences = []
-            for row in previous["requirements"]:
-                revised = {**row, "occurrence_id": str(uuid.uuid4()), "previous_occurrence_id": row["occurrence_id"]}
-                if row["occurrence_id"] == occurrence_id:
-                    revised.update({
-                        "requirement_id": requirement_id, "requirement_revision": requirement_revision,
-                        "revision": requirement_revision,
-                        "canonical": {key: target[key] for key in MEANING_KEYS},
-                        "equivalence_determination_ids": [receipt["receipt_id"]],
-                        "correction": {"reason": reason, "previous_requirement_id": original["requirement_id"],
-                                       "previous_requirement_revision": original["requirement_revision"], "provenance": receipt},
-                    })
-                occurrences.append(revised)
-            self.store.publish(
-                posting=posting, expected_revision=expected_revision, catalog_revision=epoch,
-                meanings=[], occurrences=occurrences, extraction_id=previous["extraction_determination_id"],
-                attempt_id=attempt_id, posting_guard=self.jobs.assert_posting_current, cancelled=cancelled,
-                extraction={key: previous[key] for key in ("status", "language", "quotes", "education", "languages", "unresolved", "extraction_provenance")},
-                event_type="RequirementBindingCorrected",
-            )
+            extracted = ExtractedRequirement.model_validate({key: original[key] for key in (
+                "local_id", "category", "name", "definition", "basis", "rationale", "source_note", "evidence_refs", "spans")})
+            source_binding = self._content_source(posting.get("text") or posting.get("description") or "")
+            replacement = self._proposed_occurrence(extracted, posting, original["provenance"]["extraction"],
+                source_binding, attempt_id, member_id="incoming:" + occurrence_id)
+            replacement["correction"] = {"reason": reason, "previous_requirement_id": original["requirement_id"],
+                                         "previous_requirement_revision": original["requirement_revision"]}
+            proposal = {**previous, "requirements": [replacement if row["occurrence_id"] == occurrence_id else dict(row)
+                for row in previous["requirements"]], "_attempt_id": attempt_id}
+            await self._normalize_catalog(captured=captured, proposals={job_id: proposal}, incoming=self._incoming_members([replacement]),
+                operation_id=attempt_id, action_fingerprint=action_fingerprint, cancelled=cancelled,
+                guidance={"binding_correction": {"reason": reason, "occurrence_id": occurrence_id,
+                    "requested_requirement_id": requirement_id, "authority": "The requested target is a user-selected hypothesis, not semantic proof."}},
+                required_bindings={replacement["_normalization_member_id"]: requirement_id})
             return self.get_job_requirements(job_id)
         except asyncio.CancelledError:
             self.store.finish_attempt(attempt_id, "cancelled", "cancelled")
@@ -476,7 +444,7 @@ class RequirementsService:
         self._validate_versions(expected_posting_revision, expected_revision)
         if not reason.strip():
             raise RequirementError("correction_reason_required")
-        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "operation": "revise", "requirement_id": requirement_id,
+        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "operation": "revise", "requirement_id": requirement_id,
                                           "expected_revision": expected_revision, "job_id": job_id,
                                           "expected_posting_revision": expected_posting_revision,
                                           "proposed": proposed.model_dump(), "reason": reason})
@@ -526,27 +494,19 @@ class RequirementsService:
             )}, "reason": reason},
             entity_id=requirement_id, validate=validate_revision, budget=budget,
         )
-        resolved, receipts, fresh = await self._resolve(
-            proposed, posting=posting, source_text=source_text, catalog=catalog, epoch=epoch,
-            extraction_receipt=correction_receipt, cancelled=cancelled, budget=budget, heartbeat=heartbeat,
-        )
-        if not fresh and resolved["requirement_id"] != requirement_id:
-            raise RequirementError("equivalent_requirement_already_exists")
-        revised = {
-            "requirement_id": requirement_id, "revision": expected_revision + 1, **meaning_data(proposed),
-            "created_at": now(), "provenance": {
-                "posting": self._posting_identity(posting), "spans": [span.model_dump() for span in proposed.spans],
-                "original": proposed.model_dump(exclude={"spans"}),
-                "correction": correction_receipt, "resolution": receipts, "reason": reason,
-                "previous_revision": expected_revision,
-                "catalog_matching": resolved["provenance"].get("catalog_matching") if fresh else None,
-            },
-        }
-        return self.store.revise_meaning(
-            revised=revised, expected_revision=expected_revision, catalog_revision=epoch,
-            posting=posting, posting_guard=self.jobs.assert_posting_current, cancelled=cancelled,
-            operation_id=operation_id, input_fingerprint=action_fingerprint,
-        )
+        with self.store.read_session() as connection:
+            captured = self.store.normalization_capture(connection)
+        if captured["catalog_revision"] != epoch:
+            raise RequirementError("catalog_changed")
+        attempt_id = operation_id or str(uuid.uuid4())
+        report = await self._normalize_catalog(captured=captured, proposals={}, incoming=[], operation_id=attempt_id,
+            action_fingerprint=action_fingerprint, cancelled=cancelled, heartbeat=heartbeat, budget=budget,
+            source_posting=posting,
+            guidance={"canonical_correction": {"requirement_id": requirement_id, "proposed": proposed.model_dump(),
+                "reason": reason, "support_receipt": correction_receipt,
+                "authority": "Review this source-checked correction while normalizing the complete catalog; preserve each job's own demand."}},
+            revision_action={"operation_id": attempt_id, "input_fingerprint": action_fingerprint, "requirement_id": requirement_id})
+        return self.get_requirement(report["mapping"][requirement_id])
 
     @staticmethod
     def _validate_versions(expected_posting_revision, expected_revision):
@@ -588,7 +548,7 @@ class RequirementsService:
         if type(force) is not bool:
             raise RequirementError("invalid_force")
         action_fingerprint = fingerprint({
-            "contract_version": CONTRACT_VERSION, "operation": "refresh", "job_id": job_id, "expected_posting_revision": expected_posting_revision,
+            "contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "operation": "refresh", "job_id": job_id, "expected_posting_revision": expected_posting_revision,
             "expected_revision": expected_revision, "force": force,
         })
         replay = self._replay_snapshot(operation_id, action_fingerprint)
@@ -631,30 +591,10 @@ class RequirementsService:
                 budget=budget, publication_posting=self._publication_identity(posting), source_binding=source_binding,
             )
             extraction = bind_extraction(selection, source_id=source_id, text=source_text)
-            extraction_id = extraction_receipt["receipt_id"]
-            for consolidation_attempt in range(MAX_CONSOLIDATION_ATTEMPTS):
-                self._check_cancel(cancelled)
-                epoch, catalog = self.store.catalog_snapshot()
-                try:
-                    new_meanings, occurrences = await self._resolve_inventory(
-                        extraction, posting=posting, source_text=source_text, catalog=catalog, epoch=epoch,
-                        extraction_receipt=extraction_receipt, budget=budget, cancelled=cancelled, heartbeat=heartbeat,
-                        source_binding=source_binding, refresh_binding=refresh_binding,
-                    )
-                    self.store.publish(
-                        posting=posting, expected_revision=expected_revision, catalog_revision=epoch,
-                        meanings=new_meanings, occurrences=occurrences, extraction_id=extraction_id,
-                        attempt_id=attempt_id, posting_guard=self.jobs.assert_posting_current, cancelled=cancelled,
-                        extraction=self._extraction_fields(extraction, posting, extraction_receipt, source_binding),
-                    )
-                    return self.get_job_requirements(job_id)
-                except RequirementError as failure:
-                    if failure.code != "catalog_changed" or consolidation_attempt + 1 == MAX_CONSOLIDATION_ATTEMPTS:
-                        raise
-                    # An independent discovery won publication. Recheck its
-                    # catalog with fresh model judgments before writing any ID.
-                    self.jobs.assert_posting_current(job_id, posting["revision"], posting["source_hash"])
-            raise RequirementError("catalog_changed")
+            await self._normalize_extraction(extraction, posting=posting, expected_revision=expected_revision,
+                extraction_receipt=extraction_receipt, source_binding=source_binding, operation_id=attempt_id,
+                action_fingerprint=action_fingerprint, budget=budget, cancelled=cancelled, heartbeat=heartbeat)
+            return self.get_job_requirements(job_id)
         except asyncio.CancelledError:
             self.store.finish_attempt(attempt_id, "cancelled", "cancelled")
             raise
@@ -663,50 +603,6 @@ class RequirementsService:
             state = "cancelled" if code == "cancelled" else "blocked"
             self.store.finish_attempt(attempt_id, state, code)
             raise
-
-    async def _resolve_inventory(self, extraction, *, posting, source_text, catalog, epoch,
-                                 extraction_receipt, budget, cancelled, heartbeat, source_binding=None, refresh_binding=None,
-                                 correction_guidance=None):
-        if not extraction.requirements:
-            return [], []
-        matches, receipt, inventory = await self._match_catalog(
-            extraction.requirements, posting=posting, source_text=source_text, catalog=catalog, epoch=epoch,
-            cancelled=cancelled, budget=budget, heartbeat=heartbeat,
-            source_binding=source_binding, refresh_binding=refresh_binding,
-            correction_guidance=correction_guidance,
-        )
-        new_meanings = []
-        occurrences = []
-        resolved = {}
-        candidates = {(row["requirement_id"], row["revision"]): row for row in catalog}
-        decisions = {row.local_id: row for row in matches.decisions}
-        for extracted in extraction.requirements:
-            self._check_cancel(cancelled)
-            decision = decisions[extracted.local_id]
-            if decision.verdict == "new":
-                meaning = self._new_meaning(extracted, posting, extraction_receipt, receipt, inventory)
-                new_meanings.append(meaning)
-            elif decision.equivalent_local_id is not None:
-                meaning = resolved[decision.equivalent_local_id]
-            else:
-                meaning = candidates[(decision.requirement_id, decision.requirement_revision)]
-            resolved[extracted.local_id] = meaning
-            occurrences.append({
-                "occurrence_id": str(uuid.uuid4()), "requirement_id": meaning["requirement_id"],
-                "requirement_revision": meaning["revision"], "revision": meaning["revision"],
-                "job_id": posting["job_id"], "posting_revision": posting["revision"],
-                "contract_version": CONTRACT_VERSION,
-                **extracted.model_dump(exclude={"spans"}),
-                "canonical": {key: meaning[key] for key in MEANING_KEYS},
-                "source_id": posting["source_id"], "model_source_id": source_binding["source_id"] if source_binding else self._model_source_id(posting),
-                "source_revision": posting["source_revision"], "source_hash": posting["source_hash"],
-                "spans": [span.model_dump() for span in extracted.spans],
-                "extraction_determination_id": extraction_receipt["receipt_id"],
-                "equivalence_determination_ids": [receipt["receipt_id"]],
-                "provenance": {"extraction": extraction_receipt, "resolution": [receipt],
-                               "catalog_matching": inventory, "matching_local_id": extracted.local_id},
-            })
-        return new_meanings, occurrences
 
     @classmethod
     def _extraction_fields(cls, extraction, posting, receipt, source_binding):
@@ -774,101 +670,3 @@ class RequirementsService:
     def _check_cancel(cancelled):
         if cancelled():
             raise RequirementError("cancelled")
-
-    async def _match_catalog(self, incoming, *, posting, source_text, catalog, epoch, cancelled,
-                             budget=None, heartbeat=None, source_binding=None, refresh_binding=None, correction_guidance=None):
-        self._check_cancel(cancelled)
-        source_id = source_binding["source_id"] if source_binding else self._model_source_id(posting)
-        candidate_keys = [(row["requirement_id"], row["revision"]) for row in catalog]
-        if len(candidate_keys) != len(set(candidate_keys)):
-            raise RequirementError("catalog_snapshot_invalid")
-        inventory = {
-            "contract_version": CONTRACT_VERSION, "catalog_revision": epoch, "candidate_count": len(catalog),
-            "candidate_set_fingerprint": fingerprint(sorted(candidate_keys)),
-            "meanings_fingerprint": fingerprint([{
-                "requirement_id": row["requirement_id"], "revision": row["revision"],
-                "meaning": self._catalog_source(row),
-            } for row in catalog]),
-        }
-        inventory_id = f"catalog-inventory:{fingerprint(inventory)}"
-        source_map = {source_id: source_text, inventory_id: canonical_json(inventory)}
-        incoming_source_ids = {}
-        incoming_binding = {"posting_content": source_binding,
-                            "inventory": [row.model_dump() for row in incoming]} if source_binding else None
-        for extracted in incoming:
-            identity = ({"input": incoming_binding, "local_id": extracted.local_id} if source_binding
-                        else {"posting": self._posting_identity(posting), "local_id": extracted.local_id})
-            incoming_id = f"incoming:{fingerprint(identity)}"
-            incoming_source_ids[extracted.local_id] = incoming_id
-            source_map[incoming_id] = canonical_json(extracted.model_dump())
-        for candidate in catalog:
-            source_map[f"requirement:{candidate['requirement_id']}:{candidate['revision']}"] = canonical_json(
-                self._catalog_source(candidate),
-            )
-        if heartbeat:
-            heartbeat({"phase": "requirements", "catalog_revision": epoch, "candidate_count": len(catalog),
-                       "incoming_count": len(incoming), **(budget.details() if budget is not None else {})})
-        # This one request contains every canonical definition and every
-        # incoming meaning. Admission or provider refusal cannot cause paging,
-        # truncation, an extra novelty call or partial publication.
-        matching, receipt = await self.model.determine(
-            kind="requirements.match_catalog", schema=CatalogMatching,
-            prompt_version="requirements-v2-catalog-match-v2-content-bound" if source_binding else "requirements-v2-catalog-match-v2", instruction=CATALOG_MATCHING_INSTRUCTION,
-            sources=[{"source_id": ident, "text": text} for ident, text in source_map.items()],
-            context={
-                "contract_version": CONTRACT_VERSION,
-                **({"correction_guidance": correction_guidance} if correction_guidance is not None else {}),
-                **({"posting_content": source_binding, "refresh_binding": refresh_binding} if source_binding
-                   else {"posting": self._posting_identity(posting)}), "catalog_revision": epoch,
-                "catalog_inventory_source_id": inventory_id,
-                "incoming": [{**row.model_dump(), "model_source_id": incoming_source_ids[row.local_id]} for row in incoming],
-                "candidates": [{"requirement_id": row["requirement_id"], "revision": row["revision"]} for row in catalog],
-            },
-            entity_id=None if source_binding else posting["job_id"],
-            validate=lambda result: validate_catalog_matching(
-                result, catalog=catalog, catalog_revision=epoch, incoming=incoming,
-                incoming_source_ids=incoming_source_ids, sources=source_map,
-                posting_source_id=source_id, inventory_source_id=inventory_id,
-            ),
-            budget=budget, publication_posting=self._publication_identity(posting) if source_binding else None,
-            source_binding=source_binding,
-        )
-        self._check_cancel(cancelled)
-        return matching, receipt, inventory
-
-    async def _resolve(self, extracted, *, posting, source_text, catalog, epoch, extraction_receipt, cancelled,
-                       budget=None, heartbeat=None):
-        matching, receipt, inventory = await self._match_catalog(
-            [extracted], posting=posting, source_text=source_text, catalog=catalog, epoch=epoch,
-            cancelled=cancelled, budget=budget, heartbeat=heartbeat,
-        )
-        decision = matching.decisions[0]
-        if decision.verdict == "equivalent":
-            return next(row for row in catalog if (row["requirement_id"], row["revision"]) == (
-                decision.requirement_id, decision.requirement_revision,
-            )), [receipt], False
-        return self._new_meaning(extracted, posting, extraction_receipt, receipt, inventory), [receipt], True
-
-    @classmethod
-    def _new_meaning(cls, extracted, posting, extraction_receipt, receipt, inventory):
-        source_binding = extraction_receipt.get("source_binding")
-        posting_binding = ({**cls._publication_identity(posting),
-                            "model_source_id": source_binding["semantic_source"]["source_id"]}
-                           if source_binding else cls._posting_identity(posting))
-        return {
-            "requirement_id": CONTRACT_VERSION + ":" + str(uuid.uuid5(uuid.NAMESPACE_URL, "jobctrl:requirement:" + fingerprint({
-                "contract_version": CONTRACT_VERSION,
-                # A purged identity must never be recreated as revision 1 over
-                # immutable Profile/audit provenance that names its old ID.
-                "creation_catalog_revision": inventory["catalog_revision"],
-                "semantic_source": source_binding["semantic_source"] if source_binding else cls._content_source(posting.get("text") or posting.get("description") or ""),
-                "local_id": extracted.local_id,
-                "meaning": meaning_data(extracted),
-            }))), "revision": 1, **meaning_data(extracted), "created_at": now(),
-            "provenance": {
-                "posting": posting_binding, "spans": [s.model_dump() for s in extracted.spans],
-                "original": extracted.model_dump(exclude={"spans"}),
-                "extraction": extraction_receipt, "resolution": [receipt],
-                "catalog_matching": inventory, "matching_local_id": extracted.local_id,
-            },
-        }

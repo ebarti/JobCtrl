@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .coverage import variant_fingerprint
 from .current_wording import assignment_view
-from .contract import current_contract
+from .contract import current_contract, qualification_key
 from .sources import achievements, qualification_fingerprint, wording_eligible
 
 
@@ -18,6 +18,8 @@ def valid_requirement_bindings(value):
         revision = row.get("requirement_revision")
         if not ((type(revision) is int and revision > 0) or (isinstance(revision, str) and bool(revision))):
             return False
+        if not isinstance(row.get("demand_fingerprint"), str) or not row["demand_fingerprint"]:
+            return False
     return True
 
 
@@ -26,7 +28,7 @@ def pending_wording_failures(read, snapshot):
     profile_id = profile["profile_id"]
     facts = {row["source_id"]: row for row in snapshot["facts"]}
     inventory = achievements(profile)
-    catalog = {row["requirement_id"]: row for row in snapshot["catalog"]["requirements"]}
+    catalog = {qualification_key(row): row for row in snapshot["demand_catalog"]["demands"]}
     current = {}
     for summary in read.authoring_proposals(profile_id):
         proposal = read.authoring_proposal(summary["proposal_id"], profile_id, include_brief=True, follow_retry=True)
@@ -54,26 +56,33 @@ def pending_wording_failures(read, snapshot):
         accepted = {}
         valid = True
         for row in members:
-            requirement = catalog.get(row["requirement_id"])
-            assessment = snapshot["prior_assessments"].get(row["requirement_id"])
-            if (requirement is None or str(requirement["revision"]) != str(row["requirement_revision"])
+            key = qualification_key(row)
+            requirement = catalog.get(key)
+            assessment = snapshot["prior_assessments"].get(key)
+            if (requirement is None or str(requirement["requirement_revision"]) != str(row["requirement_revision"])
                     or assessment is None or not wording_eligible(assessment)
                     or assessment["source_fingerprint"] != qualification_fingerprint(profile, requirement, snapshot["facts"])
                     or assessment["kind"] not in {"matched", "transferable"}
                     or owner not in assessment["achievement_ids"]
+                    or assessment["assessment_id"] != row.get("assessment_id")
                     or assessment["determination_id"] != row.get("qualification_determination_id")):
                 valid = False
                 break
-            accepted[row["requirement_id"]] = assessment
-        gaps = metadata["gap_requirement_ids"]
-        if (not valid or not isinstance(gaps, list)
-                or any(not isinstance(ident, str) or ident not in accepted for ident in gaps)):
+            accepted[key] = assessment
+        if not isinstance(metadata.get("gap_requirement_ids"), list):
+            continue
+        gap_bindings = metadata.get("gap_demand_bindings", [])
+        if gap_bindings and not valid_requirement_bindings(gap_bindings):
+            continue
+        gaps = [qualification_key(row) for row in gap_bindings]
+        if (not valid or any(ident not in accepted for ident in gaps)
+                or set(metadata["gap_requirement_ids"]) != {row["requirement_id"] for row in gap_bindings}):
             continue
         unresolved = []
         if metadata.get("authoring_action") == "propose_consolidation":
             selected = [assignment_view(row, read, profile) for row in maintained
-                        if row["achievement_id"] == owner and row["requirement_id"] in accepted]
-            if ({row["requirement_id"] for row in selected if row["current"]} != set(accepted)
+                        if row["achievement_id"] == owner and row["requirement_id"] in {item["requirement_id"] for item in members}]
+            if ({qualification_key({**row, **pin}) for row in selected for pin in row["demand_bindings"] if pin["current"]} != set(accepted)
                     or len({row["variant_id"] for row in selected}) != 1):
                 unresolved = list(accepted)
         for ident in gaps:
@@ -82,7 +91,7 @@ def pending_wording_failures(read, snapshot):
             for variant in profile["approved_variants"]:
                 if variant["achievement_id"] != owner or variant["achievement_id"] not in assessment["achievement_ids"]:
                     continue
-                relation = read.coverage(profile_id, ident, assessment["requirement_revision"], assessment["assessment_id"],
+                relation = read.coverage(profile_id, assessment["requirement_id"], assessment["requirement_revision"], assessment["assessment_id"],
                                          variant["variant_id"], variant["revision"])
                 if relation is not None and relation["covered"] and relation["variant_fingerprint"] == variant_fingerprint(variant):
                     covered = True
@@ -91,6 +100,6 @@ def pending_wording_failures(read, snapshot):
                 unresolved.append(ident)
         if unresolved:
             failures.append({key: proposal.get(key) for key in ("proposal_id", "status", "failure_code")} | {
-                "achievement_id": owner, "requirement_ids": unresolved,
+                "achievement_id": owner, "requirement_ids": sorted({accepted[key]["requirement_id"] for key in unresolved}),
             })
     return sorted(failures, key=lambda row: (row["achievement_id"], row["proposal_id"]))

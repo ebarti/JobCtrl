@@ -124,9 +124,9 @@ test("typed qualifications share one batch, use permitted Profile sections and r
   }));
   const matching = await modelCall(app, "requirements.match_catalog");
   matching.reply(catalogMatching(matching, {
-    python: { verdict: "equivalent", requirementId: seed.snapshot.requirements[0]!.requirement_id },
+    python: { verdict: "equivalent", requirementId: seed.snapshot.requirements[0]!.requirement_id, demandDefinition: seed.texts[0]! },
     operations: { verdict: "equivalent", requirementId: seed.snapshot.requirements[1]!.requirement_id },
-    "python-again": { verdict: "equivalent", requirementId: seed.snapshot.requirements[0]!.requirement_id },
+    "python-again": { verdict: "equivalent", requirementId: seed.snapshot.requirements[0]!.requirement_id, demandDefinition: seed.texts[0]! },
   }));
   const duplicateResponse = await extracting;
   expect(duplicateResponse.status(), await duplicateResponse.text()).toBe(200);

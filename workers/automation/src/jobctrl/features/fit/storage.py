@@ -12,7 +12,7 @@ from .serialization import encoded
 from .refresh_storage import RefreshStorage
 from .association_storage import AssociationStorage
 from .current_wording_storage import CurrentWordingStorage
-from .contract import CONTRACT_VERSION, current_contract, require_contract
+from .contract import CONTRACT_VERSION, current_contract, current_qualification, qualification_key, require_contract
 
 
 class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
@@ -54,13 +54,17 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
 
     def _assert_sources(self, connection, profile_snapshot, requirements_snapshot, *, full_profile=False):
         self._assert_profile(connection, profile_snapshot, full_profile=full_profile)
-        if "meanings_fingerprint" in requirements_snapshot and "job_id" not in requirements_snapshot:
+        if "demands" in requirements_snapshot and "snapshot_heads" in requirements_snapshot:
+            self.requirements.assert_current_demand_catalog(requirements_snapshot, connection=connection)
+        elif "meanings_fingerprint" in requirements_snapshot and "job_id" not in requirements_snapshot:
             self.requirements.assert_current_catalog(requirements_snapshot, connection=connection)
         else:
             self.requirements.assert_current(requirements_snapshot, connection=connection)
 
     def _assert_assessment(self, connection, assessment, *, expected_id=None):
         require_contract(assessment)
+        if not current_qualification(assessment):
+            raise ConflictError("The accepted qualification semantics changed. Start a manual Fit refresh.")
         latest = self.latest_assessment(
             assessment["profile_id"], assessment["requirement_id"], assessment["requirement_revision"],
             source_fingerprint=assessment["source_fingerprint"], connection=connection,
@@ -69,6 +73,10 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
         expected = expected_id if expected_id is not None else assessment["assessment_id"]
         if actual != expected:
             raise ConflictError("The accepted person qualification changed during inference.")
+        if latest is not None and any(latest.get(key) != assessment.get(key) for key in (
+                "demand_fingerprint", "definition", "capability_definition", "category",
+                "qualification_semantics_version", "qualification_prompt_version")):
+            raise ConflictError("The accepted qualification belongs to a different source demand.")
         return latest
 
     def _assert_score(self, connection, job_id, expected_revision):
@@ -91,12 +99,12 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
     def publish_assessment(self, record, facts, profile_snapshot, requirements_snapshot,
                            expected_assessment_id, *, cancelled=lambda: False):
         return self.publish_assessments([record], facts, profile_snapshot, requirements_snapshot,
-            {record["requirement_id"]: expected_assessment_id}, cancelled=cancelled)[0]
+            {qualification_key(record): expected_assessment_id}, cancelled=cancelled)[0]
 
     def publish_assessments(self, records, facts, profile_snapshot, requirements_snapshot,
                             expected_assessment_ids, *, expected_prior_assessment_ids=None, initial_job_id=None,
                             cancelled=lambda: False):
-        identifiers = [record["requirement_id"] for record in records]
+        identifiers = [qualification_key(record) for record in records]
         if (len(identifiers) != len(set(identifiers)) or set(identifiers) != set(expected_assessment_ids)
                 or expected_prior_assessment_ids is not None and set(identifiers) != set(expected_prior_assessment_ids)
                 or initial_job_id is not None and (
@@ -112,12 +120,13 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
                     record["profile_id"], record["requirement_id"], record["requirement_revision"],
                     source_fingerprint=record["source_fingerprint"], connection=connection,
                 )
-                if (latest["assessment_id"] if latest else None) != expected_assessment_ids[record["requirement_id"]]:
+                key = qualification_key(record)
+                if (latest["assessment_id"] if latest else None) != expected_assessment_ids[key]:
                     raise ConflictError("The accepted person qualification changed during inference.")
                 if expected_prior_assessment_ids is not None:
                     previous = self.latest_requirement_assessment(record["profile_id"], record["requirement_id"],
-                                                                  connection=connection)
-                    if (previous["assessment_id"] if previous else None) != expected_prior_assessment_ids[record["requirement_id"]]:
+                                                                  connection=connection, demand_fingerprint=record.get("demand_fingerprint"))
+                    if (previous["assessment_id"] if previous else None) != expected_prior_assessment_ids[key]:
                         raise ConflictError("The historical person qualification changed during inference.")
             published = []
             for record in records:
@@ -176,6 +185,10 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
             requirement = self.requirements.get_requirement(requirement_id, connection=connection)
             if str(requirement.get("requirement_revision") or requirement["revision"]) != str(requirement_revision):
                 raise ConflictError("The canonical requirement has changed.")
+            demands = self.requirements.demand_catalog_snapshot(connection=connection, active_only=True)
+            if not any(qualification_key(row) == qualification_key(record)
+                       and row["definition"] == record["definition"] for row in demands["demands"]):
+                raise ConflictError("The corrected source demand changed before publication.")
             self._assert_assessment(connection, record, expected_id=expected_assessment_id)
             accepted = self.save_assessment(connection, record, facts)
             self._event(connection, "FitRequirementCorrected", {"requirementId": requirement_id,
@@ -216,6 +229,10 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
     def latest_assessment(self, profile_id, requirement_id, requirement_revision, *, source_fingerprint=None,
                           connection=None) -> dict | None:
         def load(conn):
+            # A bare canonical ID has several possible demand qualifications.
+            # Historical reads use explicit assessment IDs, never a chosen head.
+            if source_fingerprint is None:
+                return None
             query = """SELECT assessment_json FROM fit_assessments
                        WHERE profile_id=? AND requirement_id=? AND requirement_revision=?
                        AND json_extract(assessment_json,'$.contract_version')=?"""
@@ -234,8 +251,16 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
             return json.loads(row[0]) if row else []
         return self._read(load, connection)
 
+    def coverage_relation(self, relation_id, connection=None):
+        def load(conn):
+            row = conn.execute("SELECT relation_json FROM fit_coverage_relations WHERE relation_id=?", (relation_id,)).fetchone()
+            return json.loads(row[0]) if row else None
+        return self._read(load, connection)
+
     def save_assessment(self, conn, record: dict, sources: list[dict]) -> dict:
         require_contract(record)
+        if not current_qualification(record):
+            raise ConflictError("The candidate qualification contract changed before publication.")
         previous = self.assessment(record["assessment_id"], conn)
         if previous is not None:
             if encoded(previous) != encoded(record):
@@ -516,6 +541,7 @@ class SqliteFitReadSession:
 
     def __init__(self, store, connection):
         self._store, self._connection = store, connection
+        self._demand_catalogs = {}
 
     def assessment(self, assessment_id):
         return self._store.assessment(assessment_id, self._connection)
@@ -526,6 +552,9 @@ class SqliteFitReadSession:
 
     def assessment_sources(self, assessment_id):
         return self._store.assessment_sources(assessment_id, self._connection)
+
+    def coverage_relation(self, relation_id):
+        return self._store.coverage_relation(relation_id, self._connection)
 
     def coverage(self, profile_id, requirement_id, requirement_revision, assessment_id, variant_id, variant_revision):
         return self._store.coverage(profile_id, requirement_id, requirement_revision, assessment_id, variant_id,
@@ -579,6 +608,12 @@ class SqliteFitReadSession:
     def library_catalog_snapshot(self):
         return self._store.requirements.library_catalog_snapshot(connection=self._connection)
 
+    def demand_catalog_snapshot(self, *, active_only=False):
+        if active_only not in self._demand_catalogs:
+            self._demand_catalogs[active_only] = self._store.requirements.demand_catalog_snapshot(
+                connection=self._connection, active_only=active_only)
+        return self._demand_catalogs[active_only]
+
     def wording_library(self, profile_id="default"):
         return self._store.profile.library(profile_id, connection=self._connection)
 
@@ -600,8 +635,9 @@ class SqliteFitReadSession:
     def current_wording_history(self, assignment_id, profile_id, *, limit, offset):
         return self._store._current_wording_history(assignment_id, profile_id, limit=limit, offset=offset, connection=self._connection)
 
-    def latest_requirement_assessment(self, profile_id, requirement_id):
-        return self._store.latest_requirement_assessment(profile_id, requirement_id, self._connection)
+    def latest_requirement_assessment(self, profile_id, requirement_id, *, demand_fingerprint):
+        return self._store.latest_requirement_assessment(profile_id, requirement_id, self._connection,
+                                                         demand_fingerprint=demand_fingerprint)
 
     def completed_refresh(self, profile_id):
         return self._store.completed_refresh(profile_id, self._connection)

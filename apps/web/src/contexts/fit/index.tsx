@@ -382,6 +382,6 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
 }
 
 export const fitInvalidation = {
-  eventTypes: ["FitAssessed", "FitCorrected", "FitRequirementCorrected", "FitCoverageUpdated", "FitRefreshUpdated", "FitAssociationUpdated", "FitCurrentWordingUpdated", "ProfileUpdated", "ProfileWordingUpdated", "ProfileSourceUpdated", "JobCaptured", "JobSourceObserved", "JobUpdated", "RequirementBindingCorrected", "RequirementsUpdated", "RequirementMeaningRevised"] as const,
+  eventTypes: ["FitAssessed", "FitCorrected", "FitRequirementCorrected", "FitCoverageUpdated", "FitRefreshUpdated", "FitAssociationUpdated", "FitCurrentWordingUpdated", "ProfileUpdated", "ProfileWordingUpdated", "ProfileSourceUpdated", "JobCaptured", "JobSourceObserved", "JobUpdated", "RequirementBindingCorrected", "RequirementsUpdated", "RequirementMeaningRevised", "RequirementsConsolidated"] as const,
   handle(event: DomainEventEnvelope, client: QueryClient) { void invalidateQueriesWithOptimisticOwnership(client, fitKeys.all(event.tenantId)); },
 };

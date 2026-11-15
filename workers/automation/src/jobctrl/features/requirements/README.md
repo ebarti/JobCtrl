@@ -61,13 +61,12 @@ rules. In particular, implementing a strategy does not by itself establish
 hands-on execution; guide/lead/implement wording or seniority alone cannot
 justify a different identity. Matching compares the actual competence and its
 owned evidence. It cannot invent a scope distinction to justify novelty.
-Equivalence must preserve what the candidate has to demonstrate when either
-complete meaning replaces the other. Shared topics and ordinary-facet wording
-cannot add or drop independently established capabilities or background demands.
-A valid incoming meaning with only broader, narrower or partial catalog
-candidates is new if the complete catalog has no equivalent; invalid extraction
-or genuine ambiguity still refuses acceptance. Binding correction applies the
-same comparison in both directions to its selected target.
+Capability identity describes the competence's core, independently of one job's
+complete demand. Ordinary assessment, audience, method and outcome facets do not
+justify another identity. Genuine source-established conditions remain in the
+normalized job demand and cannot be omitted or imposed on other jobs. Invalid
+extraction or genuine ambiguity refuses acceptance. Binding and meaning
+corrections pass the same complete normalization boundary before publication.
 
 Each raw quote is `{evidence_id, source_id, quote}`. Every quote must be nonblank,
 verbatim, contiguous, unique in its exact source, and used by the language
@@ -117,29 +116,42 @@ field and value, revision 1, exact spans and extraction provenance. These IDs
 are job-local. Direct fields never enter catalog equivalence, the reusable
 library or achievement-wording authoring.
 
-The public `snapshot_items(snapshot)` adapter requires this generation and a
-complete extraction. It returns detached per-occurrence assessment rows, using
-the recorded canonical meaning for reusable items while retaining `original`.
+The public `snapshot_items(snapshot)` adapter requires this generation, a complete
+extraction and `normalization_version: requirements-capability-demand-v1`.
+It returns detached per-occurrence assessment rows retaining `original`.
+Canonical ID/revision/category/name identify the capability; `capability_definition`
+retains its core. `definition`, `demand_fingerprint` and `demand_provenance` bind
+the normalized combined source demand being assessed. Same-job occurrences of
+one capability agree on that demand and are counted once by Fit. An old accepted
+snapshot remains readable but cannot supply current assessment inputs until
+explicit consolidation; the adapter refuses `requirements_consolidation_required`.
 Direct rows expose `requirement_revision`, `occurrence_id`, `name` and the exact
 structured direct meaning serialized as JSON. The adapter makes no semantic
 judgment and does not mutate the accepted snapshot.
 
 ## Complete matching and exact reuse
 
-One `requirements.match_catalog` determination sees the complete incoming
-Skills/Experience inventory and the entire active canonical catalog. Canonical
-sources contain each definition/category/name plus its original extraction and
-quoted posting evidence. The catalog inventory binds its epoch, full ID/revision
-set and source meanings. There is no top-k selection, paging, chunking, lexical
-fallback or separate novelty judgment.
+One `requirements.match_catalog` determination, versioned
+`requirements-capability-demand-v1`, sees the complete incoming Skills/Experience
+inventory and retained current-generation catalog, including hidden meanings.
+Canonical sources contain their definitions, original extraction and quoted
+posting evidence; accepted occurrences and available posting sources establish
+job demands. The inventory binds its epoch, complete ID/revision set and source
+authority. There is no top-k selection, paging, chunking, lexical fallback or
+separate novelty judgment. Existing-only repair and every semantic ingestion or
+correction use this mandatory gate.
 
-Every incoming local ID receives exactly one `equivalent`, `new` or `uncertain`
-verdict. Canonical equivalence names an exact catalog ID/revision. Incoming
-equivalence points directly to an earlier genuinely new representative, never a
-chain. Cross-category substitution, unknown/duplicate/missing IDs, stale targets,
-invalid source citations or any uncertainty refuse the whole result. Each
-decision cites the posting, its incoming meaning and the complete inventory;
-equivalence also cites its selected target. All occurrences remain recorded.
+`CatalogNormalization` contains `status`, exact `catalog_revision`,
+`capabilities`, `demands` and explicit `unresolved` entries. Capabilities partition
+every supplied existing/incoming member once and carry normalized category,
+name/core definition, reason, citations and nullable exact reuse authority.
+Code selects a stable existing survivor after the model decides membership.
+Demands account for every occurrence once and combine each job/capability into
+one source-established demand. Equivalent jobs may share an exact normalized
+signature; materially different demands remain separate under the same capability.
+Each group cites the inventory and all its members; demands cite the inventory
+and all bound occurrences. Unknown/duplicate/missing IDs, invalid exact reuse,
+non-verbatim sources, stale targets or uncertainty refuse the complete result.
 
 The feature cache binds the entire sent request: operation, prompt/instructions,
 strict schema, every source/context value and one frozen provider/model/effort/
@@ -158,15 +170,21 @@ result invalid under owner rules is never accepted cache authority. Destination
 `source_binding` separately records the real job/posting versions without
 rewriting the shared semantic result or implying another provider call.
 
-A refresh permits extraction and at most four complete-catalog attempts under
-concurrent publication. The complete description remains bounded to 192,000
+A refresh performs extraction and one complete consolidation determination. An
+explicit existing-only consolidation performs one determination. Durable call
+intent accounting prevents an interrupted operation from resetting allowance;
+only exact settled authority may be recovered. A source/catalog race refuses
+the captured work rather than starting an automatic repair loop. The complete
+description remains bounded to 192,000
 bytes and the gateway enforces its complete serialized input limit before
 provider admission. Size, context, lane, capacity, budget and provider refusals
 preserve accepted state without smaller requests or automatic repair calls.
 
 ## Generations, history and publication
 
-Existing SQL schema strings remain unchanged. New meaning JSON, occurrences,
+Existing SQL schema strings remain unchanged. A separately initialized
+`requirements_normalization_v1` extension owns aliases, reconciliation records,
+call intents and the current certificate. New meaning JSON, occurrences,
 snapshots, semantic requests, cache provenance and action fingerprints explicitly
 use `requirements-v2`; new canonical IDs use its namespace. Missing generation
 means legacy. Catalog snapshots, library reads and repairable index views expose
@@ -178,22 +196,25 @@ Legacy accepted snapshots, meaning revisions, occurrences and receipts remain
 readable with `stale_reasons: [contract_changed]`. They cannot pass currentness
 checks, enter a current catalog, qualify new work or resume/replay as new
 operations. Versioned durable actions reject incompatible action replay before
-returning old terminal results. No read, save or generation transition starts
+returning old terminal results. Current actions additionally bind the normalization
+policy, and old typed snapshots expose `consolidation_required` staleness. No
+read, save or generation transition starts
 model work. Operational rollout requires stopped old writers and a workspace
 backup; rollback after new writes restores that backup.
 
-Inference occurs outside the write transaction. Publication uses one
-transaction to check cancellation, expected accepted revision, the public Jobs
-posting revision/hash, and the captured catalog epoch before appending meanings,
-occurrences and the snapshot and moving the accepted pointer. A catalog race may
-repeat one bounded complete matching determination. Posting or accepted-state
-changes refuse publication. Failed, cancelled or interrupted work retains the
-previous accepted snapshot and historical artifacts.
+Inference occurs outside the write transaction. Publication checks cancellation,
+the complete captured catalog/member heads, affected accepted snapshot heads and
+public Jobs posting identities in one transaction. It appends changed capability
+revisions, explicit aliases, replacement Requirements snapshots and the
+reconciliation certificate together. Unchanged semantic bindings retain their
+versions and authority. Historical rows are never rewritten. Source/catalog races
+refuse publication; failed, cancelled or interrupted work retains the previous
+accepted snapshots, scores, wording approvals and document bytes. Current
+navigation may follow a recorded alias; exact historical revision reads do not.
 
-Explicit binding correction compares only the selected current-generation
-target with the original occurrence, then publishes a new immutable snapshot.
-Canonical correction applies the same scope/exclusions and a whole-catalog
-check, appends a revision and leaves older bindings visibly stale. Both retain
+Explicit binding correction requires the complete normalization result to put
+the selected source and target in the same capability. Canonical correction
+applies the same scope/exclusions and whole-catalog gate. Both retain
 source-bound receipt authority and explicit user reasons. Public
 `assert_current` and `assert_current_catalog` can join a consumer's transaction.
 Requirements writes emit invalidations; they do not schedule Fit or wording work.
@@ -208,28 +229,27 @@ snapshot must be current, English and complete. Direct demands are not selected.
 One source-bound model batch returns exactly one corrected reusable meaning per
 selected occurrence ID, using owned verbatim posting quotes. Split, merge,
 deletion, extra/missing IDs, unsupported evidence and ambiguity refuse the
-operation. Only this corrected batch enters the existing whole-active-catalog
-determination. It may reuse an existing meaning or append a new one; it cannot
-rewrite a canonical meaning or reinterpret an unselected occurrence.
+operation. This corrected batch enters the same whole-retained-catalog
+consolidation. Original fields of unselected occurrences remain unchanged;
+their capability/demand bindings can be reconciled under the complete captured
+source authority. There is no arbitrary catalog edit or direct SQL merge.
 
 Publication rechecks the exact prior snapshot and every original canonical head,
 posting revision/hash, catalog epoch and cancellation in one transaction. All
 occurrences receive new physical IDs and `previous_occurrence_id` because IDs
-are globally unique. Unselected semantic fields, binding, evidence and authority
-are copied exactly. Direct/language arrays are retained. Corrected fields name
+are globally unique. Unselected original semantic fields and evidence are
+retained. Direct/language arrays are retained. Corrected fields name
 the correction receipt/result fingerprint as their current authority, retaining
 prior extraction under `provenance.origin`. New meanings cite the correction and
 matching receipts. The snapshot retains its full original extraction provenance,
 adds namespaced correction quotes and appends `correction_history`.
 
-The operation permits at most five new call admission intents across its durable
-lifetime: one correction and at most four catalog-race resolutions. Append-only
-intents in the existing owner cache reserve allowance before dispatch. Exact
-accepted cache/settled receipt recovery makes no new call. A reserved input
-without accepted settled authority refuses with
-`requirements_correction_call_unsettled` instead of spending again. Worker
-recovery cannot reset allowance. Races cannot expand the selected set, and a
-changed original head refuses publication. Reads/writes admit no Fit followup.
+The operation permits one correction batch and one complete normalization call.
+Append-only intents reserve allowance before dispatch; exact settled authority
+can be recovered without another call. An unsettled reserved input refuses
+instead of spending again. Worker recovery cannot reset allowance. Races cannot
+expand the selected set; changed captured input refuses publication. These
+writes admit no Fit followup.
 
 ## Public entrypoints
 
@@ -238,6 +258,7 @@ changed original head refuses publication. Reads/writes admit no Fit followup.
 | `GET/HEAD /v1/jobs/{job_id}/requirements` | Accepted snapshot with currentness, or JSON null for an existing unassessed Job. No work. |
 | `POST /v1/jobs/{job_id}/requirements` | `expected_posting_revision`, `expected_revision`, optional `force`. |
 | `GET /v1/requirements` | Bounded active catalog; `q` is a literal user filter. |
+| `POST /v1/requirements/consolidate` | Explicit existing-only repair with `expected_catalog_revision` and optional stable `operation_id`. |
 | `GET /v1/requirements/index` | Active-generation index counts and exact freshness. |
 | `POST /v1/requirements/index/rebuild` | Mechanical active-index repair under `expected_catalog_revision`, zero model calls. |
 | `GET /v1/requirements/{requirement_id}` | Current or exact historical meaning, original provenance and accepted occurrences. |
@@ -245,14 +266,24 @@ changed original head refuses publication. Reads/writes admit no Fit followup.
 | `POST /v1/jobs/{job_id}/requirements/{occurrence_id}/binding` | Versioned explicit binding correction with selected target and reason. |
 | `POST /v1/jobs/{job_id}/requirements/corrections` | Source-bound one-to-one correction of selected occurrence meanings and bindings. |
 | `POST /v1/requirements/{requirement_id}/revisions` | Versioned source-bound canonical correction. Proposed shape is the extracted requirement plus exact spans. |
-| `requirements.refresh`, `requirements.correct_binding`, `requirements.correct_occurrences`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2`. |
+| `requirements.consolidate`, `requirements.refresh`, `requirements.correct_binding`, `requirements.correct_occurrences`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2:requirements-capability-demand-v1`. Durable consolidation uses the run identity and accepts `expected_catalog_revision`. |
 
 Public owner methods also include nullable `find_job_requirements`, required
 `get_job_requirements`, exact/historical `get_requirement`, full
-`catalog_snapshot`, `assert_current_catalog`, `assert_current`, and bounded
+`catalog_snapshot`, `assert_current_catalog`, `demand_catalog_snapshot`,
+`assert_current_demand_catalog`, `normalization_status`, `assert_current`, and bounded
 `job_bindings`. Bindings include generation/status, accepted/current revisions
 (including job-local direct IDs) and explicit stale reasons. Missing/deleted Jobs
 remain 404. Returned JSON is detached and reads make no provider calls.
+
+`normalization_status` reports policy version, catalog epoch, `ready`,
+`reconciliation_id` and the certificate's epoch. The complete demand catalog
+retains normalized variants, snapshot heads and posting tokens; its optional
+active projection excludes semantic work for deleted-only jobs while the
+retained catalog remains the identity-matching source. Consolidation reports
+the captured/new epochs, complete member-to-root mapping, root definitions,
+affected jobs and immutable model receipt. An alias cannot transfer assessment,
+coverage or approval authority. Fit consumes demand-scoped recorded bindings.
 
 `library_catalog_snapshot` is a separate read projection: accepted reusable
 occurrences count only while their Job exists and is not soft-deleted. Jobs'

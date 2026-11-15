@@ -28,6 +28,8 @@ jobs:
           persist-credentials: false
       - name: Fetch the fixed predecessor for the real workspace upgrade journey
         run: git fetch --no-tags --depth=1 origin 8ab86e9232d66fff9795906e061d208e7a057d8b
+      - name: Fetch the fixed predecessor for the real catalog consolidation journey
+        run: git fetch --no-tags --depth=1 origin 5b9db7ddfa20fa2d618687da1b311e2287286679
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - name: Set up Node

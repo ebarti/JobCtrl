@@ -286,6 +286,38 @@ test("demo tour retains local exact wording approval, durable edits and a real a
       linkedAchievement.getByText("Your link · unassessed", { exact: true }),
     ).toBeVisible();
 
+    await page.getByRole("textbox", { name: "Find a requirement", exact: true }).fill("");
+    const savedRequirements = page.getByRole("table", { name: "Saved requirements", exact: true });
+    await expect(savedRequirements.locator("tbody tr[data-row-id]")).toHaveCount(5);
+    const platformRow = savedRequirements.getByRole("row").filter({
+      has: page.getByRole("cell", { name: "Platform delivery leadership", exact: true }),
+    });
+    await expect(platformRow.getByRole("cell", { name: "Varies by job", exact: true })).toBeVisible();
+    await platformRow.click();
+    const demands = page.getByRole("region", { name: "Job-specific demands", exact: true });
+    const demandDetails = demands.locator("ol.requirement-demands__list > li > details");
+    await expect(demandDetails).toHaveCount(2);
+    const authoredDemands = [
+      { definition: "Guide reliable platform delivery.", jobId: "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35", outcome: "Matched" },
+      { definition: "Guide a reliability engineering team.", jobId: "job-contoso-reliability", outcome: "Missing" },
+    ];
+    const requestsBeforeDemandReads = productRequests.length;
+    for (const [index, demand] of authoredDemands.entries()) {
+      const disclosure = demandDetails.nth(index);
+      await expect(disclosure.locator(":scope > summary")).toContainText(demand.outcome);
+      await disclosure.locator(":scope > summary").click();
+      await expect(disclosure.getByText(demand.definition, { exact: true })).toBeVisible();
+      await expect(disclosure).toContainText("Authored synthetic illustration");
+      await expect(disclosure).toContainText("no model assessment ran.");
+      await disclosure.locator("summary").filter({ hasText: /^Source jobs and demand identity$/ }).click();
+      const sourceLink = disclosure.getByRole("link", { name: "Open source job 1", exact: true });
+      await expect(sourceLink).toBeVisible();
+      expect(new URL((await sourceLink.getAttribute("href"))!, origin).pathname).toBe(`/jobs/${demand.jobId}`);
+    }
+    await expect(page.getByRole("status", { name: "Public demo data boundary", exact: true })).toContainText("synthetic browser-local data");
+    expect(productRequests).toHaveLength(requestsBeforeDemandReads);
+    await testInfo.attach("demo-authored-distinct-job-demands", { contentType: "image/png", body: await page.screenshot({ fullPage: true }) });
+
     await page
       .getByRole("button", { name: "Open demo guide", exact: true })
       .click();
@@ -416,7 +448,7 @@ test("demo tour retains local exact wording approval, durable edits and a real a
       "The real update action is unavailable in this demo.",
     );
     await expect(previous).toBeDisabled();
-    await expect(walkthrough).toContainText("the complete incoming batch and the entire active catalog");
+    await expect(walkthrough).toContainText("the complete incoming batch and the entire retained catalog");
     await expect(walkthrough).toContainText("The reusable catalog contains Skills and Professional Experience.");
     await expect(walkthrough).toContainText("Direct education/language demands never enter the catalog or request achievement wording.");
     await expect(walkthrough).toContainText("Skills and experience cannot establish language proficiency.");

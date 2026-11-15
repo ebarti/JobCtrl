@@ -9,16 +9,18 @@ from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 
 from .qualification import now
 from .serialization import encoded
-from .contract import CONTRACT_VERSION, require_contract
+from .contract import CONTRACT_VERSION, qualification_key, require_contract
+from .models import QUALIFICATION_PROMPT_VERSION, QUALIFICATION_SEMANTICS_VERSION
 from .sources import FrozenFitProfileSnapshot, approved_fingerprint, dto, fact_fingerprint
 
 
 class RefreshStorage:
-    def latest_requirement_assessment(self, profile_id, requirement_id, connection=None):
+    def latest_requirement_assessment(self, profile_id, requirement_id, connection=None, *, demand_fingerprint):
         def load(conn):
             row = conn.execute(
-                "SELECT assessment_json FROM fit_assessments WHERE profile_id=? AND requirement_id=? ORDER BY rowid DESC LIMIT 1",
-                (profile_id, requirement_id),
+                "SELECT assessment_json FROM fit_assessments WHERE profile_id=? AND requirement_id=?"
+                " AND json_extract(assessment_json,'$.demand_fingerprint') IS ? ORDER BY rowid DESC LIMIT 1",
+                (profile_id, requirement_id, demand_fingerprint),
             ).fetchone()
             return json.loads(row[0]) if row else None
         return self._read(load, connection)
@@ -41,7 +43,10 @@ class RefreshStorage:
         def load(conn):
             row = conn.execute(
                 "SELECT state_json FROM fit_refresh_operations WHERE profile_id=? AND status='completed'"
-                " AND json_extract(state_json,'$.contract_version')=? ORDER BY rowid DESC LIMIT 1", (profile_id, CONTRACT_VERSION),
+                " AND json_extract(state_json,'$.contract_version')=?"
+                " AND json_extract(state_json,'$.qualification_semantics_version')=?"
+                " AND json_extract(state_json,'$.qualification_prompt_version')=? ORDER BY rowid DESC LIMIT 1",
+                (profile_id, CONTRACT_VERSION, QUALIFICATION_SEMANTICS_VERSION, QUALIFICATION_PROMPT_VERSION),
             ).fetchone()
             return json.loads(row[0]) if row else None
         return self._read(load, connection)
@@ -71,9 +76,13 @@ class RefreshStorage:
 
     def _assert_refresh_inputs(self, connection, state):
         require_contract(state)
+        if (state.get("qualification_semantics_version") != QUALIFICATION_SEMANTICS_VERSION
+                or state.get("qualification_prompt_version") != QUALIFICATION_PROMPT_VERSION):
+            raise AppError("fit_refresh_stale", "The qualification contract changed. Start a new manual refresh.", 409)
         snapshot = FrozenFitProfileSnapshot(state["snapshot"]["profile"], state["snapshot"]["guidance"])
         self._assert_profile(connection, snapshot, full_profile=True)
         self.requirements.assert_current_catalog(state["snapshot"]["catalog"], connection=connection)
+        self.requirements.assert_current_demand_catalog(state["snapshot"]["demand_catalog"], connection=connection)
         expected_wordings = state.get("accepted_wordings_fingerprint", state["snapshot"].get("current_wordings_fingerprint"))
         if (expected_wordings is not None
                 and self.current_wordings_fingerprint(state["profile_id"], connection=connection) != expected_wordings):
@@ -90,8 +99,12 @@ class RefreshStorage:
             if current != expected:
                 raise ConflictError("A selected failed wording proposal changed during the manual retry.")
         accepted = state.get("accepted_assessment_ids", {})
+        requirements = {qualification_key(row): row for row in
+                        state["snapshot"]["demand_catalog"]["demands"] + state["snapshot"]["direct_requirements"]}
         for ident, before in state["snapshot"]["prior_assessments"].items():
-            current = self.latest_requirement_assessment(state["profile_id"], ident, connection)
+            requirement = requirements[ident]
+            current = self.latest_requirement_assessment(state["profile_id"], requirement["requirement_id"], connection,
+                                                          demand_fingerprint=requirement.get("demand_fingerprint"))
             expected = accepted.get(ident, before["assessment_id"] if before else None)
             if (current["assessment_id"] if current else None) != expected:
                 raise ConflictError("A catalog qualification changed during the manual refresh.")

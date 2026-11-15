@@ -15,6 +15,17 @@ remain outside achievement selection. Fit supplies persisted, source-bound cover
 relation stays unknown/uncovered. Resumes performs no meaning judgment and does
 not write a person score.
 
+Requirements additionally supplies `requirements-capability-demand-v1` source-
+established demands. Fit coverage binds exact capability revision, normalized
+demand and assessment alongside wording revision/approval. Resumes consumes the
+binding applicable to its job; a sibling demand's positive coverage or shared
+batch receipt cannot substitute. One maintained common variant may retain several
+exact demand bindings, with uncovered demands left explicit. The selection
+objective still gives one point to each eligible capability per job. Recorded
+aliases or catalog consolidation cannot transfer approval or make an earlier
+assessment current. Changed source bindings produce historical freshness while
+preserving the last accepted document bytes; no read regenerates them.
+
 For every achievement exactly one approved variant is chosen. The exact dynamic
 program gives each eligible canonical requirement one internal policy point.
 It first maximizes distinct covered requirements, then complementary supports

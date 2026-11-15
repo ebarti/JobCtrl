@@ -198,6 +198,24 @@ preserving authored Profile facts/wording and independent immutable audit
 receipts. A later explicit extraction can establish a new meaning after that
 removal; deleted history cannot be restored.
 
+Capability-consolidation clarification (2026-11-15): every semantic publication
+must pass a complete retained-catalog consolidation decision, including
+existing-existing entries and hidden meanings. Ordinary phases, audiences,
+quality checks and outcomes must not multiply reusable capability identities;
+independent expertise and explicitly demanded named technologies stay distinct.
+Retain original source demands and bind qualification to a model-normalized
+combined demand per job/capability. One capability contributes at most one Fit
+and composition-policy item per job. Reuse requires its exact revision, demand,
+permitted Profile-source fingerprint and qualification-policy/prompt version.
+Append source-bound reconciliation, alias and replacement-snapshot authority
+atomically; preserve exact historical records, approvals and accepted bytes.
+An alias cannot inherit a favorable assessment or coverage. Uncertain, partial,
+stale, cancelled or refused work publishes no repair. There is no target count,
+lexical fallback, per-item inference fanout or automatic downstream refresh.
+The library shows demand-specific support rather than selecting one sibling
+assessment as global authority. See the
+[consolidation decision](decisions.md#capability-consolidation-and-source-demand).
+
 ## Technical Requirements
 
 ### Product Surface And Runtime

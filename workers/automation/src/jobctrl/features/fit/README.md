@@ -26,7 +26,8 @@ assessment item. Deleting a job removes its direct assessment records together
 with its score/operation records; reusable person/requirement authority remains.
 
 `unique_requirements` consumes Requirements' public `snapshot_items` adapter,
-which joins reusable occurrences to exact canonical category, name and definition.
+which joins reusable occurrences to exact canonical capability identity and the
+normalized combined job demand, retaining the core definition separately.
 The original source-bound extraction, source note and occurrence IDs remain
 inspectable. Repeated occurrences of a canonical meaning count once. Source notes
 are retained for explanation and do not affect score arithmetic. Unsupported
@@ -36,17 +37,48 @@ qualification work.
 
 ## One complete qualification batch
 
+Requirements' mandatory `requirements-capability-demand-v1` consolidation owns
+one capability identity plus the normalized complete demand for each job. Fit
+uses that demand's definition, fingerprint and provenance, retaining the core
+separately. Qualification semantics `fit-qualification-demand-v1`, the exact
+prompt version, capability revision and permitted Profile evidence all bind
+reuse/currentness. Every lookup, head comparison, correction, refresh checkpoint
+and publication uses the same tuple. Old qualification/operation authority stays
+readable but cannot become current through a changed prompt or recorded alias.
+
+Same-job repeated occurrences yield one capability item. Identical normalized
+demands can reuse exact accepted authority across jobs; different demands cannot
+share one assessment simply because their capability ID is equal. Manual refresh
+captures Requirements' public demand inventory and retained catalog under source
+fences, qualifies only its admitted affected demand scope and scores selected
+jobs. Deleted-only demands do not start new qualification work. Reads, saves,
+approvals and the operation's own writes never schedule a refresh.
+
+The library keeps one canonical row and exposes `demand_assessments` and an
+explicit scope/summary. Multiple demands show `varies_by_job`, with no chosen
+scalar assessment. Incomplete unnormalized source inventory remains
+`consolidation_required`; verified partial rows do not claim full support.
+
+Grouped wording coverage uses `fit-wording-coverage-demand-v1` and exact demand
+and assessment pins. One common maintained variant stores all of its exact
+positive `demand_bindings`; sibling gaps remain explicit. A shared batch receipt
+cannot authorize another row's demand, and an alias transfers no qualification,
+coverage or approval. Maintained heads participate in cached selection identity
+and CAS. A singleton selection cannot silently truncate the aggregate or replace
+its common text without complete-group authority. Resumes projects only its
+job's applicable binding and retains one capability policy point.
+
 `FitService.assess_job` and `Qualification.resolve_many` inspect the entire fixed
 job item set, reuse exact current authority, then submit every pending category
 together in one `fit.qualification-batch` determination, prompt
-`fit-qualification-batch-v3`, in the existing `scoring` lane. The complete Profile
-source inventory is supplied once. Each item has its own `requirement:<id>` source,
-category, revision and permitted evidence IDs. There are no chunks, truncated
+`fit-qualification-batch-v4-demand`, in the existing `scoring` lane. The complete Profile
+source inventory is supplied once. Each item has its own capability/demand source,
+category, revision, demand fingerprint and permitted evidence IDs. There are no chunks, truncated
 inventories, lexical judgments, per-item semantic retries or result replay cache.
 An all-current set makes zero qualification calls.
 
 The strict response remains `{ requirements: QualificationDecision[] }`. It must
-contain every requested ID/revision exactly once. Decisions retain `kind`,
+contain every requested ID/revision/demand binding exactly once. Decisions retain `kind`,
 `strength`, confidence, rationale, exact citations, supported achievement IDs and
 model-supplied keyword labels. They also record `evidence_route` and
 `wording_support`. Only recorded authored or explicitly confirmed Profile sources

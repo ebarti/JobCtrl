@@ -18,12 +18,16 @@ import {
   modelSources,
   typedExtraction,
 } from "./requirements-data.js";
-import { qualificationBatchDecision } from "./qualification-data.js";
+import { qualificationBatchDecision, qualificationKey } from "./qualification-data.js";
 export { qualificationBatchDecision } from "./qualification-data.js";
 
 export type FitAssessment = {
   assessment_id: string;
   requirement_id: string;
+  demand_fingerprint: string | null;
+  capability_definition: string;
+  normalization_version: string | null;
+  qualification_semantics_version: string;
   kind: string;
   determination_id: string;
   provenance: {
@@ -80,6 +84,7 @@ export type ImpactContext = {
   requirements: {
     requirement_id: string;
     requirement_revision: string;
+    demand_fingerprint: string | null;
     canonical_source_id: string;
     saved_assessment_source_id: string;
     prior_assessment_id: string | null;
@@ -91,6 +96,8 @@ export type ImpactContext = {
 type CoverageRelationBinding = {
   requirement_id: string;
   requirement_revision: string;
+  demand_fingerprint: string;
+  assessment_id: string;
   achievement_id: string;
   variant_id: string;
   variant_revision: string;
@@ -98,13 +105,32 @@ type CoverageRelationBinding = {
 export type GroupedCoverageContext = {
   binding: {
     achievement_id: string;
-    requirements: { requirement_id: string; requirement_revision: string }[];
+    requirements: { requirement_id: string; requirement_revision: string; demand_fingerprint: string; assessment_id: string }[];
     approved_variants: { variant_id: string }[];
   };
   missing_relations: CoverageRelationBinding[];
 };
 
-export function groupedCoverageDecision(
+type CoverageChoice = {
+  evidenceSourceId: string;
+  status: "covered" | "partial" | "not_covered";
+  action: "reuse_approved" | "propose_wording" | "no_meaningful_gap";
+  reusableVariantId?: string | null;
+  gapRequirementIds?: string[];
+  gapDemandBindings?: { requirement_id: string; requirement_revision: string; demand_fingerprint: string }[];
+};
+
+export function groupedCoverageDecision(call: ExternalCall, options: CoverageChoice) {
+  expect(call.body["prompt_version"]).toBe("fit-wording-coverage-demand-v1");
+  return coverageResponse(call, options, true);
+}
+
+/** Explicit pre-normalization predecessor response, never a current fallback. */
+export function legacyGroupedCoverageDecision(call: ExternalCall, options: CoverageChoice) {
+  return coverageResponse(call, options, false);
+}
+
+function coverageResponse(
   call: ExternalCall,
   {
     evidenceSourceId,
@@ -112,15 +138,19 @@ export function groupedCoverageDecision(
     action,
     reusableVariantId = null,
     gapRequirementIds = [],
-  }: {
-    evidenceSourceId: string;
-    status: "covered" | "partial" | "not_covered";
-    action: "reuse_approved" | "propose_wording" | "no_meaningful_gap";
-    reusableVariantId?: string | null;
-    gapRequirementIds?: string[];
-  },
+    gapDemandBindings,
+  }: CoverageChoice,
+  withDemand: boolean,
 ) {
   const context = call.body["context"] as GroupedCoverageContext;
+  const requirementSourceId = (binding: GroupedCoverageContext["binding"]["requirements"][number]) =>
+    "requirement:" + (withDemand ? qualificationKey(binding) : binding.requirement_id);
+  const gaps = withDemand ? gapDemandBindings ?? gapRequirementIds.map((id) => {
+    const matches = context.binding.requirements.filter((row) => row.requirement_id === id);
+    expect(matches, "Author exact gapDemandBindings when a capability has several source demands").toHaveLength(1);
+    const { requirement_id, requirement_revision, demand_fingerprint } = matches[0]!;
+    return { requirement_id, requirement_revision, demand_fingerprint };
+  }) : [];
   return {
     achievement_id: context.binding.achievement_id,
     relations: context.missing_relations.map((binding) => ({
@@ -129,19 +159,20 @@ export function groupedCoverageDecision(
       rationale:
         "Explicit expression coverage against the complete grouped requirement set and exact approved wording.",
       citations: citeSources(call, [
-        `requirement:${binding.requirement_id}`,
+        requirementSourceId(binding),
         `approved-variant:${binding.variant_id}`,
         evidenceSourceId,
       ]),
     })),
     action,
     reusable_variant_id: reusableVariantId,
-    gap_requirement_ids: gapRequirementIds,
+    gap_requirement_ids: withDemand ? [...new Set(gaps.map((row) => row.requirement_id))] : gapRequirementIds,
+    ...(withDemand ? { gap_demand_bindings: gaps } : {}),
     rationale:
       "One source-bound expression decision for the full achievement requirement set.",
     citations: citeSources(call, [
       ...context.binding.requirements.map(
-        (row) => `requirement:${row.requirement_id}`,
+        requirementSourceId,
       ),
       evidenceSourceId,
       ...(reusableVariantId ? [`approved-variant:${reusableVariantId}`] : []),
@@ -153,15 +184,28 @@ export function impactPartition(
   call: ExternalCall,
   choices: Record<string, "affected" | "unchanged">,
 ) {
+  return impactResponse(call, choices, true);
+}
+
+/** Only for the fixed public predecessor's earlier impact wire contract. */
+export function legacyImpactPartition(call: ExternalCall, choices: Record<string, "affected" | "unchanged">) {
+  return impactResponse(call, choices, false);
+}
+
+function impactResponse(call: ExternalCall, choices: Record<string, "affected" | "unchanged">, withDemand: boolean) {
   const context = call.body["context"] as ImpactContext;
+  if (withDemand) expect(context.requirements.every((row) => Object.hasOwn(row, "demand_fingerprint"))).toBe(true);
+  const keyFor = (row: ImpactContext["requirements"][number]) => context.requirements.filter((other) => other.requirement_id === row.requirement_id).length > 1
+    ? qualificationKey(row) : row.requirement_id;
   expect(Object.keys(choices).sort()).toEqual(
-    context.requirements.map((row) => row.requirement_id).sort(),
+    context.requirements.map(keyFor).sort(),
   );
   return {
     requirements: context.requirements.map((requirement) => ({
       requirement_id: requirement.requirement_id,
       requirement_revision: requirement.requirement_revision,
-      verdict: choices[requirement.requirement_id],
+      ...(withDemand ? { demand_fingerprint: requirement.demand_fingerprint } : {}),
+      verdict: choices[keyFor(requirement)],
       rationale:
         "Explicit impact choice against this requirement's own frozen before/current source inventory.",
       citations: citeSources(call, [

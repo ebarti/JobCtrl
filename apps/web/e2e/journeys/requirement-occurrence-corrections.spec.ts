@@ -1,6 +1,6 @@
 import type { APIRequestContext } from "@playwright/test";
 import { test, expect, json, modelCall, completed, terminal, type ApplicationStack, type ExternalCall } from "../harness/fixtures.js";
-import { catalogMatching, typedExtraction, modelSources, type CatalogContext, type CatalogChoice } from "./requirements-data.js";
+import { catalogMatching, catalogMemberMeaning, typedExtraction, modelSources, type CatalogContext } from "./requirements-data.js";
 import { captureReusePosting, acceptReuseRequirements, type CapturedPosting } from "./reuse-data.js";
 
 const ACTION = "requirements.correct_occurrences";
@@ -98,17 +98,18 @@ function revision(call: ExternalCall, value: Seed) {
 }
 
 function resolution(call: ExternalCall, value: Seed, uncertain = false) {
-  const context = call.body["context"] as CatalogContext & { correction_guidance: {
-    authority: string; selected_bindings: { occurrence_id: string; requirement_id: string; requirement_revision: number; canonical: unknown; reason: string }[];
-  }; refresh_binding: { corrections: Corrections } };
+  const context = call.body["context"] as CatalogContext & { guidance: { occurrence_corrections: Corrections } };
   expect(context.incoming.map((row) => row.local_id)).toEqual(value.snapshot.requirements.slice(0, 2).map((row) => row.occurrence_id));
   expect(new Set(context.candidates.map((row) => row.requirement_id))).toEqual(new Set(value.catalog.requirements.map((row) => row.requirement_id)));
-  expect(context.correction_guidance.authority.trim()).not.toBe("");
-  expect(context.correction_guidance.selected_bindings).toEqual(value.snapshot.requirements.slice(0, 2).map((row) => ({
-    occurrence_id: row.occurrence_id, requirement_id: row.requirement_id, requirement_revision: row.requirement_revision,
-    canonical: row["canonical"], reason: context.refresh_binding.corrections.find((selected) => selected.occurrence_id === row.occurrence_id)!.reason,
-  })));
-  expect(modelSources(call).map((row) => row.text)).not.toContain(context.correction_guidance.authority);
+  expect(context.guidance.occurrence_corrections.map((row) => row.occurrence_id)).toEqual(value.snapshot.requirements.slice(0, 2).map((row) => row.occurrence_id));
+  for (const correction of context.guidance.occurrence_corrections) {
+    expect(correction.reason.trim()).not.toBe("");
+    // User correction intent is guidance; it cannot become a source citation.
+    expect(modelSources(call).some((row) => row.text.includes(correction.reason))).toBe(false);
+  }
+  for (const original of value.snapshot.requirements.slice(0, 2)) {
+    expect(catalogMemberMeaning(call, original.requirement_id)).toMatchObject(original["canonical"] as Record<string, unknown>);
+  }
   return catalogMatching(call, {
     [context.incoming[0]!.local_id]: uncertain ? { verdict: "uncertain" } : { verdict: "equivalent", requirementId: value.existingId },
     [context.incoming[1]!.local_id]: { verdict: "new" },
@@ -305,7 +306,7 @@ test("scoped occurrence corrections refuse a posting edit during catalog resolut
   expect(operations(app, before)).toEqual([ACTION, "requirements.match_catalog"]);
 });
 
-test("scoped occurrence corrections keep the five-call bound through repeated catalog races and exact replay", async ({ api, app }) => {
+test("scoped occurrence corrections refuse a catalog race after one complete reconciliation and keep exact replay inert", async ({ api, app }) => {
   const value = await seed(api, app, "occurrence-call-bound");
   await allowOwnedOverlap(api);
   const payload = body(value, "Bounded complete correction");
@@ -313,24 +314,17 @@ test("scoped occurrence corrections keep the five-call bound through repeated ca
   const run = await start(api, payload, "occurrence-call-bound");
   const call = await modelCall(app, ACTION);
   call.reply(revision(call, value));
-  for (let index = 0; index < 4; index += 1) {
-    const held = await modelCall(app, "requirements.match_catalog");
-    const added = await captureReusePosting(api, `occurrence-catalog-race-${index}`, `Maintain owned operational record ${index + 1}.`);
-    await acceptReuseRequirements(api, app, added,
-      [{ localId: `record-${index}`, text: added.description }], { [`record-${index}`]: { verdict: "new" } });
-    const context = held.body["context"] as CatalogContext;
-    const choices: Record<string, CatalogChoice> = {
-      [context.incoming[0]!.local_id]: { verdict: "equivalent", requirementId: value.existingId },
-      [context.incoming[1]!.local_id]: { verdict: "new" },
-    };
-    held.reply(catalogMatching(held, choices));
-  }
+  const held = await modelCall(app, "requirements.match_catalog");
+  const added = await captureReusePosting(api, "occurrence-catalog-race-winner", "Maintain an owned operational record.");
+  await acceptReuseRequirements(api, app, added,
+    [{ localId: "record", text: added.description }], { record: { verdict: "new" } });
+  held.reply(resolution(held, value));
   expect(await terminal(api, run.runId)).toMatchObject({ status: "failed", errorCode: "catalog_changed" });
   await retained(api, value);
-  const correctionIds = value.snapshot.requirements.slice(0, 2).map((row) => row.occurrence_id).toSorted();
-  const ownCalls = app.external.calls.slice(before).filter((row) => row.body["operation"] === ACTION ||
-    row.body["operation"] === "requirements.match_catalog" && JSON.stringify((row.body["context"] as CatalogContext).incoming.map((item) => item.local_id).toSorted()) === JSON.stringify(correctionIds));
-  expect(ownCalls.map((row) => row.body["operation"])).toEqual([ACTION, ...Array.from({ length: 4 }, () => "requirements.match_catalog")]);
+  // The held correction made one correction call and one complete catalog
+  // call. The other two calls belong to the independently accepted winner.
+  expect(operations(app, before)).toEqual([ACTION, "requirements.match_catalog", "requirements.extract", "requirements.match_catalog"]);
+  expect(app.external.calls.slice(before).filter((row) => row === call || row === held)).toHaveLength(2);
   const beforeReplay = app.external.calls.length;
   expect((await start(api, payload, "occurrence-call-bound")).runId).toBe(run.runId);
   expect(app.external.calls).toHaveLength(beforeReplay);

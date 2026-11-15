@@ -10,7 +10,8 @@ from typing import Any
 from jobctrl.app.errors import AppError
 
 from .serialization import encoded
-from .contract import CONTRACT_VERSION, DIRECT_CATEGORIES, require_contract
+from .contract import CONTRACT_VERSION, DIRECT_CATEGORIES, qualification_binding, require_contract
+from .models import QUALIFICATION_PROMPT_VERSION, QUALIFICATION_SEMANTICS_VERSION
 
 
 def fingerprint(value: Any) -> str:
@@ -114,7 +115,14 @@ def qualification_fingerprint(profile: dict, requirement: dict, facts=None) -> s
     facts = fact_sources(profile) if facts is None else facts
     selected = permitted_facts(requirement, facts)
     experience = any(evidence_category(row) == "professional_experience" for row in selected)
-    return fingerprint({"contract_version": CONTRACT_VERSION, "sources": selected,
+    return fingerprint({"contract_version": CONTRACT_VERSION,
+                        "qualification_semantics_version": QUALIFICATION_SEMANTICS_VERSION,
+                        "qualification_prompt_version": QUALIFICATION_PROMPT_VERSION,
+                        "binding": qualification_binding(requirement),
+                        "definition": requirement["definition"],
+                        "capability_definition": requirement.get("capability_definition"),
+                        "normalization_version": requirement.get("normalization_version"),
+                        "sources": selected,
                         "guidance": [row for row in facts if row.get("kind") == "user_scoring_guidance"],
                         "achievements": achievement_inventory(profile) if experience else {}})
 
@@ -122,7 +130,7 @@ def qualification_fingerprint(profile: dict, requirement: dict, facts=None) -> s
 def job_fingerprint(profile: dict, requirements: list[dict]) -> str:
     facts = fact_sources(profile)
     return fingerprint({"contract_version": CONTRACT_VERSION,
-        "requirements": [{"requirement_id": row["requirement_id"],
+        "requirements": [{**qualification_binding(row),
                           "sources": qualification_fingerprint(profile, row, facts)} for row in requirements]})
 
 
@@ -143,6 +151,9 @@ def requirement_source(requirement: dict) -> dict:
     text = encoded({"contract_version": CONTRACT_VERSION,
                     "category": requirement["category"], "name": requirement["name"],
                     "definition": requirement["definition"],
+                    "capability_definition": requirement.get("capability_definition"),
+                    "demand_fingerprint": requirement.get("demand_fingerprint"),
+                    "normalization_version": requirement.get("normalization_version"),
                     **{key: requirement[key] for key in ("qualification", "subjects", "alternative", "language", "proficiency")
                        if key in requirement}})
     return {"source_id": "requirement", "revision": str(requirement["requirement_revision"]), "text": text}

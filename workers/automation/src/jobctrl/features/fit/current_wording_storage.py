@@ -7,7 +7,8 @@ import json
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 
-from .current_wording import ASSIGNMENT_PINS, assignment_reasons, assignment_view, require_current_assignment
+from .current_wording import (ASSIGNMENT_PINS, assignment_demand_views, assignment_reasons, assignment_view,
+                              require_current_assignment)
 from .current_wording_authority import validate_selection
 from .qualification import now
 from .serialization import encoded
@@ -52,13 +53,11 @@ class CurrentWordingStorage:
         # meaning is permanently removed. Only retained meanings need repinning.
         required.intersection_update(row["requirement_id"] for row in read.catalog_snapshot()["requirements"])
         for ident in required - {request["requirement_id"]}:
-            requirement = read.requirement(ident)
-            if not current_contract(requirement):
-                continue
-            assessment = read.latest_assessment(profile["profile_id"], ident, requirement["revision"],
-                source_fingerprint=qualification_fingerprint(profile, requirement))
-            if assessment is not None and (not wording_eligible(assessment)
-                    or request["achievement_id"] not in assessment["achievement_ids"]):
+            requirements = [row for row in read.demand_catalog_snapshot(active_only=True)["demands"] if row["requirement_id"] == ident]
+            assessments = [read.latest_assessment(profile["profile_id"], ident, row["requirement_revision"],
+                source_fingerprint=qualification_fingerprint(profile, row)) for row in requirements]
+            if assessments and all(row is not None and (not wording_eligible(row)
+                    or request["achievement_id"] not in row["achievement_ids"]) for row in assessments):
                 continue
             mapped = next((row for row in (heads if resulting_heads is None else resulting_heads)
                            if row["state"] == "active" and row["requirement_id"] == ident
@@ -108,7 +107,13 @@ class CurrentWordingStorage:
 
     def _activate_current_wording(self, connection, pins, previous, profile, selection_provenance, request_fingerprint=None):
         pins = {**pins, "requirement_revision": int(pins["requirement_revision"]), "variant_revision": int(pins["variant_revision"])}
-        if (previous is not None and previous["state"] == "active" and all(previous[key] == pins[key] for key in ASSIGNMENT_PINS)
+        bindings = pins.get("demand_bindings", [])
+        if (not bindings or len({row.get("demand_fingerprint") for row in bindings}) != len(bindings)
+                or any(set(row) != {"demand_fingerprint", "assessment_id", "relation_id"}
+                       or any(not isinstance(value, str) or not value for value in row.values()) for row in bindings)):
+            raise AppError("fit_current_wording_scope_invalid", "Maintain exact unique demand/assessment/coverage pins.", 422)
+        pins["demand_bindings"] = sorted(bindings, key=lambda row: row["demand_fingerprint"])
+        if (previous is not None and previous["state"] == "active" and all(previous.get(key) == pins[key] for key in ASSIGNMENT_PINS)
                 and previous["selection_provenance"] == selection_provenance):
             return previous
         created = now()
@@ -140,9 +145,29 @@ class CurrentWordingStorage:
                     raise ConflictError("The reviewed Profile changed before wording selection.")
                 if (previous["revision"] if previous else 0) != request["expected_revision"]:
                     raise ConflictError("The maintained wording changed. Review its current assignment.")
+                relation = read.coverage_relation(request["relation_id"])
+                if (relation is None or not isinstance(relation.get("demand_fingerprint"), str)
+                        or not relation["demand_fingerprint"] or any(str(relation[key]) != str(request[key]) for key in (
+                        "profile_id", "achievement_id", "requirement_id", "requirement_revision", "variant_id", "variant_revision", "approval_id"))):
+                    raise ConflictError("Select the exact current demand-specific coverage relation.")
+                bindings = {relation.get("demand_fingerprint"): {key: relation[key] for key in
+                            ("demand_fingerprint", "assessment_id", "relation_id")}}
+                if previous is not None and previous["state"] == "active":
+                    for binding in assignment_demand_views(previous, read, profile):
+                        if not binding["current"]:
+                            continue
+                        maintained = read.coverage(request["profile_id"], request["requirement_id"], request["requirement_revision"],
+                            binding["assessment_id"], request["variant_id"], request["variant_revision"])
+                        if (maintained is None or not maintained["covered"]
+                                or maintained.get("demand_fingerprint") != binding["demand_fingerprint"]):
+                            raise AppError("fit_wording_consolidation_required",
+                                "Review this capability's complete demand set before changing its common wording.", 409)
+                        bindings[binding["demand_fingerprint"]] = {key: maintained[key] for key in
+                            ("demand_fingerprint", "assessment_id", "relation_id")}
+                request = {**request, "demand_bindings": sorted(bindings.values(), key=lambda row: row["demand_fingerprint"])}
                 require_current_assignment(request, read, profile)
                 if (previous is not None and previous["state"] == "active"
-                        and all(str(previous[key]) == str(request[key]) for key in ASSIGNMENT_PINS)):
+                        and all(previous.get(key) == request[key] for key in ASSIGNMENT_PINS)):
                     return assignment_view(previous, read, profile)
                 self._guard_manual_replacement(request, heads, read, profile)
                 self._guard_manual_variants(request, heads)
@@ -189,7 +214,7 @@ class CurrentWordingStorage:
                     exact_replay = (bool(selection_provenance.get("group_key")) and set(active) == pairs
                         and (bool(assignments) or bool(heads) and all(row["selection_provenance"] == selection_provenance for row in heads))
                         and all(active[(row["achievement_id"], row["requirement_id"])]["selection_provenance"] == selection_provenance
-                            and all(str(active[(row["achievement_id"], row["requirement_id"])][key]) == str(row[key]) for key in ASSIGNMENT_PINS)
+                            and all(active[(row["achievement_id"], row["requirement_id"])].get(key) == row[key] for key in ASSIGNMENT_PINS)
                             for row in assignments))
                     if not exact_replay:
                         raise ConflictError("The maintained wording group changed during review.")
@@ -203,12 +228,12 @@ class CurrentWordingStorage:
                 for pair, row in previous.items():
                     if row["state"] != "active" or pair in pairs:
                         continue
-                    requirement = read.requirement(row["requirement_id"])
-                    assessment = read.latest_assessment(profile["profile_id"], row["requirement_id"], requirement["revision"],
-                                                        source_fingerprint=qualification_fingerprint(profile, requirement))
-                    if (assessment is None or assessment["source_fingerprint"] != qualification_fingerprint(profile, requirement)
-                            or str(assessment["requirement_revision"]) != str(requirement["revision"])
-                            or wording_eligible(assessment) and row["achievement_id"] in assessment["achievement_ids"]):
+                    demands = [item for item in read.demand_catalog_snapshot(active_only=True)["demands"]
+                               if item["requirement_id"] == row["requirement_id"]]
+                    assessments = [read.latest_assessment(profile["profile_id"], item["requirement_id"], item["requirement_revision"],
+                        source_fingerprint=qualification_fingerprint(profile, item)) for item in demands]
+                    if any(assessment is None or wording_eligible(assessment) and row["achievement_id"] in assessment["achievement_ids"]
+                           for assessment in assessments):
                         raise ConflictError("The complete maintained wording group must retain every supported requirement.")
                 accepted = [self._activate_current_wording(conn, row, previous.get((row["achievement_id"], row["requirement_id"])),
                             profile, selection_provenance) for row in assignments]

@@ -66,6 +66,49 @@ const meanings: Omit<DemoCanonicalRequirement, "created_at" | "provenance">[] = 
     name: "Systems delivery leadership", definition: "Lead systems delivery." },
 ];
 
+// Fixed teaching records, bound to exact authored postings and profile IDs.
+// These hashes use the same versioned signature shape as the local app; they
+// do not represent a model determination or consolidation certificate.
+export const DEMO_PLATFORM_DEMANDS = [
+  { jobId: "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35", definition: "Guide reliable platform delivery.",
+    fingerprint: "cf95637789a64b8c5ad23e63f21f19c3f4b6f02d880bd5b38facc7378e02aba6", index: 0, kind: "matched" },
+  { jobId: "job-contoso-reliability", definition: "Guide a reliability engineering team.",
+    fingerprint: "b690de7ac054ee49916ac052cb673cd05ca88dee7d5d5e016a90701a75047568", index: 1, kind: "missing" },
+] as const;
+export const DEMO_NORMALIZATION_VERSION = "requirements-capability-demand-v1";
+const DEMO_PLATFORM_REQUIREMENT = "requirement:v2:demo:platform";
+
+/** An authored per-job example; it never infers support from visitor edits. */
+export function demoPlatformDemandAssessment(snapshot: DemoWorkspaceSnapshot, jobId: string) {
+  const demand = DEMO_PLATFORM_DEMANDS.find((item) => item.jobId === jobId);
+  if (!demand) return null;
+  const signature = snapshot.state.features?.fitProfileSourceSignature;
+  const assessed = signature ? ProfileSchema.parse(JSON.parse(signature)) : null;
+  const evidence = assessed?.resume.experience_entries.flatMap((role) => {
+    const index = role.achievement_ids?.indexOf(DEMO_PLATFORM_ACHIEVEMENT) ?? -1;
+    return index < 0 || !role.bullets[index] ? [] : [{ source_id: `achievement:${DEMO_PLATFORM_ACHIEVEMENT}`, revision: 1, quote: role.bullets[index]! }];
+  }) ?? [];
+  const matched = demand.kind === "matched" && evidence.length > 0;
+  const kind = !signature ? "not_assessed" : demand.kind === "missing" ? "missing" : matched ? "matched" : "not_assessed";
+  const current = Boolean(signature && !snapshot.state.features?.profileSourcesChanged
+    && signature === stableDemoStringify(snapshot.state.readModel.profile.config.profile));
+  return {
+    contract_version: "requirements-v2" as const,
+    assessment_id: `demo:assessment:v2:${demand.jobId}:reusable:${demand.index}`,
+    requirement_id: DEMO_PLATFORM_REQUIREMENT, requirement_revision: 1,
+    name: "Platform delivery leadership", category: "professional_experience" as const, definition: demand.definition,
+    demand_fingerprint: demand.fingerprint, kind, confidence: kind === "not_assessed" ? "low" : "high",
+    achievement_ids: matched ? [DEMO_PLATFORM_ACHIEVEMENT] : [], evidence_refs: matched ? evidence : [],
+    wording_support: matched ? "achievement" as const : "none" as const,
+    rationale: matched ? "Authored synthetic illustration: the saved achievement supports this delivery demand; no model assessment ran."
+      : kind === "missing" ? "Authored synthetic illustration: the saved sources do not establish leadership of a reliability engineering team; no model assessment ran."
+      : "Authored synthetic illustration: the saved example sources are unavailable; no model assessment ran.",
+    origin: "bundled_synthetic_example" as const, determination_id: `demo:bundled-synthetic:v2:${demand.jobId}`,
+    provenance: { kind: "bundled_synthetic_example", synthetic: true, model_called: false },
+    current, stale_reasons: current ? [] : [signature ? "profile_facts_changed" : "profile_sources_unavailable"],
+  };
+}
+
 /** Authored source examples, explicitly distinct from model-assessed evidence. */
 export function demoCanonicalRequirements(
   snapshot: DemoWorkspaceSnapshot,
@@ -205,32 +248,47 @@ export function demoRequirementLibrary(snapshot: DemoWorkspaceSnapshot) {
     fact_semantics_version: null,
     wording_revision: library.wordingRevision,
     catalog_revision: 1,
-    requirements: demoCanonicalRequirements(snapshot).map((requirement) => ({
-      ...requirement,
-      assessment: requirement.requirement_id === "requirement:v2:demo:release-coordination" && skills ? {
-        contract_version: "requirements-v2", assessment_id: "demo:assessment:v2:release-section", requirement_id: requirement.requirement_id,
-        requirement_revision: requirement.revision, name: requirement.name, category: requirement.category, definition: requirement.definition,
-        kind: "matched", confidence: "high", achievement_ids: [], wording_support: "section",
-        rationale: "Authored illustration: release coordination is supported from the saved structured Skills section. Achievement wording is not required.",
-        origin: "bundled_synthetic_example", determination_id: "demo:bundled-synthetic:v2:release-section",
-        evidence_refs: [{ source_id: `demo:profile-section:skill_categories:${skills.id}`, revision: 1, quote: JSON.stringify(skills) }],
-        provenance: { kind: "bundled_synthetic_example", synthetic: true, model_called: false }, current,
-        stale_reasons: current ? [] : ["profile_facts_changed"],
-      } : null,
-      coverage: [],
-      current_wordings: [],
-      wording_assignments: [],
-      associations: associations
-        .filter(
-          (association) =>
-            association.requirement_id === requirement.requirement_id,
-        )
-        .map((association) => demoAssociationView(snapshot, association)),
-    })),
+    requirements: demoCanonicalRequirements(snapshot).map((requirement) => {
+      const demands = requirement.requirement_id === DEMO_PLATFORM_REQUIREMENT ? DEMO_PLATFORM_DEMANDS.flatMap((demand) => {
+        const job = snapshot.state.readModel.jobs.details[demand.jobId]?.job;
+        const savedPosting = snapshot.state.features?.postings?.[demand.jobId];
+        if (!job || job.deletedAt || savedPosting && (savedPosting.revision !== 1 || !savedPosting.description.includes(demand.definition))) return [];
+        const assessment = demoPlatformDemandAssessment(snapshot, demand.jobId)!;
+        return [{ demand_fingerprint: demand.fingerprint, definition: demand.definition, capability_definition: requirement.definition,
+          normalization_version: DEMO_NORMALIZATION_VERSION, job_ids: [demand.jobId], assessment,
+          state: assessment.current ? "current" as const : "stale" as const, current: assessment.current, stale_reasons: assessment.stale_reasons }];
+      }) : null;
+      return {
+        ...requirement,
+        assessment: demands ? demands.length === 1 ? demands[0]!.assessment : null : requirement.requirement_id === "requirement:v2:demo:release-coordination" && skills ? {
+          contract_version: "requirements-v2", assessment_id: "demo:assessment:v2:release-section", requirement_id: requirement.requirement_id,
+          requirement_revision: requirement.revision, name: requirement.name, category: requirement.category, definition: requirement.definition,
+          kind: "matched", confidence: "high", achievement_ids: [], wording_support: "section",
+          rationale: "Authored illustration: release coordination is supported from the saved structured Skills section. Achievement wording is not required.",
+          origin: "bundled_synthetic_example", determination_id: "demo:bundled-synthetic:v2:release-section",
+          evidence_refs: [{ source_id: `demo:profile-section:skill_categories:${skills.id}`, revision: 1, quote: JSON.stringify(skills) }],
+          provenance: { kind: "bundled_synthetic_example", synthetic: true, model_called: false }, current,
+          stale_reasons: current ? [] : ["profile_facts_changed"],
+        } : null,
+        ...(demands ? { assessment_scope: demands.length > 1 ? "varies_by_job" as const : demands.length === 1 ? "single_demand" as const : "not_applicable" as const,
+          assessment_summary: { demand_count: demands.length, assessed_count: demands.length, current_count: demands.filter((demand) => demand.current).length },
+          demand_assessments: demands, historical_alias_records: [] } : {}),
+        coverage: [],
+        current_wordings: [],
+        wording_assignments: [],
+        associations: associations
+          .filter(
+            (association) =>
+              association.requirement_id === requirement.requirement_id,
+          )
+          .map((association) => demoAssociationView(snapshot, association)),
+      };
+    }),
     synthetic: true,
     provenance: {
       kind: "browser_local_synthetic_demo",
-      assessment_status: "unassessed",
+      illustrated_assessments: "authored_examples",
+      manual_links_assessment_status: "unassessed",
       model_called: false,
     },
   };

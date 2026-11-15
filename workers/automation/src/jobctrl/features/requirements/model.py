@@ -15,9 +15,12 @@ class RequirementModelAdapter:
         self.store = store
         self.jobs = jobs
 
+    def receipt(self, receipt_id):
+        return self.gateway.receipt(receipt_id)
+
     async def determine(
         self, *, kind, schema, prompt_version, instruction, sources, context,
-        entity_id, validate, budget=None, publication_posting=None, source_binding=None,
+        entity_id, validate, budget=None, publication_posting=None, source_binding=None, catalog_guard=None,
     ):
         selection = self.gateway.selection()
         model_spec = f"{selection['provider']}:{selection['model']}"
@@ -42,7 +45,8 @@ class RequirementModelAdapter:
         except AppError as failure:
             self._raise_catalog_refusal(failure, kind, context)
             raise
-        cached = self.store.model_call(input_fingerprint)
+        cached = (self.store.normalization_model_call(input_fingerprint) if catalog_guard is not None
+                  else self.store.model_call(input_fingerprint))
         if cached is not None:
             parsed, provenance = self._checked(cached, input_fingerprint, kind, schema, validate)
             if budget is not None:
@@ -73,14 +77,8 @@ class RequirementModelAdapter:
                 provenance["contract_version"] = CONTRACT_VERSION
                 if budget is not None:
                     budget.reused += 1
-                posting = publication_posting or context.get("posting")
-                if not isinstance(posting, dict):
-                    raise RequirementError("model_source_context_missing")
-                accepted = self.store.save_model_call(
-                    input_fingerprint=input_fingerprint, operation=kind, posting=posting,
-                    catalog_revision=context.get("catalog_revision"), result=parsed.model_dump(), provenance=provenance,
-                    posting_guard=self.jobs.assert_posting_current,
-                )
+                accepted = self._save(input_fingerprint, kind, context, parsed, provenance,
+                                      publication_posting, catalog_guard)
                 parsed, provenance = self._checked(accepted, input_fingerprint, kind, schema, validate)
                 return parsed, self._bind(provenance, publication_posting, source_binding)
         if budget is not None:
@@ -106,16 +104,24 @@ class RequirementModelAdapter:
         provenance["contract_version"] = CONTRACT_VERSION
         if provenance.get("input_fingerprint") != input_fingerprint:
             raise RequirementError("model_cache_binding_invalid")
+        accepted = self._save(input_fingerprint, kind, context, parsed, provenance,
+                              publication_posting, catalog_guard)
+        parsed, provenance = self._checked(accepted, input_fingerprint, kind, schema, validate)
+        return parsed, self._bind(provenance, publication_posting, source_binding)
+
+    def _save(self, input_fingerprint, kind, context, parsed, provenance, publication_posting, catalog_guard):
+        if catalog_guard is not None:
+            return self.store.save_normalization_model_call(
+                input_fingerprint=input_fingerprint, operation=kind, catalog_revision=context["catalog_revision"],
+                result=parsed.model_dump(), provenance=provenance, guard=catalog_guard)
         posting = publication_posting or context.get("posting")
         if not isinstance(posting, dict):
             raise RequirementError("model_source_context_missing")
-        accepted = self.store.save_model_call(
+        return self.store.save_model_call(
             input_fingerprint=input_fingerprint, operation=kind, posting=posting,
             catalog_revision=context.get("catalog_revision"), result=parsed.model_dump(), provenance=provenance,
             posting_guard=self.jobs.assert_posting_current,
         )
-        parsed, provenance = self._checked(accepted, input_fingerprint, kind, schema, validate)
-        return parsed, self._bind(provenance, publication_posting, source_binding)
 
     @staticmethod
     def _bind(provenance, posting, source_binding):

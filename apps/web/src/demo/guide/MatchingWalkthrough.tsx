@@ -76,18 +76,18 @@ export function MatchingWalkthrough({ jobId, onNavigate }: {
         </div>
 
         {step === 0 ? <>
-          <p data-typography="body">The reusable catalog contains Skills and Professional Experience. One source-bound comparison considers the complete incoming batch and the entire active catalog, using each category, name and definition.</p>
+          <p data-typography="body">The reusable catalog contains Skills and Professional Experience. One source-bound comparison considers the complete incoming batch and the entire retained catalog, using each category, name and definition.</p>
           <div className="grid gap-2 border border-border bg-muted/40 p-3">
-            <p data-typography="label">Example qualified meaning</p>
-            <p data-typography="strong-body">Lead incident recovery for production services</p>
-            <p data-typography="body">Category: Professional Experience · Name: Production incident leadership</p>
+            <p data-typography="label">Authored synthetic capability</p>
+            <p data-typography="strong-body">Guide reliable platform delivery</p>
+            <p data-typography="body">Category: Professional Experience · Name: Platform delivery leadership</p>
             <div className="grid gap-1" data-typography="body">
-              <p><strong>Posting 1:</strong> “Lead incident recovery for production services.”</p>
-              <p><strong>Posting 2:</strong> “Lead production incident recovery.”</p>
+              <p><strong>Posting 1:</strong> “Guide reliable platform delivery.” The example records support from a saved achievement.</p>
+              <p><strong>Posting 2:</strong> “Guide a reliability engineering team.” The example records that this specific leadership demand is not established.</p>
             </div>
-            <p data-typography="body">Illustrative mapping: if the comparison confirms the same full meaning, both postings can link here while keeping separate source occurrences.</p>
+            <p data-typography="body">One capability can have distinct job demands and different support. The demo library shows this as “Varies by job”; neither outcome is a model result.</p>
           </div>
-          <p data-typography="body">Different capabilities remain separate. Ordinary facets of one competence can reuse its meaning when the model confirms equivalence. An uncertain or refused comparison stays unresolved and preserves accepted results.</p>
+          <p data-typography="body">Different capabilities remain separate. Ordinary facets can share a capability when the model confirms the complete grouping; each job keeps its own demand. An uncertain or refused comparison stays unresolved and preserves accepted results.</p>
           <div className="grid gap-2 border border-border p-3" data-typography="body">
             <p><strong>Education:</strong> “Engineering degree or equivalent professional experience” stays with this job. The recorded route can use Education or the explicitly offered experience alternative without asserting a degree.</p>
             <p><strong>Languages:</strong> “English at professional working proficiency” uses a structured Language / Proficiency entry. Skills and experience cannot establish language proficiency.</p>
