@@ -26,6 +26,11 @@ Durable preparation, Discovery and Interview recovery bind the saved action key 
 
 Profile transfer uses a separate browser port to inspect the existing legacy IndexedDB and local-storage records without creating or changing them. It reports inaccessible or malformed records separately and hashes valid preserved PDF bytes without logging their contents. The feature owns the transfer manifest, provenance and user-initiated download; the adapter does not infer that historical bytes are factual authority.
 
+The same port decodes the explicitly selected PDF into a local Blob for import
+preview. The viewer consumes those bytes through its existing loader rather
+than fetching a data URL. This keeps preview compatible with the app's content
+policy without broadening network or sandbox permissions.
+
 The explicit place-search port sends only the selected location query after a
 user action and validates provider results at its boundary. Profile joins a
 selected place by recorded row index and exact saved text; editing/removing a row

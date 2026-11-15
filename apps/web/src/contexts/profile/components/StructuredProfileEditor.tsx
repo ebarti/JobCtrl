@@ -218,9 +218,17 @@ export interface StructuredProfileEditorProps {
   mode?: "profile" | "preferences" | "target-search";
   showSectionHeading?: boolean;
   profile: JsonRecord | null;
+  onSkillSaveTrackerChange?: (tracker: ProfileSkillSaveTracker | null) => void;
+  draftResetToken?: number;
   style: JsonRecord | null;
   onProfileChange: (value: JsonRecord) => void;
+  onProfileSaveRequest?: () => void;
   onStyleChange: (value: JsonRecord) => void;
+}
+
+export interface ProfileSkillSaveTracker {
+  /** Capture row identities from this exact submission, then accept its real receipt. */
+  captureSubmission(profile: JsonRecord | null): (acceptedProfile: JsonRecord | null) => void;
 }
 
 function TargetPreferenceCard({
@@ -259,8 +267,11 @@ export function StructuredProfileEditor({
   mode = "profile",
   showSectionHeading = true,
   profile,
+  onSkillSaveTrackerChange,
+  draftResetToken = 0,
   style,
   onProfileChange,
+  onProfileSaveRequest,
   onStyleChange,
 }: StructuredProfileEditorProps) {
   const { requestIdentity, storage } = usePorts();
@@ -296,6 +307,47 @@ export function StructuredProfileEditor({
   }, [achievementId, activeSection, selectedRoleId]);
   const pendingFocusKeyRef = useRef<string | null>(null);
   const reservedRepeatIdsRef = useRef(new Set<string>());
+  const [newSkillFields, setNewSkillFields] = useState<Record<string, string>>({});
+  // These objects identify draft rows independently of their current list index.
+  const newSkillOriginsRef = useRef(new Map<string, Map<number, object>>());
+
+  useEffect(() => {
+    newSkillOriginsRef.current.clear();
+    setNewSkillFields({});
+  }, [draftResetToken]);
+
+  useEffect(() => {
+    onSkillSaveTrackerChange?.({
+      captureSubmission(submittedProfile) {
+        const submittedCategories = recordArrayAt(submittedProfile, "resume.skill_categories");
+        const rows = submittedCategories.flatMap((category, categoryIndex) => {
+          const categoryKey = textFrom(category["id"]) || `category-${categoryIndex}`;
+          const skills = editableTextArrayAt(category, "items");
+          return Array.from(newSkillOriginsRef.current.get(categoryKey) ?? []).flatMap(([index, origin]) => {
+            const value = skills[index];
+            return value?.trim() ? [{ categoryKey, index, origin, value }] : [];
+          });
+        });
+        return (acceptedProfile) => {
+          const acceptedCategories = recordArrayAt(acceptedProfile, "resume.skill_categories");
+          for (const row of rows) {
+            const acceptedCategory = acceptedCategories.find((category, index) =>
+              (textFrom(category["id"]) || `category-${index}`) === row.categoryKey);
+            if (editableTextArrayAt(acceptedCategory, "items")[row.index] !== row.value) continue;
+            const origins = newSkillOriginsRef.current.get(row.categoryKey);
+            if (!origins) continue;
+            // A row can move or be edited during the request. Retire only the
+            // same captured object, never a replacement at its former index.
+            for (const [index, origin] of origins) {
+              if (origin === row.origin) origins.delete(index);
+            }
+            if (!origins.size) newSkillOriginsRef.current.delete(row.categoryKey);
+          }
+        };
+      },
+    });
+    return () => onSkillSaveTrackerChange?.(null);
+  }, [onSkillSaveTrackerChange]);
 
   useEffect(() => {
     const focusKey = pendingFocusKeyRef.current;
@@ -311,7 +363,7 @@ export function StructuredProfileEditor({
     if (element instanceof HTMLInputElement) {
       element.select();
     }
-  }, [profile]);
+  }, [profile, newSkillFields]);
 
   const registerFocusTarget =
     (key: string) => (element: HTMLElement | null) => {
@@ -591,16 +643,74 @@ export function StructuredProfileEditor({
     });
   };
 
+  const skillCategoryKey = (categoryIndex: number) =>
+    textFrom(recordArrayAt(profile, "resume.skill_categories")[categoryIndex]?.["id"])
+      || `category-${categoryIndex}`;
+  const skillFocusKey = (categoryKey: string, skillIndex: number) =>
+    `skill:${categoryKey}:${skillIndex}`;
+  const removeLocalSkillOrigin = (categoryKey: string, skillIndex: number) => {
+    const origins = newSkillOriginsRef.current.get(categoryKey);
+    if (!origins) return;
+    newSkillOriginsRef.current.set(categoryKey, new Map(Array.from(origins)
+      .filter(([index]) => index !== skillIndex)
+      .map(([index, authored]) => [index > skillIndex ? index - 1 : index, authored] as const)));
+  };
+
   const addSkill = (categoryIndex: number) => {
-    updateProfileDraft((draft) => {
+    const categoryKey = skillCategoryKey(categoryIndex);
+    const skills = editableTextArrayAt(profile, `resume.skill_categories.${categoryIndex}.items`);
+    const emptyIndex = skills.findIndex((skill) => !skill.trim());
+    if (emptyIndex >= 0) {
+      focusTargetsRef.current.get(skillFocusKey(categoryKey, emptyIndex))?.focus();
+      return;
+    }
+    focusAfterDraftUpdate(skillFocusKey(categoryKey, skills.length));
+    // An empty field is an editing affordance, not an authored Profile skill.
+    setNewSkillFields((current) => ({ ...current, [categoryKey]: current[categoryKey] ?? "" }));
+  };
+
+  const updateSkill = (categoryIndex: number, skillIndex: number, value: string, newField: boolean) => {
+    const categoryKey = skillCategoryKey(categoryIndex);
+    const origins = newSkillOriginsRef.current.get(categoryKey) ?? new Map<number, object>();
+    const origin = origins.get(skillIndex);
+    if (newField && !value.trim()) {
+      setNewSkillFields((current) => ({ ...current, [categoryKey]: value }));
+      return;
+    }
+    if (origin && !value.trim()) {
       const path = `resume.skill_categories.${categoryIndex}.items`;
-      setPathValue(draft, path, [...editableTextArrayAt(draft, path), ""]);
+      const remaining = editableTextArrayAt(profile, path).filter((_, index) => index !== skillIndex);
+      removeLocalSkillOrigin(categoryKey, skillIndex);
+      setNewSkillFields((current) => ({ ...current, [categoryKey]: value }));
+      focusAfterDraftUpdate(skillFocusKey(categoryKey, remaining.length));
+      updateProfilePath(path, remaining);
+      return;
+    }
+    if (newField || origin) {
+      origins.set(skillIndex, newField ? {} : origin!);
+      newSkillOriginsRef.current.set(categoryKey, origins);
+    }
+    if (newField) setNewSkillFields((current) => {
+      const next = { ...current };
+      delete next[categoryKey];
+      return next;
     });
+    updateProfilePath(`resume.skill_categories.${categoryIndex}.items.${skillIndex}`, value);
   };
 
   const removeSkill = (categoryIndex: number, skillIndex: number) => {
+    const path = `resume.skill_categories.${categoryIndex}.items`;
+    const categoryKey = skillCategoryKey(categoryIndex);
+    if (skillIndex >= editableTextArrayAt(profile, path).length) {
+      setNewSkillFields((current) => {
+        const next = { ...current };
+        delete next[categoryKey];
+        return next;
+      });
+      return;
+    }
+    removeLocalSkillOrigin(categoryKey, skillIndex);
     updateProfileDraft((draft) => {
-      const path = `resume.skill_categories.${categoryIndex}.items`;
       setPathValue(
         draft,
         path,
@@ -1794,7 +1904,6 @@ export function StructuredProfileEditor({
                               <IconArrowDown aria-hidden="true" size={14} />
                             </Button>
                           </div>
-                          <span>Included in every resume</span>
                           <Button
                             onClick={() =>
                               removeRepeatItem(
@@ -2074,7 +2183,7 @@ export function StructuredProfileEditor({
               educationEntries.length === 1 ? "entry" : "entries"
             }`}
             defaultOpen={false}
-            description="Degrees, institutions and completion dates"
+            description="Degrees, institutions and completion dates. Education is included in every resume."
             headingLevel={3}
             id="profile-education"
             hidden={activeSection !== "education"}
@@ -2093,7 +2202,6 @@ export function StructuredProfileEditor({
                         {textFrom(entry["degree"]) || `Education ${index + 1}`}
                       </FieldLegend>
                       <div className="repeat-controls">
-                        <span>Included in every resume</span>
                         <Button
                           onClick={() =>
                             removeRepeatItem("resume.education_entries", index)
@@ -2178,19 +2286,25 @@ export function StructuredProfileEditor({
               skillCategories.length === 1 ? "category" : "categories"
             }`}
             defaultOpen={false}
-            description="Skill groups and individual skills"
+            description="Skill groups and individual skills. Skills are included in every resume."
             headingLevel={3}
             id="profile-skills"
             hidden={activeSection !== "skills"}
             title="Skills"
           >
-            <FieldGroup className="repeat-list">
+            {/* These vertical fields do not consume this group's size queries.
+                Avoid containing the native fieldsets across row removals. */}
+            <FieldGroup className="repeat-list" style={{ containerType: "normal" }}>
               {skillCategories.map((entry, index) => {
                 const entryId = textFrom(entry["id"]);
                 const skills = editableTextArrayAt(
                   profile,
                   `resume.skill_categories.${index}.items`,
                 );
+                const categoryKey = skillCategoryKey(index);
+                const skillFields = categoryKey in newSkillFields
+                  ? [...skills, newSkillFields[categoryKey]!]
+                  : skills;
                 return (
                   <Fragment key={`${entryId || "skills"}-${index}`}>
                     {index > 0 ? (
@@ -2223,7 +2337,6 @@ export function StructuredProfileEditor({
                         />
                       </FieldLegend>
                       <div className="repeat-controls">
-                        <span>Included in every resume</span>
                         <Button
                           onClick={() =>
                             removeRepeatItem("resume.skill_categories", index)
@@ -2236,8 +2349,8 @@ export function StructuredProfileEditor({
                         </Button>
                       </div>
                       <Separator />
-                      <FieldGroup className="skill-list">
-                        {skills.map((skill, skillIndex) => {
+                      <FieldGroup className="skill-list" style={{ containerType: "normal" }}>
+                        {skillFields.map((skill, skillIndex) => {
                           const skillId = editorControlId(
                             "profile",
                             `skill-category-${index}-skill-${skillIndex}`,
@@ -2248,18 +2361,24 @@ export function StructuredProfileEditor({
                               key={`${entryId}-${skillIndex}`}
                             >
                               <Field className="skill-input field">
-                                <FieldLabel htmlFor={skillId}>
+                                <FieldLabel className="sr-only" htmlFor={skillId}>
                                   Skill {skillIndex + 1}
                                 </FieldLabel>
                                 <Input
                                   id={skillId}
+                                  ref={registerFocusTarget(skillFocusKey(categoryKey, skillIndex))}
                                   value={skill}
-                                  onChange={(event) =>
-                                    updateProfilePath(
-                                      `resume.skill_categories.${index}.items.${skillIndex}`,
-                                      event.target.value,
-                                    )
-                                  }
+                                  onChange={(event) => updateSkill(index, skillIndex, event.target.value, skillIndex === skills.length)}
+                                  onKeyDown={(event) => {
+                                    if (event.key !== "Enter") return;
+                                    event.stopPropagation();
+                                    // Enter must remain available to confirm native IME composition.
+                                    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+                                    event.preventDefault();
+                                    if (event.repeat || !event.currentTarget.value.trim()) return;
+                                    onProfileSaveRequest?.();
+                                    addSkill(index);
+                                  }}
                                 />
                               </Field>
                               <Button

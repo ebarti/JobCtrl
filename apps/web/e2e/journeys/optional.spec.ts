@@ -367,7 +367,7 @@ test("interview notes and learning activity preserve source ownership; the diges
   api,
   page,
   allowRequestFailure,
-}) => {
+}, testInfo) => {
   await createBaseline(api);
   const job = await createPosting(api, "career");
   const profileBefore = await json(api, "get", "/v1/profile");
@@ -404,6 +404,63 @@ test("interview notes and learning activity preserve source ownership; the diges
     factualSupport: "unverified_user_statement",
   });
 
+  // The selected-job path is a separate panel from the no-job library. Check
+  // its actual content and disclosures without generating interview material.
+  const callsBeforeInterview = app.external.calls.filter((call) => call.path === "/model").length;
+  await page.goto(`/interviews?job=${encodeURIComponent(job.job_id)}&card=B01`);
+  const jobPreparation = page.getByRole("region", { name: "Job interview preparation", exact: true });
+  const contextPanel = jobPreparation.getByRole("region", { name: "Question selection and interview context", exact: true });
+  const notePanel = jobPreparation.getByRole("region", { name: "Independent user notes", exact: true });
+  await expect(notePanel.getByRole("textbox", { name: "Notes for B01", exact: true })).toHaveValue("A revised synthetic example.");
+  await expect(jobPreparation.getByText("No interview prep generated.", { exact: true })).toBeVisible();
+  await contextPanel.getByRole("button", { name: "Add question to preparation", exact: true }).click();
+  const evidence = contextPanel.getByText("Evidence for B01: automatic selection", { exact: true });
+  await evidence.click();
+  await expect(contextPanel.getByRole("button", { name: "Use no evidence for B01", exact: true })).toBeVisible();
+  const noteHistory = notePanel.getByText("Saved note revision history", { exact: true });
+  await noteHistory.click();
+  await expect(notePanel.getByText("A synthetic example to prepare.", { exact: true })).toBeVisible();
+  for (const [width, inset] of [[1193, 24], [390, 16], [320, 16]] as const) {
+    await page.setViewportSize({ width, height: 1226 });
+    const geometry = await jobPreparation.evaluate((panel) => {
+      const bounds = (element: Element) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+      };
+      const header = panel.querySelector(".interview-job-preparation__header")!;
+      const context = panel.querySelector('[aria-label="Question selection and interview context"]')!;
+      const notes = panel.querySelector('[aria-label="Independent user notes"]')!;
+      const prep = panel.querySelector('[aria-label="Interview preparation"]')!;
+      const historySection = panel.querySelector('[aria-label="Preparation history"]')!;
+      return {
+        panel: bounds(panel),
+        header: bounds(header),
+        title: bounds(header.querySelector("h2")!),
+        link: bounds(header.querySelector("a")!),
+        context: bounds(context.querySelector("h3")!),
+        notes: bounds(notes.querySelector("h3")!),
+        textarea: bounds(notes.querySelector("textarea")!),
+        prep: bounds(prep.querySelector("h3")!),
+        history: bounds(historySection.querySelector("h3")!),
+        noteHistory: bounds(notes.querySelector("details > summary")!),
+      };
+    });
+    expect(geometry.title.top - geometry.panel.top).toBeGreaterThanOrEqual(15);
+    expect(geometry.link.top - geometry.title.bottom).toBeGreaterThanOrEqual(6);
+    expect(geometry.context.top - geometry.header.bottom).toBeGreaterThanOrEqual(15);
+    for (const item of [geometry.title, geometry.link, geometry.context, geometry.notes, geometry.textarea, geometry.prep, geometry.history, geometry.noteHistory]) {
+      expect(item.left).toBeGreaterThanOrEqual(geometry.panel.left + inset - 1);
+      expect(item.right).toBeLessThanOrEqual(geometry.panel.right - inset + 1);
+    }
+    await jobPreparation.getByRole("heading", { name: "Preparation for Synthetic Reliability Engineer", exact: true }).scrollIntoViewIfNeeded();
+    await testInfo.attach(`interview-job-preparation-${width}`, {
+      contentType: "image/png",
+      body: await page.screenshot(),
+    });
+  }
+  expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(callsBeforeInterview);
+  await page.setViewportSize({ width: 1440, height: 900 });
+
   const path = "/v1/evidence-map/learning";
   const preview = await json<Learning>(api, "post", path, {
     action: "preview",
@@ -424,6 +481,52 @@ test("interview notes and learning activity preserve source ownership; the diges
   };
   await page.goto("/learning");
   await openLearning();
+  const callsBeforeLearningLayout = app.external.calls.filter((call) => call.path === "/model").length;
+  const learning = page.getByRole("region", { name: "Learning and selected-job demand", exact: true });
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const title = await page.getByRole("heading", { name: "Learning", level: 1, exact: true }).boundingBox();
+    const geometry = await learning.evaluate((panel) => {
+      const bounds = (element: Element) => {
+        const box = element.getBoundingClientRect();
+        return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width };
+      };
+      const content = panel.querySelector(".career-learning-content")!;
+      const form = content.querySelector(".career-learning-cohort")!;
+      return {
+        panel: bounds(panel),
+        form: bounds(form),
+        intro: bounds(content.querySelector(":scope > p")!),
+        inputs: Array.from(form.querySelectorAll(".career-learning-cohort__fields input")).map(bounds),
+        rootSize: parseFloat(getComputedStyle(document.documentElement).fontSize),
+        viewport: document.documentElement.clientWidth,
+        documentWidth: document.documentElement.scrollWidth,
+      };
+    });
+    expect(geometry.inputs).toHaveLength(4);
+    expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.viewport);
+    expect(geometry.form.width).toBeLessThanOrEqual(60 * geometry.rootSize + 1);
+    expect(Math.abs(geometry.form.left - title!.x)).toBeLessThanOrEqual(1);
+    for (const input of geometry.inputs) {
+      expect(input.left).toBeGreaterThanOrEqual(geometry.panel.left - 1);
+      expect(input.right).toBeLessThanOrEqual(geometry.form.right + 1);
+    }
+    if (width === 1440) {
+      expect(geometry.form.width).toBeLessThan(geometry.panel.width);
+      expect(geometry.intro.width).toBeLessThan(geometry.form.width);
+      expect(Math.abs(geometry.inputs[0]!.top - geometry.inputs[1]!.top)).toBeLessThanOrEqual(1);
+      expect(Math.abs(geometry.inputs[2]!.top - geometry.inputs[3]!.top)).toBeLessThanOrEqual(1);
+      expect(geometry.inputs[0]!.right).toBeLessThan(geometry.inputs[1]!.left);
+    } else {
+      for (const [index, input] of geometry.inputs.entries()) {
+        expect(Math.abs(input.left - geometry.form.left)).toBeLessThanOrEqual(1);
+        if (index) expect(input.top).toBeGreaterThan(geometry.inputs[index - 1]!.bottom);
+      }
+    }
+    await testInfo.attach(`learning-cohort-layout-${width}`, { contentType: "image/png", body: await learning.screenshot({ animations: "disabled" }) });
+  }
+  expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(callsBeforeLearningLayout);
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByLabel("Cohort name").fill("Synthetic cohort");
   await page.getByLabel("Selection date").fill("2026-11-06");
   await page

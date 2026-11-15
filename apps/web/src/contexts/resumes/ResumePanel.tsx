@@ -13,6 +13,7 @@ import { useTenantId } from "../../shared/providers/TenantProvider.js";
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
 import { useResumeActions, useResumeHtml, useResumes, type Resume, type ResumeDocument } from "./client.js";
 import { resumeEditorDraftKey, useResumeEditorDraftStore } from "./editorDrafts.js";
+import "../../styles/resume-workspace.css";
 
 function reviewStatusLabel(status: string) {
   return status === "not_applicable" ? "not applicable" : status;
@@ -183,12 +184,17 @@ function ResumeTemplateAssignment({ disabled, run }: { disabled: boolean; run: (
   }, meta: { suppressGlobalErrorToast: true } });
   const versions = query.data?.templates.flatMap((template) => template.versions?.length ? template.versions : [template.activeVersion]) ?? [];
   const selected = versions.find((version) => version.versionId === versionId);
-  return <details><summary>Resume template</summary>
-    <p>Choose a saved template version. It changes the layout without replacing the resume content or the accepted copy.</p>
-    {query.error ? <p role="alert">{query.error.message}</p> : null}
-    {versions.length ? <><label>Template version<select value={versionId} onChange={(event) => setVersionId(event.currentTarget.value)}><option value="">Select a template</option>
-      {versions.map((version) => <option key={version.versionId} value={version.versionId}>{version.displayName} · version {version.versionNumber}</option>)}
-    </select></label><Button type="button" variant="outline" disabled={disabled || !selected} onClick={() => { if (selected) run("template", { template_id: selected.templateId, template_version: selected.versionId }); }}>Apply template</Button></> : !query.isPending && !query.error ? <p>No saved templates are available.</p> : null}
+  return <details className="resume-controls-disclosure"><summary>Resume template</summary>
+    <div className="resume-controls-body">
+      <p>Choose a saved template version. It changes the layout without replacing the resume content or the accepted copy.</p>
+      {query.error ? <p role="alert">{query.error.message}</p> : null}
+      {versions.length ? <div className="resume-template-assignment-controls">
+        <label className="resume-control-field"><span>Template version</span><select value={versionId} onChange={(event) => setVersionId(event.currentTarget.value)}><option value="">Select a template</option>
+          {versions.map((version) => <option key={version.versionId} value={version.versionId}>{version.displayName} · version {version.versionNumber}</option>)}
+        </select></label>
+        <Button type="button" variant="outline" disabled={disabled || !selected} onClick={() => { if (selected) run("template", { template_id: selected.templateId, template_version: selected.versionId }); }}>Apply template</Button>
+      </div> : !query.isPending && !query.error ? <p>No saved templates are available.</p> : null}
+    </div>
   </details>;
 }
 
@@ -205,27 +211,33 @@ function ResumeLocales({ resume, disabled, translationAvailable, translationReas
     if (!parsed.success) { setValidation("Choose two different supported languages."); return; }
     setValidation(""); run("locales/generate", { source_locale: parsed.data.source, target_locale: parsed.data.target });
   } });
-  return <details><summary>Resume translations</summary>
-    <p>Translate an accepted resume, review the result independently, then accept and export the translation separately.</p>
-    <form onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
-      <form.Field name="source">{(field) => <label>Source language<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}>{languages.map((lang) => <option key={lang} value={lang}>{lang}</option>)}</select></label>}</form.Field>
-      <form.Field name="target">{(field) => <label>Target language<select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}>{languages.map((lang) => <option key={lang} value={lang}>{lang}</option>)}</select></label>}</form.Field>
-      <Button type="submit" variant="outline" disabled={!translationAvailable || disabled || !resume.accepted_revision_id}>Translate resume</Button>
-    </form>
-    {!translationAvailable ? <p>{translationReason}</p> : null}
-    {validation ? <p role="alert">{validation}</p> : null}
-    {resume.locales.map((item) => <section key={item.locale_id} aria-label={`Translation ${item.locale_id}`}>
-      <h4>{item.source_locale} → {item.target_locale}: {item.status}</h4>
-      <p>Independent review: {item.review.status}{item.failure_code ? `; ${item.failure_code}` : ""}{item.review.failure_code ? `; ${item.review.failure_code}` : ""}</p>
-      {[...item.findings, ...item.review.findings].map((finding, index) => <p key={index}>{finding.detail}</p>)}
-      {item.document ? <details><summary>Review translated resume</summary><TranslatedResume document={item.document} /></details> : null}
-      <div className="toolbar">
-        <Button type="button" variant="outline" disabled={!translationAvailable || disabled || item.status !== "generated" || item.review.status !== "pending"} onClick={() => run(`locales/${encodeURIComponent(item.locale_id)}/review`, {})}>Review translation</Button>
-        <Button type="button" disabled={disabled || item.status !== "generated" || item.review.status !== "pass" || item.findings.length > 0} onClick={() => run(`locales/${encodeURIComponent(item.locale_id)}/accept`, { user_confirmed: true })}>Accept translation</Button>
-        <Button type="button" variant="outline" disabled={disabled || item.status !== "accepted"} onClick={() => exportLocale(item.locale_id, "pdf")}>Export translation PDF</Button>
-        <Button type="button" variant="outline" disabled={!docxAvailable || disabled || item.status !== "accepted"} onClick={() => exportLocale(item.locale_id, "docx")}>Export translation DOCX</Button>
-      </div>
-    </section>)}
+  return <details className="resume-controls-disclosure"><summary>Resume translations</summary>
+    <div className="resume-controls-body">
+      <p>Translate an accepted resume, review the result independently, then accept and export the translation separately.</p>
+      <form className="resume-translation-controls" onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
+        <div className="resume-translation-fields">
+          <form.Field name="source">{(field) => <label className="resume-control-field"><span>Source language</span><select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}>{languages.map((lang) => <option key={lang} value={lang}>{lang}</option>)}</select></label>}</form.Field>
+          <form.Field name="target">{(field) => <label className="resume-control-field"><span>Target language</span><select value={field.state.value} onChange={(event) => field.handleChange(event.currentTarget.value)}>{languages.map((lang) => <option key={lang} value={lang}>{lang}</option>)}</select></label>}</form.Field>
+        </div>
+        <div className="resume-control-actions">
+          <Button type="submit" variant="outline" disabled={!translationAvailable || disabled || !resume.accepted_revision_id}>Translate resume</Button>
+        </div>
+      </form>
+      {!translationAvailable ? <p>{translationReason}</p> : null}
+      {validation ? <p role="alert">{validation}</p> : null}
+      {resume.locales.map((item) => <section key={item.locale_id} aria-label={`Translation ${item.locale_id}`}>
+        <h4>{item.source_locale} → {item.target_locale}: {item.status}</h4>
+        <p>Independent review: {item.review.status}{item.failure_code ? `; ${item.failure_code}` : ""}{item.review.failure_code ? `; ${item.review.failure_code}` : ""}</p>
+        {[...item.findings, ...item.review.findings].map((finding, index) => <p key={index}>{finding.detail}</p>)}
+        {item.document ? <details><summary>Review translated resume</summary><TranslatedResume document={item.document} /></details> : null}
+        <div className="toolbar">
+          <Button type="button" variant="outline" disabled={!translationAvailable || disabled || item.status !== "generated" || item.review.status !== "pending"} onClick={() => run(`locales/${encodeURIComponent(item.locale_id)}/review`, {})}>Review translation</Button>
+          <Button type="button" disabled={disabled || item.status !== "generated" || item.review.status !== "pass" || item.findings.length > 0} onClick={() => run(`locales/${encodeURIComponent(item.locale_id)}/accept`, { user_confirmed: true })}>Accept translation</Button>
+          <Button type="button" variant="outline" disabled={disabled || item.status !== "accepted"} onClick={() => exportLocale(item.locale_id, "pdf")}>Export translation PDF</Button>
+          <Button type="button" variant="outline" disabled={!docxAvailable || disabled || item.status !== "accepted"} onClick={() => exportLocale(item.locale_id, "docx")}>Export translation DOCX</Button>
+        </div>
+      </section>)}
+    </div>
   </details>;
 }
 

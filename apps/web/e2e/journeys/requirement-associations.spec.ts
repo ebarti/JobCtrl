@@ -158,6 +158,19 @@ test("manual requirement links preserve many-to-many intent, exact wording pins 
       .getByRole("button")
       .filter({ hasText: "Synthetic Earlier Company" }),
   ).toHaveAttribute("aria-current", "true");
+  const achievementLinks = page.getByRole("region", { name: "Requirements for this achievement", exact: true });
+  const disclosure = achievementLinks.locator("summary");
+  await expect(disclosure).toHaveText("Linked requirements (1)");
+  const requirementLink = achievementLinks.getByRole("button").filter({ hasText: first.definition });
+  await expect(requirementLink).not.toBeVisible();
+  await disclosure.press("Enter");
+  await expect(requirementLink).toBeVisible();
+  await expect(requirementLink).toContainText("Your link · unassessed");
+  await testInfo.attach("achievement-requirement-links-expanded", {
+    contentType: "image/png", body: await page.screenshot(),
+  });
+  await disclosure.press("Enter");
+  await expect(requirementLink).not.toBeVisible();
   await page.getByRole("link", { name: /Back to requirements$/ }).click();
   await expect(filter).toHaveValue(first.definition);
   expect(new URL(page.url()).searchParams.get("requirement")).toBe(

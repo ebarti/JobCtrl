@@ -4,6 +4,8 @@ import { z } from "zod";
 import { useFitEvidenceMap } from "../../contexts/fit/index.js";
 import { useProfileSources } from "../../contexts/profile/index.js";
 import { useResumeArtifactCatalog } from "../../contexts/resumes/index.js";
+import "../../styles/evidence-map-panels.css";
+import "../../styles/panel-inset.css";
 
 const storySchema = z.object({
   source_text: z.string().optional(), scope: z.string().optional(), action: z.string().optional(),
@@ -89,7 +91,7 @@ export function EvidenceMapConnections({ search = "", focusSourceId = "", jobId 
     const rows = groupedWordingGaps.get(key) ?? [];
     rows.push(gap); groupedWordingGaps.set(key, rows);
   }
-  return <section className="card" aria-labelledby="evidence-connections-title">
+  return <section className="card evidence-map-panel panel-inset" aria-labelledby="evidence-connections-title">
     <h2 id="evidence-connections-title">Evidence connections across jobs</h2>
     <p>These links come from saved source references, assessments and rendered resume revisions. A stale connection is retained as history; it is not a current claim.</p>
     {sourcesQuery.error ? <p role="alert">Profile sources could not be refreshed: {sourcesQuery.error.message}{sourcesQuery.data ? " The sources below are from the last successful read." : ""}</p> : null}

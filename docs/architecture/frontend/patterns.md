@@ -22,6 +22,16 @@ Private text and personal multi-step drafts never belong in the URL.
 
 Dashboard, Activity, Settings, Evidence Map and job workspaces combine public panels and queries. Each panel owns its loading, empty, failure and retry states. Optional contributions are explicitly selected by the shell and injected into a core workspace through public slots; removing a contribution must not change the core feature's imports or behavior.
 
+A public panel also owns the spacing between its own heading, fields, actions
+and disclosures. A route composition owns the gap or divider between panels
+and the outer workspace frame. When panels share that frame, flatten their
+direct outer borders at the composition boundary; keep their internal content
+insets. A standalone panel must remain readable in each consuming route.
+Generic table cards intentionally support edge-to-edge content, so changing
+global card padding is not a repair for a panel that lacks its own inset.
+Raw content panels can opt into `styles/panel-inset.css` to consume the existing
+panel-padding and internal-gap density tokens; that class adds no frame.
+
 ## 4.6 Forms Convention (TanStack Form)
 
 Use TanStack Form and Zod `safeParse`, with visible validation, conflict and save states. Preserve the source revision/version used to create a write and revalidate approvals against their source. A failed save must not erase a user's draft or last accepted artifact.
@@ -35,6 +45,13 @@ The shadcn Rhea/Base preset provides the acquisition pattern; the copied wrapper
 ## 4.8 Styling and density
 
 Tailwind utilities and the CSS-first theme bridge in `styles/globals.css` consume the semantic variables in `styles/tokens.css`. Dark mode uses the root `data-theme` selector. The app shell owns density: compact, regular and comfy row heights are 44, 52 and 60 pixels. A table-scoped saved view may override density without changing the global preference. Keep visual status paired with text, and preserve readable focus and narrow-screen navigation.
+
+Components used in split panes adapt to their containing width, including when
+the window is wide. Grid tracks and form controls must be allowed to shrink;
+source identifiers wrap inside their owner. Document previews may scroll within
+their bounded viewer. Avoid hiding page overflow to mask clipped content.
+Verify expanded panels and populated histories as well as their collapsed
+state; page-width checks alone do not establish readable internal layout.
 
 ## 4.9 Cross-Cutting Client State (Zustand vs Context)
 

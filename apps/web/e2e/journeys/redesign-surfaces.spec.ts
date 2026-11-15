@@ -15,7 +15,7 @@ const activeSections: Record<string, readonly [string, string]> = {
   materials: ["Jobs sections", "Materials"],
 };
 
-test("Original redesign renders all twenty-six primary workspace surfaces at normal, desktop, wide and mobile widths", async ({
+test("Original redesign renders twenty-seven primary workspace surfaces at normal, desktop, wide and mobile widths", async ({
   page,
   api,
   app,
@@ -111,6 +111,12 @@ test("Original redesign renders all twenty-six primary workspace surfaces at nor
       name: "profile-education",
       path: "/profile?section=education",
       heading: "Education",
+      workspace: "My profile",
+    },
+    {
+      name: "profile-languages",
+      path: "/profile?section=languages",
+      heading: "Languages",
       workspace: "My profile",
     },
     {

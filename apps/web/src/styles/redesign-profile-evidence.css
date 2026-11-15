@@ -1,0 +1,82 @@
+.profile-evidence-panel {
+  display: grid;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.profile-evidence-panel > h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.profile-evidence-panel p {
+  max-width: 85ch;
+  margin: 0;
+  white-space: pre-wrap;
+}
+.profile-evidence-panel > ul {
+  display: grid;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.profile-evidence-panel > ul > li {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-block: 16px;
+}
+.profile-evidence-panel h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.profile-evidence-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.profile-evidence-panel__add {
+  min-width: 0;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.profile-evidence-panel__add > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.profile-evidence-panel__add > form,
+.profile-evidence-panel__add label {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+.profile-evidence-panel__add > form {
+  gap: 12px;
+  margin-top: 16px;
+}
+.profile-evidence-panel__add textarea {
+  width: 100%;
+  min-width: 0;
+  min-height: 140px;
+  resize: vertical;
+}
+.profile-evidence-panel__add button {
+  justify-self: start;
+}
+@media (max-width: 640px) {
+  .profile-evidence-panel__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .profile-evidence-panel__actions > button,
+  .profile-evidence-panel__add button {
+    min-height: 44px;
+    white-space: normal;
+  }
+}

@@ -2,6 +2,7 @@ import {
   test as base,
   expect,
   type APIRequestContext,
+  type APIResponse,
   type Request,
   type Response,
 } from "@playwright/test";
@@ -75,11 +76,11 @@ type Fixtures = {
     request: Request;
     errorText: "net::ERR_FAILED";
   }[];
-  allowRequestFailure: (request: Request, errorText: "net::ERR_FAILED") => void;
+  allowRequestFailure: (request: Request, errorText: "net::ERR_FAILED", forwardedResponse?: APIResponse) => void;
   expectedResponseErrors: Response[];
   allowResponseError: (
     response: Response,
-    expected: { method: "GET" | "POST"; status: 409; code: string },
+    expected: { method: "GET" | "POST" | "PATCH"; status: 409; code: string },
   ) => Promise<void>;
 };
 
@@ -100,6 +101,10 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       expect(response.status()).toBe(expected.status);
       expect(response.request().method()).toBe(expected.method);
       expect(new URL(response.url()).origin).toBe(app.baseURL);
+      if (expected.method === "PATCH") {
+        expect(new URL(response.url()).pathname).toBe("/v1/profile");
+        expect(expected.code).toBe("revision_conflict");
+      }
       const body = (await response.json()) as { error?: { code?: unknown } };
       expect(
         body.error?.code,
@@ -110,15 +115,20 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     });
   },
   allowRequestFailure: async ({ app, expectedTransportFailures }, use) => {
-    await use((request, errorText) => {
+    await use((request, errorText, forwardedResponse) => {
       expect(errorText).toBe("net::ERR_FAILED");
       expect(
         request.method() === "POST" ||
           (request.method() === "PATCH" &&
             new URL(request.url()).origin === app.baseURL &&
-            new URL(request.url()).pathname === "/v1/credentials/batch"),
-        "Only an observed admitted POST or credential batch acknowledgement may be severed",
+            ["/v1/credentials/batch", "/v1/profile"].includes(new URL(request.url()).pathname)),
+        "Only an observed admitted POST, credential batch or Profile acknowledgement may be severed",
       ).toBe(true);
+      if (request.method() === "PATCH" && new URL(request.url()).pathname === "/v1/profile") {
+        expect(forwardedResponse, "A Profile acknowledgement allowance needs its actual forwarded response").toBeDefined();
+        expect(forwardedResponse!.status()).toBe(200);
+        expect(forwardedResponse!.url()).toBe(request.url());
+      }
       expect(
         request.failure()?.errorText,
         "Only an actually failed browser Request may allow its native transport console entry",

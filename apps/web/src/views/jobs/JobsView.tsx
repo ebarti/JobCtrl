@@ -61,19 +61,19 @@ function CaptureJob() {
     setValidation("");
     try { await importUrl.mutateAsync(parsed.data); urlForm.reset(); } catch { /* Retain URL for retry. */ }
   } });
-  return <section className="card" aria-label="Add a job">
+  return <section className="card jobs-capture" aria-label="Add a job">
     <h2>Add a job</h2>
-    <details><summary>Import posting URL</summary><form onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void urlForm.handleSubmit(); }}>
+    <details><summary>Import posting URL</summary><form className="jobs-capture__url" onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void urlForm.handleSubmit(); }}>
       <urlForm.Field name="url">{(field) => <label>Posting URL<input type="url" value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</urlForm.Field>
       <Button type="submit" disabled={!importAvailability.available || importUrl.isPending}>Import job</Button>
       {!importAvailability.available ? <p>{importAvailability.reason}</p> : null}
     </form></details>
-    <details><summary>Manual capture</summary><form onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
-      <form.Field name="url">{(field) => <label>Posting URL<input type="url" value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
+    <details><summary>Manual capture</summary><form className="jobs-capture__manual" onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
+      <form.Field name="url">{(field) => <label className="jobs-capture__wide">Posting URL<input type="url" value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
       <form.Field name="title">{(field) => <label>Job title<input value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
       <form.Field name="company">{(field) => <label>Company<input value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
       <form.Field name="location">{(field) => <label>Location<input value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
-      <form.Field name="description">{(field) => <label>Posting description<textarea value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
+      <form.Field name="description">{(field) => <label className="jobs-capture__wide">Posting description<textarea value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</form.Field>
       <Button type="submit" disabled={capture.isPending}>Save job</Button>
     </form></details>
     {validation ? <p role="alert">{validation}</p> : null}

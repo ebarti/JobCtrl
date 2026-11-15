@@ -12,6 +12,9 @@
 .profile-peer-resume {
   min-width: 0;
 }
+.profile-peer-data {
+  container: profile-editor / inline-size;
+}
 .profile-peer-content--split {
   display: grid;
   grid-template-columns: minmax(350px, 0.85fr) minmax(480px, 1.15fr);
@@ -397,15 +400,132 @@
 .profile-resume-template-tools {
   padding-block: 16px;
   border-top: 1px solid var(--border);
+  min-width: 0;
 }
+.profile-recovery > summary,
 .profile-secondary-tools > summary,
 .profile-transfer-tools > summary,
 .profile-resume-template-tools > summary {
   cursor: pointer;
   font-weight: 600;
 }
-.profile-secondary-tools[open] > :not(summary) {
-  margin-top: 12px;
+.profile-secondary-tools,
+.profile-transfer-tools,
+.profile-resume-template-tools {
+  container: profile-auxiliary / inline-size;
+}
+:is(.profile-secondary-tools, .profile-transfer-tools, .profile-resume-template-tools)[open] > :not(summary) {
+  margin-top: 16px;
+}
+.profile-secondary-tools > .profile-route-actions {
+  margin-bottom: 16px;
+}
+.profile-resume-template-tools > .resume-template-workspace > h3 {
+  padding: 16px 20px;
+  background: transparent;
+  line-height: 1.4;
+}
+.profile-resume-template-tools .resume-template-shell {
+  padding: 20px;
+}
+.profile-transfer-panel {
+  display: grid;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.profile-transfer-panel > h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.profile-transfer-panel p {
+  max-width: 85ch;
+  margin: 0;
+}
+.profile-transfer-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.profile-transfer-panel__status {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.profile-coaching-panel[data-slot="card"] {
+  min-width: 0;
+  margin: 0;
+  gap: 16px;
+  --card-spacing: 20px;
+}
+.profile-coaching-panel [data-slot="card-header"] {
+  column-gap: 20px;
+  row-gap: 8px;
+}
+.profile-coaching-panel :is([data-slot="card-title"], [data-slot="card-description"], [data-slot="card-content"], [data-slot="card-footer"]) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.profile-coaching-panel [data-slot="card-content"].border-t {
+  padding-top: 16px;
+}
+.profile-coaching-panel [data-slot="card-footer"] {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.profile-coaching-panel details > summary {
+  cursor: pointer;
+  font-weight: 500;
+}
+.profile-coaching-panel details[open] > :not(summary) {
+  margin-block: 12px 0;
+}
+.profile-coaching-panel blockquote {
+  margin-inline: 0;
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+}
+@container profile-auxiliary (max-width: 640px) {
+  .profile-resume-template-tools > .resume-template-workspace > h3 {
+    padding-inline: 16px;
+  }
+  .profile-resume-template-tools .resume-template-shell {
+    padding: 16px;
+  }
+  .profile-transfer-panel__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .profile-transfer-panel__actions > button {
+    min-height: 44px;
+    white-space: normal;
+  }
+  .profile-coaching-panel[data-slot="card"] {
+    --card-spacing: 16px;
+  }
+  .profile-coaching-panel [data-slot="card-header"] {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .profile-coaching-panel [data-slot="card-action"] {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: stretch;
+  }
+  .profile-coaching-panel [data-slot="card-action"] > button {
+    width: 100%;
+    min-height: 44px;
+    white-space: normal;
+  }
 }
 .profile-recovery ul {
   padding: 0;
@@ -417,6 +537,13 @@
   justify-content: space-between;
   gap: 16px;
   padding-block: 12px;
+}
+.profile-recovery li > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.profile-recovery li > button {
+  flex-shrink: 0;
 }
 .profile-draft-recovery {
   padding: 12px;
@@ -433,9 +560,9 @@
     width: 100%;
   }
 }
-@media (max-width: 680px) {
+@container profile-editor (max-width: 680px) {
   .profile-experience-workspace {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 20px;
   }
   .profile-career-list {
@@ -445,15 +572,17 @@
   .profile-peer-section__header {
     flex-direction: column;
   }
-  .profile-recovery li {
-    flex-direction: column;
-  }
   .profile-wording-card:is([data-kind="current"], [data-kind="source"]) {
     grid-template-columns: minmax(0, 1fr);
   }
   .profile-wording-card:is([data-kind="current"], [data-kind="source"])
     > .profile-wording-audit:not([open]) {
     grid-column: 1;
+  }
+}
+@media (max-width: 680px) {
+  .profile-recovery li {
+    flex-direction: column;
   }
 }
 @media (max-width: 480px) {

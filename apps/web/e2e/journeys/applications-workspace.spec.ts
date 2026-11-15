@@ -21,6 +21,152 @@ test("application tasks retain edits and selection across desktop and mobile nav
     name: "Application review queue",
   });
   await expect(queue.getByText("2 applications")).toBeVisible();
+
+  const preparation = page.getByRole("region", {
+    name: "Prepare resume",
+    exact: true,
+  });
+  const options = preparation.getByText("Preparation options and history", {
+    exact: true,
+  });
+  for (const [width, inset] of [
+    [1193, 24],
+    [390, 16],
+  ] as const) {
+    await page.setViewportSize({ width, height: 1226 });
+    await expect(
+      preparation.getByRole("combobox", {
+        name: "Resume to prepare",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      preparation.getByRole("button", { name: "Prepare resume", exact: true }),
+    ).toBeVisible();
+    const geometry = await preparation.evaluate((task) => {
+      const card = task.closest(".application-review-workspace")!;
+      const tabs = card.querySelector(
+        '[aria-label="Application review tasks"]',
+      )!;
+      const rect = (element: Element) => {
+        const bounds = element.getBoundingClientRect();
+        return {
+          left: bounds.left,
+          right: bounds.right,
+          top: bounds.top,
+          bottom: bounds.bottom,
+        };
+      };
+      const controls = task.querySelector(".job-preparation-task__controls")!;
+      return {
+        card: rect(card),
+        tabs: rect(tabs),
+        controls: rect(controls),
+        select: rect(controls.querySelector("select")!),
+        button: rect(controls.querySelector("button")!),
+        scope: rect(task.querySelector(".job-preparation-task__scope")!),
+        summary: rect(
+          task.querySelector(".job-preparation-inspection > summary")!,
+        ),
+        notices: Array.from(
+          task.querySelectorAll(
+            ":scope > [role=status], :scope > [role=alert]",
+          ),
+        )
+          .filter((element) => element.getClientRects().length > 0)
+          .map(rect),
+      };
+    });
+    expect(geometry.controls.top - geometry.tabs.bottom).toBeGreaterThanOrEqual(
+      15,
+    );
+    expect(
+      geometry.scope.top - geometry.controls.bottom,
+    ).toBeGreaterThanOrEqual(10);
+    expect(geometry.summary.top - geometry.scope.bottom).toBeGreaterThanOrEqual(
+      10,
+    );
+    for (const bounds of [
+      geometry.select,
+      geometry.button,
+      geometry.scope,
+      geometry.summary,
+      ...geometry.notices,
+    ]) {
+      expect(bounds.left).toBeGreaterThanOrEqual(
+        geometry.card.left + inset - 1,
+      );
+      expect(bounds.right).toBeLessThanOrEqual(geometry.card.right - inset + 1);
+    }
+
+    await options.click();
+    await expect(
+      preparation.getByText("No preparation runs recorded.", { exact: true }),
+    ).toBeVisible();
+    const tools = preparation.getByText("Individual preparation tools", {
+      exact: true,
+    });
+    await tools.click();
+    await expect(
+      preparation.getByRole("group", {
+        name: "Preparation actions",
+        exact: true,
+      }),
+    ).toBeVisible();
+    const expanded = await preparation.evaluate((task) => {
+      const inspection = task.querySelector(".job-preparation-inspection")!;
+      const card = task
+        .closest(".application-review-workspace")!
+        .getBoundingClientRect();
+      const rect = (element: Element) => {
+        const bounds = element.getBoundingClientRect();
+        return {
+          left: bounds.left,
+          right: bounds.right,
+          top: bounds.top,
+          bottom: bounds.bottom,
+        };
+      };
+      return {
+        card: { left: card.left, right: card.right },
+        option: rect(inspection.querySelector(":scope > label")!),
+        history: rect(
+          inspection.querySelector('[aria-label="Preparation runs"]')!,
+        ),
+        toolsSummary: rect(
+          inspection.querySelector(":scope > details > summary")!,
+        ),
+        actions: rect(inspection.querySelector(".preparation-actions")!),
+      };
+    });
+    for (const bounds of [
+      expanded.option,
+      expanded.history,
+      expanded.toolsSummary,
+      expanded.actions,
+    ]) {
+      expect(bounds.left).toBeGreaterThanOrEqual(
+        expanded.card.left + inset - 1,
+      );
+      expect(bounds.right).toBeLessThanOrEqual(expanded.card.right - inset + 1);
+    }
+    expect(
+      expanded.history.top - expanded.option.bottom,
+    ).toBeGreaterThanOrEqual(10);
+    expect(
+      expanded.toolsSummary.top - expanded.history.bottom,
+    ).toBeGreaterThanOrEqual(10);
+    expect(
+      expanded.actions.top - expanded.toolsSummary.bottom,
+    ).toBeGreaterThanOrEqual(10);
+    await testInfo.attach(`applications-preparation-expanded-${width}`, {
+      contentType: "image/png",
+      body: await page.screenshot(),
+    });
+    await tools.click();
+    await options.click();
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await queue
     .getByRole("searchbox", { name: "Filter applications" })
     .fill("product");

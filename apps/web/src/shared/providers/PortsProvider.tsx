@@ -44,6 +44,7 @@ const defaultSessionStorage = new BrowserSessionStorageAdapter();
 const defaultPlaces = new PhotonPlacesAdapter();
 const unavailableProfileTransfer: ProfileTransferPort = {
   async inspect() { return { selectedRaw: null, legacyRaw: null, reviewsRaw: null, errors: ["Profile transfer is unavailable in this workspace."] }; },
+  async readPdf() { throw new Error("Browser-held PDF reading is unavailable in this workspace."); },
   async digestPdf() { throw new Error("Profile transfer is unavailable in this workspace."); },
 };
 

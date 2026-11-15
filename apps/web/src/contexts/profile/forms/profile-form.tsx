@@ -28,6 +28,7 @@ import {
 import {
   StructuredProfileEditor,
   type ProfileActiveSection,
+  type ProfileSkillSaveTracker,
 } from "../components/StructuredProfileEditor.js";
 import { RequiredBulletSuggestions } from "../components/RequiredBulletSuggestions.js";
 import { TargetRoleSuggestions } from "../components/TargetRoleSuggestions.js";
@@ -43,7 +44,7 @@ import {
 } from "../lib/profile-draft-state.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { ProfileDraftRecovery } from "../components/ProfileDraftRecovery.js";
-import { AutosaveUndoController } from "../../../shared/ui/autosave-undo-controller.js";
+import { AutosaveUndoController, type AutosaveUndoControllerHandle } from "../../../shared/ui/autosave-undo-controller.js";
 import {
   isProfileDateRangeChronological,
   parseProfileDateRange,
@@ -981,6 +982,16 @@ function TenantProfileForm({
   const [statusMessage, setStatusMessage] = useState("");
   const [statusTone, setStatusTone] = useState<"saved" | "warning">("saved");
   const [resetToken, setResetToken] = useState(0);
+  const autosaveControllerRef = useRef<AutosaveUndoControllerHandle | null>(null);
+  const skillSaveTrackerRef = useRef<ProfileSkillSaveTracker | null>(null);
+  const confirmedProfileSubmissionRef = useRef(0);
+  const profileSubmissionSequenceRef = useRef(0);
+  const bindAutosaveController = useCallback((controller: AutosaveUndoControllerHandle | null) => {
+    autosaveControllerRef.current = controller;
+  }, []);
+  const bindSkillSaveTracker = useCallback((tracker: ProfileSkillSaveTracker | null) => {
+    skillSaveTrackerRef.current = tracker;
+  }, []);
   const [formBaseVersion, setFormBaseVersion] = useState(
     initial.profileVersion,
   );
@@ -1165,6 +1176,7 @@ function TenantProfileForm({
         return;
       }
       const submittedValues = serializeProfileValues(value);
+      const acceptSkillSave = skillSaveTrackerRef.current?.captureSubmission(value.profile);
       const shouldUpdateProfile =
         submittedValues !== serializeProfileValues(formBaseValuesRef.current);
       let profileResponse = formBaseResponseRef.current;
@@ -1191,6 +1203,9 @@ function TenantProfileForm({
           return;
         }
       }
+      // Local row identities are acknowledged by this exact accepted payload,
+      // before newer input can be interpreted against its saved-row lifecycle.
+      acceptSkillSave?.(isJsonRecord(profileResponse.profile) ? profileResponse.profile : null);
       if (shouldUpdateProfile) {
         profileSaveVersionFenceRef.current =
           profileResponse.profileVersion ?? profileSaveVersionFenceRef.current;
@@ -1310,8 +1325,15 @@ function TenantProfileForm({
         setStatusTone("warning");
         setStatusMessage("Saved; newer changes pending");
       }
+      confirmedProfileSubmissionRef.current = profileSubmissionSequenceRef.current;
     },
   });
+
+  const submitProfileWithAuthority = async () => {
+    const sequence = ++profileSubmissionSequenceRef.current;
+    await form.handleSubmit();
+    return confirmedProfileSubmissionRef.current === sequence;
+  };
 
   const applyPlateTextChanges = useCallback(
     (changes: readonly ProfilePlateTextChange[]) => {
@@ -1915,7 +1937,7 @@ function TenantProfileForm({
       onSubmit={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        void form.handleSubmit();
+        autosaveControllerRef.current?.requestSave();
       }}
       onReset={(event) => {
         event.preventDefault();
@@ -2077,7 +2099,8 @@ function TenantProfileForm({
                 form.reset(nextValues, { keepDefaultValues: true });
               }}
               setStatusMessage={setStatusMessage}
-              submit={() => form.handleSubmit()}
+              onControllerChange={bindAutosaveController}
+              submit={submitProfileWithAuthority}
               values={values}
             />
           </>
@@ -2249,7 +2272,10 @@ function TenantProfileForm({
                     {...(achievementWordings ? { achievementWordings } : {})}
                     showSectionHeading={showSectionHeading}
                     profile={profileField.state.value}
+                    onSkillSaveTrackerChange={bindSkillSaveTracker}
+                    draftResetToken={resetToken}
                     style={styleField.state.value}
+                    onProfileSaveRequest={() => autosaveControllerRef.current?.requestSave()}
                     onProfileChange={(value) => {
                       clearTransientStatus();
                       const conflict = requiredPinConflictRef.current;

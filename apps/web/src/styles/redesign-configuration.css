@@ -67,6 +67,14 @@
 
 /* Profile and preferences -------------------------------------------------- */
 
+/* Keep the single-column preferences editor bounded after the legacy mobile
+ * .profile-layout rule switches to 1fr. Its A4 template document already owns
+ * a scroll area; its intrinsic width must not become the form's grid minimum. */
+.profile-layout-single {
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
 /* The baseline resume is an A4 editing surface, not a thumbnail. Keep enough
  * space for the 794px document plus its scroll gutter; the form's container
  * queries intentionally collapse its fields before the document is squeezed. */
@@ -743,6 +751,14 @@
 
 .configuration-section__body {
   padding: 0 0 20px;
+}
+
+#preferences-tailoring > .configuration-section__body {
+  padding-inline: var(--jh-panel-padding);
+}
+
+.settings-pane .discovery-runtime-settings .field-grid {
+  padding-inline: var(--jh-panel-padding);
 }
 
 .configuration-section .field-grid {
@@ -1590,6 +1606,19 @@
 
 .discovery-workspace .discovery-panel-head h3 {
   font: inherit;
+}
+
+.discovery-feedback-refresh {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 12px;
+  padding: 12px;
+  overflow-wrap: anywhere;
+}
+
+.discovery-feedback-refresh > p {
+  margin: 0;
 }
 
 .discovery-workspace .discovery-source-summary {

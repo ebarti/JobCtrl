@@ -2,6 +2,7 @@ import { useRequirementLibrary } from "../../contexts/fit/index.js";
 import { AchievementWordings, useWordingLibrary } from "../../contexts/profile/index.js";
 import { Button } from "../../shared/ui/button.js";
 import "../../styles/redesign-requirements.css";
+import { RequirementLinksDisclosure } from "./RequirementLinksDisclosure.js";
 
 /** Compose only saved assignment identities; coverage or approval never selects a wording. */
 export function AchievementWordingWorkspace({ achievementId, onSelectRequirement }: {
@@ -30,7 +31,7 @@ export function AchievementWordingWorkspace({ achievementId, onSelectRequirement
     {library.error ? <p role="alert">Requirement-specific wording could not be refreshed.{library.data ? " Showing the last available mappings." : ""} <Button type="button" variant="outline" size="sm" onClick={() => void library.refetch()}>Retry</Button></p> : null}
     {distinct.size > 1 ? <p role="status">Several current wordings are recorded for this achievement. Review their linked requirements and selection history.</p> : null}
     {stale.length ? <div className="achievement-wording-workspace__notice" role="status"><strong>Current wording needs review</strong>
-      <div className="achievement-requirements__tags">{stale.map(({ requirement }) => <button className="achievement-requirements__tag" type="button" key={requirement.requirement_id} onClick={() => onSelectRequirement(requirement.requirement_id)}>{requirement.definition}<small>Needs review</small></button>)}</div></div> : null}
+      <RequirementLinksDisclosure label="Requirements needing review" links={stale.map(({ requirement }) => ({ id: requirement.requirement_id, definition: requirement.definition, status: "Needs review" }))} onSelectRequirement={onSelectRequirement} /></div> : null}
     <AchievementWordings achievementId={achievementId} currentWordings={current} hasSavedAssignment={assignments.length > 0}
       assignmentsUnavailable={!library.data || (!!assignments.length && !wording.data)}
       wordingContext={(variantId, revision) => {
@@ -42,7 +43,7 @@ export function AchievementWordingWorkspace({ achievementId, onSelectRequirement
           const status = assignment ? assignment.current && aligned ? "Current wording" : "Current wording · needs review" : coverage.some((item) => item.current) ? "Coverage recorded" : associations.some((item) => item.current) ? "Your link · unassessed" : "Earlier link · needs review";
           return [{ requirement, status }];
         });
-        return matches.length ? <div className="achievement-requirements__tags" aria-label="Requirements for this wording">{matches.map(({ requirement, status }) => <button className="achievement-requirements__tag" type="button" key={requirement.requirement_id} onClick={() => onSelectRequirement(requirement.requirement_id)}><span>{requirement.definition}</span><small>{status}</small></button>)}</div> : null;
+        return matches.length ? <RequirementLinksDisclosure label="Requirements for this wording" links={matches.map(({ requirement, status }) => ({ id: requirement.requirement_id, definition: requirement.definition, status }))} onSelectRequirement={onSelectRequirement} /> : null;
       }} />
   </div>;
 }

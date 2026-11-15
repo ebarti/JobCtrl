@@ -38,6 +38,7 @@ import {
   useCareerLearningMutation,
   useCareerLearningQuery,
 } from "../hooks/useCareerLearning.js";
+import "../../../styles/career-learning.css";
 
 /** Public immutable job choices supplied by the page that composes Jobs and Learning. */
 export interface CareerJobChoices {
@@ -645,7 +646,7 @@ function CareerLearningWorkspace({ jobs }: { readonly jobs: CareerJobChoices }) 
     );
   const act = (command: CareerLearningCommand) => mutation.mutate(command);
   return (
-    <div className="grid min-w-0 gap-5 pt-4 break-words">
+    <div className="career-learning-content grid min-w-0 gap-5 pt-4 break-words">
       <h2>Review a selected-job cohort</h2>
       <p>
         Choose up to 30 jobs and a selection date. The model compares only their
@@ -691,7 +692,7 @@ function CareerLearningWorkspace({ jobs }: { readonly jobs: CareerJobChoices }) 
         </p>
       ) : null}
       <form
-        className="grid gap-4"
+        className="career-learning-cohort grid gap-4"
         onSubmit={(event) => {
           event.preventDefault();
           void form.handleSubmit();
@@ -705,53 +706,55 @@ function CareerLearningWorkspace({ jobs }: { readonly jobs: CareerJobChoices }) 
         <form.Subscribe selector={(state) => state.values}>{(values) => <CohortDraftKeeper
           tenant={tenant} epoch={draftEpoch} values={values} editing={editing} preview={preview} />}</form.Subscribe>
         <FieldGroup>
-          {(
-            [
-              ["title", "Cohort name"],
-              ["asOf", "Selection date"],
+          <FieldGroup className="career-learning-cohort__fields">
+            {(
               [
-                "aspirations",
-                "Your aspirations (separate from demonstrated capability)",
-              ],
-            ] as const
-          ).map(([name, label]) => (
-            <form.Field name={name} key={name}>
-              {(field) => (
-                <Field>
-                  <FieldLabel htmlFor={`${id}-${name}`}>{label}</FieldLabel>
-                  <Input
-                    id={`${id}-${name}`}
-                    type={name === "asOf" ? "date" : "text"}
-                    value={field.state.value}
-                    maxLength={
-                      name === "title"
-                        ? 160
-                        : name === "aspirations"
-                          ? 2000
-                          : undefined
-                    }
-                    onChange={(event) => field.handleChange(event.target.value)}
-                    onBlur={field.handleBlur}
-                  />
-                </Field>
-              )}
-            </form.Field>
-          ))}
-          <Field>
-            <FieldLabel htmlFor={`${id}-search`}>
-              Find jobs to select
-            </FieldLabel>
-            <Input
-              id={`${id}-search`}
-              value={jobs.search}
-              onChange={(event) => {
-                jobs.onSearchChange(event.target.value);
-              }}
-            />
-          </Field>
+                ["title", "Cohort name"],
+                ["asOf", "Selection date"],
+                [
+                  "aspirations",
+                  "Your aspirations (separate from demonstrated capability)",
+                ],
+              ] as const
+            ).map(([name, label]) => (
+              <form.Field name={name} key={name}>
+                {(field) => (
+                  <Field>
+                    <FieldLabel htmlFor={`${id}-${name}`}>{label}</FieldLabel>
+                    <Input
+                      id={`${id}-${name}`}
+                      type={name === "asOf" ? "date" : "text"}
+                      value={field.state.value}
+                      maxLength={
+                        name === "title"
+                          ? 160
+                          : name === "aspirations"
+                            ? 2000
+                            : undefined
+                      }
+                      onChange={(event) => field.handleChange(event.target.value)}
+                      onBlur={field.handleBlur}
+                    />
+                  </Field>
+                )}
+              </form.Field>
+            ))}
+            <Field>
+              <FieldLabel htmlFor={`${id}-search`}>
+                Find jobs to select
+              </FieldLabel>
+              <Input
+                id={`${id}-search`}
+                value={jobs.search}
+                onChange={(event) => {
+                  jobs.onSearchChange(event.target.value);
+                }}
+              />
+            </Field>
+          </FieldGroup>
           <form.Field name="jobIds">
             {(field) => (
-              <FieldSet>
+              <FieldSet className="career-learning-cohort__jobs">
                 <FieldLegend>
                   Explicit job selection ({field.state.value.length}/30)
                 </FieldLegend>
@@ -822,7 +825,7 @@ function CareerLearningWorkspace({ jobs }: { readonly jobs: CareerJobChoices }) 
               </FieldSet>
             )}
           </form.Field>
-          <div className="flex items-center gap-3">
+          <div className="career-learning-cohort__pagination">
             <Button
               type="button"
               variant="outline"
