@@ -46,9 +46,7 @@ class AssociationStorage:
     def library_records(self, profile_id, connection=None):
         def read(conn):
             assessments = [json.loads(row[0]) for row in conn.execute(
-                "WITH ranked AS (SELECT assessment_json,row_number() OVER "
-                "(PARTITION BY requirement_id ORDER BY rowid DESC) position FROM fit_assessments WHERE profile_id=?) "
-                "SELECT assessment_json FROM ranked WHERE position=1", (profile_id,),
+                "SELECT assessment_json FROM fit_assessments WHERE profile_id=? ORDER BY rowid DESC", (profile_id,),
             )]
             coverage = [json.loads(row[0]) for row in conn.execute(
                 "SELECT relation_json FROM fit_coverage_relations WHERE profile_id=? ORDER BY rowid DESC", (profile_id,),

@@ -1,6 +1,6 @@
-import { test, expect, json, modelCall, action, completed } from "../harness/fixtures.js";
+import { test, expect, json, modelCall, action, completed, type ExternalCall } from "../harness/fixtures.js";
 import { captureReusePosting, acceptReuseRequirements, reusableModelCatalog, type CapturedPosting, type RequirementSnapshot } from "./reuse-data.js";
-import { citeSources, modelSources } from "./requirements-data.js";
+import { citeSources, modelSources, type CatalogContext } from "./requirements-data.js";
 
 const requirement = [{ localId: "recovery", text: "Implement durable workflow recovery." }];
 const body = requirement[0]!.text;
@@ -9,14 +9,31 @@ function assertDestination(snapshot: RequirementSnapshot, posting: CapturedPosti
   expect(snapshot).toMatchObject({ job_id: posting.job_id, posting_revision: posting.revision, posting_hash: posting.source_hash, stale: false });
   const occurrence = snapshot.requirements[0]!;
   expect(occurrence).toMatchObject({ job_id: posting.job_id, source_id: posting.source_id, source_revision: posting.source_revision, source_hash: posting.source_hash, model_source_id: semanticSourceId });
-  for (const provenance of [occurrence.provenance.extraction, ...occurrence.provenance.resolution]) {
-    expect(provenance.source_binding).toMatchObject({ version: 2, contract_version: "requirements-v2", semantic_source: { version: 2, contract_version: "requirements-v2", source_id: semanticSourceId }, destination_posting: {
-      job_id: posting.job_id, revision: posting.revision, source_id: posting.source_id, source_revision: posting.source_revision, source_hash: posting.source_hash,
-    } });
+  expect(occurrence.provenance.extraction.source_binding).toMatchObject({ version: 2, contract_version: "requirements-v2", semantic_source: { version: 2, contract_version: "requirements-v2", source_id: semanticSourceId }, destination_posting: {
+    job_id: posting.job_id, revision: posting.revision, source_id: posting.source_id, source_revision: posting.source_revision, source_hash: posting.source_hash,
+  } });
+  expect(occurrence.provenance.resolution).toHaveLength(1);
+  expect(occurrence.equivalence_determination_ids).toEqual(occurrence.provenance.resolution.map((receipt) => receipt.receipt_id));
+  for (const receipt of occurrence.provenance.resolution) {
+    expect(receipt).toMatchObject({ prompt_version: "requirements-capability-demand-v2",
+      input_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      accepted_result_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
   }
 }
 
-test("Requirements exact content reuse keeps destination bindings and invalidates for full body catalog model and effort", async ({ api, app }) => {
+function assertNormalizationDestination(call: ExternalCall, posting: CapturedPosting) {
+  const context = call.body["context"] as CatalogContext;
+  expect(context.incoming).toEqual([expect.objectContaining({ job_id: posting.job_id })]);
+  expect(context.occurrences.filter((row) => row.job_id === posting.job_id)).toHaveLength(1);
+  const reference = context.posting_sources.find((row) => row.job_id === posting.job_id)!;
+  expect(reference).toMatchObject({ job_id: posting.job_id, revision: posting.revision, source_hash: posting.source_hash });
+  const source = modelSources(call).find((row) => row.source_id === reference.source_id)!;
+  expect(source).toBeTruthy();
+  expect(JSON.parse(source.text)).toMatchObject({ job_id: posting.job_id, revision: posting.revision,
+    source_id: posting.source_id, source_revision: posting.source_revision, source_hash: posting.source_hash });
+}
+
+test("Requirements exact content reuse keeps extraction destination bindings and normalizes each Job against its complete catalog with model and effort authority", async ({ api, app }) => {
   reusableModelCatalog(app);
   const first = await captureReusePosting(api, "reuse-first", body);
   const accepted = await acceptReuseRequirements(api, app, first, requirement, { recovery: { verdict: "new" } });
@@ -29,6 +46,7 @@ test("Requirements exact content reuse keeps destination bindings and invalidate
   expect(JSON.stringify(accepted.extraction!.body)).not.toContain(first.job_id);
   expect(JSON.stringify(accepted.extraction!.body)).not.toContain("Synthetic reuse-first");
   assertDestination(accepted.snapshot, first, semanticSourceId);
+  assertNormalizationDestination(accepted.matching!, first);
   const canonicalId = accepted.snapshot.requirements[0]!.requirement_id;
   const equivalent = { recovery: { verdict: "equivalent" as const, requirementId: canonicalId } };
 
@@ -39,17 +57,19 @@ test("Requirements exact content reuse keeps destination bindings and invalidate
   const reusedExtraction = await acceptReuseRequirements(api, app, second, requirement, equivalent, { extract: false });
   expect(app.external.calls.slice(beforeSecond).map((call) => call.body["operation"])).toEqual(["requirements.match_catalog"]);
   expect(reusedExtraction.snapshot.requirements[0]!.extraction_determination_id).toBe(accepted.snapshot.requirements[0]!.extraction_determination_id);
-  expect(reusedExtraction.matching!.body["prompt_version"]).toBe("requirements-v2-catalog-match-v2-content-bound");
+  expect(reusedExtraction.matching!.body["prompt_version"]).toBe("requirements-capability-demand-v2");
   assertDestination(reusedExtraction.snapshot, second, semanticSourceId);
+  assertNormalizationDestination(reusedExtraction.matching!, second);
 
   const third = await captureReusePosting(api, "reuse-third", body);
   const beforeThird = app.external.calls.length;
-  const exact = await acceptReuseRequirements(api, app, third, requirement, equivalent, { extract: false, match: false });
-  expect(app.external.calls).toHaveLength(beforeThird);
+  const exact = await acceptReuseRequirements(api, app, third, requirement, equivalent, { extract: false });
+  expect(app.external.calls.slice(beforeThird).map((call) => call.body["operation"])).toEqual(["requirements.match_catalog"]);
   expect(exact.snapshot.requirements[0]!.extraction_determination_id).toBe(accepted.snapshot.requirements[0]!.extraction_determination_id);
-  expect(exact.snapshot.requirements[0]!.equivalence_determination_ids).toEqual(reusedExtraction.snapshot.requirements[0]!.equivalence_determination_ids);
+  expect(exact.snapshot.requirements[0]!.equivalence_determination_ids).not.toEqual(reusedExtraction.snapshot.requirements[0]!.equivalence_determination_ids);
   expect(new Set([accepted, reusedExtraction, exact].map((value) => value.snapshot.requirements[0]!.occurrence_id)).size).toBe(3);
   assertDestination(exact.snapshot, third, semanticSourceId);
+  assertNormalizationDestination(exact.matching!, third);
 
   const differentBody = `${body}\nAuthored source context.`;
   const changedBody = await captureReusePosting(api, "reuse-exact-context", differentBody);

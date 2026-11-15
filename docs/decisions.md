@@ -3507,3 +3507,92 @@ and [QA](local-reliability-qa.md). Completion requires actual owned synthetic
 upgrade, failure/concurrency, language/Plate/export and four-category application
 journeys; this contract alone establishes no passing result, real-provider
 judgment quality, installed release or deployment.
+
+<a id="capability-consolidation-and-source-demand"></a>
+
+## 2026-11-15: Mandatory Capability Consolidation and Source-Demand Authority
+
+Status: accepted correction, tracked in
+[#1488](https://github.com/ebarti/JobCtrl/issues/1488). Implementation, application
+verification and real-provider interpretation remain separate evidence.
+
+**Problem.** Copying a posting's complete extracted definition into a canonical
+identity lets ordinary phases, audiences, checks and outcomes become separate
+skills. Comparing only incoming entries with the catalog leaves earlier splits
+intact. These extra identities affect equal-item Fit and resume selection, so
+removing repeated rows in a reader cannot repair the defect. Conversely, merging
+their definitions into a global union can impose one posting's genuine demands
+on another; dropping those demands weakens the assessment.
+
+**Decision.** Requirements owns one reusable capability identity and a separate
+source-bound normalized demand for each job/capability. Original extraction and
+posting evidence remain immutable. Ordinary facets share capability identity;
+independently demanded expertise and named technologies remain distinct. Technical
+practice remains a Skill even when the posting calls it experience. There is no
+target catalog size or name-based merge rule.
+
+Original posting evidence outranks fallible derived definitions. Policy
+`requirements-capability-demand-v2` records an explicit correction witness when
+a retained historical member attributes an unsupported scope or relationship.
+This bounded correction requires no accepted occurrence of that member,
+including on deleted jobs; an exact prior claim, its own original source
+authority, its retained group and a valid group preserving the separately
+established demand remain pinned. The witness and receipt survive in
+reconciliation and root-revision provenance. It cannot split current occurrences,
+create a one-to-many alias, invent an unspecified subtype or remove a genuine
+job demand. Cases needing a broader source correction remain explicit review.
+
+An explicit repair and every semantic ingestion/correction path use the same
+mandatory whole-catalog consolidation gate. One determination sees the complete
+retained current-generation catalog, including hidden meanings, their original
+source authority, incoming entries and accepted occurrence bindings. Its result
+must exhaustively partition capabilities and account for every job occurrence in
+one combined demand per job/capability. Equivalent demands can share their exact
+normalized signature; materially different demands cannot share qualification
+merely because their capability is the same. An unchanged accepted capability or
+demand is explicitly reused rather than gratuitously rewritten.
+
+Code validates complete partitions, exact source citations, recorded IDs,
+revisions and the captured catalog/snapshot/posting identities. It chooses a
+stable surviving ID after the model decides the group. This selection is an
+identity rule, not a semantic classifier. Uncertain, incomplete, unsupported,
+oversized, cancelled or stale work publishes no partial repair and preserves
+accepted state. No lexical fallback, automatic chunking, per-requirement call
+fanout or retry-until-success loop is permitted.
+
+Publication appends capability revisions, explicit aliases, a reconciliation
+receipt/certificate and replacement Requirements snapshots atomically. Historical
+meaning/occurrence IDs and accepted artifacts remain available. Exact historical
+reads do not silently follow an alias or relabel an assessment. Current
+navigation can follow a recorded alias. A separately initialized schema extension
+stores reconciliation authority; previously registered schema strings are not
+edited. The normalization policy participates in action, cache and currentness
+bindings, so an old accepted snapshot cannot masquerade as normalized authority.
+
+**Fit and wording.** Qualification reuse binds Profile, capability ID/revision,
+normalized demand, permitted factual sources and qualification-policy/prompt
+version. The existing complete missing-item batch handles all applicable demands;
+there is no second scoring layer or extra per-item inference. One job counts a
+capability once even when several source occurrences express it. Direct
+Education and Languages retain their job-local contracts.
+
+The library has one capability row and exposes demand-specific support. It never
+chooses the strongest or latest sibling assessment as global authority. Exact
+coverage binds the applicable demand and assessment as well as approved text.
+One maintained wording head per achievement/capability can retain several exact
+demand bindings under the same approved variant. An uncovered sibling stays a
+gap; it neither inherits coverage nor invalidates an unchanged sibling's exact
+binding. No alias transfers approval, qualification or coverage.
+
+Changed authority makes affected Fit and composition results historical. Updating
+them remains an explicitly admitted, finite manual operation. Catalog repair,
+Profile saves, reads, approvals and their own writes never launch downstream
+work. The last accepted resume bytes remain available on failure or staleness.
+
+**Proof.** Exercise existing-only repair, hidden retained members, source-demand
+reuse/separation, one-item scoring, exact wording bindings, predecessor upgrade,
+complete-output refusal, concurrent source/catalog changes, cancellation and
+recovery through real application entrypoints in owned synthetic workspaces.
+Controlled external choices establish structural/authority behavior; a separate
+configured-provider run is needed to assess the reported semantic failure.
+Neither schema validation nor a passing browser suite proves semantic infallibility.

@@ -241,7 +241,7 @@ the Python application. Before operational rollout, stop every old application
 and worker writer and take a consistent workspace backup, including workflow
 history and referenced accepted artifacts. Verify ownership and stopped
 processes; do not treat a database-only snapshot as that complete backup.
-This implementation work has not rolled out to a live workspace.
+A source implementation alone does not establish a release or operational rollout.
 
 The new generation starts with an empty active Skills/Professional Experience
 catalog. Legacy accepted rows, job revision ordering and accepted resume bytes
@@ -255,6 +255,20 @@ as one workspace unit with compatible application/workflow state. Installing an
 older binary alone is unsafe. Keep the backup and historical accepted artifacts
 until the deliberate rollout and recovery checks have succeeded. No development
 or QA instruction authorizes restoring or resetting a real user's workspace.
+
+The later capability-consolidation policy stays within `requirements-v2` and
+adds separate normalization records. It does not reset the catalog on startup.
+Before adopting the source update, stop the owned writers and verify the same
+paired workspace backup. **Consolidate skills** is an explicit model operation
+over the complete retained catalog, including deleted-job sources. A successful
+operation records stable identities, aliases and combined job demands atomically;
+earlier meanings, assessments, approvals and accepted resume bytes remain
+history. Refused, interrupted or cancelled work cannot partially replace them.
+Changed derivations require an explicitly admitted refresh before they establish
+current authority. Reads and Profile saves never start that work. See the
+[Requirements library](requirements-library.md) for the action and recovery
+behavior. After publication, rollback requires the compatible workspace backup
+and workflow state together; an older binary alone is insufficient.
 
 The Python target does not upgrade or restore a pre-Python legacy database into place.
 The explicit `profile-transfer` command reads the old workspace and requires a

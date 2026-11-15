@@ -31,6 +31,11 @@ those purposes.
 - Compare the complete incoming Skills/Experience batch with the entire active
   catalog in one prompt. Reuse equivalent meanings, including ordinary facets
   of one competence, without collapsing materially different capabilities.
+  The [15 November correction](../decisions.md#capability-consolidation-and-source-demand)
+  makes complete retained-catalog consolidation mandatory, including hidden and
+  existing-existing entries. It separates capability identity from the normalized
+  job demand used for qualification, with append-only alias/reconciliation
+  authority and no transfer of old assessment or wording approval.
 - Qualify all missing items together, using reusable current assessments when
   valid. Every judgment must cite permitted sources. No lexical fallback.
 - A current section-backed match does not create an achievement-wording gap.
@@ -70,6 +75,13 @@ alongside its canonical binding; canonicalization does not erase the original.
 Source identities used for cache reuse derive from the complete semantic input,
 not arbitrary job IDs. Direct demands have job-local identities and exact source
 revisions, so they cannot accidentally reuse another job's assessment.
+
+Source follow-up [#1488](https://github.com/ebarti/JobCtrl/issues/1488) adds
+`requirements-capability-demand-v2` authority within this generation. Older typed
+snapshots remain readable but require explicit consolidation before new Fit or
+tailored composition. Reusable qualification binds the exact normalized demand
+and qualification-policy version; one capability still contributes one item per
+job. Earlier passing journeys do not establish this follow-up's verification.
 
 The same missing-qualification batch accepts all four categories. Structural
 validation enforces permitted evidence categories and records the education

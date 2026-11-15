@@ -71,6 +71,11 @@ def association_stale_reasons(record, requirement, profile, wording_library):
     reasons = [] if current_contract(record) else ["contract_changed"]
     if requirement is None or str(record["requirement_revision"]) != str(requirement["revision"]):
         reasons.append("requirement_revised")
+    if requirement is not None and requirement.get("stale"):
+        reasons.extend(reason for reason in requirement.get("stale_reasons", ["requirement_revised"]) if reason not in reasons)
+    if (requirement is not None and requirement.get("resolved_requirement_id", record["requirement_id"]) != record["requirement_id"]
+            and "requirement_consolidated" not in reasons):
+        reasons.append("requirement_consolidated")
     if profile is None:
         return [*reasons, "profile_unavailable"]
     achievement = achievements(profile).get(record["achievement_id"])

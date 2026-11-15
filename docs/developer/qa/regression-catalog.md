@@ -55,6 +55,20 @@ its canonical binding. Equal-item arithmetic uses distinct canonical meanings
 and direct demands, with no source weights, must-have multiplier or blocker cap;
 duplicates and alternatives cannot multiply points and an empty set has no score.
 
+Mandatory capability consolidation covers the complete retained catalog, including
+hidden and existing-existing members. Require exhaustive source-bound capability
+and job-demand partitions, append-only alias/revision/snapshot authority, and no
+partial publication on uncertainty or source/catalog races. Original demand is
+effective assessment input, not only inspection metadata. Reuse/currentness binds
+its normalized fingerprint and qualification policy as well as capability and
+Profile versions. One job scores a capability once; different demands cannot
+share authority just because names or canonical IDs match. Shared batch receipts
+cannot cross-authorize demand-specific wording coverage. A maintained common
+variant closes all its recorded positive bindings and cannot be overwritten by
+cached selection authority omitting the maintained-head input. Retained alias
+history must not become current qualification or approval. See the
+[consolidation decision](../../decisions.md#capability-consolidation-and-source-demand).
+
 Profile owns facts, attachments, confirmations, authored baseline and wording
 approval. Requirements owns qualified meanings and source occurrences. Fit
 owns factual support and exact approved-wording coverage relations. Resumes

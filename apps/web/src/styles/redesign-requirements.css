@@ -17,6 +17,11 @@
 .requirements-workspace { display: grid; gap: 20px; width: 100%; }
 .requirements-workspace > .page-head { margin-bottom: 0; }
 .requirements-library > :is([role="status"], [role="alert"], .muted) { margin: 0 0 16px; }
+.requirement-consolidation { display: grid; justify-items: start; gap: 10px; margin-bottom: 20px; padding: 16px 20px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.requirement-consolidation :is(h2, p) { margin: 0; }
+.requirement-consolidation h2 { font-size: 16px; line-height: 1.4; }
+.requirement-consolidation div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.requirement-consolidation div > :is(h2, p) { flex-basis: 100%; }
 .requirements-library__layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; }
 .requirements-library__table { min-width: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--card); overflow: hidden; }
 .requirements-library__table:focus { outline: 2px solid var(--ring); outline-offset: 3px; }
@@ -45,6 +50,12 @@
 .requirements-detail { padding: clamp(18px, 2vw, 28px); }
 .requirements-detail :is(details, p, blockquote, footer, pre) { min-inline-size: 0; max-inline-size: 100%; overflow-wrap: anywhere; }
 .requirements-detail > .requirement-assessment { margin-bottom: 24px; }
+.requirement-demands { display: grid; gap: 10px; margin-bottom: 24px; }
+.requirement-demands h3, .requirement-demands p { margin: 0; }
+.requirement-demands__list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.requirement-demands__list > li { padding: 10px 0; border-top: 1px solid var(--border); }
+.requirement-demands__content { display: grid; gap: 10px; padding: 10px 0 4px; }
+.requirement-demands__content :is(blockquote, ul) { margin: 0; }
 .requirements-detail blockquote footer { margin-top: 6px; font-size: 12px; line-height: 1.5; }
 .requirement-history__list { list-style: none; padding: 0; margin: 0; }
 .requirements-definition { padding-bottom: 22px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
@@ -76,6 +87,8 @@
 .requirement-history { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
 .requirements-library details summary, .requirement-picker details summary { cursor: pointer; color: var(--primary); font-weight: 600; }
 .requirement-history__content { display: grid; gap: 12px; padding-top: 14px; overflow-wrap: anywhere; }
+.requirement-alias-history { display: grid; gap: 10px; }
+.requirement-alias-history :is(h4, p) { min-inline-size: 0; margin: 0; overflow-wrap: anywhere; }
 .requirement-history__list { display: grid; gap: 12px; }
 .requirement-history__list > li, .requirement-removed { display: grid; gap: 7px; padding: 14px; border: 1px solid var(--border); border-radius: 6px; }
 .requirement-history__list p, .requirement-history__list blockquote, .requirement-removed p { margin: 0; }

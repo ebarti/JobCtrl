@@ -52,9 +52,13 @@ class RebuildRequest(RequestValue):
     expected_catalog_revision: StrictInt = Field(ge=0, le=2**63 - 1)
 
 
+class ConsolidateRequest(RebuildRequest):
+    operation_id: StrictStr | None = Field(default=None, min_length=1, max_length=240)
+
+
 def raise_application_error(failure: RequirementError):
     if failure.code in {"catalog_changed", "cancelled", "stale_catalog_revision", "retrieval_index_stale", "requirements_contract_changed",
-                         "requirements_correction_call_unsettled"}:
+                         "requirements_correction_call_unsettled", "requirements_consolidation_call_unsettled"}:
         status = 409
     elif failure.code in {"model_provenance_missing", "requirements_catalog_unavailable", "catalog_snapshot_invalid"}:
         status = 503
@@ -89,6 +93,13 @@ def _pagination(request, *, default=50, maximum=200):
 
 
 def routes(service):
+    async def consolidate(request):
+        body = await parse_request(request, ConsolidateRequest)
+        try:
+            return JSONResponse(await service.consolidate_catalog(**body.model_dump()))
+        except RequirementError as failure:
+            raise_application_error(failure)
+
     async def job_requirements(request):
         if request.method in {"GET", "HEAD"}:
             return JSONResponse(service.find_job_requirements(request.path_params["job_id"]))
@@ -167,6 +178,7 @@ def routes(service):
         Route("/v1/jobs/{job_id}/requirements/corrections", correct_occurrences, methods=["POST"]),
         Route("/v1/jobs/{job_id}/requirements/{occurrence_id}/binding", correct_binding, methods=["POST"]),
         Route("/v1/requirements", catalog, methods=["GET"]),
+        Route("/v1/requirements/consolidate", consolidate, methods=["POST"]),
         Route("/v1/requirements/index", index_status, methods=["GET"]),
         Route("/v1/requirements/index/rebuild", rebuild, methods=["POST"]),
         Route("/v1/requirements/{requirement_id}", detail, methods=["GET"]),

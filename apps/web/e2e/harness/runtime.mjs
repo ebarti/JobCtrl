@@ -417,7 +417,7 @@ export async function applicationStack(
   }
   try {
     if (sourceRevision) {
-      if (sourceRevision !== "8ab86e9232d66fff9795906e061d208e7a057d8b")
+      if (!["8ab86e9232d66fff9795906e061d208e7a057d8b", "5b9db7ddfa20fa2d618687da1b311e2287286679"].includes(sourceRevision))
         throw new Error("The source upgrade journey requires its exact fixed predecessor.");
       const resolved = await execFile("git", ["rev-parse", "--verify", `${sourceRevision}^{commit}`], { cwd: repo, timeout: 5_000 });
       if (resolved.stdout.trim() !== sourceRevision)
@@ -557,6 +557,21 @@ with sqlite3.connect(file.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
 print(hashlib.sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
 `, workspace], { env, timeout: 5_000, maxBuffer: 10_000 });
         return inspected.stdout.trim();
+      },
+      async databaseSchemaInventory() {
+        const inspected = await execFile(pythonExecutable, ["-c", `
+import json, os, pathlib, sqlite3, sys
+root = pathlib.Path(sys.argv[1])
+owner = json.loads((root / ".jobctrl-e2e-owned.json").read_text())
+assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
+file = root / "jobctrl.db"
+assert not file.is_symlink()
+with sqlite3.connect(file.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
+    conn.execute("PRAGMA query_only=ON")
+    rows = conn.execute("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").fetchall()
+print(json.dumps([dict(zip(("type", "name", "table", "sql"), row)) for row in rows], sort_keys=True))
+`, workspace], { env, timeout: 5_000, maxBuffer: 200_000 });
+        return JSON.parse(inspected.stdout);
       },
       async failRendering() {
         await writeFile(renderFailure, "external browser process failure\n", {

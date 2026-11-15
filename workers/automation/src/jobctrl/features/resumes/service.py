@@ -177,13 +177,21 @@ class ResumesService:
                 "input_hash": digest({"contract_version": "requirements-v2", **payload})}
 
     def _coverage(self, job_id, snapshot, connection=None):
+        from jobctrl.features.requirements import snapshot_items
         requirements = dto(self.requirements.get_job_requirements(job_id, connection=connection))
         if requirements.get("contract_version") != "requirements-v2":
             raise ResumeError("requirements_contract_changed")
         if requirements.get("stale") is True:
             raise ResumeError("requirements_source_changed")
+        items = {}
+        for row in snapshot_items(requirements):
+            previous = items.get(row["requirement_id"])
+            if previous is not None and any(previous.get(key) != row.get(key) for key in
+                    ("requirement_revision", "demand_fingerprint", "definition")):
+                raise ResumeError("requirements_source_changed")
+            items[row["requirement_id"]] = row
         coverage = dto(self.fit.coverage_for(
-            snapshot["profile_revision"], requirements.get("requirements", []), snapshot["approved_variants"],
+            snapshot["profile_revision"], list(items.values()), snapshot["approved_variants"],
             profile_id=snapshot["profile_id"], connection=connection,
         ))
         return requirements, coverage

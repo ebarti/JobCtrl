@@ -1,8 +1,8 @@
 import { test, expect, json, modelCall, completed, type ExternalCall } from "../harness/fixtures.js";
 import { baseline, createBaseline, acceptBaseline, getResume, type Profile } from "./core-data.js";
 import { captureReusePosting, type RequirementSnapshot } from "./reuse-data.js";
-import { catalogMatching, typedExtraction, citeSources, modelSources } from "./requirements-data.js";
-import { groupedCoverageDecision, impactPartition, refreshPayload, startRefresh, type PendingRefresh } from "./fit-data.js";
+import { catalogMatching, legacyCatalogMatching, typedExtraction, citeSources, modelSources } from "./requirements-data.js";
+import { legacyGroupedCoverageDecision, legacyImpactPartition, refreshPayload, startRefresh, type PendingRefresh } from "./fit-data.js";
 import { qualificationBatchDecision } from "./qualification-data.js";
 
 // This exact public predecessor writes its own real state. CI fetches this Git
@@ -35,7 +35,7 @@ test("a real predecessor upgrade preserves history and accepted bytes, starts an
     reason: "Explicit legacy source-bound synthetic demand.", citations: citeSources(oldExtraction, [source.source_id]),
   });
   const oldMatching = await modelCall(app, "requirements.match_catalog");
-  const { status: _newStatus, ...legacyMatching } = catalogMatching(oldMatching, { recovery: { verdict: "new" } });
+  const { status: _newStatus, ...legacyMatching } = legacyCatalogMatching(oldMatching, { recovery: { verdict: "new" } });
   oldMatching.reply(legacyMatching);
   const extracted = await extracting;
   expect(extracted.status(), await extracted.text()).toBe(200);
@@ -53,11 +53,11 @@ test("a real predecessor upgrade preserves history and accepted bytes, starts an
   const key = "legacy-upgrade-refresh";
   const oldRun = await startRefresh(api, refresh, key);
   const impact = await modelCall(app, "fit.catalog-impact");
-  impact.reply(impactPartition(impact, { [oldRequirements.requirements[0]!.requirement_id]: "affected" }));
+  impact.reply(legacyImpactPartition(impact, { [oldRequirements.requirements[0]!.requirement_id]: "affected" }));
   const refreshedQualification = await modelCall(app, "fit.qualification-batch");
   refreshedQualification.reply(legacyQualification(refreshedQualification, achievement.achievement_id, evidenceId));
   const oldCoverage = await modelCall(app, "fit.wording-coverage-grouped");
-  oldCoverage.reply(groupedCoverageDecision(oldCoverage, { evidenceSourceId: evidenceId, status: "covered", action: "reuse_approved", reusableVariantId: achievement.baseline_variant_id }));
+  oldCoverage.reply(legacyGroupedCoverageDecision(oldCoverage, { evidenceSourceId: evidenceId, status: "covered", action: "reuse_approved", reusableVariantId: achievement.baseline_variant_id }));
   const oldAction = await completed(api, oldRun.runId);
   const oldProfile = await json<Profile>(api, "get", "/v1/profile");
   const acceptedResume = await acceptBaseline(api, posting.job_id, oldProfile.profileVersion);
@@ -67,12 +67,19 @@ test("a real predecessor upgrade preserves history and accepted bytes, starts an
   type Fit = { current: boolean; stale_reasons: string[]; selection: { ready_for_materials: boolean }; score: { revision: number; score: number } };
   const oldFit = await json<Fit>(api, "get", `/v1/jobs/${posting.job_id}/fit`);
   const oldHistory = await json(api, "get", `/v1/jobs/${posting.job_id}/fit/history`);
-  const oldSchema = await app.databaseSchemaFingerprint();
+  const oldSchema = await app.databaseSchemaInventory();
   expect(oldFit.score.score).toBe(10);
   const callsBeforeUpgrade = app.external.calls.length;
   const replacement = await app.upgradeSource();
   expect(replacement.current).not.toBe(replacement.previous);
-  expect(await app.databaseSchemaFingerprint()).toBe(oldSchema);
+  const upgradedSchema = await app.databaseSchemaInventory();
+  const schemaKey = (row: typeof oldSchema[number]) => JSON.stringify([row.type, row.name]);
+  const originalSchemaKeys = new Set(oldSchema.map(schemaKey));
+  expect(upgradedSchema.filter((row) => originalSchemaKeys.has(schemaKey(row)))).toEqual(oldSchema);
+  const additions = upgradedSchema.filter((row) => !originalSchemaKeys.has(schemaKey(row)));
+  const normalizationTables = ["requirements_aliases", "requirements_reconciliations", "requirements_reconciliation_certificate", "requirements_normalization_cache", "requirements_normalization_intents"];
+  expect(additions.every((row) => normalizationTables.includes(row.table))).toBe(true);
+  expect(additions.filter((row) => row.type === "table").map((row) => row.name).sort()).toEqual([...normalizationTables].sort());
   const currentProfile = await json<Profile>(api, "get", "/v1/profile");
   expect(currentProfile).toMatchObject({ profileVersion: oldProfile.profileVersion, profile: { resume: { language_entries: [] } } });
   const noOp = await json<Profile>(api, "patch", "/v1/profile", { expectedProfileVersion: currentProfile.profileVersion, profile: currentProfile.profile });

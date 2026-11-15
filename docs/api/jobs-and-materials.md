@@ -164,6 +164,7 @@ purge; it cannot revive removed revision pins or Profile links.
 | Route | Contract |
 | --- | --- |
 | `GET /v1/requirements/{requirement_id}` | Retained current or exact historical meaning and accepted occurrences, including meanings outside the active library. `active_in_library` distinguishes current membership from retention. |
+| `POST /v1/requirements/consolidate` | Explicit source-bound existing-only consolidation: `{expected_catalog_revision,operation_id?}`. The durable `requirements.consolidate` action accepts `{expected_catalog_revision}` and uses its run ID. |
 | `GET /v1/requirements/{requirement_id}/history` | `kind=revisions\|occurrences`, `limit=1..200` (default 50) and nonnegative `offset`; returns `{requirement_id,current_revision,active_in_library,kind,total,limit,offset,rows}`. Occurrences retain exact accepted posting/meaning revisions and report `current`/`stale_reasons`. |
 | `GET /v1/fit/requirement-library?profile_id=default` | Complete active library with nullable recorded `assessment`, exact `coverage`, separate unassessed `associations`, active `current_wordings` heads (including stale heads) and all `wording_assignments` heads. Returns Profile/fact/wording/catalog revisions and `readiness: ready\|profile_required`. An absent Profile has null Profile revisions, not invented evidence. |
 | `POST /v1/fit/associations` | Requires stable `association_id`, `profile_id`, `expected_profile_revision`, `requirement_id`, `requirement_revision`, `achievement_id`, exact `achievement_source_refs`, and `wording: null` or `{variant_id,variant_revision,exact_text,source_refs}`. |
@@ -182,6 +183,46 @@ original pins stale. Restoration does not claim freshness or reassess anything.
 These writes make no model call, qualification, coverage, score, wording approval,
 resume change or automatic refresh. Readers join recorded IDs and revisions;
 they do not infer links from labels or text similarity.
+
+The `requirements-capability-demand-v2` policy makes complete retained-catalog
+consolidation mandatory for semantic publication. Its report contains captured
+and published catalog epochs, input member count, canonical roots, complete
+member-to-root mapping, affected jobs, reconciliation identity and model receipt.
+Catalog reads include `normalization` status/version/certificate and recorded
+aliases. Exact historical revision reads preserve their original identity;
+current navigation may follow a recorded alias. Old typed job snapshots report
+`consolidation_required` staleness and cannot supply new assessment authority.
+
+Reusable occurrences retain their original extracted definition and exact source
+evidence plus `normalized_demand` containing its definition, fingerprint, policy
+version and source-bound provenance. The assessment adapter exposes canonical
+ID/revision/category/name, `capability_definition`, normalized demand `definition`,
+`demand_fingerprint` and `demand_provenance`. Same-job occurrences of one capability
+share one combined demand; direct Education/Languages remain job-local.
+
+Fit library rows add `assessment_scope`, `assessment_summary` and
+`demand_assessments`. Each demand row retains its definition, fingerprint,
+applicable jobs and actual recorded assessment/currentness. Multiple demands
+report `varies_by_job` with no representative scalar assessment; incomplete old
+source inventory reports `consolidation_required`, including any verified partial
+rows without claiming a complete assessment. No strongest/latest sibling can
+become global support. Qualification, coverage, refresh checkpoints and
+publication fences retain the exact demand and policy version. Maintained common
+wording heads retain per-demand assessment/relation bindings under one exact
+approved variant; an uncovered demand remains a gap.
+
+Normalization's explicit correction witness is bounded to a retained historical
+member with no accepted occurrence, including deleted jobs. It pins the exact
+unsupported prior claim, original source, retained group and preserved demand
+group. Original definitions stay immutable history; active occurrence splitting
+and invented subtype/scope are refused. The same complete determination and
+atomic source fences apply—there is no separate per-member correction call.
+
+Incomplete/uncertain partitions, invalid reuse/citations, cancellation, stale
+catalog/posting/snapshot heads and payload/provider refusal preserve accepted
+records. No partial consolidation, automatic downstream refresh, lexical fallback
+or per-item inference fanout is admitted. See the
+[decision](../decisions.md#capability-consolidation-and-source-demand).
 
 Maintained assignments are distinct from user associations. They bind exact
 current approved wording and recorded positive coverage (`approval_id` and

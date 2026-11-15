@@ -5,6 +5,7 @@ from __future__ import annotations
 from jobctrl.app.errors import AppError, ConflictError
 
 from .coverage_groups import GroupedCoverageDecision, owned_support
+from .contract import qualification_key, wording_selection_inputs
 from .sources import achievements, dto, fact_sources, fingerprint, qualification_fingerprint, wording_eligible
 
 
@@ -12,7 +13,7 @@ def prepare_wording_retries(coverage, profile_snapshot, requirements_snapshot, r
     profile = dto(profile_snapshot)
     facts = fact_sources(profile)
     inventory = achievements(profile)
-    catalog = {row["requirement_id"]: row for row in requirements}
+    catalog = {qualification_key(row): row for row in requirements}
     plans, seen = [], set()
     operation.check()
     with coverage.store.read_snapshot() as read:
@@ -39,43 +40,58 @@ def prepare_wording_retries(coverage, profile_snapshot, requirements_snapshot, r
             entries = []
             requirement_ids = set()
             for binding in metadata["requirements"]:
-                ident = binding["requirement_id"]
+                ident = qualification_key(binding)
                 requirement = catalog.get(ident)
                 if (ident in requirement_ids or requirement is None
                         or str(requirement["requirement_revision"]) != str(binding["requirement_revision"])):
                     raise ConflictError("A selected retry's canonical requirement changed. Refresh Fit first.")
                 requirement_ids.add(ident)
-                assessment = read.latest_assessment(profile["profile_id"], ident, requirement["requirement_revision"],
+                assessment = read.latest_assessment(profile["profile_id"], requirement["requirement_id"], requirement["requirement_revision"],
                                                       source_fingerprint=qualification_fingerprint(profile, requirement, facts))
                 if (assessment is None or not wording_eligible(assessment) or assessment["kind"] not in {"matched", "transferable"}
                         or achievement_id not in assessment["achievement_ids"]
                         or not owned_support(inventory[achievement_id], assessment)
+                        or binding.get("assessment_id") != assessment["assessment_id"]
                         or binding["qualification_determination_id"] != assessment["determination_id"]):
                     raise ConflictError("A selected retry's factual support changed. Refresh Fit first.")
                 entries.append((requirement, assessment))
-            gaps = metadata["gap_requirement_ids"]
+            gaps = [qualification_key(row) for row in metadata.get("gap_demand_bindings", [])]
             if len(set(gaps)) != len(gaps) or not set(gaps).issubset(requirement_ids):
                 raise ConflictError("The selected retry's expression gaps cannot be bound.")
-            entries.sort(key=lambda item: item[0]["requirement_id"])
+            entries.sort(key=lambda item: qualification_key(item[0]))
             variants = [row for row in profile["approved_variants"] if row["achievement_id"] == achievement_id]
+            record = coverage.store.wording_group_decision(metadata["group_key"])
+            if record is None:
+                raise ConflictError("The selected retry's grouped determination is unavailable. Refresh Fit first.")
+            heads = read.current_wordings(profile["profile_id"], achievement_ids=[achievement_id])
+            if wording_selection_inputs(heads) != record.get("current_wordings"):
+                decision = record["decision"]
+                accepted = {qualification_key(row): row for row in record["requirements"]}
+                expected = ({key: decision["reusable_variant_id"] for key in accepted} if decision["action"] == "reuse_approved"
+                            else {qualification_key(row): row["variant_id"] for row in decision.get("selected_relations", [])})
+                actual = {qualification_key({**head, **pin}): head["variant_id"] for head in heads
+                          for pin in head.get("demand_bindings", [])}
+                if (actual != expected or any(head.get("selection_provenance", {}).get("group_key") != record["group_key"] for head in heads)
+                        or any(pin["assessment_id"] != accepted[qualification_key({**head, **pin})]["assessment_id"]
+                               for head in heads for pin in head.get("demand_bindings", []))):
+                    raise ConflictError("The common wording changed after this proposal. Refresh Fit before retrying.")
             group_facts, sources, bindings, group_key = coverage._group_inputs(
-                profile, inventory[achievement_id], entries, variants, facts,
+                profile, inventory[achievement_id], entries, variants, facts, maintained=record["current_wordings"],
             )
             if group_key != metadata["group_key"]:
                 raise ConflictError("The selected retry's source or approved wording inventory changed. Refresh Fit first.")
-            record = coverage.store.wording_group_decision(group_key)
             if (record is None or record["source_fingerprint"] != fingerprint(sources)
                     or record["decision"]["action"] not in {"propose_wording", "propose_consolidation"}
-                    or not set(gaps).issubset(record["decision"]["gap_requirement_ids"])):
+                    or not set(gaps).issubset(qualification_key(row) for row in record["decision"]["gap_demand_bindings"])):
                 raise ConflictError("The selected retry has no current source-bound expression decision. Refresh Fit first.")
             result = GroupedCoverageDecision.model_validate(record["decision"])
             current_relations, _ = coverage._current_relations(profile, entries, variants, facts,
                 profile_snapshot, requirements_snapshot, operation.cancelled, operation)
             coverage._validate_group(result, achievement_id, entries, variants, group_facts, sources, set(), current_relations, set(), None,
                 owned_ids={ref["source_id"] for binding in bindings for ref in binding["evidence_refs"]},
-                expected={(row["requirement_id"], row["variant_id"]) for row in record["requested_relations"]})
+                expected={(qualification_key(row), row["variant_id"]) for row in record["requested_relations"]})
             for requirement, assessment in entries:
-                if requirement["requirement_id"] in gaps and coverage._has_covered(
+                if qualification_key(requirement) in gaps and coverage._has_covered(
                         profile, requirement, assessment, variants):
                     raise AppError("fit_wording_retry_unnecessary", "An approved wording already covers a selected retry gap.", 409)
             plans.append((inventory[achievement_id], entries, record, previous))

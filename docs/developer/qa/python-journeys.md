@@ -46,12 +46,56 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **128 journeys in 42 project-file groups**:
-**127 Chromium cases in 41 spec files**, plus **one demo case in one file**.
+The current configured inventory is **133 journeys in 43 project-file groups**:
+**132 Chromium cases in 42 spec files**, plus **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts and keyboard-driven Profile saves. Listing
 these scenarios is not evidence that the complete current candidate passed.
+
+### Capability consolidation — 15 November 2026
+
+Five [consolidation journeys](../../../apps/web/e2e/journeys/requirements-consolidation.spec.ts)
+exercise complete retained-catalog publication and exact source-demand authority.
+They cover different demands under one capability, identical-demand receipt
+reuse, duplicate-occurrence scoring, source/catalog races, durable cancellation,
+and an existing-only upgrade from the real `5b9db7ddf` predecessor. The predecessor
+creates historical source records through its own public application. The new
+source must include hidden members, preserve independent technology, correct an
+old technical-practice category, retain original category/evidence/history, and
+publish recorded aliases without transferring assessment or approval authority.
+The historical-attribution witness has positive publication and exact replay
+coverage, plus active-member and unchanged-definition refusal controls. These
+controlled choices test validation and ownership; they do not grade a model's
+semantic interpretation.
+
+The broader affected run `e2e-KCU3Tt` recorded **71 passed / 2 failed** across 73
+cases, with no skips or flaky results. The failures were exact test expectations:
+accepted-action replay adds `reused_action: true`, and explicit rediscovery
+advances the catalog revision while visibility-only actions do not. Both were
+repaired without changing production behavior or weakening the preserved-state
+checks. The follow-up `e2e-Em13XJ` passed **4/4** predecessor, witness and lifecycle
+cases in **29.388 s** of journeys and **38.512 s** total. Its Python source digest
+was `75c71d9505dc136d777f80b61541ee3027b1da8181d70db37ef5c0e3d5c23730`
+and the unchanged web build digest was
+`8a7f1bc7574c9decd931304023aa3c337a47f1def3a159e047a747dffc109b45`.
+This is affected-path evidence, not a complete 133-case result or a real-provider
+semantic acceptance claim.
+
+The separate demo follow-up `e2e-2FSKbp` passed its single browser-local journey
+in **42.685 s** of orchestration and **51.726 s** total with the same Python and
+web digests. Initial and expanded demand captures preserve the actual saved
+freshness state; screenshot positioning does not change synthetic evidence or
+make an earlier illustration current. The journey also exercises durable local
+edits and accepted PDF export without product network or model requests.
+
+The source-format follow-up `e2e-vWlopO` passed **6/6** affected public journeys
+in **33.795 s** of orchestration and **43.570 s** total. It includes literal
+multiline, quoted and backslash source values; altered and cross-field-joined
+quotes must refuse while accepted state stays exact. Short citation handles
+retain real canonical/job IDs and unchanged persisted model results. Its Python
+digest was `f891a3519752d5076db1228eede9889b303b0cfd9591af500d74423f27c5b8bd`;
+the unchanged web digest remains the one above.
 
 ### Expanded screens and Profile editing — 15 November 2026
 

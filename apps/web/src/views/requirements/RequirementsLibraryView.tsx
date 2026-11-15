@@ -7,7 +7,7 @@ import {
   useCurrentWordingActions, useCurrentWordingHistory, useRequirementAssociationHistory, useRequirementLibrary,
   type AchievementChoice, type LibraryRequirement, type UserAssociation,
 } from "../../contexts/fit/index.js";
-import { requirementTableReturnState, requirementsLibrarySearchSchema, useRequirementHistory,
+import { RequirementConsolidationPanel, requirementTableReturnState, requirementsLibrarySearchSchema, useRequirementCatalog, useRequirementHistory,
   type RequirementsTableState } from "../../contexts/requirements/index.js";
 import { useProfileQuery, useWordingHistory, useWordingLibrary } from "../../contexts/profile/index.js";
 import { useJobsReturnSearch } from "../../contexts/jobs/index.js";
@@ -21,6 +21,7 @@ import { SavedTableViewsControl } from "../../shared/ui/saved-table-views-contro
 
 type Coverage = LibraryRequirement["coverage"][number];
 type Assignment = LibraryRequirement["wording_assignments"][number];
+type EarlierRecords = NonNullable<LibraryRequirement["historical_alias_records"]>[number];
 type Library = NonNullable<ReturnType<typeof useRequirementLibrary>["data"]>;
 const DEFAULT_TABLE_PRESENTATION: SavedTablePresentation = {
   columns: { order: [...REQUIREMENTS_TABLE_COLUMN_IDS], hidden: [...DEFAULT_REQUIREMENTS_HIDDEN_COLUMN_IDS], widths: {} },
@@ -30,6 +31,7 @@ const DEFAULT_TABLE_PRESENTATION: SavedTablePresentation = {
 function linkedAchievementIds(requirement: LibraryRequirement) {
   return [...new Set([
     ...(requirement.assessment?.achievement_ids ?? []),
+    ...(requirement.demand_assessments ?? []).flatMap((demand) => demand.assessment?.achievement_ids ?? []),
     ...requirement.coverage.map((item) => item.achievement_id),
     ...requirement.current_wordings.map((item) => item.achievement_id),
     ...requirement.associations.filter((item) => item.state === "active").map((item) => item.achievement_id),
@@ -41,6 +43,9 @@ function categoryLabel(requirement: LibraryRequirement) {
 }
 
 function supportLabel(requirement: LibraryRequirement) {
+  if (requirement.assessment_scope === "varies_by_job") return "Varies by job";
+  if (requirement.assessment_scope === "consolidation_required") return "Consolidation required";
+  if (requirement.assessment_scope === "not_applicable") return "No current job demand";
   if (!requirement.assessment) return "Not assessed";
   return `${requirement.assessment.current ? "" : "Earlier · "}${readable(requirement.assessment.kind)}`;
 }
@@ -50,7 +55,7 @@ function readable(value: string) {
   return text ? text[0]!.toLocaleUpperCase() + text.slice(1) : text;
 }
 
-function WordingAssignmentHistory({ assignment }: { assignment: Assignment }) {
+function WordingAssignmentHistory({ assignment, historical = false }: { assignment: Pick<Assignment, "assignment_id" | "profile_id">; historical?: boolean }) {
   const [offset, setOffset] = useState(0);
   const query = useCurrentWordingHistory(assignment.assignment_id, { profileId: assignment.profile_id, limit: 20, offset });
   return <div className="requirement-history__content">
@@ -59,7 +64,7 @@ function WordingAssignmentHistory({ assignment }: { assignment: Assignment }) {
     {query.data ? <>
       <ul className="requirement-history__list">{query.data.rows.map((row) => <li key={row.revision}>
         <strong>Selection revision {row.revision} · {row.state === "active" ? "Selected" : "Removed"}</strong>
-        <span>Requirement revision {row.requirement_revision} · wording revision {row.variant_revision} · {row.current ? "source pins current" : "needs review"}</span>
+        <span>Requirement revision {row.requirement_revision} · wording revision {row.variant_revision} · {historical ? "earlier record" : row.current ? "source pins current" : "needs review"}</span>
         <span>Wording {row.variant_id} · coverage {row.relation_id} · approval {row.approval_id}</span>
         {row.stale_reasons.length ? <span>Needs review: {row.stale_reasons.map(readable).join("; ")}</span> : null}
         <details><summary>Selection provenance</summary><pre>{JSON.stringify(row.selection_provenance, null, 2)}</pre></details>
@@ -91,11 +96,15 @@ function WordingSelectionAction({ library, requirement, achievementId, relation,
   const oneWording = variants.size <= 1;
   const requirementRevision = Number(relation.requirement_revision);
   const variantRevision = Number(relation.variant_revision);
+  const supportingAssessment = requirement.demand_assessments
+    ? requirement.demand_assessments.find((demand) => demand.current && demand.assessment?.assessment_id === relation.assessment_id)?.assessment
+    : requirement.assessment?.assessment_id === relation.assessment_id ? requirement.assessment : null;
   const valid = library.profile_revision !== null && Number.isSafeInteger(requirementRevision) && requirementRevision > 0
     && Number.isSafeInteger(variantRevision) && variantRevision > 0
+    && requirement.assessment_scope !== "consolidation_required"
     && relation.current && relation.covered && relation.status === "covered" && variant.status === "approved"
-    && !!requirement.assessment?.current && ["matched", "transferable"].includes(requirement.assessment.kind)
-    && requirement.assessment.achievement_ids.includes(achievementId)
+    && !!supportingAssessment?.current && ["matched", "transferable"].includes(supportingAssessment.kind)
+    && supportingAssessment.achievement_ids.includes(achievementId)
     && relation.approval_id === variant.approval_id && requirementRevision === requirement.revision;
   if (!valid) return null;
   if (!oneWording) return <p className="muted">Update affected matches to review all linked requirements before maintaining a different wording.</p>;
@@ -110,7 +119,7 @@ function WordingSelectionAction({ library, requirement, achievementId, relation,
   </div>;
 }
 
-function AssociationHistory({ association }: { association: UserAssociation }) {
+function AssociationHistory({ association, historical = false }: { association: Pick<UserAssociation, "association_id" | "profile_id">; historical?: boolean }) {
   const [offset, setOffset] = useState(0);
   const query = useRequirementAssociationHistory(association.association_id, { profileId: association.profile_id, limit: 20, offset });
   return <div className="requirement-history__content">
@@ -119,7 +128,7 @@ function AssociationHistory({ association }: { association: UserAssociation }) {
     {query.data ? <>
       <ul className="requirement-history__list">{query.data.rows.map((row) => <li key={row.revision}>
         <strong>Revision {row.revision} · {row.state === "active" ? "Linked" : "Removed"}</strong>
-        <span>Requirement revision {row.requirement_revision} · {row.current ? "original pins current" : "original pins need review"} · {row.updated_at}</span>
+        <span>Requirement revision {row.requirement_revision} · {historical ? "earlier record" : row.current ? "original pins current" : "original pins need review"} · {row.updated_at}</span>
         {row.wording ? <><span>Wording revision {row.wording.variant_revision}</span><blockquote>{row.wording.exact_text}</blockquote></> : <span>No specific wording linked.</span>}
       </li>)}</ul>
       {query.data.total > query.data.limit ? <HistoryPagination total={query.data.total} offset={offset} limit={query.data.limit} onOffset={setOffset} /> : null}
@@ -148,7 +157,7 @@ function HistoryPagination({ total, offset, limit, onOffset }: { total: number; 
   </div>;
 }
 
-function RequirementHistory({ requirementId, kind, filter, returnTable }: { requirementId: string; kind: "revisions" | "occurrences"; filter: string; returnTable: string }) {
+function RequirementHistory({ requirementId, kind, filter, returnTable, historical }: { requirementId: string; kind: "revisions" | "occurrences"; filter: string; returnTable: string; historical: boolean }) {
   const [offset, setOffset] = useState(0);
   const jobsSearch = useJobsReturnSearch();
   const query = useRequirementHistory(requirementId, { kind, limit: 20, offset });
@@ -156,19 +165,20 @@ function RequirementHistory({ requirementId, kind, filter, returnTable }: { requ
   return <div className="requirement-history__content">
     {query.isPending ? <p>Loading history…</p> : null}
     {query.error ? <p className="requirement-error" role="alert">{query.error.message}</p> : null}
-    {result?.kind === "revisions" ? result.rows.length ? <ul className="requirement-history__list">{result.rows.map((row) => <li key={row.revision}>
-      <strong>Revision {row.revision} · {row.current ? "Current" : "Earlier meaning"}</strong>
+    {result?.kind === "revisions" ? result.rows.length ? <ul className="requirement-history__list">{result.rows.map((row) => <li key={`${row.requirement_id}:${row.revision}`}>
+      <strong>Revision {row.revision} · {historical ? "Recorded historical meaning" : row.current ? "Current" : "Earlier meaning"}</strong>
       <p>{row.definition}</p><span>{requirementQualifierText(row)}</span>
+      {row.requirement_id !== requirementId ? <span>Earlier identity {row.requirement_id}</span> : null}
       {row.stale_reasons.length ? <span>Needs review: {row.stale_reasons.map(readable).join("; ")}</span> : null}
     </li>)}</ul> : <p>No revisions recorded.</p> : null}
-    {result?.kind === "occurrences" ? result.rows.length ? <ul className="requirement-history__list">{result.rows.map((row) => <li key={`${row.job_id}:${row.occurrence_id}:${row.snapshot_revision}`}>
-      <div className="requirement-history__line"><strong>{row.current ? "Current posting reference" : "Earlier posting reference"}</strong>
+    {result?.kind === "occurrences" ? result.rows.length ? <ul className="requirement-history__list">{result.rows.map((row) => <li key={`${row.requirement_id}:${row.job_id}:${row.occurrence_id}:${row.snapshot_revision}`}>
+      <div className="requirement-history__line"><strong>{historical ? "Historical posting reference" : row.current ? "Current posting reference" : "Earlier posting reference"}</strong>
         <Link to="/jobs/$jobId" params={{ jobId: row.job_id }} search={{ ...jobsSearch, returnRequirement: requirementId, returnRequirementsFilter: filter, returnRequirementsTable: returnTable, jobTab: "fit" }}>Open source job</Link></div>
       <blockquote>{row.text ?? row.definition}</blockquote>
       <p>Recorded meaning: {row.definition}</p><span>{requirementQualifierText(row)}{row.contract_version !== "requirements-v2" && row.tier ? ` · historical ${readable(row.tier)}` : ""}{row.contract_version !== "requirements-v2" && row.weight !== undefined ? ` · historical weight ${row.weight}` : ""}</span>
       {row.source_note ? <p>Posting context: {row.source_note}</p> : null}
       <details><summary>Source and provenance</summary>
-        <p>Requirement revision {row.requirement_revision} · posting revision {row.posting_revision} · snapshot {row.snapshot_revision}{row.accepted ? " · accepted snapshot" : " · superseded snapshot"}</p>
+        <p>Requirement {row.requirement_id} · revision {row.requirement_revision} · posting revision {row.posting_revision} · snapshot {row.snapshot_revision}{row.accepted ? " · accepted snapshot" : " · superseded snapshot"}</p>
         <p>Source {row.source_id} · revision {row.source_revision} · hash {row.source_hash}</p>
         {row.spans.map((span, index) => <blockquote key={`${span.start}:${span.end}:${index}`}>{span.quote}</blockquote>)}
         <p>Extraction {row.extraction_determination_id}{row.equivalence_determination_ids.length ? ` · equivalence ${row.equivalence_determination_ids.join(", ")}` : ""}</p>
@@ -179,10 +189,71 @@ function RequirementHistory({ requirementId, kind, filter, returnTable }: { requ
   </div>;
 }
 
-function HistoryDisclosure({ requirementId, kind, title, filter, returnTable }: { requirementId: string; kind: "revisions" | "occurrences"; title: string; filter: string; returnTable: string }) {
+function HistoryDisclosure({ requirementId, kind, title, filter, returnTable, historical = false }: { requirementId: string; kind: "revisions" | "occurrences"; title: string; filter: string; returnTable: string; historical?: boolean }) {
   const [open, setOpen] = useState(false);
-  return <details className="requirement-history" onToggle={(event) => setOpen(event.currentTarget.open)}><summary>{title}</summary>
-    {open ? <RequirementHistory requirementId={requirementId} kind={kind} filter={filter} returnTable={returnTable} /> : null}
+  return <details className={historical ? undefined : "requirement-history"} onToggle={(event) => setOpen(event.currentTarget.open)}><summary>{title}</summary>
+    {open ? <RequirementHistory requirementId={requirementId} kind={kind} filter={filter} returnTable={returnTable} historical={historical} /> : null}
+  </details>;
+}
+
+function ConsolidatedIdentityHistory({ aliases, filter, returnTable }: { aliases: string[]; filter: string; returnTable: string }) {
+  if (!aliases.length) return null;
+  return <details className="requirement-history"><summary>Earlier consolidated identities · {aliases.length}</summary>
+    <div className="requirement-history__content">
+      <p>These records retain the definitions and posting references saved before consolidation.</p>
+      {aliases.map((alias, index) => <section className="requirement-alias-history" key={alias} aria-label={`Earlier identity ${index + 1}`}>
+        <h4>Earlier identity {index + 1}</h4>
+        <p>Recorded identity: {alias}</p>
+        <HistoryDisclosure requirementId={alias} kind="revisions" title="Definition history" filter={filter} returnTable={returnTable} historical />
+        <HistoryDisclosure requirementId={alias} kind="occurrences" title="Source history and posting references" filter={filter} returnTable={returnTable} historical />
+      </section>)}
+    </div>
+  </details>;
+}
+
+function EarlierAssociation({ association }: { association: EarlierRecords["associations"][number] }) {
+  const [open, setOpen] = useState(false);
+  return <details onToggle={(event) => setOpen(event.currentTarget.open)}><summary>Earlier link · recorded as {readable(association.state)}</summary>
+    <p>Link {association.association_id} · revision {association.revision} · achievement {association.achievement_id}</p>
+    {open ? <AssociationHistory association={association} historical /> : null}
+  </details>;
+}
+
+function EarlierWording({ assignment }: { assignment: EarlierRecords["wording_assignments"][number] }) {
+  const [open, setOpen] = useState(false);
+  return <details onToggle={(event) => setOpen(event.currentTarget.open)}><summary>Earlier wording selection · recorded as {readable(assignment.state)}</summary>
+    <p>Selection {assignment.assignment_id} · revision {assignment.revision} · achievement {assignment.achievement_id}</p>
+    {open ? <WordingAssignmentHistory assignment={assignment} historical /> : null}
+  </details>;
+}
+
+function EarlierFitRecords({ records }: { records: EarlierRecords[] }) {
+  const saved = records.filter((group) => group.assessments.length || group.associations.length || group.wording_assignments.length || group.coverage.length);
+  if (!saved.length) return null;
+  return <details className="requirement-history"><summary>Earlier links and assessments</summary>
+    <div className="requirement-history__content">
+      <p>These retained records belong to an earlier identity or source binding. They do not establish current support or wording coverage.</p>
+      {saved.map((group, groupIndex) => <section className="requirement-alias-history" key={group.requirement_id} aria-label={`Earlier records ${groupIndex + 1}`}>
+        <h4>Recorded requirement: {group.requirement_id}</h4>
+        {group.assessments.map((assessment) => <details key={assessment.assessment_id}>
+          <summary>Earlier assessment{assessment.kind ? ` · ${readable(assessment.kind)}` : ""}</summary>
+          {assessment.rationale ? <p>{assessment.rationale}</p> : null}
+          {assessment.evidence_refs?.map((ref, index) => <blockquote key={`${ref.source_id}:${ref.revision}:${index}`}>{ref.quote}<footer>Source {ref.source_id} · revision {ref.revision}</footer></blockquote>)}
+          <p>Assessment {assessment.assessment_id}{assessment.determination_id ? ` · determination ${assessment.determination_id}` : ""}</p>
+          {assessment.achievement_ids?.length ? <p>Recorded achievements: {assessment.achievement_ids.join(", ")}</p> : null}
+        </details>)}
+        {group.associations.map((association) => <EarlierAssociation key={association.association_id} association={association} />)}
+        {group.wording_assignments.map((assignment) => <EarlierWording key={assignment.assignment_id} assignment={assignment} />)}
+        {group.coverage.map((relation) => <details key={relation.relation_id}>
+          <summary>Earlier wording coverage · {readable(relation.status)}</summary>
+          {relation.rationale ? <p>{relation.rationale}</p> : null}
+          {relation.source_refs?.map((ref, index) => <blockquote key={`${ref.source_id}:${ref.revision}:${index}`}>{ref.quote}<footer>Source {ref.source_id} · revision {ref.revision}</footer></blockquote>)}
+          <p>Coverage {relation.relation_id} · assessment {relation.assessment_id} · achievement {relation.achievement_id}</p>
+          {relation.variant_id ? <p>Wording {relation.variant_id}{relation.variant_revision !== undefined ? ` · revision ${relation.variant_revision}` : ""}{relation.approval_id ? ` · approval ${relation.approval_id}` : ""}</p> : null}
+          {relation.determination_id ? <p>Determination {relation.determination_id}</p> : null}
+        </details>)}
+      </section>)}
+    </div>
   </details>;
 }
 
@@ -262,6 +333,8 @@ function LinkedAchievement({ library, requirement, achievementId, achievement, o
   onLinkWording: (achievementId: string) => void; onEditLink: (achievementId: string) => void; canLink: boolean; sourceState: "loading" | "error" | "ready"; recordsAligned: boolean;
 }) {
   const assessment = requirement.assessment?.achievement_ids.includes(achievementId) ? requirement.assessment : null;
+  const demandCount = (requirement.demand_assessments ?? [])
+    .filter((demand) => demand.assessment?.achievement_ids.includes(achievementId)).length;
   const coverage = requirement.coverage.filter((row) => row.achievement_id === achievementId);
   const assignments = requirement.current_wordings.filter((row) => row.achievement_id === achievementId);
   const associations = requirement.associations.filter((row) => row.achievement_id === achievementId && row.state === "active");
@@ -274,7 +347,7 @@ function LinkedAchievement({ library, requirement, achievementId, achievement, o
         {assessment.evidence_refs.map((ref, index) => <blockquote key={`${ref.source_id}:${ref.revision}:${index}`}>{ref.quote}<footer>Source {ref.source_id} · revision {ref.revision}</footer></blockquote>)}
         <p>Requirement revision {assessment.requirement_revision} · {readable(assessment.origin)} · determination {assessment.determination_id}</p>
         {assessment.stale_reasons.length ? <p>Needs review: {assessment.stale_reasons.map(readable).join("; ")}</p> : null}
-      </details></div> : null}
+      </details></div> : demandCount ? <p className="muted">Recorded support is linked to {demandCount} {demandCount === 1 ? "job-specific demand" : "job-specific demands"}. Review the demand evidence above.</p> : null}
     {associations.filter((association) => !association.wording).map((association) => <AssociationRecord key={association.association_id} association={association} onEdit={canLink && achievement ? () => onEditLink(achievementId) : undefined} />)}
     <div className="requirement-section-heading"><h5>Wordings for this requirement</h5>
       {achievement && canLink ? <Button type="button" variant="outline" size="sm" onClick={() => onLinkWording(achievementId)}>Link wording</Button> : null}</div>
@@ -282,8 +355,50 @@ function LinkedAchievement({ library, requirement, achievementId, achievement, o
   </article>;
 }
 
-function RequirementDetail({ library, requirement, choices, canLink, onOpenAchievement, onLinkAchievement, onLinkWording, onEditLink, filter, returnTable, sourceState, recordsAligned }: {
+function JobSpecificDemands({ requirement, filter, returnTable }: { requirement: LibraryRequirement; filter: string; returnTable: string }) {
+  const jobsSearch = useJobsReturnSearch();
+  const demands = requirement.demand_assessments ?? [];
+  if (!demands.length) return null;
+  return <section className="requirement-demands" aria-label="Job-specific demands">
+    <h3>Job-specific demands</h3>
+    <p className="muted">{requirement.assessment_scope === "consolidation_required"
+      ? "Some saved job demands need consolidation. The recorded demands below may be incomplete."
+      : requirement.assessment_scope === "varies_by_job"
+        ? "Factual support varies with the demand recorded for each job."
+        : "This recorded demand is shared by the listed jobs."}</p>
+    <ol className="requirement-demands__list">{demands.map((demand, index) => {
+      const assessment = demand.assessment;
+      const status = demand.state === "profile_required" ? "Profile required"
+        : demand.state === "not_assessed" ? "Not assessed"
+        : demand.state === "stale" ? assessment ? `Earlier · ${readable(assessment.kind)}` : "Needs review"
+        : assessment ? readable(assessment.kind) : "Assessment unavailable";
+      return <li key={demand.demand_fingerprint}><details>
+        <summary>Demand {index + 1} · {status} · {demand.job_ids.length} {demand.job_ids.length === 1 ? "job" : "jobs"}</summary>
+        <div className="requirement-demands__content">
+          <p>{demand.definition}</p>
+          {assessment ? <><p><strong>{assessment.origin === "bundled_synthetic_example" ? "Authored synthetic illustration" : assessment.current && demand.current ? "Recorded factual support" : "Earlier factual support · needs review"}:</strong> {readable(assessment.kind)}</p>
+            {assessment.origin === "bundled_synthetic_example" && (!assessment.current || !demand.current) ? <p>Earlier example · needs review.</p> : null}
+            <p>{assessment.rationale}</p>
+            {assessment.wording_support === "section" ? <p>Supported by saved Profile section evidence.</p> : null}
+            {assessment.evidence_refs.map((ref, evidenceIndex) => <blockquote key={`${ref.source_id}:${ref.revision}:${evidenceIndex}`}>{ref.quote}<footer>Source {ref.source_id} · revision {ref.revision}</footer></blockquote>)}
+            <p>{assessment.origin === "bundled_synthetic_example" ? "Example" : "Determination"} {assessment.determination_id} · confidence {readable(assessment.confidence)}</p>
+            {assessment.stale_reasons.length ? <p>Assessment needs review: {assessment.stale_reasons.map(readable).join("; ")}</p> : null}
+          </> : <p>{status}.</p>}
+          {demand.stale_reasons.length ? <p>Demand needs review: {demand.stale_reasons.map(readable).join("; ")}</p> : null}
+          <details><summary>Source jobs and demand identity</summary>
+            <p>Capability definition: {demand.capability_definition}</p>
+            <p>Demand {demand.demand_fingerprint} · normalization {demand.normalization_version}</p>
+            <ul>{demand.job_ids.map((jobId, jobIndex) => <li key={jobId}><Link to="/jobs/$jobId" params={{ jobId }} search={{ ...jobsSearch, returnRequirement: requirement.requirement_id, returnRequirementsFilter: filter, returnRequirementsTable: returnTable, jobTab: "fit" }}>Open source job {jobIndex + 1}</Link></li>)}</ul>
+          </details>
+        </div>
+      </details></li>;
+    })}</ol>
+  </section>;
+}
+
+function RequirementDetail({ library, requirement, aliases, choices, canLink, onOpenAchievement, onLinkAchievement, onLinkWording, onEditLink, filter, returnTable, sourceState, recordsAligned }: {
   library: Library; requirement: LibraryRequirement; choices: AchievementChoice[]; canLink: boolean; filter: string; returnTable: string; sourceState: "loading" | "error" | "ready"; recordsAligned: boolean;
+  aliases: string[];
   onOpenAchievement?: ((roleId: string, achievementId: string) => void) | undefined;
   onLinkAchievement: () => void; onLinkWording: (achievementId: string) => void; onEditLink: (achievementId: string) => void;
 }) {
@@ -296,7 +411,7 @@ function RequirementDetail({ library, requirement, choices, canLink, onOpenAchie
       <p>{requirementQualifierText(requirement)}</p>
       <details><summary>Definition identity</summary><p>Requirement {requirement.requirement_id} · revision {requirement.revision}</p></details>
     </div>
-    {requirement.assessment ? <section className="requirement-assessment" aria-label="Recorded factual support">
+    {requirement.demand_assessments?.length ? <JobSpecificDemands requirement={requirement} filter={filter} returnTable={returnTable} /> : requirement.assessment ? <section className="requirement-assessment" aria-label="Recorded factual support">
       <h3>Factual support</h3>
       <p>{requirement.assessment.origin === "bundled_synthetic_example" ? "Authored synthetic illustration" : requirement.assessment.current ? "Current assessment" : "Earlier assessment · needs review"}: {readable(requirement.assessment.kind)}</p>
       <p>{requirement.assessment.rationale}</p>
@@ -326,6 +441,8 @@ function RequirementDetail({ library, requirement, choices, canLink, onOpenAchie
     </div></details> : null}
     <HistoryDisclosure requirementId={requirement.requirement_id} kind="revisions" title="Definition history" filter={filter} returnTable={returnTable} />
     <HistoryDisclosure requirementId={requirement.requirement_id} kind="occurrences" title="Source history and posting references" filter={filter} returnTable={returnTable} />
+    <EarlierFitRecords records={requirement.historical_alias_records ?? []} />
+    <ConsolidatedIdentityHistory aliases={aliases} filter={filter} returnTable={returnTable} />
   </section>;
 }
 
@@ -337,6 +454,7 @@ export function RequirementsLibraryView({ selectedRequirementId, onSelectRequire
   onTableStateChange?: ((state: RequirementsTableState) => void) | undefined;
 }) {
   const library = useRequirementLibrary();
+  const catalog = useRequirementCatalog({ limit: 1 });
   const profile = useProfileQuery();
   const wording = useWordingLibrary();
   const choices = achievementChoices(profile.data?.profile, wording.data);
@@ -353,8 +471,11 @@ export function RequirementsLibraryView({ selectedRequirementId, onSelectRequire
   const search = navigation.q;
   const needle = search.trim().toLocaleLowerCase();
   const shown = requirements.filter((requirement) => `${requirement.name}\n${requirement.definition}`.toLocaleLowerCase().includes(needle));
-  const selectedId = selectedRequirementId === undefined ? localSelected : selectedRequirementId;
+  const requestedId = selectedRequirementId === undefined ? localSelected : selectedRequirementId;
+  const catalogAligned = Boolean(library.data && catalog.data && library.data.catalog_revision === catalog.data.catalog_revision);
+  const selectedId = requestedId && catalogAligned ? catalog.data?.aliases?.[requestedId] ?? requestedId : requestedId;
   const selected = selectedId ? requirements.find((item) => item.requirement_id === selectedId) : undefined;
+  const resolvedAlias = Boolean(requestedId && selectedId && requestedId !== selectedId);
   const filters = navigation.column_filters ?? {};
   const sort = { columnId: navigation.sort, direction: navigation.dir };
   const hasFilters = Boolean(needle) || Object.values(filters).some(isActiveDataGridFilter);
@@ -410,9 +531,12 @@ export function RequirementsLibraryView({ selectedRequirementId, onSelectRequire
     && library.data.profile_revision === profile.data?.profileVersion && library.data.profile_revision === wording.data?.profileVersion;
   return <div className={`requirements-workspace${selectedId ? " requirements-workspace--selected" : ""}`}>
     <PageHead eyebrow="Library" title="Requirements library" subtitle="Reusable Skills and Professional Experience, their recorded support, and approved wording. Education and languages stay with each job." />
-    {library.data?.synthetic ? <p role="note">Synthetic catalog: bundled source examples and your unassessed links. Any illustrated section support is authored teaching content; no model assessment ran.</p> : null}
+    {library.data?.synthetic ? <p role="note">Synthetic catalog: bundled source examples and your unassessed links. Illustrated support is authored teaching content; no model assessment ran.</p> : null}
     <section className="requirements-library" aria-label="Requirements library">
       {library.error ? <div className="requirement-error" role="alert"><p>{library.error.message}{library.data ? " Showing the last available data." : ""}</p><Button type="button" variant="outline" size="sm" onClick={() => void library.refetch()}>Retry</Button></div> : null}
+      {catalog.error ? <div className="requirement-error" role="alert"><p>Catalog readiness and saved links could not be refreshed. {catalog.data ? "The last loaded catalog state remains available." : "Saved requirement records remain available."}</p><Button type="button" variant="outline" size="sm" onClick={() => void catalog.refetch()}>Retry catalog</Button></div> : null}
+      {library.data && catalog.data && !catalogAligned ? <p role="status">The saved catalog and requirement relationships are from different revisions. Refresh both before following consolidated links. <Button type="button" variant="outline" size="sm" onClick={() => { void Promise.all([catalog.refetch(), library.refetch()]); }}>Refresh records</Button></p> : null}
+      <RequirementConsolidationPanel normalization={catalog.data?.normalization} catalogUnavailable={!catalog.data || Boolean(catalog.error)} onSettled={() => { void library.refetch(); }} />
       {profile.error || wording.error ? <p className="requirement-error" role="alert">Achievement details could not be refreshed. Saved requirement records remain available.</p> : null}
       {mismatch ? <p role="status">The Profile and requirement records are from different revisions. Refresh them before changing links or wording. <Button type="button" variant="outline" size="sm" onClick={() => { void Promise.all([library.refetch(), profile.refetch(), wording.refetch()]); }}>Refresh records</Button></p> : null}
       {library.data?.readiness === "profile_required" ? <p className="muted">Save a Profile to link achievements to requirements.</p> : null}
@@ -443,10 +567,11 @@ export function RequirementsLibraryView({ selectedRequirementId, onSelectRequire
         </div>
         {selectedId ? <div className="requirements-library__detail" ref={detailRef} tabIndex={-1} role="region" aria-label="Requirement details">
           <div className="requirements-detail__navigation"><Button type="button" variant="ghost" size="sm" onClick={() => select(null)}>← Back to requirements</Button></div>
+          {selected && resolvedAlias ? <p className="requirements-detail__filter-note" role="status">This saved link points to a consolidated requirement.</p> : null}
           {selected && needle && !shown.some((row) => row.requirement_id === selectedId) ? <p className="requirements-detail__filter-note" role="status">The selected requirement is outside the current search filter.</p> : null}
-          {selected ? <RequirementDetail key={selected.requirement_id} library={library.data!} requirement={selected} choices={choices} canLink={canLink} filter={search} returnTable={returnTable} sourceState={sourceState} recordsAligned={sourceState === "ready" && !mismatch} onOpenAchievement={onOpenAchievement}
+          {selected ? <RequirementDetail key={selected.requirement_id} library={library.data!} requirement={selected} aliases={catalogAligned ? Object.entries(catalog.data?.aliases ?? {}).filter(([, root]) => root === selected.requirement_id).map(([alias]) => alias).sort() : []} choices={choices} canLink={canLink} filter={search} returnTable={returnTable} sourceState={sourceState} recordsAligned={sourceState === "ready" && !mismatch} onOpenAchievement={onOpenAchievement}
             onLinkAchievement={() => setPicker({})} onLinkWording={(achievementId) => setPicker({ achievementId, requireWording: true })} onEditLink={(achievementId) => setPicker({ achievementId })} />
-            : library.isPending ? <p role="status">Loading the selected requirement…</p> : <div className="requirement-empty"><strong>Requirement unavailable in the current library.</strong><p>Select another saved definition from the table.</p></div>}
+            : library.isPending || catalog.isPending ? <p role="status">Loading the selected requirement…</p> : catalog.error || !catalogAligned ? <div className="requirement-empty"><strong>Saved requirement links are unavailable.</strong><p>Refresh the catalog and relationships before following this link.</p></div> : <div className="requirement-empty"><strong>Requirement unavailable in the current library.</strong><p>Select another saved definition from the table.</p></div>}
         </div> : null}
       </div>
     </section>

@@ -26,7 +26,8 @@ import {
   type DemoProfileVersion, type DemoProfileSourceVersion,
   type DemoWordingLibrary as WordingLibrary, type DemoWordingVariant as WordingVariant,
 } from "./profile-library.js";
-import { demoCanonicalRequirements, demoRequirementLibrary, demoRequirementAssociations, demoAssociationView,
+import { DEMO_NORMALIZATION_VERSION, DEMO_PLATFORM_DEMANDS, demoPlatformDemandAssessment,
+  demoCanonicalRequirements, demoRequirementLibrary, demoRequirementAssociations, demoAssociationView,
   createDemoAssociation, reviseDemoAssociation, changeDemoAssociation, type DemoRequirementAssociations } from "./requirement-library.js";
 import type {
   DemoWorkspaceRepository,
@@ -1978,6 +1979,10 @@ export class DemoFeatureHttpAdapter {
       { text: "Coordinate incident response with the engineering team.", requirementId: "requirement:v2:demo:incident-response" },
       { text: "Use release coordination to make delivery plans clear.", requirementId: "requirement:v2:demo:release-coordination" },
     );
+    const sharedDemand = DEMO_PLATFORM_DEMANDS.find((demand) => demand.jobId === id);
+    if (!isPlatform && sharedDemand && posting.revision === 1 && posting.description.includes(sharedDemand.definition)) {
+      sourceExamples.push({ text: sharedDemand.definition, requirementId: "requirement:v2:demo:platform" });
+    }
     const quote = (text: string, evidenceId: string) => {
       const start = posting.description.indexOf(text);
       if (start < 0) throw conflict("The saved synthetic occurrence does not belong to this posting revision.");
@@ -2005,6 +2010,11 @@ export class DemoFeatureHttpAdapter {
       job_id: id, revision: 1, posting_revision: posting.revision, posting_hash: posting.source_hash, catalog_revision: 1,
       requirements: sourceExamples.map((sourceExample, index) => {
         const canonical = catalog.find((requirement) => requirement.requirement_id === sourceExample.requirementId)!;
+        const normalized = posting.revision === 1 && canonical.requirement_id === "requirement:v2:demo:platform" && sharedDemand
+          && sourceExample.text === sharedDemand.definition ? {
+            normalization_version: DEMO_NORMALIZATION_VERSION, definition: sharedDemand.definition,
+            demand_fingerprint: sharedDemand.fingerprint, provenance: { kind: "bundled_synthetic_example", synthetic: true, model_called: false },
+          } : null;
         return {
           contract_version: "requirements-v2", occurrence_id: `demo:occurrence:v2:${id}:${index}`,
           requirement_id: canonical.requirement_id, requirement_revision: 1, job_id: id, posting_revision: posting.revision,
@@ -2013,7 +2023,7 @@ export class DemoFeatureHttpAdapter {
           basis: "explicit", rationale: null, source_note: null, evidence_refs: [sources[index]!.evidence_id],
           source_id: posting.source_id, source_revision: posting.source_revision, source_hash: posting.source_hash,
           spans: span(sources[index]!), extraction_determination_id: `demo:bundled-synthetic:v2:${id}`,
-          equivalence_determination_ids: [], provenance, synthetic: true,
+          equivalence_determination_ids: [], provenance, ...(normalized ? { normalized_demand: normalized } : {}), synthetic: true,
         };
       }),
       education: isPlatform ? [{ ...direct(0), requirement_id: `demand:v2:demo:${id}:education`, category: "education" as const,
@@ -2061,6 +2071,11 @@ export class DemoFeatureHttpAdapter {
       return index < 0 ? [] : [{ source_id: `achievement:${achievementId}`, revision: 1, quote: entry.bullets[index]! }];
     });
     const assessments: Data[] = requirements.requirements.map((requirement, index) => {
+      const authored = requirement.requirement_id === "requirement:v2:demo:platform" && "normalized_demand" in requirement
+        ? demoPlatformDemandAssessment(snapshot, id) : null;
+      if (authored) return { ...authored, text: authored.definition, strength: authored.kind === "matched" ? "direct" : null,
+        evidence_route: null, eligibility: "unknown", blocker_category: null, warning_category: null,
+        contribution: { max_points: 1, awarded_points: authored.kind === "matched" ? 1 : 0 }, synthetic: true };
       const sectionBacked = requirement.requirement_id === "requirement:v2:demo:release-coordination";
       const achievementId = requirement.requirement_id === "requirement:v2:demo:incident-response" ? "demo:achievement:incident-practice"
         : requirement.requirement_id === "requirement:v2:demo:systems" ? "demo:achievement:systems-delivery" : "demo:achievement:platform-reliability";

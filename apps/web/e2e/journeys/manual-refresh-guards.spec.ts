@@ -123,7 +123,7 @@ for (const defect of [
       "unknown verdict": "model_schema_violation",
       "foreign citation": "fit_foreign_source_id",
       "non-verbatim citation": "fit_non_verbatim_quote",
-      "stale requirement revision": "fit_requirement_binding_invalid",
+      "stale requirement revision": "fit_refresh_partition_invalid",
     }[defect];
     expect(await terminal(api, run.runId)).toMatchObject({
       status: "failed",

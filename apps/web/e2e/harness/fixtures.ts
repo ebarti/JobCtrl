@@ -43,6 +43,7 @@ export type ApplicationStack = {
   restartWorker(): Promise<{ previous: number; current: number }>;
   upgradeSource(): Promise<{ previous: number; current: number; backup: string; candidateOrigin: string; mode: "source" | "installed" }>;
   databaseSchemaFingerprint(): Promise<string>;
+  databaseSchemaInventory(): Promise<{ type: string; name: string; table: string; sql: string | null }[]>;
   failRendering(): Promise<void>;
   restoreRendering(): Promise<void>;
   cli(

@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { test, expect, json, modelCall, action, terminal, completed } from "../harness/fixtures.js";
 import { createBaseline, type Profile } from "./core-data.js";
-import { qualificationBatchDecision, type QualificationBinding } from "./qualification-data.js";
+import { qualificationBatchDecision, qualificationKey, type QualificationBinding } from "./qualification-data.js";
 import { captureReusePosting, acceptReuseRequirements, type CapturedPosting, type RequirementSnapshot } from "./reuse-data.js";
-import { citeSources, modelSources } from "./requirements-data.js";
+import { catalogMatching, modelSources, type CatalogContext } from "./requirements-data.js";
 import { createScoredFit, impactPartition, refreshPayload, startRefresh, type PendingRefresh, type RefreshOperation } from "./fit-data.js";
 
 const definitions = [
@@ -52,10 +52,10 @@ test("Fit batches cold requirements once, shares exact receipts and reuses only 
   expect(new Set(first.score!.assessments.map((row) => row.assessment_id)).size).toBe(2);
   for (const row of first.score!.assessments) {
     const decision = response.requirements.find((item) => item.requirement_id === row.requirement_id)!;
-    expect(row.provenance).toMatchObject({ receipt_id: row.determination_id, prompt_version: "fit-qualification-batch-v3", lane: "scoring", accepted_result_fingerprint: fingerprint(response), qualification_result_fingerprint: fingerprint(decision) });
+    expect(row.provenance).toMatchObject({ receipt_id: row.determination_id, prompt_version: "fit-qualification-batch-v4-demand", lane: "scoring", accepted_result_fingerprint: fingerprint(response), qualification_result_fingerprint: fingerprint(decision) });
     expect(row.requirement_revision).toBe(Number(decision.requirement_revision));
     expect(row.requirement_citations).toEqual(decision.requirement_citations);
-    expect(row.requirement_citations[0]!.source_id).toBe(`requirement:${row.requirement_id}`);
+    expect(row.requirement_citations[0]!.source_id).toBe("requirement:" + qualificationKey({ ...decision, demand_fingerprint: decision.demand_fingerprint ?? null }));
   }
   expect(app.external.calls.slice(before).map((call) => call.body["operation"])).toEqual(["fit.qualification-batch"]);
   const factualSources = modelSources(batch).filter((row) => row.source_id.startsWith("evidence:"));
@@ -226,7 +226,7 @@ for (const defect of ["incomplete", "duplicate", "foreign requirement", "cross-r
     if (defect === "non-verbatim evidence") response.requirements[1]!.evidence[0]!.quote = "This factual quote never occurred in any supplied source.";
     if (defect === "stale revision") response.requirements[1]!.requirement_revision = "999";
     batch.reply(response);
-    const expectedCode = { incomplete: "fit_qualification_partition_invalid", duplicate: "fit_qualification_partition_invalid", "foreign requirement": "fit_qualification_partition_invalid", "cross-row citation": "fit_foreign_source_id", "non-verbatim evidence": "fit_non_verbatim_quote", "stale revision": "fit_requirement_binding_invalid" }[defect];
+    const expectedCode = { incomplete: "fit_qualification_partition_invalid", duplicate: "fit_qualification_partition_invalid", "foreign requirement": "fit_qualification_partition_invalid", "cross-row citation": "fit_foreign_source_id", "non-verbatim evidence": "fit_non_verbatim_quote", "stale revision": "fit_qualification_partition_invalid" }[defect];
     expect(await terminal(api, run.runId)).toMatchObject({ status: "failed", errorCode: expectedCode });
     const retained = await json<Fit>(api, "get", fitPath(seed.posting as CapturedPosting));
     expect(retained.score).toEqual(original.score);
@@ -265,11 +265,15 @@ for (const changedSource of ["Profile", "requirement binding"] as const) {
         requirement_id: occurrence.requirement_id, requirement_revision: occurrence.requirement_revision,
         reason: "Explicitly confirm this occurrence's qualified canonical meaning.",
       } });
-      const correction = await modelCall(app, "requirements.correct_binding");
-      expect(correction.body["prompt_version"]).toBe("requirements-v2-binding-correction-v2");
-      expect((correction.body["context"] as { posting: { job_id: string } }).posting.job_id).toBe(seed.posting.job_id);
-      expect(modelSources(correction).some((row) => row.source_id.startsWith(`posting:${seed.posting.job_id}:`))).toBe(true);
-      correction.reply({ decisions: [{ requirement_id: occurrence.requirement_id, requirement_revision: occurrence.requirement_revision, relation: "equivalent", reason: "The exact current posting supports the selected canonical meaning.", citations: citeSources(correction, modelSources(correction).map((row) => row.source_id)) }] });
+      const correction = await modelCall(app, "requirements.match_catalog");
+      const context = correction.body["context"] as CatalogContext & { guidance: { binding_correction: { occurrence_id: string; requested_requirement_id: string; authority: string } } };
+      expect(context.guidance.binding_correction).toMatchObject({ occurrence_id: occurrence.occurrence_id, requested_requirement_id: occurrence.requirement_id });
+      expect(context.guidance.binding_correction.authority.trim()).not.toBe("");
+      const postingSource = context.posting_sources.find((row) => row.job_id === seed.posting.job_id)!;
+      expect(postingSource).toMatchObject({ revision: seed.posting.revision, source_hash: seed.posting.source_hash });
+      expect(modelSources(correction).some((row) => row.source_id === postingSource.source_id)).toBe(true);
+      expect(context.incoming).toHaveLength(1);
+      correction.reply(catalogMatching(correction, { [context.incoming[0]!.local_id]: { verdict: "equivalent", requirementId: occurrence.requirement_id } }));
       const corrected = await correcting;
       expect(corrected.status(), await corrected.text()).toBe(200);
       expect((await corrected.json()).revision).toBe(seed.snapshot.revision + 1);

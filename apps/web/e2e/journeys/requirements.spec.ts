@@ -11,6 +11,7 @@ import {
   typedExtraction,
   type CatalogContext,
 } from "./requirements-data.js";
+import { acceptBaseline, createBaseline } from "./core-data.js";
 
 type Source = { source_id: string; text: string };
 type Posting = { job_id: string; revision: number };
@@ -352,11 +353,11 @@ test("one catalog determination resolves the full posting batch and more than tw
   expect(context.candidates).toHaveLength(15);
   expect(context.incoming).toHaveLength(3);
   for (const candidate of context.candidates) {
+    const member = context.members.find((row) => row.requirement_id === candidate.requirement_id && row.revision === candidate.revision);
+    expect(member).toBeTruthy();
     expect(
       sources(matching).find(
-        (row) =>
-          row.source_id ===
-          `requirement:${candidate.requirement_id}:${candidate.revision}`,
+        (row) => row.source_id === member!.source_id,
       ),
     ).toBeTruthy();
   }
@@ -418,7 +419,7 @@ test("one catalog determination resolves the full posting batch and more than tw
 
 for (const defect of [
   "unknown field",
-  "unknown verdict",
+  "unknown category",
   "foreign source",
   "non-verbatim quote",
   "uncertain",
@@ -464,23 +465,23 @@ for (const defect of [
         requirementId: accepted.requirements[0]!.requirement_id,
       },
     });
-    const decision = value.decisions[0]!;
+    const capability = value.capabilities[0]!;
     if (defect === "unknown field")
       matching.reply({ ...value, unrequested: true });
-    if (defect === "unknown verdict")
+    if (defect === "unknown category")
       matching.reply({
         ...value,
-        decisions: [{ ...decision, verdict: "approximately_equivalent" }],
+        capabilities: [{ ...capability, category: "approximately_skill" }],
       });
     if (defect === "foreign source")
       matching.reply({
         ...value,
-        decisions: [
+        capabilities: [
           {
-            ...decision,
+            ...capability,
             citations: [
-              { ...decision.citations[0]!, source_id: "unrecorded:foreign" },
-              ...decision.citations.slice(1),
+              { ...capability.citations[0]!, source_id: "unrecorded:foreign" },
+              ...capability.citations.slice(1),
             ],
           },
         ],
@@ -488,16 +489,16 @@ for (const defect of [
     if (defect === "non-verbatim quote")
       matching.reply({
         ...value,
-        decisions: [
+        capabilities: [
           {
-            ...decision,
+            ...capability,
             citations: [
               {
-                ...decision.citations[0]!,
+                ...capability.citations[0]!,
                 quote:
                   "Invented source statement absent from the saved posting.",
               },
-              ...decision.citations.slice(1),
+              ...capability.citations.slice(1),
             ],
           },
         ],
@@ -505,14 +506,8 @@ for (const defect of [
     if (defect === "uncertain")
       matching.reply({
         ...value,
-        decisions: [
-          {
-            ...decision,
-            verdict: "uncertain",
-            requirement_id: null,
-            requirement_revision: null,
-          },
-        ],
+        status: "needs_review",
+        unresolved: [{ member_ids: capability.member_ids, reason: "Explicit source-bound uncertainty; no partial publication.", citations: capability.citations }],
       });
     if (defect === "stale revision")
       matching.reply({
@@ -524,7 +519,7 @@ for (const defect of [
     const result = await refresh;
     expect(result.status(), await result.text()).toBe(
       defect === "unknown field" ||
-        defect === "unknown verdict" ||
+        defect === "unknown category" ||
         defect === "provider unavailable"
         ? 502
         : defect === "stale revision"
@@ -551,6 +546,7 @@ test("an oversized complete catalog request refuses without truncation or automa
   api,
   app,
 }) => {
+  const { profile } = await createBaseline(api);
   const posting = await json<Posting>(api, "post", "/v1/jobs/capture", {
     url: "https://example.com/jobs/full-input-refusal",
     title: "Synthetic Engineering Leader",
@@ -566,6 +562,12 @@ test("an oversized complete catalog request refuses without truncation or automa
   const initialResponse = await first;
   expect(initialResponse.status(), await initialResponse.text()).toBe(200);
   const accepted: Requirements = await initialResponse.json();
+
+  const resume = await acceptBaseline(api, posting.job_id, profile.profileVersion);
+  const pdfPath = `/v1/resumes/${resume.resume_id}/export?format=pdf&accepted=true`;
+  const originalPdf = await api.get(pdfPath);
+  expect(originalPdf.status(), await originalPdf.text()).toBe(200);
+  const acceptedPdfBytes = await originalPdf.body();
 
   // A bounded valid extraction can still exceed the model's input boundary
   // once every incoming qualified meaning and the entire catalog are supplied.
@@ -628,6 +630,9 @@ test("an oversized complete catalog request refuses without truncation or automa
     `/v1/jobs/${posting.job_id}/requirements`,
   );
   expect(retained.requirements).toEqual(accepted.requirements);
+  const retainedPdf = await api.get(pdfPath);
+  expect(retainedPdf.status(), await retainedPdf.text()).toBe(200);
+  expect(await retainedPdf.body()).toEqual(acceptedPdfBytes);
   expect(retained.revision).toBe(accepted.revision);
   expect(retained.stale).toBe(true);
   expect(

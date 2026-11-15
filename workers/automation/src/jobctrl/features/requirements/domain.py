@@ -219,14 +219,31 @@ def snapshot_items(snapshot: dict) -> list[dict]:
         raise RequirementError("requirements_contract_changed")
     if snapshot.get("status") != "complete":
         raise RequirementError("unsupported_language")
+    from jobctrl.app.errors import AppError
+    from .normalization_domain import NORMALIZATION_VERSION, demand_fingerprint
+    if snapshot.get("normalization_version") != NORMALIZATION_VERSION:
+        raise AppError("requirements_consolidation_required", "Consolidate the retained requirement catalog before using these demands.", 409)
     rows = []
+    normalized_bindings = {}
     for occurrence in snapshot["requirements"]:
         if not current_contract(occurrence) or not current_contract(occurrence.get("canonical")):
             raise RequirementError("requirements_contract_changed")
         original = {key: occurrence[key] for key in (
             "category", "name", "definition", "basis", "rationale", "source_note",
         )}
-        rows.append({**occurrence, **occurrence["canonical"], "original": original})
+        demand = occurrence.get("normalized_demand")
+        if (not isinstance(demand, dict) or not isinstance(demand.get("definition"), str) or not demand["definition"].strip()
+                or demand.get("normalization_version") != NORMALIZATION_VERSION
+                or demand.get("demand_fingerprint") != demand_fingerprint(occurrence["canonical"]["category"], demand.get("definition"))):
+            raise AppError("requirements_consolidation_required", "The saved requirement demand needs source-bound consolidation.", 409)
+        binding = (occurrence["requirement_revision"], occurrence["canonical"], demand["definition"], demand["demand_fingerprint"])
+        previous = normalized_bindings.setdefault(occurrence["requirement_id"], binding)
+        if previous != binding:
+            raise AppError("requirements_demand_partition_invalid", "Occurrences of one capability must share one complete combined job demand.", 409)
+        rows.append({**occurrence, **occurrence["canonical"], "original": original,
+                     "capability_definition": occurrence["canonical"]["definition"], "definition": demand["definition"],
+                     "normalization_version": NORMALIZATION_VERSION, "demand_fingerprint": demand["demand_fingerprint"],
+                     "demand_provenance": demand["provenance"]})
     for field, category, keys, name in (
         ("education", "education", ("qualification", "subjects", "alternative", "source_note"), "qualification"),
         ("languages", "language", ("language", "proficiency", "source_note"), "language"),
@@ -240,11 +257,14 @@ def snapshot_items(snapshot: dict) -> list[dict]:
     return json.loads(canonical_json(rows))
 
 
-def validate_citations(citations: list[Citation], sources: dict[str, str], required: set[str] | None = None) -> None:
+def validate_citations(citations: list[Citation], sources: dict[str, str], required: set[str] | None = None,
+                       *, source_segments: dict[str, tuple[str, ...]] | None = None) -> None:
     for citation in citations:
         if citation.source_id not in sources:
             raise RequirementError("foreign_source_id")
-        if not citation.quote.strip() or citation.quote not in sources[citation.source_id]:
+        if not citation.quote.strip() or (
+                citation.quote not in sources[citation.source_id]
+                and not any(citation.quote in segment for segment in (source_segments or {}).get(citation.source_id, ()))):
             raise RequirementError("non_verbatim_quote")
     if required and not required.issubset({c.source_id for c in citations}):
         raise RequirementError("missing_source_citation")

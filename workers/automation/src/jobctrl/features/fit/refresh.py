@@ -8,10 +8,12 @@ from types import SimpleNamespace
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 
-from .contract import CONTRACT_VERSION, assessment_fields, current_contract, require_contract, reusable
+from .contract import (CONTRACT_VERSION, assessment_fields, current_contract, current_qualification,
+                       qualification_binding, qualification_key, require_contract, reusable)
 from .coverage import Coverage
 from .domain import FORMULA_VERSION, calculate_score
-from .models import CATALOG_IMPACT_INSTRUCTIONS, CatalogImpactDecision
+from .models import (CATALOG_IMPACT_INSTRUCTIONS, CatalogImpactDecision,
+                     QUALIFICATION_PROMPT_VERSION, QUALIFICATION_SEMANTICS_VERSION)
 from .qualification import decide, now
 from .refresh_pending import pending_wording_failures, valid_requirement_bindings
 from .serialization import encoded
@@ -25,8 +27,12 @@ from .sources import (
 def public_operation(state):
     if state is None:
         return None
-    return {"contract_version": state.get("contract_version"), "current": current_contract(state),
-            "stale_reasons": [] if current_contract(state) else ["contract_changed"], **{key: state[key] for key in (
+    reasons = [] if current_contract(state) else ["contract_changed"]
+    if current_contract(state) and (state.get("qualification_semantics_version") != QUALIFICATION_SEMANTICS_VERSION
+                                  or state.get("qualification_prompt_version") != QUALIFICATION_PROMPT_VERSION):
+        reasons.append("qualification_semantics_changed")
+    return {"contract_version": state.get("contract_version"), "current": not reasons,
+            "stale_reasons": reasons, **{key: state[key] for key in (
         "operation_id", "profile_id", "status", "phase", "job_ids", "catalog_revision", "requirement_count",
         "selected_requirement_ids", "limits", "counters", "failure_code", "created_at", "deadline_at", "updated_at",
         "factual_published", "accepted_score_revisions",
@@ -34,15 +40,17 @@ def public_operation(state):
          "hard_monetary_bound": False, "spend_policy": "gateway_lane_and_workspace_budget",
          "prepare_wording": state.get("prepare_wording", True), "prepare_coverage": state.get("prepare_coverage", True),
          "wording_failures": state.get("wording_failures", []),
+         "selected_qualification_bindings": state.get("selected_qualification_bindings"),
          "retry_wording_proposal_ids": state.get("retry_wording_proposal_ids", [])}
 
 
-def normalize_catalog(catalog):
-    return [{**row, "requirement_revision": row["revision"]} for row in catalog["requirements"]]
+def frozen_requirements(snapshot):
+    return snapshot["demand_catalog"]["demands"] + snapshot["direct_requirements"]
 
 
 def _mandatory(previous, requirement, profile, facts):
-    if not current_contract(previous) or str(previous["requirement_revision"]) != str(requirement["requirement_revision"]):
+    if (not current_qualification(previous) or qualification_key(previous) != qualification_key(requirement)
+            or previous["definition"] != requirement["definition"]):
         return True
     if not citations_still_bound(previous["evidence_refs"], facts):
         return True
@@ -163,8 +171,10 @@ class ManualRefresh:
         profile = dto(profile_snapshot)
         catalog = read.catalog_snapshot()
         require_contract(catalog)
-        requirements = normalize_catalog(catalog)
-        prior = {row["requirement_id"]: read.latest_requirement_assessment(profile_id, row["requirement_id"])
+        demand_catalog = read.demand_catalog_snapshot(active_only=True)
+        requirements = demand_catalog["demands"]
+        prior = {qualification_key(row): read.latest_requirement_assessment(profile_id, row["requirement_id"],
+                                                                          demand_fingerprint=row.get("demand_fingerprint"))
                  for row in requirements}
         jobs = []
         stale = []
@@ -180,25 +190,30 @@ class ManualRefresh:
                     stale.append(job_id)
                 jobs.append({"job_id": job_id, "score_revision": score["revision"], "score": score, "requirements": job_snapshot})
             except AppError as error:
-                if not isinstance(error, (NotFoundError, ConflictError)) and error.code not in {"contract_changed", "unsupported_posting_language"}:
+                if not isinstance(error, (NotFoundError, ConflictError)) and error.code not in {
+                        "contract_changed", "unsupported_posting_language", "requirements_consolidation_required"}:
                     raise
                 stale.append(job_id)
                 jobs.append({"job_id": job_id, "score_revision": score["revision"], "source_error": error.code})
         direct = [item for job in jobs if "source_error" not in job
                   for item in unique_requirements(job["requirements"]) if not reusable(item)]
-        prior.update({row["requirement_id"]: read.latest_requirement_assessment(profile_id, row["requirement_id"])
+        prior.update({qualification_key(row): read.latest_requirement_assessment(profile_id, row["requirement_id"],
+                                                                               demand_fingerprint=row.get("demand_fingerprint"))
                       for row in direct})
         source_hash = fact_fingerprint(profile)
         maintained_wordings = read.current_wordings(profile_id)
         maintained_fingerprint = read.current_wordings_fingerprint(profile_id)
         stamp = fingerprint({
             "profile_id": profile_id, "facts": source_hash, "approved": approved_fingerprint(profile),
-            "guidance": profile_snapshot.scoring_guidance, "catalog": catalog, "jobs": jobs,
+            "guidance": profile_snapshot.scoring_guidance, "catalog": catalog, "demand_catalog": demand_catalog, "jobs": jobs,
+            "qualification_semantics_version": QUALIFICATION_SEMANTICS_VERSION,
+            "qualification_prompt_version": QUALIFICATION_PROMPT_VERSION,
             "assessment_ids": {ident: row["assessment_id"] if row else None for ident, row in prior.items()},
             "current_wordings_fingerprint": maintained_fingerprint,
         })
         return {"profile": profile, "guidance": profile_snapshot.scoring_guidance,
-                "facts": fact_sources(profile), "catalog": catalog, "jobs": jobs, "direct_requirements": direct,
+                "facts": fact_sources(profile), "catalog": catalog, "demand_catalog": demand_catalog,
+                "jobs": jobs, "direct_requirements": direct,
                 "prior_assessments": prior, "current_wordings": maintained_wordings,
                 "current_wordings_fingerprint": maintained_fingerprint,
                 "prior_sources": {row["assessment_id"]: read.assessment_sources(row["assessment_id"])
@@ -216,6 +231,8 @@ class ManualRefresh:
             latest = read.latest_refresh(profile_id)
             wording_failures = pending_wording_failures(read, snapshot)
             reasons = []
+            if snapshot["demand_catalog"].get("consolidation_required_job_ids"):
+                reasons.append("requirements_consolidation_required")
             if stale:
                 reasons.append("saved_job_inputs_changed")
             if wording_failures:
@@ -223,10 +240,10 @@ class ManualRefresh:
             if (latest is not None and latest["status"] in {"failed", "cancelled", "stale", "limited"}
                     and (latest.get("failure_code") != "fit_refresh_wording_incomplete" or wording_failures)):
                 reasons.append("manual_refresh_incomplete")
-            if any(not current_contract(row) or row["source_fingerprint"] != qualification_fingerprint(snapshot["profile"], requirement, snapshot["facts"])
-                   or str(row["requirement_revision"]) != str(requirement["revision"])
-                   for requirement in snapshot["catalog"]["requirements"]
-                   for row in [snapshot["prior_assessments"][requirement["requirement_id"]]]):
+            if any(not current_qualification(row) or row["source_fingerprint"] != qualification_fingerprint(snapshot["profile"], requirement, snapshot["facts"])
+                   or str(row["requirement_revision"]) != str(requirement["requirement_revision"])
+                   for requirement in snapshot["demand_catalog"]["demands"]
+                   for row in [snapshot["prior_assessments"][qualification_key(requirement)]]):
                 reasons.append("catalog_qualification_pending")
             if (latest is not None and latest["status"] == "completed"
                     and (latest["snapshot"]["catalog"] != snapshot["catalog"]
@@ -235,7 +252,7 @@ class ManualRefresh:
             return {"contract_version": CONTRACT_VERSION, "profile_id": profile_id, "readiness": "ready", "pending": bool(reasons), "pending_reasons": reasons,
                     "stale_job_ids": stale, "available_job_ids": [row["job_id"] for row in snapshot["jobs"] if "source_error" not in row],
                     "catalog_revision": snapshot["catalog"]["catalog_revision"],
-                    "requirement_count": len(snapshot["catalog"]["requirements"]),
+                    "requirement_count": len(snapshot["demand_catalog"]["demands"]),
                     "expected_input_fingerprint": stamp, "latest_operation": public_operation(latest),
                     "pending_wording_failures": wording_failures}
 
@@ -255,7 +272,7 @@ class ManualRefresh:
         profile = snapshot["profile"]
         facts = {row["source_id"]: row for row in snapshot["facts"]}
         inventory = achievements(profile)
-        catalog = {row["requirement_id"]: row for row in snapshot["catalog"]["requirements"]}
+        catalog = {qualification_key(row): row for row in snapshot["demand_catalog"]["demands"]}
         selected = []
         owners = set()
         for ident in proposal_ids:
@@ -286,11 +303,13 @@ class ManualRefresh:
             if not valid_requirement_bindings(metadata["requirements"]):
                 raise AppError("fit_refresh_retry_invalid", "This proposal has no exact requirement bindings.", 409)
             for requirement in metadata["requirements"]:
-                current = catalog.get(requirement["requirement_id"])
-                prior = snapshot["prior_assessments"].get(requirement["requirement_id"])
-                if (current is None or str(current["revision"]) != str(requirement["requirement_revision"])
+                key = qualification_key(requirement)
+                current = catalog.get(key)
+                prior = snapshot["prior_assessments"].get(key)
+                if (current is None or str(current["requirement_revision"]) != str(requirement["requirement_revision"])
                         or prior is None or prior["source_fingerprint"] != qualification_fingerprint(profile, current, snapshot["facts"])
                         or owner not in prior["achievement_ids"]
+                        or prior["assessment_id"] != requirement.get("assessment_id")
                         or prior["determination_id"] != requirement.get("qualification_determination_id")):
                     raise AppError("fit_refresh_retry_stale", "The failed wording's accepted support changed. Run a normal manual Fit refresh first.", 409)
             selected.append(proposal)
@@ -304,6 +323,9 @@ class ManualRefresh:
         existing = self.store.refresh_operation(operation_id)
         if existing is not None:
             require_contract(existing)
+            if (existing.get("qualification_semantics_version") != QUALIFICATION_SEMANTICS_VERSION
+                    or existing.get("qualification_prompt_version") != QUALIFICATION_PROMPT_VERSION):
+                raise AppError("fit_refresh_stale", "The qualification contract changed. Start a new manual refresh.", 409)
             if existing["input_fingerprint"] != input_hash:
                 raise ConflictError("The manual refresh identity belongs to different input.")
             return existing
@@ -311,6 +333,8 @@ class ManualRefresh:
             snapshot, stamp, _ = self._inputs(read, request["profile_id"])
         if stamp != request["expected_input_fingerprint"]:
             raise AppError("fit_refresh_stale", "Saved inputs changed before this manual Fit refresh started. Review the pending work and start a new refresh.", 409)
+        if snapshot["demand_catalog"].get("consolidation_required_job_ids"):
+            raise AppError("requirements_consolidation_required", "Consolidate saved requirements before refreshing Fit.", 409)
         retry_ids = request.get("retry_wording_proposal_ids", [])
         for ident in retry_ids:
             # Explicit retry admission may resolve a dead authoring owner, but
@@ -325,13 +349,15 @@ class ManualRefresh:
         from .service import unique_requirements
         snapshot["direct_requirements"] = [item for job in snapshot["jobs"]
             for item in unique_requirements(job["requirements"]) if not reusable(item)]
-        admitted = {row["requirement_id"] for row in normalize_catalog(snapshot["catalog"]) + snapshot["direct_requirements"]}
+        admitted = {qualification_key(row) for row in frozen_requirements(snapshot)}
         snapshot["prior_assessments"] = {ident: row for ident, row in snapshot["prior_assessments"].items() if ident in admitted}
         before_ids = {row["assessment_id"] for row in snapshot["prior_assessments"].values() if row is not None}
         snapshot["prior_sources"] = {ident: rows for ident, rows in snapshot["prior_sources"].items() if ident in before_ids}
         created = now()
         return self.store.start_refresh({
             "contract_version": CONTRACT_VERSION,
+            "qualification_semantics_version": QUALIFICATION_SEMANTICS_VERSION,
+            "qualification_prompt_version": QUALIFICATION_PROMPT_VERSION,
             "operation_id": operation_id, "input_fingerprint": input_hash, "profile_id": request["profile_id"],
             "status": "running", "phase": "selection", "job_ids": request["job_ids"],
             "catalog_revision": snapshot["catalog"]["catalog_revision"],
@@ -356,7 +382,7 @@ class ManualRefresh:
         try:
             operation.check()
             profile_snapshot = FrozenFitProfileSnapshot(state["snapshot"]["profile"], state["snapshot"]["guidance"], operation_id)
-            requirements = normalize_catalog(state["snapshot"]["catalog"]) + state["snapshot"]["direct_requirements"]
+            requirements = frozen_requirements(state["snapshot"])
             if state.get("retry_wording_proposal_ids"):
                 state = self.store.update_refresh(operation_id, {"selected_requirement_ids": [], "phase": "coverage"})
             elif not state["factual_published"]:
@@ -364,16 +390,19 @@ class ManualRefresh:
                 if selection is None:
                     selection = await self._select(operation, state, requirements)
                     operation.checkpoint("selection", selection)
-                selected = [row["requirement_id"] for row in selection["decision"]["requirements"] if row["verdict"] == "affected"]
-                state = self.store.update_refresh(operation_id, {"selected_requirement_ids": selected, "phase": "qualification"})
+                selected = [qualification_key(row) for row in selection["decision"]["requirements"] if row["verdict"] == "affected"]
+                state = self.store.update_refresh(operation_id, {"selected_requirement_ids": sorted({row["requirement_id"]
+                    for row in selection["decision"]["requirements"] if row["verdict"] == "affected"}),
+                    "selected_qualification_bindings": [qualification_binding(row) for row in selection["decision"]["requirements"]
+                                                       if row["verdict"] == "affected"], "phase": "qualification"})
                 if len(selected) > state["limits"]["max_requirements"]:
                     raise AppError("fit_refresh_requirement_limit", "The selected requirements exceed this manual refresh's fixed work limit.", 409)
                 batch = operation.checkpoint_value("qualification_batch")
                 if batch is None:
-                    pending = [row for row in requirements if row["requirement_id"] in selected
-                               and operation.checkpoint_value("qualification:" + row["requirement_id"]) is None]
+                    pending = [row for row in requirements if qualification_key(row) in selected
+                               and operation.checkpoint_value("qualification:" + qualification_key(row)) is None]
                     prepared = await self.service.qualification.candidates(profile_snapshot, pending, model=operation.model)
-                    batch = {row["requirement_id"]: {**row, "refresh_operation_id": operation_id,
+                    batch = {qualification_key(row): {**row, "refresh_operation_id": operation_id,
                              "impact_selection_kind": selection.get("kind", "model"),
                              "impact_selection_provenance": selection["provenance"],
                              "impact_selection_receipt_id": (selection["provenance"] or {}).get("receipt_id")} for row in prepared}
@@ -382,7 +411,7 @@ class ManualRefresh:
                 candidates = {}
                 for requirement in requirements:
                     operation.check()
-                    ident = requirement["requirement_id"]
+                    ident = qualification_key(requirement)
                     if ident in selected:
                         candidate = operation.checkpoint_value("qualification:" + ident)
                         if candidate is None:
@@ -407,7 +436,7 @@ class ManualRefresh:
             heartbeat({"operationId": operation_id, "phase": "coverage"})
             coverage = Coverage(model=operation.model, profile=operation.profile, store=self.store,
                                 qualification=self.service.qualification)
-            result = await coverage.refresh(profile_snapshot, state["snapshot"]["catalog"], [row for row in requirements if reusable(row)],
+            result = await coverage.refresh(profile_snapshot, state["snapshot"]["demand_catalog"], [row for row in requirements if reusable(row)],
                                             prepare_wording=state["prepare_wording"], cancelled=cancelled, operation=operation)
             operation.checkpoint("coverage_result", result)
             failures = {row["proposal_id"]: row for row in result.get("wording_failures", [])}
@@ -432,7 +461,7 @@ class ManualRefresh:
 
     async def _select(self, operation, state, requirements):
         snapshot = state["snapshot"]
-        if requirements and all(snapshot["prior_assessments"][row["requirement_id"]] is None for row in requirements):
+        if requirements and all(snapshot["prior_assessments"][qualification_key(row)] is None for row in requirements):
             operation.check()
             # No prior judgment exists to retain. This selects work, never
             # meaning/support, and still obeys the frozen scope and item limit.
@@ -440,7 +469,7 @@ class ManualRefresh:
                 "kind": "structural", "contract_version": CONTRACT_VERSION,
                 "basis": "all_prior_assessment_ids_absent",
             }, "decision": {"requirements": [{
-                "requirement_id": row["requirement_id"], "requirement_revision": str(row["requirement_revision"]),
+                **qualification_binding(row),
                 "verdict": "affected", "rationale": "No prior assessment exists; an initial qualification is required.",
                 "citations": [],
             } for row in requirements]}}
@@ -451,7 +480,7 @@ class ManualRefresh:
         inventories = set()
         entries = []
         for requirement in requirements:
-            ident = requirement["requirement_id"]
+            ident = qualification_key(requirement)
             canonical = requirement_source(requirement)
             sources.append({**canonical, "source_id": "catalog:" + ident})
             previous = snapshot["prior_assessments"][ident]
@@ -478,7 +507,7 @@ class ManualRefresh:
             assessment_source = "assessment:" + ident
             sources.append({"source_id": assessment_source, "revision": previous["assessment_id"] if previous else "none",
                             "text": encoded(previous) if previous else "No previous assessment exists."})
-            entries.append({"requirement_id": ident, "requirement_revision": str(requirement["requirement_revision"]),
+            entries.append({**qualification_binding(requirement),
                             "category": requirement["category"], "name": requirement["name"],
                             "canonical_source_id": "catalog:" + ident, "saved_assessment_source_id": assessment_source,
                             "prior_assessment_id": previous["assessment_id"] if previous else None,
@@ -487,28 +516,28 @@ class ManualRefresh:
         # Exact recorded factual authority needs no semantic rejudgment. This
         # also makes wording-only refreshes and unchanged manual retries free
         # of impact/qualification calls while still checking the full catalog.
-        item_index = {row["requirement_id"]: row for row in requirements}
+        item_index = {qualification_key(row): row for row in requirements}
         if all(not row["mandatory_reassessment"] and
-               snapshot["prior_assessments"][row["requirement_id"]]["source_fingerprint"] ==
-               qualification_fingerprint(snapshot["profile"], item_index[row["requirement_id"]], facts) for row in entries):
-            return {"decision": {"requirements": [{"requirement_id": row["requirement_id"],
-                    "requirement_revision": row["requirement_revision"], "verdict": "unchanged",
+               snapshot["prior_assessments"][qualification_key(row)]["source_fingerprint"] ==
+               qualification_fingerprint(snapshot["profile"], item_index[qualification_key(row)], facts) for row in entries):
+            return {"decision": {"requirements": [{**qualification_binding(row), "verdict": "unchanged",
                     "rationale": "The exact current factual qualification is already recorded.", "citations": []} for row in entries]},
                     "provenance": None, "kind": "exact_binding_reuse"}
         result, provenance = await decide(operation.model, operation="fit.catalog-impact", schema=CatalogImpactDecision,
             instructions=CATALOG_IMPACT_INSTRUCTIONS, sources=sources,
             context={"profile_id": state["profile_id"], "catalog_revision": state["catalog_revision"],
                      "requirements": entries, "fact_semantics_version": snapshot["profile"]["fact_semantics_version"]})
-        index = {row["requirement_id"]: row for row in entries}
-        returned = [row.requirement_id for row in result.requirements]
+        index = {qualification_key(row): row for row in entries}
+        returned = [qualification_key(row.model_dump()) for row in result.requirements]
         if len(returned) != len(set(returned)) or set(returned) != set(index):
             raise AppError("fit_refresh_partition_invalid", "The catalog impact decision must partition every frozen requirement exactly once.", 422)
         for row in result.requirements:
-            expected = index[row.requirement_id]
+            key = qualification_key(row.model_dump())
+            expected = index[key]
             if row.requirement_revision != expected["requirement_revision"]:
                 raise AppError("fit_requirement_binding_invalid", "The catalog impact decision referenced an older requirement.", 422)
             validate_citations(row.citations, sources, required_ids=(expected["canonical_source_id"],))
-            allowed = {"catalog:" + row.requirement_id, "assessment:" + row.requirement_id}
+            allowed = {"catalog:" + key, "assessment:" + key}
             if any(cite.source_id not in allowed and not cite.source_id.startswith("current:")
                    and not cite.source_id.startswith("before:" + expected["before_inventory_id"] + ":") for cite in row.citations):
                 raise AppError("fit_refresh_baseline_invalid", "The impact decision cited another requirement's source baseline.", 422)
@@ -521,13 +550,16 @@ class ManualRefresh:
     @staticmethod
     def _alias(state, requirement, selection):
         snapshot = state["snapshot"]
-        previous = snapshot["prior_assessments"][requirement["requirement_id"]]
+        previous = snapshot["prior_assessments"][qualification_key(requirement)]
+        if not current_qualification(previous) or qualification_key(previous) != qualification_key(requirement):
+            raise ConflictError("An unchanged decision cannot inherit another demand or qualification contract.")
         source_hash = qualification_fingerprint(snapshot["profile"], requirement, snapshot["facts"])
         if previous["source_fingerprint"] == source_hash:
             return previous
         provenance = selection["provenance"]
         sources = {row["source_id"]: row for row in snapshot["facts"]}
-        rationale = next(row["rationale"] for row in selection["decision"]["requirements"] if row["requirement_id"] == requirement["requirement_id"])
+        rationale = next(row["rationale"] for row in selection["decision"]["requirements"]
+                         if qualification_key(row) == qualification_key(requirement))
         return {**previous, "assessment_id": "fit-assessment-" + fingerprint({
             "previous": previous["assessment_id"], "sources": source_hash, "impact_receipt": provenance["receipt_id"],
         }), "origin": "revalidated", "source_fingerprint": source_hash,
@@ -548,7 +580,7 @@ class ManualRefresh:
             rows = unique_requirements(requirements)
             assessments = []
             for row in rows:
-                candidate = candidates.get(row["requirement_id"])
+                candidate = candidates.get(qualification_key(row))
                 if candidate is None or str(candidate["requirement_revision"]) != str(row["requirement_revision"]):
                     raise ConflictError("The selected job does not use the frozen canonical catalog.")
                 assessments.append({**candidate, **assessment_fields(row)})
@@ -563,7 +595,8 @@ class ManualRefresh:
                     "approved_variants_fingerprint": approved_fingerprint(profile),
                     "requirements_revision": requirements["revision"], "posting_revision": requirements["posting_revision"],
                     "posting_hash": requirements["posting_hash"], "assessment_ids": [row["assessment_id"] for row in assessments],
-                    "requirements": [{"requirement_id": row["requirement_id"], "requirement_revision": row["requirement_revision"]} for row in rows]},
+                    "requirements": [{"requirement_id": row["requirement_id"], "requirement_revision": row["requirement_revision"],
+                                      "demand_fingerprint": row.get("demand_fingerprint")} for row in rows]},
                 "created_at": now(), "origin": "model", "correction": None, "policy_version": FORMULA_VERSION,
                 "refresh_operation_id": state["operation_id"]}
             previous = job["score"]
@@ -572,7 +605,8 @@ class ManualRefresh:
                     "profile_id", "source_fingerprint", "requirements_revision", "posting_revision",
                     "posting_hash", "assessment_ids", "requirements")):
                 continue
-            authority_keys = ("requirement_id", "requirement_revision", "determination_id", "category")
+            authority_keys = ("requirement_id", "requirement_revision", "determination_id", "category",
+                              "demand_fingerprint", "qualification_semantics_version", "qualification_prompt_version")
             if (current_contract(previous) and previous.get("correction") is not None
                     and [{key: row.get(key) for key in authority_keys} for row in previous["assessments"]]
                     == [{key: row.get(key) for key in authority_keys} for row in assessments]):

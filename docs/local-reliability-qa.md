@@ -118,6 +118,29 @@ Skills and direct demands must not trigger unnecessary achievement rewrites.
 Inspect `requirement-fit-v3-equal`, equal-item contributions, duplicate-occurrence
 invariance, alternatives counted once and no-score behavior for an empty set.
 
+For `requirements-capability-demand-v2`, exercise existing-only consolidation
+from a real predecessor-created catalog and the same mandatory gate during
+ingestion/correction. Include hidden retained members, complete existing-existing
+and incoming partitions, original-source preservation, stable aliases and exact
+historical reads. Ordinary facets share a capability; independently demanded
+technologies remain distinct. Same-capability jobs with different source demands
+must not share qualification, while identical normalized demands reuse the exact
+current assessment. A repeated occurrence contributes no extra score item.
+Require exact demand and policy pins in qualification, coverage, maintained
+wording, refresh checkpoints and currentness. A shared batch receipt cannot
+cross-authorize sibling demands. A common selected wording retains every exact
+covered binding; an uncovered sibling remains a gap. Manual selection and cached
+group decisions cannot overwrite newer maintained-head inputs.
+
+Reject missing/foreign members or occurrences, invalid reuse/citations, uncertainty,
+oversized/context refusal, stale posting/catalog/snapshot heads and cancellation
+without partial publication. Compare every predecessor schema entry byte-for-byte
+and allow only the declared additive normalization schema objects. Preserve old
+scores, approval history and accepted PDF bytes, while changed derivations become
+historical. No read/save starts repair or downstream work. Controlled boundary
+choices prove authority, not semantic accuracy; run the configured provider on
+the reported source-bound failure separately.
+
 Post-edit Fit refresh is manually admitted. Prove that saves, approvals, reads
 and the operation's own writes make no additional model calls or queued work.
 Exercise the complete-catalog impact decision, previously unsupported

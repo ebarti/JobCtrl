@@ -15,8 +15,9 @@ import type { HttpPort } from "../../shared/ports/HttpPort.js";
 
 export { useRequirementCatalog, useRequirementDetail, useRequirementHistory, useRequirementMeaningCorrection,
   requirementLibraryKeys, canonicalRequirementSchema } from "./library.js";
+export { RequirementConsolidationPanel } from "./consolidation.js";
 export type { CanonicalRequirement, RequirementDetail, RequirementHistory, RequirementHistoryKind,
-  RequirementOccurrence, RequirementCatalog, RequirementMeaningCorrection } from "./library.js";
+  RequirementOccurrence, RequirementCatalog, RequirementMeaningCorrection, RequirementNormalization } from "./library.js";
 export { requirementsLibrarySearchSchema, requirementsReturnTableSchema, requirementTableReturnState,
   requirementsReturnSearch } from "./library-navigation.js";
 export type { RequirementsLibrarySearch, RequirementsTableState } from "./library-navigation.js";
@@ -206,7 +207,7 @@ export function RequirementsPanel({ jobId, postingRevision }: { jobId: string; p
 }
 
 export const requirementsInvalidation = {
-  eventTypes: ["RequirementBindingCorrected", "RequirementsUpdated", "RequirementMeaningRevised", "JobCaptured", "JobSourceObserved", "JobUpdated"] as const,
+  eventTypes: ["RequirementBindingCorrected", "RequirementsUpdated", "RequirementMeaningRevised", "RequirementsConsolidated", "JobCaptured", "JobSourceObserved", "JobUpdated"] as const,
   handle(event: DomainEventEnvelope, client: QueryClient) {
     void invalidateQueriesWithOptimisticOwnership(client, requirementsKeys.all(event.tenantId));
   },

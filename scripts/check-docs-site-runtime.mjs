@@ -237,7 +237,10 @@ const EXPLANATION_CONTRACTS = [
       "Incompatible old operations are refused",
       "rollback restores the verified pre-upgrade backup",
       "Installing an older binary alone is unsafe",
-      "has not rolled out to a live workspace",
+      "source implementation alone does not establish a release or operational rollout",
+      "It does not reset the catalog on startup",
+      "stable identities, aliases and combined job demands atomically",
+      "Reads and Profile saves never start that work",
     ],
   },
   {

@@ -23,8 +23,21 @@ const occurrenceSchema = z.object({
   extraction_determination_id: z.string(), equivalence_determination_ids: z.array(z.string()),
   provenance: z.record(z.string(), z.unknown()),
 }).passthrough();
+const normalizationSchema = z.object({
+  normalization_version: z.literal("requirements-capability-demand-v2"), ready: z.boolean(),
+  catalog_revision: z.number().int().nonnegative(), reconciliation_id: z.string().nullable(),
+  certificate_catalog_revision: z.number().int().nonnegative().nullable(),
+});
 const catalogSchema = z.object({ catalog_revision: z.number().int().nonnegative(), total: z.number().int().nonnegative(),
-  requirements: z.array(canonicalRequirementSchema) });
+  requirements: z.array(canonicalRequirementSchema), normalization: normalizationSchema.optional(),
+  aliases: z.record(z.string(), z.string()).optional() }).superRefine((catalog, context) => {
+  if ((catalog.normalization === undefined) !== (catalog.aliases === undefined)
+      || catalog.normalization && (catalog.normalization.catalog_revision !== catalog.catalog_revision
+        || catalog.normalization.ready && (catalog.normalization.certificate_catalog_revision !== catalog.catalog_revision
+          || !catalog.normalization.reconciliation_id))) {
+    context.addIssue({ code: "custom", message: "The saved catalog normalization state could not be verified." });
+  }
+});
 const detailSchema = canonicalRequirementSchema.extend({ current_revision: z.number().int().positive(), occurrences: z.array(occurrenceSchema) });
 const freshness = { current: z.boolean(), stale_reasons: z.array(z.string()) };
 const historyBase = z.object({ requirement_id: z.string(), current_revision: z.number().int().positive(),
@@ -39,6 +52,7 @@ export type RequirementDetail = z.infer<typeof detailSchema>;
 export type RequirementHistory = z.infer<typeof historySchema>;
 export type RequirementOccurrence = z.infer<typeof occurrenceSchema>;
 export type RequirementCatalog = z.infer<typeof catalogSchema>;
+export type RequirementNormalization = z.infer<typeof normalizationSchema>;
 export type RequirementHistoryKind = "revisions" | "occurrences";
 
 export const requirementLibraryKeys = {

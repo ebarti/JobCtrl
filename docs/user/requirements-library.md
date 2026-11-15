@@ -18,6 +18,17 @@ saved links, Fit history and accepted resumes remain retained independently.
 Historical support or a manual link alone does not keep a deleted-only meaning
 in the active list.
 
+Older catalogs may need **Consolidate skills** before their reusable meanings
+are ready for current matching. This explicit action reviews the complete saved
+catalog and its retained posting sources, including sources from deleted jobs.
+It may use your configured model; opening the library does not start it. The
+existing catalog and accepted artifacts remain available if the action is
+refused, cancelled or cannot finish. Check the recorded run before retrying an
+unconfirmed request. A prior requirement link resolves to its recorded current
+identity when that meaning is in the active library; its original source history
+is retained. Open **Earlier consolidated identities** in the current record to
+inspect each earlier identity's definition and posting history.
+
 Permanently deleting a job also permanently removes its requirement meanings
 when no other retained job references them. A shared meaning remains even when
 the other job is in deleted items. The same transaction removes Fit-owned links,
@@ -61,13 +72,24 @@ or a source job preserve the same table context. Select a requirement to inspect
 
 - its category, name, exact definition and canonical revision;
 - **Linked achievements**, grouped by saved achievement identity rather than by
-  the number of wording revisions;
+  the number of wording revisions. The count includes recorded relationships
+  that need review; it does not assert current factual support;
 - **Wordings for this requirement** within each achievement, with the exact text,
   approval and recorded coverage shown separately;
 - maintained current wording separately from proposed revisions, old selections
   and approval history, with stale saved selections still marked for review;
 - prior meaning revisions and original posting occurrences, including whether
   their saved revisions are still current.
+
+One reusable capability can carry different demands from different jobs. When
+multiple distinct demands are recorded in a ready catalog, the table says **Varies by job**. Open
+**Job-specific demands** to inspect each demand, its source jobs, assessment,
+evidence and freshness. Linked achievements include those recorded across the
+demands; their presence does not turn a job-specific assessment into a global
+judgment. When consolidation is required, any demands shown may be incomplete.
+**Earlier links and assessments** retains records bound to an older identity or
+source context for inspection. Those records are excluded from the linked-achievement
+count and do not establish current support for the consolidated requirement.
 
 A requirement can link to several achievements, and an achievement can serve
 several requirements. One exact wording can cover several requirements. Missing
@@ -179,9 +201,12 @@ persisted determination. Unavailable or invalid work remains unavailable.
 The API also supports explicitly correcting selected posting occurrences rather
 than interpreting the whole posting again. Each correction must be supported by
 that posting, and your reason guides the review without becoming evidence.
-Other saved meanings, bindings, evidence and their model authority remain
-unchanged; earlier snapshots remain in history. This does not reassess your Fit
-or rewrite achievement wording automatically.
+The corrected batch passes through the complete retained-catalog consolidation,
+which can also reconcile other existing meanings and job-demand bindings.
+Unselected occurrences retain their original semantic fields and evidence, and
+earlier snapshots remain in history. The correction does not automatically
+reassess your Fit or rewrite achievement wording; changed bindings can require
+review.
 
 The API ownership and revision fences are documented in
 [Jobs and Materials API](../api/jobs-and-materials.md#requirements-library-and-associations).

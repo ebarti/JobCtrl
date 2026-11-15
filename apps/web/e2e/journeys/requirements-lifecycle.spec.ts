@@ -43,6 +43,7 @@ test("Requirements library follows deleted and restored job roots while retainin
   const historyBefore = await json<History>(api, "get", historyPath);
   expect(detailBefore.active_in_library).toBe(true);
   expect(historyBefore.rows).toHaveLength(1);
+  const epochBeforeVisibility = (await json<Catalog>(api, "get", "/v1/requirements")).catalog_revision;
   const callsBeforeVisibility = app.external.calls.length;
 
   await page.goto(`/requirements?requirement=${encodeURIComponent(unique.requirement_id)}`);
@@ -51,7 +52,7 @@ test("Requirements library follows deleted and restored job roots while retainin
   await expect(library).toContainText(shared.name);
   const timeOrigin = await page.evaluate(() => performance.timeOrigin);
 
-  async function membership(expected: string[]) {
+  async function membership(expected: string[], expectedEpoch = epochBeforeVisibility) {
     const [catalog, composed] = await Promise.all([
       json<Catalog>(api, "get", "/v1/requirements"),
       json<Library>(api, "get", "/v1/fit/requirement-library"),
@@ -59,7 +60,7 @@ test("Requirements library follows deleted and restored job roots while retainin
     expect(catalog.requirements.map((row) => row.requirement_id).sort()).toEqual([...expected].sort());
     expect(catalog.total).toBe(expected.length);
     expect(composed.requirements.map((row) => row.requirement_id).sort()).toEqual([...expected].sort());
-    expect(catalog.catalog_revision).toBe(initial.catalog_revision);
+    expect(catalog.catalog_revision).toBe(expectedEpoch);
   }
 
   await json(api, "post", `/v1/jobs/${seed.posting.job_id}/hide`, {});
@@ -115,7 +116,9 @@ test("Requirements library follows deleted and restored job roots while retainin
   const matching = reused.matching!.body["context"] as { candidates: { requirement_id: string }[] };
   expect(matching.candidates.map((row) => row.requirement_id).sort()).toEqual([shared.requirement_id, unique.requirement_id].sort());
   expect(reused.snapshot.requirements[0]!.requirement_id).toBe(unique.requirement_id);
-  await membership([unique.requirement_id]);
+  const epochAfterRediscovery = (await json<Catalog>(api, "get", "/v1/requirements")).catalog_revision;
+  expect(epochAfterRediscovery).toBeGreaterThan(epochBeforeVisibility);
+  await membership([unique.requirement_id], epochAfterRediscovery);
   await expect(library).toContainText(unique.name);
   expect(await json<Profile>(api, "get", "/v1/profile")).toEqual(profileBefore);
   expect(await json(api, "get", associationPath)).toEqual(associationHistory);
@@ -241,7 +244,8 @@ test("permanent job deletion removes only orphaned canonical meanings and Fit li
     requirement_id: uniqueId, requirement_revision: 1, achievement_id: achievement.achievement_id,
     achievement_source_refs: achievement.source_refs, wording: null,
   });
-  type RetainedLibrary = { requirements: (Meaning & { assessment: unknown; coverage: unknown[]; current_wordings: { assignment_id: string }[] })[] };
+  type RetainedLibrary = { requirements: (Meaning & { assessment: unknown; coverage: unknown[]; current_wordings: { assignment_id: string }[];
+    demand_assessments: ({ job_ids: string[] } & Record<string, unknown>)[] })[] };
   const libraryBefore = await json<RetainedLibrary>(api, "get", "/v1/fit/requirement-library");
   const sharedBefore = libraryBefore.requirements.find((row) => row.requirement_id === sharedId)!;
   const uniqueBefore = libraryBefore.requirements.find((row) => row.requirement_id === uniqueId)!;
@@ -274,7 +278,11 @@ test("permanent job deletion removes only orphaned canonical meanings and Fit li
   expect(await json(api, "get", "/v1/profile/wording")).toEqual(wordingBefore);
   await json(api, "post", `/v1/jobs/${second.job_id}/restore`, {});
   const restored = await json<RetainedLibrary>(api, "get", "/v1/fit/requirement-library");
-  expect(restored.requirements).toEqual([sharedBefore]);
+  expect(restored.requirements).toEqual([{ ...sharedBefore,
+    demand_assessments: sharedBefore.demand_assessments.map((demand) => ({ ...demand,
+      job_ids: demand.job_ids.filter((jobId) => jobId !== seed.posting.job_id),
+    })),
+  }]);
   expect(app.external.calls).toHaveLength(callsBeforeDelete);
 
   const later = await captureReusePosting(api, "library-after-permanent", "Implement and maintain durable workflow recovery.\nEstablish explicit review ownership for operational changes.");
