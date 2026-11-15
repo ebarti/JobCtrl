@@ -9,6 +9,7 @@ from jobctrl.app.errors import ConflictError
 from .domain import RequirementError, canonical_json, current_contract, fingerprint, now
 from .normalization_domain import NORMALIZATION_VERSION
 from .normalization_citations import CITATION_BINDER_VERSION, citation_binding_summary
+from .normalization_partitions import NORMALIZATION_BINDING_VERSION, partition_binding_summary
 
 
 class NormalizationStore:
@@ -121,7 +122,7 @@ class NormalizationStore:
                 raise ConflictError("The consolidation operation ID belongs to another input.")
             stored = json.loads(row["report_json"])
             if "storage_version" in stored:
-                if stored["storage_version"] != CITATION_BINDER_VERSION:
+                if stored["storage_version"] not in (CITATION_BINDER_VERSION, NORMALIZATION_BINDING_VERSION):
                     raise RequirementError("requirements_citation_wire_changed")
                 return stored["report"]
             return stored
@@ -159,11 +160,14 @@ class NormalizationStore:
         return self.normalization_model_call(input_fingerprint)
 
     def publish_normalization(self, *, captured, meanings, aliases, replacements, operation_id, input_fingerprint,
-                              decision, selection, citation_binding, receipt, authority_receipt, report, guard, cancelled, revision_action=None):
+                              decision, selection, intermediate_selection, partition_binding, citation_binding,
+                              receipt, authority_receipt, report, guard, cancelled, revision_action=None):
         if (canonical_json(authority_receipt["value"]) != canonical_json(selection)
-                or fingerprint(selection) != citation_binding["selection_fingerprint"]
+                or fingerprint(selection) != partition_binding["raw_selection_fingerprint"]
+                or fingerprint(intermediate_selection) != partition_binding["intermediate_fingerprint"]
+                or partition_binding["intermediate_fingerprint"] != citation_binding["selection_fingerprint"]
                 or fingerprint(decision) != citation_binding["derived_fingerprint"]
-                or receipt["accepted_result_fingerprint"] != citation_binding["selection_fingerprint"]):
+                or receipt["accepted_result_fingerprint"] != partition_binding["raw_selection_fingerprint"]):
             raise RequirementError("model_cache_receipt_invalid")
         with self.database.transaction() as connection:
             if cancelled():
@@ -218,10 +222,14 @@ class NormalizationStore:
                       "normalization_version": NORMALIZATION_VERSION, "reconciliation_id": operation_id,
                       "input_fingerprint": receipt["input_fingerprint"], "receipt": receipt}
             authority = {"member_roots": aliases, "root_heads": report["roots"],
-                         "decision_fingerprint": fingerprint(selection), "derived_fingerprint": fingerprint(decision),
+                         "decision_fingerprint": fingerprint(selection),
+                         "intermediate_fingerprint": partition_binding["intermediate_fingerprint"],
+                         "derived_fingerprint": fingerprint(decision),
+                         "partition_binding": partition_binding_summary(partition_binding),
                          "citation_binding": citation_binding_summary(citation_binding), "receipt": receipt,
                          "corrections": decision["corrections"]}
-            stored_report = {"storage_version": CITATION_BINDER_VERSION, "report": report,
+            stored_report = {"storage_version": NORMALIZATION_BINDING_VERSION, "report": report,
+                             "intermediate_selection": intermediate_selection, "partition_binding": partition_binding,
                              "derived_decision": decision, "citation_binding": citation_binding}
             connection.execute("INSERT INTO requirements_reconciliations VALUES (?,?,?,?,?,?,?,?,?)",
                 (operation_id, input_fingerprint, receipt["input_fingerprint"], captured["catalog_revision"], epoch, canonical_json(selection),

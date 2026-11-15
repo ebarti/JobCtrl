@@ -2,9 +2,12 @@ import { createHash } from "node:crypto";
 import { expect, type ExternalCall } from "../harness/fixtures.js";
 
 export type ModelSource = { source_id: string; text: string };
-export const NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-citation-v3";
+export const NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v4";
+export const CITATION_SELECTION_PROMPT_VERSION = "requirements-capability-demand-citation-v3";
 export const LEGACY_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-v2";
 export const CITATION_BINDER_VERSION = "requirements-citation-binding-v1";
+export const PARTITION_BINDER_VERSION = "requirements-partition-binding-v1";
+export const NORMALIZATION_STORAGE_VERSION = "requirements-normalization-binding-v2";
 export const modelSources = (call: ExternalCall) =>
   call.body["sources"] as ModelSource[];
 
@@ -216,14 +219,53 @@ export type DemandChoice = {
 };
 type NormalizationCorrection<Citation> = { member_id: string; retained_group_id: string; unsupported_claim: string;
   represented_by_group_id: string; reason: string; citations: Citation[] };
-export type CorrectionWitness = NormalizationCorrection<CitationSelection>;
+export type CorrectionWitness = { member_id: string; represented_by_member_id: string; unsupported_claim: string;
+  reason: string; citations: CitationSelection[] };
 export type BoundCorrectionWitness = NormalizationCorrection<ReturnType<typeof citeSources>[number]>;
+export type MemberRootSlot = { kind: "root"; category: "skill" | "professional_experience"; name: string;
+  definition: string; reuse_requirement_id: string | null; reason: string; citations: CitationSelection[] };
+export type OccurrenceRootSlot = { kind: "root"; definition: string; reuse_demand_fingerprint: string | null; citations: CitationSelection[] };
+type UnresolvedSlot = { kind: "unresolved"; reason: string; citations: CitationSelection[] };
+export type MemberSlot = MemberRootSlot | { kind: "same_as"; member_id: string } | UnresolvedSlot;
+export type OccurrenceSlot = OccurrenceRootSlot | { kind: "same_as"; occurrence_id: string } | UnresolvedSlot;
+export type CatalogSlots = { status: "complete" | "needs_review"; catalog_revision: number;
+  member_slots: Record<string, MemberSlot>; occurrence_slots: Record<string, OccurrenceSlot>; corrections: CorrectionWitness[] };
+export const memberRoots = (value: CatalogSlots) => Object.entries(value.member_slots).flatMap(([memberId, slot]) =>
+  slot.kind === "root" ? [{ memberId, slot }] : []);
+export const occurrenceRoots = (value: CatalogSlots) => Object.entries(value.occurrence_slots).flatMap(([occurrenceId, slot]) =>
+  slot.kind === "root" ? [{ occurrenceId, slot }] : []);
 
 /** Authors supply the complete semantic partition. This binds only live IDs,
  * exhaustive inventory accounting and verbatim citations, never meaning. */
-export function catalogNormalization(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]) {
+export function catalogNormalization(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]): CatalogSlots {
   expect(call.body["operation"]).toBe("requirements.match_catalog");
   expect(call.body["prompt_version"]).toBe(NORMALIZATION_PROMPT_VERSION);
+  const authored = normalizationResponse(call, capabilities, demands, (references) => citationSelections(call, references));
+  const member_slots: CatalogSlots["member_slots"] = {};
+  for (const group of authored.capabilities) {
+    const representative = group.member_ids[0]!;
+    expect(representative).toBeTruthy();
+    for (const memberId of group.member_ids) member_slots[memberId] = memberId === representative
+      ? { kind: "root", category: group.category, name: group.name, definition: group.definition,
+        reuse_requirement_id: group.reuse_requirement_id, reason: group.reason, citations: group.citations }
+      : { kind: "same_as", member_id: representative };
+  }
+  const occurrence_slots: CatalogSlots["occurrence_slots"] = {};
+  for (const demand of authored.demands) {
+    const occurrences = demand.bindings.flatMap((binding) => binding.occurrence_ids);
+    const representative = occurrences[0]!;
+    expect(representative).toBeTruthy();
+    for (const occurrenceId of occurrences) occurrence_slots[occurrenceId] = occurrenceId === representative
+      ? { kind: "root", definition: demand.definition, reuse_demand_fingerprint: demand.reuse_demand_fingerprint, citations: demand.citations }
+      : { kind: "same_as", occurrence_id: representative };
+  }
+  return { status: "complete", catalog_revision: authored.catalog_revision, member_slots, occurrence_slots, corrections: [] };
+}
+
+/** Explicit v3 transport used only before an actual pinned source upgrade. */
+export function legacyCatalogNormalizationV3(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]) {
+  expect(call.body["operation"]).toBe("requirements.match_catalog");
+  expect(call.body["prompt_version"]).toBe(CITATION_SELECTION_PROMPT_VERSION);
   return normalizationResponse(call, capabilities, demands, (references) => citationSelections(call, references));
 }
 
@@ -355,9 +397,17 @@ export function catalogMatching(call: ExternalCall, choices: Record<string, Cata
   const uncertain = context.incoming.filter((row) => choices[row.local_id]!.verdict === "uncertain");
   if (uncertain.length) {
     result.status = "needs_review";
-    result.unresolved = uncertain.map((row) => ({ member_ids: [row.member_id], reason: "Explicit uncertain source-bound choice; preserve accepted state.", citations: citationSelections(call, [
-      { sourceId: row.model_source_id, valuePath: ["definition"] }, { sourceId: context.catalog_inventory_source_id },
-    ]) }));
+    for (const row of uncertain) {
+      result.member_slots[row.member_id] = { kind: "unresolved",
+        reason: "Explicit uncertain source-bound choice; preserve accepted state.", citations: citationSelections(call, [
+          { sourceId: row.model_source_id, valuePath: ["definition"] }, { sourceId: context.catalog_inventory_source_id },
+        ]) };
+      for (const occurrence of context.occurrences.filter((item) => item.member_id === row.member_id))
+        result.occurrence_slots[occurrence.occurrence_id] = { kind: "unresolved",
+          reason: "The explicitly unresolved capability leaves this source demand unresolved.", citations: citationSelections(call, [
+            { sourceId: occurrence.source_id, valuePath: ["original", "spans", 0, "quote"] }, { sourceId: context.catalog_inventory_source_id },
+          ]) };
+    }
   }
   return result;
 }

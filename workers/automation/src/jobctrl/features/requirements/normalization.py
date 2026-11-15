@@ -10,11 +10,12 @@ from jobctrl.app.errors import ConflictError
 
 from .domain import CONTRACT_VERSION, MEANING_KEYS, ModelCallBudget, RequirementError, canonical_json, fingerprint, meaning_data, now
 from .normalization_domain import (
-    NORMALIZATION_INSTRUCTION, NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION,
-    CatalogNormalization, CatalogNormalizationSelection, bind_normalization_selection,
+    NORMALIZATION_CITATION_PROMPT_VERSION, NORMALIZATION_INSTRUCTION, NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION,
+    CatalogNormalization, CatalogNormalizationSelection, bind_normalization_selection, bind_normalization_slots,
     demand_fingerprint, validate_normalization,
 )
 from .normalization_citations import citation_binding_report, citation_binding_summary, citation_segment_catalog, citation_source_context
+from .normalization_partitions import partition_binding_summary, partition_selection_schema
 
 
 def _tokens(postings):
@@ -261,12 +262,17 @@ class CatalogNormalizationService:
         context["citation_source_fingerprints"] = {ident: fingerprint(text) for ident, text in sources.items()}
         context["citation_source_context_fingerprint"] = fingerprint(citation_source_context(context, sources))
         return {"operation": "requirements.match_catalog", "prompt_version": NORMALIZATION_PROMPT_VERSION,
-                "instructions": NORMALIZATION_INSTRUCTION, "response_schema": CatalogNormalizationSelection.model_json_schema(),
+                "instructions": NORMALIZATION_INSTRUCTION, "response_schema": partition_selection_schema(context).model_json_schema(),
                 "context": context, "sources": [{"source_id": ident, "text": text} for ident, text in sources.items()]}
 
     @staticmethod
     def validate_catalog_consolidation(value, prepared):
         if prepared["prompt_version"] == NORMALIZATION_PROMPT_VERSION:
+            result = partition_selection_schema(prepared["context"]).model_validate(value)
+            bind_normalization_slots(result, context=prepared["context"],
+                sources={row["source_id"]: row["text"] for row in prepared["sources"]})
+            return result.model_dump()
+        if prepared["prompt_version"] == NORMALIZATION_CITATION_PROMPT_VERSION:
             result = CatalogNormalizationSelection.model_validate(value)
             bind_normalization_selection(result, context=prepared["context"],
                 sources={row["source_id"]: row["text"] for row in prepared["sources"]})
@@ -284,10 +290,12 @@ class CatalogNormalizationService:
     def bind_catalog_consolidation(value, prepared):
         if prepared["prompt_version"] != NORMALIZATION_PROMPT_VERSION:
             raise RequirementError("requirements_citation_wire_changed")
-        selection = CatalogNormalizationSelection.model_validate(value)
-        derived, binding = bind_normalization_selection(selection, context=prepared["context"],
+        selection = partition_selection_schema(prepared["context"]).model_validate(value)
+        derived, intermediate, partition_binding, citation_binding = bind_normalization_slots(selection, context=prepared["context"],
             sources={row["source_id"]: row["text"] for row in prepared["sources"]})
-        return {"selection": selection.model_dump(), "derived_decision": derived.model_dump(), "citation_binding": binding}
+        return {"selection": selection.model_dump(), "intermediate_selection": intermediate.model_dump(),
+                "derived_decision": derived.model_dump(), "partition_binding": partition_binding,
+                "citation_binding": citation_binding}
 
     async def _normalize_catalog(self, *, captured, proposals, incoming, operation_id, action_fingerprint,
                                  cancelled, heartbeat=None, budget=None, guidance=None, revision_action=None,
@@ -327,25 +335,29 @@ class CatalogNormalizationService:
             heartbeat({"phase": "requirements_consolidation", "catalog_revision": captured["catalog_revision"],
                        "member_count": len(context["members"]), "occurrence_count": len(context["occurrences"])})
         selection, receipt = await self.model.determine(
-            kind="requirements.match_catalog", schema=CatalogNormalizationSelection, prompt_version=NORMALIZATION_PROMPT_VERSION,
+            kind="requirements.match_catalog", schema=partition_selection_schema(context), prompt_version=NORMALIZATION_PROMPT_VERSION,
             instruction=NORMALIZATION_INSTRUCTION, sources=[{"source_id": ident, "text": text} for ident, text in sources.items()],
             context=context, entity_id=None,
-            validate=lambda value: bind_normalization_selection(value, context=context, sources=sources),
+            validate=lambda value: bind_normalization_slots(value, context=context, sources=sources),
             budget=ModelCallBudget(action_fingerprint, 1, reserve=lambda value:
                 self.store.reserve_normalization_call(operation_id, value, guard)), catalog_guard=guard,
         )
         self._check_cancel(cancelled)
-        decision, binding = bind_normalization_selection(selection, context=context, sources=sources)
-        binding_summary = citation_binding_summary(binding)
-        if receipt["accepted_result_fingerprint"] != binding["selection_fingerprint"]:
+        decision, intermediate, partition_binding, citation_binding = bind_normalization_slots(selection, context=context, sources=sources)
+        binding_summary = citation_binding_summary(citation_binding)
+        partition_summary = partition_binding_summary(partition_binding)
+        if receipt["accepted_result_fingerprint"] != partition_binding["raw_selection_fingerprint"]:
             raise RequirementError("model_cache_binding_invalid")
-        mappings, roots, new_meanings = self._normalization_roots(captured, context, decision, receipt, operation_id, effective, binding_summary)
+        mappings, roots, new_meanings = self._normalization_roots(captured, context, decision, receipt, operation_id, effective,
+                                                               binding_summary, partition_summary)
         if any(mappings[member] != mappings[target] for member, target in (required_bindings or {}).items()):
             raise RequirementError("binding_not_equivalent")
-        replacements = self._normalization_replacements(captured, effective, proposals, mappings, roots, decision, receipt, operation_id, binding_summary)
+        replacements = self._normalization_replacements(captured, effective, proposals, mappings, roots, decision, receipt,
+                                                       operation_id, binding_summary, partition_summary)
         report = {"captured_catalog_revision": captured["catalog_revision"],
                   "input_member_count": len(context["members"]), "root_count": len(roots),
-                  "mapping": mappings, "citation_binding": citation_binding_report(binding),
+                  "mapping": mappings, "citation_binding": citation_binding_report(citation_binding),
+                  "partition_binding": partition_binding,
                   "corrections": [row.model_dump() for row in decision.corrections],
                   "roots": [{"requirement_id": row["requirement_id"], "revision": row["revision"],
                       "category": row["category"], "name": row["name"], "definition": row["definition"]} for row in roots.values()]}
@@ -363,13 +375,14 @@ class CatalogNormalizationService:
             revision_action = {**revision_action, "requirement_id": revised_root, "revision": roots[revised_root]["revision"]}
         return self.store.publish_normalization(captured=captured, meanings=new_meanings, aliases=aliases,
             replacements=replacements, operation_id=operation_id, input_fingerprint=action_fingerprint,
-            decision=decision.model_dump(), selection=selection.model_dump(), citation_binding=binding,
+            decision=decision.model_dump(), selection=selection.model_dump(), intermediate_selection=intermediate.model_dump(),
+            partition_binding=partition_binding, citation_binding=citation_binding,
             receipt=receipt, authority_receipt=self.model.receipt(receipt["receipt_id"]),
             report=report, guard=guard, cancelled=cancelled,
             revision_action=revision_action)
 
     @staticmethod
-    def _normalization_roots(captured, context, decision, receipt, operation_id, effective, citation_binding):
+    def _normalization_roots(captured, context, decision, receipt, operation_id, effective, citation_binding, partition_binding):
         existing = {row["requirement_id"]: row for row in captured["roots"]}
         mappings, roots, new_meanings = {}, {}, []
         for group in decision.capabilities:
@@ -397,7 +410,7 @@ class CatalogNormalizationService:
                         if original_row else {}, "extraction": original_row["provenance"]["extraction"] if original_row else {},
                     "resolution": [receipt]}
                 provenance["normalization"] = {"normalization_version": NORMALIZATION_VERSION,
-                    "citation_binding": citation_binding,
+                    "citation_binding": citation_binding, "partition_binding": partition_binding,
                     "reconciliation_id": operation_id, "receipt": receipt, "member_ids": group.member_ids,
                     "reason": group.reason, "citations": [row.model_dump() for row in group.citations], "corrections": corrections}
                 if previous is None and original_row and provenance.get("semantic_stage") == "occurrence_correction":
@@ -410,7 +423,8 @@ class CatalogNormalizationService:
         return mappings, roots, new_meanings
 
     @staticmethod
-    def _normalization_replacements(captured, effective, proposals, mappings, roots, decision, receipt, operation_id, citation_binding):
+    def _normalization_replacements(captured, effective, proposals, mappings, roots, decision, receipt, operation_id,
+                                    citation_binding, partition_binding):
         groups = {group.group_id: mappings[group.member_ids[0]] for group in decision.capabilities}
         demands = {}
         for demand in decision.demands:
@@ -419,7 +433,7 @@ class CatalogNormalizationService:
             for binding in demand.bindings:
                 normalized = {"normalization_version": NORMALIZATION_VERSION, "definition": demand.definition,
                     "demand_fingerprint": signature, "provenance": {"normalization_version": NORMALIZATION_VERSION,
-                        "citation_binding": citation_binding,
+                        "citation_binding": citation_binding, "partition_binding": partition_binding,
                         "reconciliation_id": operation_id, "receipt": receipt, "input_fingerprint": receipt["input_fingerprint"],
                         "citations": [row.model_dump() for row in demand.citations], "occurrence_ids": binding.occurrence_ids}}
                 for occurrence_id in binding.occurrence_ids:
@@ -461,7 +475,8 @@ class CatalogNormalizationService:
                     row.pop("previous_occurrence_id", None)
             replacement = {**snapshot, "requirements": rows, "revision": previous_heads.get(job_id, 0) + 1,
                 "normalization_version": NORMALIZATION_VERSION, "normalization_provenance": {"receipt": receipt,
-                    "reconciliation_id": operation_id, "citation_binding": citation_binding}, "created_at": now(),
+                    "reconciliation_id": operation_id, "citation_binding": citation_binding,
+                    "partition_binding": partition_binding}, "created_at": now(),
                 "_attempt_id": snapshot.get("_attempt_id", "normalization:" + operation_id + ":" + job_id)}
             replacements.append(replacement)
         return replacements

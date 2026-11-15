@@ -46,8 +46,8 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **134 journeys in 44 project-file groups**:
-**133 Chromium cases in 43 spec files**, plus **one demo case in one file**.
+The current configured inventory is **137 journeys in 45 project-file groups**:
+**136 Chromium cases in 44 spec files**, plus **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts and keyboard-driven Profile saves. Listing
@@ -108,6 +108,17 @@ wrong-source segments, legacy quote fields and stale catalog inputs. A read-only
 inspector in the owned synthetic workspace compares the immutable raw selection
 and gateway receipt with the separately stored exact-quote projection and source
 index; it neither seeds state nor replaces a determination.
+
+The [required-slot journeys](../../../apps/web/e2e/journeys/requirements-partition-slots.spec.ts)
+accept opposing explicitly authored partitions while accounting for every member
+and occurrence. The source upgrade inventory also retains the real `943c8b4d0`
+citation-selection predecessor. Refusal controls distinguish missing/foreign
+schema keys, graph cycles, incompatible demand aliases and genuine unresolved
+source meaning, without weakening accepted-state checks. Receipt inspection
+compares raw slots, the separately bound grouping and exact-quote projections.
+The full-batch path includes the supported 120-character extraction ID and its
+untruncated 129-character incoming identity; bounded projection handles retain
+their exact recorded joins.
 
 ### Expanded screens and Profile editing — 15 November 2026
 

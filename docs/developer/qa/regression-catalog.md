@@ -69,6 +69,13 @@ cached selection authority omitting the maintained-head input. Retained alias
 history must not become current qualification or approval. See the
 [consolidation decision](../../decisions.md#capability-consolidation-and-source-demand).
 
+Normalization response schemas require every supplied member and occurrence slot;
+omitted or foreign keys cannot be schema-valid output. Source uncertainty remains
+explicit. Validate model-declared alias graphs, exact raw receipt equality and
+the separately bound grouping/quote projections; no fabricated group reference
+or projection may become authority. Preserve prior v3 history and reject
+incompatible durable work without another model call.
+
 Profile owns facts, attachments, confirmations, authored baseline and wording
 approval. Requirements owns qualified meanings and source occurrences. Fit
 owns factual support and exact approved-wording coverage relations. Resumes
