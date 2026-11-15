@@ -353,11 +353,11 @@ test("one catalog determination resolves the full posting batch and more than tw
   expect(context.candidates).toHaveLength(15);
   expect(context.incoming).toHaveLength(3);
   for (const candidate of context.candidates) {
+    const member = context.members.find((row) => row.requirement_id === candidate.requirement_id && row.revision === candidate.revision);
+    expect(member).toBeTruthy();
     expect(
       sources(matching).find(
-        (row) =>
-          row.source_id ===
-          `requirement:${candidate.requirement_id}:${candidate.revision}`,
+        (row) => row.source_id === member!.source_id,
       ),
     ).toBeTruthy();
   }

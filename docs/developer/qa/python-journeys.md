@@ -89,6 +89,14 @@ freshness state; screenshot positioning does not change synthetic evidence or
 make an earlier illustration current. The journey also exercises durable local
 edits and accepted PDF export without product network or model requests.
 
+The source-format follow-up `e2e-vWlopO` passed **6/6** affected public journeys
+in **33.795 s** of orchestration and **43.570 s** total. It includes literal
+multiline, quoted and backslash source values; altered and cross-field-joined
+quotes must refuse while accepted state stays exact. Short citation handles
+retain real canonical/job IDs and unchanged persisted model results. Its Python
+digest was `f891a3519752d5076db1228eede9889b303b0cfd9591af500d74423f27c5b8bd`;
+the unchanged web digest remains the one above.
+
 ### Expanded screens and Profile editing — 15 November 2026
 
 The primary [surface inventory](../../../apps/web/e2e/journeys/redesign-surfaces.spec.ts)

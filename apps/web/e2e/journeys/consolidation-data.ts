@@ -19,7 +19,8 @@ export type NormalizedSnapshot = Omit<SourceSnapshot, "requirements"> & {
     previous_occurrence_id: string;
     name: string; definition: string;
     canonical: { category: string; name: string; definition: string };
-    normalized_demand: { definition: string; demand_fingerprint: string; normalization_version: string };
+    normalized_demand: { definition: string; demand_fingerprint: string; normalization_version: string;
+      provenance: { citations: { source_id: string; quote: string }[] } };
   })[];
 };
 export type ReconciliationReport = { input_member_count: number; root_count: number; catalog_revision: number;

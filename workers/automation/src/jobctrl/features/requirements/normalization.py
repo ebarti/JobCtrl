@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
 import uuid
 
 from jobctrl.app.errors import ConflictError
@@ -17,6 +18,28 @@ from .normalization_domain import (
 def _tokens(postings):
     return [{key: row.get(key) for key in ("job_id", "revision", "source_hash", "deleted")}
             for _, row in sorted(postings.items())]
+
+
+def _compact_citation_sources(context, sources):
+    """Short operation-local references; semantic identities and text stay exact."""
+    handles = {source_id: f"s{index:03d}" for index, source_id in enumerate(sources, 1)}
+    occurrence_sources = {row["source_id"] for row in context["occurrences"]}
+    compacted = {}
+    for source_id, text in sources.items():
+        if source_id in occurrence_sources:
+            # Only this outer field refers to the source being supplied here.
+            # Nested provider/posting source identities are historical facts.
+            value = json.loads(text)
+            value["source_id"] = handles[source_id]
+            text = canonical_json(value)
+        compacted[handles[source_id]] = text
+    context["catalog_inventory_source_id"] = handles[context["catalog_inventory_source_id"]]
+    for collection, field in (("members", "source_id"), ("occurrences", "source_id"),
+                              ("incoming", "model_source_id"), ("accepted_demands", "source_id"),
+                              ("posting_sources", "source_id")):
+        for row in context[collection]:
+            row[field] = handles[row[field]]
+    return context, compacted
 
 
 class CatalogNormalizationService:
@@ -200,6 +223,7 @@ class CatalogNormalizationService:
                    "accepted_demands": list(accepted.values()), "guidance": guidance}
         context["posting_sources"] = [{"job_id": job_id, "revision": posting["revision"], "source_hash": posting["source_hash"],
             "source_id": f"posting:{job_id}:{posting['revision']}:{posting['source_hash']}"} for job_id, posting in sorted(postings.items())]
+        context, sources = _compact_citation_sources(context, sources)
         return context, sources, effective
 
     @classmethod

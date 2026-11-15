@@ -257,11 +257,14 @@ def snapshot_items(snapshot: dict) -> list[dict]:
     return json.loads(canonical_json(rows))
 
 
-def validate_citations(citations: list[Citation], sources: dict[str, str], required: set[str] | None = None) -> None:
+def validate_citations(citations: list[Citation], sources: dict[str, str], required: set[str] | None = None,
+                       *, source_segments: dict[str, tuple[str, ...]] | None = None) -> None:
     for citation in citations:
         if citation.source_id not in sources:
             raise RequirementError("foreign_source_id")
-        if not citation.quote.strip() or citation.quote not in sources[citation.source_id]:
+        if not citation.quote.strip() or (
+                citation.quote not in sources[citation.source_id]
+                and not any(citation.quote in segment for segment in (source_segments or {}).get(citation.source_id, ()))):
             raise RequirementError("non_verbatim_quote")
     if required and not required.issubset({c.source_id for c in citations}):
         raise RequirementError("missing_source_citation")

@@ -1,7 +1,7 @@
 import type { Page, TestInfo } from "@playwright/test";
 import { test, expect, json, modelCall, action, completed, terminal, type ExternalCall } from "../harness/fixtures.js";
 import { createBaseline, acceptBaseline, getResume } from "./core-data.js";
-import { catalogMatching, citeSources, modelSources, typedExtraction, type CatalogContext } from "./requirements-data.js";
+import { catalogMatching, catalogOccurrenceEvidence, citeSources, modelSources, typedExtraction, type CatalogContext } from "./requirements-data.js";
 import { qualificationBatchDecision, legacyQualificationBatchDecision } from "./qualification-data.js";
 import { createScoredFit, legacyGroupedCoverageDecision, refreshPayload, startRefresh, type PendingRefresh } from "./fit-data.js";
 import { acceptReuseRequirements, captureReusePosting, type RequirementSnapshot } from "./reuse-data.js";
@@ -391,8 +391,9 @@ test.describe("retained public predecessor capability authority", () => {
 
   test("redirects never inherit legacy approved coverage or scores and refused partitions preserve accepted snapshots and PDF bytes", async ({ api, app, page }, testInfo) => {
     const { profile, library } = await createBaseline(api);
-    const clauses = ["Improve engineering processes through delivery review.", "Assess engineering process outcomes."];
+    const clauses = ["Improve engineering processes through \"delivery\\review\"\nand assess delivery outcomes.", "Assess engineering process outcomes."];
     const core = "Improve engineering processes.";
+    const completeDemand = "Improve engineering processes through \"delivery\\review\" and assess delivery outcomes.";
     const posting = await captureReusePosting(api, "legacy-approved-split", clauses.join("\n"));
     const accepted = await acceptLegacyRequirements(api, app, posting, clauses.map((text, index) => ({
       localId: ["delivery", "outcomes"][index]!, text, category: "skill", name: "Engineering process improvement", definition: core,
@@ -426,7 +427,20 @@ test.describe("retained public predecessor capability authority", () => {
     expect(app.external.calls).toHaveLength(callsBeforeUpgrade);
     const before = await json<RequirementSnapshot>(api, "get", requirementsPath(posting.job_id));
     const catalogBefore = await readCatalog(api);
-    const faults = ["omitted member", "foreign member", "omitted occurrence", "foreign occurrence", "schema", "uncertain", "blank normalized definition", "active correction"] as const;
+    const multilineSource = (request: ExternalCall) => {
+      const input = request.body["context"] as CatalogContext;
+      const reference = input.occurrences.find((row) => row.occurrence_id === accepted.requirements[0]!.occurrence_id)!;
+      expect(reference).toBeTruthy();
+      const source = catalogOccurrenceEvidence(request, reference.occurrence_id);
+      const container = modelSources(request).find((row) => row.source_id === reference.source_id)!;
+      expect(source.original.spans[0]!.quote).toBe(clauses[0]);
+      // The literal newline, quotes and backslash belong to one decoded value;
+      // their JSON transport escaping is not the original source quotation.
+      expect(container.text).not.toContain(clauses[0]);
+      return { sourceId: reference.source_id, original: source.original };
+    };
+    const faults = ["omitted member", "foreign member", "omitted occurrence", "foreign occurrence", "schema", "uncertain", "blank normalized definition", "active correction",
+      "non-verbatim occurrence quote", "joined source fields"] as const;
     for (const fault of faults) {
       const attempt = api.post("/v1/requirements/consolidate", { data: { expected_catalog_revision: catalogBefore.catalog_revision } });
       const call = await modelCall(app, "requirements.match_catalog");
@@ -436,6 +450,14 @@ test.describe("retained public predecessor capability authority", () => {
       if (fault === "foreign member") invalid.capabilities[0]!.member_ids[0] = "foreign:unrecorded-member";
       if (fault === "omitted occurrence") invalid.demands.shift();
       if (fault === "foreign occurrence") invalid.demands[0]!.bindings[0]!.occurrence_ids[0] = "foreign:unrecorded-occurrence";
+      if (fault === "non-verbatim occurrence quote" || fault === "joined source fields") {
+        const source = multilineSource(call);
+        const citation = invalid.demands.flatMap((demand) => demand.citations).find((row) => row.source_id === source.sourceId)!;
+        expect(citation).toBeTruthy();
+        citation.quote = fault === "non-verbatim occurrence quote"
+          ? "Improve engineering process outputs using an invented method."
+          : source.original.name + "\n" + source.original.definition;
+      }
       if (fault === "blank normalized definition") invalid.capabilities[0]!.definition = " \n\t ";
       if (fault === "active correction") {
         const context = call.body["context"] as CatalogContext;
@@ -465,6 +487,7 @@ test.describe("retained public predecessor capability authority", () => {
         "omitted occurrence": "requirements_demand_partition_invalid", "foreign occurrence": "requirements_demand_partition_invalid",
         schema: "model_schema_violation", uncertain: "requirements_consolidation_uncertain",
         "blank normalized definition": "blank_requirement_field", "active correction": "requirements_correction_witness_invalid",
+        "non-verbatim occurrence quote": "non_verbatim_quote", "joined source fields": "non_verbatim_quote",
       }[fault] } });
       const retained = await json<RequirementSnapshot>(api, "get", requirementsPath(posting.job_id));
       expect(retained.requirements).toEqual(before.requirements);
@@ -478,7 +501,12 @@ test.describe("retained public predecessor capability authority", () => {
     const success = api.post("/v1/requirements/consolidate", { data: { expected_catalog_revision: catalogBefore.catalog_revision } });
     const merging = await modelCall(app, "requirements.match_catalog");
     const root = retainedCapability(merging, ids[0]!, "process");
-    merging.reply(authoredPartition(merging, [{ ...root, memberIds: ids }], [{ groupId: "process", definition: core, jobIds: [posting.job_id] }]));
+    const normalized = authoredPartition(merging, [{ ...root, memberIds: ids }], [{ groupId: "process", definition: completeDemand, jobIds: [posting.job_id] }]);
+    const source = multilineSource(merging);
+    const multilineCitation = normalized.demands[0]!.citations.find((row) => row.source_id === source.sourceId)!;
+    expect(multilineCitation).toBeTruthy();
+    multilineCitation.quote = source.original.spans[0]!.quote;
+    merging.reply(normalized);
     const published = await success;
     expect(published.status(), await published.text()).toBe(200);
     const report = await published.json() as ReconciliationReport;
@@ -486,6 +514,15 @@ test.describe("retained public predecessor capability authority", () => {
     // The survivor's name/definition/revision stay exact. Its older positive
     // outcomes and approved wording still cannot acquire the new demand pins.
     expect(report.roots[0]).toMatchObject({ requirement_id: ids[0], revision: 1, definition: core });
+    const currentRequirements = await json<NormalizedSnapshot>(api, "get", requirementsPath(posting.job_id));
+    expect(currentRequirements.requirements).toHaveLength(2);
+    expect(currentRequirements.requirements[0]!.spans).toEqual(accepted.requirements[0]!.spans);
+    for (const occurrence of currentRequirements.requirements) {
+      expect(occurrence.normalized_demand.definition).toBe(completeDemand);
+      expect(occurrence.normalized_demand.provenance.citations).toEqual(expect.arrayContaining([
+        { source_id: source.sourceId, quote: clauses[0] },
+      ]));
+    }
     const stale = await json<Fit>(api, "get", fitPath(posting.job_id));
     expect(stale).toMatchObject({ current: false, score: oldFit.score, selection: { ready_for_materials: false } });
     type EarlierRecords = { requirement_id: string; root_requirement_id: string; current: false; stale_reasons: string[];

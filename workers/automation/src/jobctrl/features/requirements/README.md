@@ -226,6 +226,16 @@ refuse publication; failed, cancelled or interrupted work retains the previous
 accepted snapshots, scores, wording approvals and document bytes. Current
 navigation may follow a recorded alias; exact historical revision reads do not.
 
+The model wire uses operation-local citation handles; real capability, member,
+occurrence and job IDs remain unchanged. Context references and supplied source
+entries use the same handles, and the immutable receipt retains the exact model
+result without an output-ID decoder. No prose or source inventory is truncated.
+For the owner's JSON-encoded sources, citation validation accepts an exact
+contiguous quote within the raw source or one decoded string value from that
+same source. It never joins fields, reparses embedded text, normalizes whitespace
+or supplies meaning through a lexical fallback. Plain-source validation remains
+raw-only by default.
+
 Explicit binding correction requires the complete normalization result to put
 the selected source and target in the same capability. Canonical correction
 applies the same scope/exclusions and whole-catalog gate. Both retain

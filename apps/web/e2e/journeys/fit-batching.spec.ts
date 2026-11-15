@@ -269,7 +269,9 @@ for (const changedSource of ["Profile", "requirement binding"] as const) {
       const context = correction.body["context"] as CatalogContext & { guidance: { binding_correction: { occurrence_id: string; requested_requirement_id: string; authority: string } } };
       expect(context.guidance.binding_correction).toMatchObject({ occurrence_id: occurrence.occurrence_id, requested_requirement_id: occurrence.requirement_id });
       expect(context.guidance.binding_correction.authority.trim()).not.toBe("");
-      expect(modelSources(correction).some((row) => row.source_id.startsWith(`posting:${seed.posting.job_id}:`))).toBe(true);
+      const postingSource = context.posting_sources.find((row) => row.job_id === seed.posting.job_id)!;
+      expect(postingSource).toMatchObject({ revision: seed.posting.revision, source_hash: seed.posting.source_hash });
+      expect(modelSources(correction).some((row) => row.source_id === postingSource.source_id)).toBe(true);
       expect(context.incoming).toHaveLength(1);
       correction.reply(catalogMatching(correction, { [context.incoming[0]!.local_id]: { verdict: "equivalent", requirementId: occurrence.requirement_id } }));
       const corrected = await correcting;

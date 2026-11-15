@@ -64,8 +64,36 @@ def demand_fingerprint(category: str, definition: str) -> str:
                         "category": category, "definition": definition})
 
 
+def _source_string_values(value):
+    """Yield separate decoded values, never keys, joins or reparsed source text."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for item in value.values():
+            yield from _source_string_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _source_string_values(item)
+
+
+def _normalization_source_segments(sources):
+    # This owner serializes every structured source using canonical_json.
+    # Decode that outer format exactly once; each leaf remains its own source
+    # value. A malformed/plain source gains no additional citation authority.
+    segments = {}
+    for source_id, text in sources.items():
+        try:
+            value = json.loads(text)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(value, (dict, list)):
+            segments[source_id] = tuple(_source_string_values(value))
+    return segments
+
+
 def validate_normalization(value: CatalogNormalization, *, context: dict, sources: dict[str, str]) -> None:
     _nonblank(value.model_dump())
+    source_segments = _normalization_source_segments(sources)
     if value.catalog_revision != context["catalog_revision"]:
         raise RequirementError("stale_catalog_revision")
     if value.status != "complete" or value.unresolved:
@@ -82,7 +110,7 @@ def validate_normalization(value: CatalogNormalization, *, context: dict, source
     inventory = context["catalog_inventory_source_id"]
     for group in value.capabilities:
         required = {inventory, *(members[ident]["source_id"] for ident in group.member_ids)}
-        validate_citations(group.citations, sources, required)
+        validate_citations(group.citations, sources, required, source_segments=source_segments)
         if group.reuse_requirement_id is not None:
             reused = members.get(group.reuse_requirement_id)
             reused_meaning = json.loads(sources[reused["source_id"]])["canonical"] if reused is not None and reused["requirement_id"] is not None else {}
@@ -104,7 +132,7 @@ def validate_normalization(value: CatalogNormalization, *, context: dict, source
         if (correction.unsupported_claim not in original["definition"]
                 or groups[correction.retained_group_id].definition == original["definition"]):
             raise RequirementError("requirements_correction_witness_invalid")
-        validate_citations(correction.citations, sources, {inventory, member["source_id"]})
+        validate_citations(correction.citations, sources, {inventory, member["source_id"]}, source_segments=source_segments)
 
         def cites_original(candidate):
             if candidate["requirement_id"] is None:
@@ -158,7 +186,7 @@ def validate_normalization(value: CatalogNormalization, *, context: dict, source
                     allowed.add(posting["source_id"])
         if any(citation.source_id not in allowed for citation in demand.citations):
             raise RequirementError("requirements_demand_source_invalid")
-        validate_citations(demand.citations, sources, required)
+        validate_citations(demand.citations, sources, required, source_segments=source_segments)
     if seen != set(occurrences):
         raise RequirementError("requirements_demand_partition_invalid")
 

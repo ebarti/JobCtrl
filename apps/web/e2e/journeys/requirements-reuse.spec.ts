@@ -25,9 +25,12 @@ function assertNormalizationDestination(call: ExternalCall, posting: CapturedPos
   const context = call.body["context"] as CatalogContext;
   expect(context.incoming).toEqual([expect.objectContaining({ job_id: posting.job_id })]);
   expect(context.occurrences.filter((row) => row.job_id === posting.job_id)).toHaveLength(1);
-  expect(modelSources(call)).toEqual(expect.arrayContaining([expect.objectContaining({
-    source_id: `posting:${posting.job_id}:${posting.revision}:${posting.source_hash}`,
-  })]));
+  const reference = context.posting_sources.find((row) => row.job_id === posting.job_id)!;
+  expect(reference).toMatchObject({ job_id: posting.job_id, revision: posting.revision, source_hash: posting.source_hash });
+  const source = modelSources(call).find((row) => row.source_id === reference.source_id)!;
+  expect(source).toBeTruthy();
+  expect(JSON.parse(source.text)).toMatchObject({ job_id: posting.job_id, revision: posting.revision,
+    source_id: posting.source_id, source_revision: posting.source_revision, source_hash: posting.source_hash });
 }
 
 test("Requirements exact content reuse keeps extraction destination bindings and normalizes each Job against its complete catalog with model and effort authority", async ({ api, app }) => {

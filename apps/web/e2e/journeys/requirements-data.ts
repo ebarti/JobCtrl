@@ -107,6 +107,7 @@ export type CatalogContext = {
   occurrences: { job_id: string; occurrence_id: string; member_id: string; source_id: string; posting_revision: number; posting_hash: string }[];
   accepted_demands: { group_member_ids: string[]; source_id: string; demand_fingerprint: string; normalization_version: string }[];
   accepted_occurrence_counts: Record<string, number>;
+  posting_sources: { job_id: string; revision: number; source_hash: string; source_id: string }[];
 };
 
 type CatalogMeaning = { category: "skill" | "professional_experience"; name: string; definition: string };
