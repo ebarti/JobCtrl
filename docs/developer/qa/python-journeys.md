@@ -46,15 +46,48 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **152 journeys in 47 project-file groups**:
-**151 Chromium cases in 46 spec files**, plus **one demo case in one file**.
+The current configured inventory is **160 journeys in 48 project-file groups**:
+**159 Chromium cases in 47 spec files**, plus **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts, keyboard-driven Profile saves, posting-fetch refusals and the
 actual terminal-root v4 and terminal-group v5 predecessor upgrades, demand-citation
 role refusals, and Fit schema refusals. The four hosted shard listings
-contain 40 / 36 / 38 / 38 cases and match the unsharded inventory exactly once.
+contain 40 / 42 / 39 / 39 cases and match the unsharded inventory exactly once.
 Listing these scenarios is not evidence that the complete current candidate passed.
+
+### Bounded Fit impact scope and durable call recovery — 17 November 2026
+
+[Fit refresh scope](../../../apps/web/e2e/journeys/fit-refresh-scope.spec.ts) adds eight
+cases. A real b49 predecessor creates a structurally oversized accepted catalog,
+then refuses the original impact request before a provider call. After upgrading
+the same public-created workspace, the successor retains 52 exact qualifications,
+qualifies seven mandatory items in one call, preserves the other selected scores,
+and retains all four selected scores current. This synthetic structure is not a
+replay of private sources or model results. Another case covers exact, mandatory and unresolved
+semantic rows together, original raw-subset receipt joins, a foreign fixed-row
+refusal, zero-call reuse and checkpoint recovery.
+
+The remaining cases stop actual fixed df06/b49 predecessor workers at completed
+or unsettled qualification calls before the batch checkpoint, and b49 impact
+calls before the selection checkpoint. A harness-only pdb observer pauses the
+unmodified owned predecessor process; it changes no locals, source code, model
+result or database row. The same workspace then upgrades. Completed raw calls
+must replay exactly; unsettled calls retain interruption without a new request,
+scope guess, counter reset or fabricated transport binding. Hosted setup fetches
+the exact b49 predecessor in addition to df06 and the prior fixed objects.
+
+The final focused run `e2e-o8ARvv` passed **37/37** cases with zero retries: all eight
+new cases and 29 existing batching, manual-refresh cancellation, source/catalog
+race, refusal, persisted-limit, exact-reuse and selected-score cases. Its Python
+snapshot is `9427bba1430e7cd3ba56d1996d9ef3d7daa2eada7293036089fbe24fe7d549ae`
+and source candidate is
+`b9ba3f020300ade3b354a0f2ef1656792fd12b6dada50247faec2ca17170a769`.
+Build, journey and total times were **7.887 s / 442.071 s / 451.764 s**. The runner
+confirmed unchanged web artifacts and lockfiles throughout execution. Type,
+boundary and scoped Python checks passed. This focused result does not qualify
+the full 160-case hosted inventory or prove real-provider semantic quality.
+Case deadlines, zero retries and the 720-second global limit remain unchanged.
 
 ### Source-role and permission-scope follow-up — 16 November 2026
 

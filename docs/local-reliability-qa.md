@@ -166,8 +166,10 @@ composition; an inventory listing or schema check does not prove model quality.
 
 Post-edit Fit refresh is manually admitted. Prove that saves, approvals, reads
 and the operation's own writes make no additional model calls or queued work.
-Exercise the complete-catalog impact decision, previously unsupported
-requirements made relevant by new evidence, reuse of unaffected decisions,
+Exercise complete-catalog accounting, exact current and mandatory per-item work
+selection, the single unresolved semantic impact partition with all factual
+sources, previously unsupported requirements made relevant by new evidence,
+separate structural/model provenance, reuse of unaffected decisions,
 and grouped wording preparation. Check fixed input versions and job selection,
 including the selected jobs' exact direct-demand snapshots,
 duplicate admission, persisted call/item/deadline limits, cancellation and real
@@ -175,6 +177,11 @@ worker restart. Changes while queued or running must refuse stale work without
 expanding the operation. Report recorded monetary spend separately from work
 limits; ordinary lane/daily spend admission is not a guaranteed per-operation
 maximum charge.
+Real fixed-predecessor worker pauses must cover completed/unsettled call-only
+recovery across impact and qualification transport changes. Reuse the exact
+retained request or refuse; no counter reset, guessed wire or duplicate call is
+permitted. A debugger may observe/pause the unmodified owned predecessor process;
+it cannot alter locals, results, production code or domain rows.
 
 A controlled boundary proves authority and failure handling. Real SDK/provider
 compatibility, authentication, a provider/model change and pre-release readiness

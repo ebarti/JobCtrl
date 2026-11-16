@@ -3667,3 +3667,39 @@ recovery through real application entrypoints in owned synthetic workspaces.
 Controlled external choices establish structural/authority behavior; a separate
 configured-provider run is needed to assess the reported semantic failure.
 Neither schema validation nor a passing browser suite proves semantic infallibility.
+
+## 2026-11-17: Resolve Exact Fit Authority Before Impact Inference
+
+Explicit manual refresh still freezes and accounts for the complete active
+reusable catalog and selected jobs' direct demands. Resolve each exact current
+qualification unchanged, and mark items with the existing mandatory dependency
+predicate for reassessment, before constructing model sources. One source-bound
+impact determination covers only genuinely unresolved changed-fact items with
+all current facts and each included item's own prior baseline. This refines the
+10/13 November full-catalog policy: complete accounting does not require a model
+to repeat already fixed work decisions. No lexical rule, omission, truncation,
+chunking, relaxed input guard or semantic fallback is introduced.
+
+Keep fixed structural authority distinct from the raw model-subset receipt and
+the composed complete partition. Recompute the frozen predicates, exact binding
+partition, request/receipt joins and fingerprints on checkpoint recovery before
+qualification. All selected affected items remain one qualification batch, and
+publication retains the complete source/head/cancellation fences and unchanged
+unrelated scores.
+
+Pin impact scope and qualification transport independently per operation. Older
+operations retain the exact original impact call key. Reconstruct both historical
+inline and shared-scope qualification keys from frozen inputs when recovering an
+unpinned call-only operation: exactly one retained match replays its completed
+raw result or retains an unsettled-call refusal. Mismatched/conflicting calls
+cannot spend another allowance. No call means atomically pinning the current
+wire before reservation. Do not infer a wire from missing derived provenance or
+attach a scope binding to an inline result. Qualification policy/currentness,
+accepted receipts, operation counters and existing batch checkpoints remain
+unchanged.
+
+The [scoring reference](architecture/scoring.md#profile-edits-and-explicit-refresh),
+[Fit owner](../workers/automation/src/jobctrl/features/fit/README.md#manual-bounded-refresh)
+and [QA ledger](developer/qa/python-journeys.md) own implementation and observed
+proof. This decision alone does not establish real-provider recovery or hosted
+qualification of a future head.

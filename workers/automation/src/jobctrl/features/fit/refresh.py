@@ -11,9 +11,10 @@ from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 from .contract import (CONTRACT_VERSION, assessment_fields, current_contract, current_qualification,
                        qualification_binding, qualification_key, require_contract, reusable)
 from .coverage import Coverage
+from .context_transport import CONTEXT_TRANSPORT_VERSION, TRANSPORT_INSTRUCTIONS, expand_context
 from .domain import FORMULA_VERSION, calculate_score
 from .models import (CATALOG_IMPACT_INSTRUCTIONS, CatalogImpactDecision,
-                     QUALIFICATION_PROMPT_VERSION, QUALIFICATION_SEMANTICS_VERSION)
+                     QUALIFICATION_INSTRUCTIONS, QUALIFICATION_PROMPT_VERSION, QUALIFICATION_SEMANTICS_VERSION)
 from .qualification import decide, now
 from .refresh_pending import pending_wording_failures, valid_requirement_bindings
 from .serialization import encoded
@@ -22,6 +23,13 @@ from .sources import (
     citations_still_bound, dto, fact_fingerprint, fact_sources, fingerprint,
     job_fingerprint, permitted_facts, qualification_fingerprint, requirement_source, source_id, validate_citations,
 )
+
+IMPACT_SCOPE_VERSION = "fit-impact-selection-scope-v1"
+IMPACT_SCOPE_INSTRUCTIONS = """\nThe context.requirements array is the complete unresolved impact-selection scope.
+Other frozen items already have exact recorded unchanged authority or an enforced mandatory reassessment.
+Do not return those other items. Partition EVERY supplied item exactly once using the existing impact rules.
+All current factual sources remain supplied; each item's own before-source baseline remains authoritative.
+"""
 
 
 def public_operation(state):
@@ -41,7 +49,8 @@ def public_operation(state):
          "prepare_wording": state.get("prepare_wording", True), "prepare_coverage": state.get("prepare_coverage", True),
          "wording_failures": state.get("wording_failures", []),
          "selected_qualification_bindings": state.get("selected_qualification_bindings"),
-         "retry_wording_proposal_ids": state.get("retry_wording_proposal_ids", [])}
+         "retry_wording_proposal_ids": state.get("retry_wording_proposal_ids", [])} | {
+             key: state[key] for key in ("impact_selection_scope_version", "qualification_transport_version") if key in state}
 
 
 def frozen_requirements(snapshot):
@@ -58,6 +67,24 @@ def _mandatory(previous, requirement, profile, facts):
     cited = {ref["source_id"] for ref in previous["evidence_refs"]}
     return any(ident not in inventory or not cited.intersection(source_id(ref) for ref in inventory[ident].get("source_refs", []))
                for ident in previous["achievement_ids"])
+
+
+def _selection_authority(selection, requirement):
+    """Keep raw model-subset authority distinct from the composed partition."""
+    fixed = selection.get("fixed_authorities", {}).get(qualification_key(requirement))
+    scope = selection.get("scope_binding")
+    if fixed is None:
+        kind, provenance = selection.get("kind", "model"), selection["provenance"]
+    else:
+        kind = fixed["kind"]
+        provenance = {**fixed, "kind": "structural", "selection_kind": kind, "contract_version": CONTRACT_VERSION}
+    if scope is not None:
+        provenance = {**(provenance or {}), "selection_scope": {
+            "version": IMPACT_SCOPE_VERSION, "binding_fingerprint": fingerprint(scope),
+            "complete_partition_fingerprint": scope["complete_partition_fingerprint"],
+            "requirement": qualification_binding(requirement)}}
+    return {"impact_selection_kind": kind, "impact_selection_provenance": provenance,
+            "impact_selection_receipt_id": (provenance or {}).get("receipt_id")}
 
 
 class RefreshOperation:
@@ -124,6 +151,29 @@ class RefreshOperation:
 class BoundedModel:
     def __init__(self, operation, model):
         self.operation, self._model = operation, model
+
+    def qualification_request(self, request, binding):
+        """Recover only a retained exact inline/scoped wire, never infer one."""
+        state = self.operation.check()
+        if request["instructions"] != QUALIFICATION_INSTRUCTIONS + TRANSPORT_INSTRUCTIONS:
+            raise AppError("fit_refresh_transport_invalid", "The qualification request wire cannot be verified.", 409)
+        inline = {**request, "context": expand_context(request["context"], request["sources"]),
+                  "instructions": QUALIFICATION_INSTRUCTIONS}
+        choices = {"fit-qualification-inline-v4": (inline, None), CONTEXT_TRANSPORT_VERSION: (request, binding)}
+        retained = {key: value for key, value in state["calls"].items() if value["kind"] == "fit.qualification-batch"}
+        pinned = state.get("qualification_transport_version")
+        if retained:
+            matches = [version for version, (arguments, _) in choices.items()
+                       if "model:" + fingerprint(arguments) in retained]
+            if len(retained) != 1 or len(matches) != 1 or pinned not in {None, matches[0]}:
+                raise AppError("fit_refresh_interrupted", "The retained qualification request cannot be recovered exactly.", 409)
+            return choices[matches[0]]
+        if pinned not in {None, CONTEXT_TRANSPORT_VERSION}:
+            raise AppError("fit_refresh_transport_invalid", "The qualification request wire cannot be verified.", 409)
+        if pinned is None:
+            self.operation.store.pin_refresh_qualification_transport(
+                self.operation.operation_id, CONTEXT_TRANSPORT_VERSION, fingerprint(state["calls"]))
+        return request, binding
 
     async def determine(self, **arguments):
         key = "model:" + fingerprint(arguments)
@@ -358,6 +408,8 @@ class ManualRefresh:
             "contract_version": CONTRACT_VERSION,
             "qualification_semantics_version": QUALIFICATION_SEMANTICS_VERSION,
             "qualification_prompt_version": QUALIFICATION_PROMPT_VERSION,
+            "impact_selection_scope_version": IMPACT_SCOPE_VERSION,
+            "qualification_transport_version": CONTEXT_TRANSPORT_VERSION,
             "operation_id": operation_id, "input_fingerprint": input_hash, "profile_id": request["profile_id"],
             "status": "running", "phase": "selection", "job_ids": request["job_ids"],
             "catalog_revision": snapshot["catalog"]["catalog_revision"],
@@ -390,6 +442,7 @@ class ManualRefresh:
                 if selection is None:
                     selection = await self._select(operation, state, requirements)
                     operation.checkpoint("selection", selection)
+                self._verify_selection(operation, state, requirements, selection)
                 selected = [qualification_key(row) for row in selection["decision"]["requirements"] if row["verdict"] == "affected"]
                 state = self.store.update_refresh(operation_id, {"selected_requirement_ids": sorted({row["requirement_id"]
                     for row in selection["decision"]["requirements"] if row["verdict"] == "affected"}),
@@ -401,11 +454,10 @@ class ManualRefresh:
                 if batch is None:
                     pending = [row for row in requirements if qualification_key(row) in selected
                                and operation.checkpoint_value("qualification:" + qualification_key(row)) is None]
-                    prepared = await self.service.qualification.candidates(profile_snapshot, pending, model=operation.model)
+                    prepared = await self.service.qualification.candidates(
+                        profile_snapshot, pending, model=operation.model, request_policy=operation.model.qualification_request)
                     batch = {qualification_key(row): {**row, "refresh_operation_id": operation_id,
-                             "impact_selection_kind": selection.get("kind", "model"),
-                             "impact_selection_provenance": selection["provenance"],
-                             "impact_selection_receipt_id": (selection["provenance"] or {}).get("receipt_id")} for row in prepared}
+                             **_selection_authority(selection, row)} for row in prepared}
                     operation.check()
                     operation.checkpoint("qualification_batch", batch)
                 candidates = {}
@@ -459,7 +511,116 @@ class ManualRefresh:
             self.store.finish_refresh(operation_id, status, error.code)
             raise
 
+    @staticmethod
+    def _selection_inputs(state, requirements):
+        snapshot = state["snapshot"]
+        profile, facts = snapshot["profile"], snapshot["facts"]
+        fixed, authorities, unresolved = {}, {}, []
+        for requirement in requirements:
+            key = qualification_key(requirement)
+            previous = snapshot["prior_assessments"][key]
+            source_hash = qualification_fingerprint(profile, requirement, facts)
+            if _mandatory(previous, requirement, profile, facts):
+                kind, verdict = "mandatory_reassessment", "affected"
+                basis = "current_exact_dependencies_required"
+            elif previous["source_fingerprint"] == source_hash:
+                kind, verdict = "exact_binding_reuse", "unchanged"
+                basis = "exact_current_factual_qualification"
+            else:
+                unresolved.append(requirement)
+                continue
+            fixed[key] = {**qualification_binding(requirement), "verdict": verdict,
+                          "rationale": basis, "citations": []}
+            authorities[key] = {"kind": kind, "basis": basis,
+                                "prior_assessment_id": previous["assessment_id"] if previous else None,
+                                "source_fingerprint": source_hash}
+        inputs = {"version": IMPACT_SCOPE_VERSION, "requirements_fingerprint": fingerprint(requirements),
+                  "facts_fingerprint": fingerprint(facts),
+                  "prior_assessments_fingerprint": fingerprint(snapshot["prior_assessments"]),
+                  "fixed_authorities": authorities,
+                  "model_bindings": [qualification_binding(row) for row in unresolved]}
+        return fixed, authorities, unresolved, inputs
+
+    @staticmethod
+    def _scope_context(inputs, requirements, fixed):
+        return {"version": IMPACT_SCOPE_VERSION, "input_binding_fingerprint": fingerprint(inputs),
+                "frozen_requirement_count": len(requirements), "fixed_requirement_count": len(fixed)}
+
     async def _select(self, operation, state, requirements):
+        # Pre-pin operations retain their exact request/call key, including a
+        # completed call without a selection checkpoint or a lost acknowledgement.
+        version = state.get("impact_selection_scope_version")
+        if version is None:
+            return await self._select_legacy(operation, state, requirements)
+        if version != IMPACT_SCOPE_VERSION:
+            raise AppError("fit_refresh_scope_changed", "This refresh uses another impact-selection contract.", 409)
+        snapshot = state["snapshot"]
+        if requirements and all(snapshot["prior_assessments"][qualification_key(row)] is None for row in requirements):
+            return await self._select_legacy(operation, state, requirements)
+        fixed, authorities, unresolved, inputs = self._selection_inputs(state, requirements)
+        model_selection = (await self._select_legacy(operation, state, unresolved,
+            scope=self._scope_context(inputs, requirements, fixed))) if unresolved else None
+        model_decision = model_selection["decision"] if model_selection else {"requirements": []}
+        decisions = {qualification_key(row): row for row in model_decision["requirements"]} | fixed
+        complete = {"requirements": [decisions[qualification_key(row)] for row in requirements]}
+        operation.check()
+        return {"kind": "model" if model_selection else "structural", "decision": complete,
+                "provenance": model_selection["provenance"] if model_selection else None,
+                "model_decision": model_decision, "fixed_authorities": authorities,
+                "scope_binding": {**inputs, "model_result_fingerprint": fingerprint(model_decision),
+                                  "complete_partition_fingerprint": fingerprint(complete)}}
+
+    def _verify_selection(self, operation, state, requirements, selection):
+        """Recompute the complete work partition and its independently retained call."""
+        try:
+            returned = [qualification_key(row) for row in selection["decision"]["requirements"]]
+            expected = [qualification_key(row) for row in requirements]
+            if len(returned) != len(set(returned)) or set(returned) != set(expected):
+                raise ValueError("incomplete selection")
+            if state.get("impact_selection_scope_version") is None:
+                return  # Exact legacy checkpoints retain their original accepted wire.
+            if state["impact_selection_scope_version"] != IMPACT_SCOPE_VERSION:
+                raise ValueError("incompatible composed binding")
+            if "scope_binding" not in selection:
+                if not requirements or not all(state["snapshot"]["prior_assessments"][key] is None for key in expected):
+                    raise ValueError("missing composed binding")
+                if (selection["kind"] != "initial_qualification" or selection["provenance"] != {
+                        "kind": "structural", "contract_version": CONTRACT_VERSION,
+                        "basis": "all_prior_assessment_ids_absent"} or any(
+                        row["verdict"] != "affected" or row["citations"] for row in selection["decision"]["requirements"])):
+                    raise ValueError("invalid initial selection")
+                return
+            fixed, authorities, unresolved, inputs = self._selection_inputs(state, requirements)
+            model_decision = CatalogImpactDecision.model_validate(selection["model_decision"])
+            model_keys = [qualification_key(row.model_dump()) for row in model_decision.requirements]
+            if len(model_keys) != len(set(model_keys)) or set(model_keys) != {qualification_key(row) for row in unresolved}:
+                raise ValueError("invalid unresolved partition")
+            if unresolved:
+                request, entries = self._impact_request(state, unresolved, scope=self._scope_context(inputs, requirements, fixed))
+                self._validate_impact(model_decision, entries, request["sources"])
+                provenance = selection["provenance"]
+                self._verify_impact_receipt(operation.model, model_decision, provenance)
+                retained = operation.state()["calls"]["model:" + fingerprint(request)]
+                raw = retained["result"]
+                if (retained["status"] != "completed" or retained["kind"] != "fit.catalog-impact"
+                        or raw["value"] != model_decision.model_dump()
+                        or any(raw["provenance"].get(key) != provenance.get(key) for key in (
+                            "receipt_id", "provider", "model", "lane", "prompt_version", "input_fingerprint", "created_at"))
+                        or provenance["accepted_result_fingerprint"] != fingerprint(model_decision.model_dump())):
+                    raise ValueError("unbound model subset")
+            elif selection["provenance"] is not None:
+                raise ValueError("fabricated model authority")
+            decisions = {qualification_key(row.model_dump()): row.model_dump() for row in model_decision.requirements} | fixed
+            complete = {"requirements": [decisions[key] for key in expected]}
+            binding = {**inputs, "model_result_fingerprint": fingerprint(model_decision.model_dump()),
+                       "complete_partition_fingerprint": fingerprint(complete)}
+            if (selection["decision"] != complete or selection["fixed_authorities"] != authorities
+                    or selection["scope_binding"] != binding):
+                raise ValueError("changed composed selection")
+        except (KeyError, TypeError, ValueError):
+            raise AppError("fit_refresh_checkpoint_invalid", "The retained impact partition cannot be verified.", 409) from None
+
+    async def _select_legacy(self, operation, state, requirements, *, scope=None):
         snapshot = state["snapshot"]
         if requirements and all(snapshot["prior_assessments"][qualification_key(row)] is None for row in requirements):
             operation.check()
@@ -473,6 +634,26 @@ class ManualRefresh:
                 "verdict": "affected", "rationale": "No prior assessment exists; an initial qualification is required.",
                 "citations": [],
             } for row in requirements]}}
+        request, entries = self._impact_request(state, requirements, scope=scope)
+        facts = snapshot["facts"]
+        # Exact recorded factual authority needs no semantic rejudgment.
+        item_index = {qualification_key(row): row for row in requirements}
+        if all(not row["mandatory_reassessment"] and
+               snapshot["prior_assessments"][qualification_key(row)]["source_fingerprint"] ==
+               qualification_fingerprint(snapshot["profile"], item_index[qualification_key(row)], facts) for row in entries):
+            return {"decision": {"requirements": [{**qualification_binding(row), "verdict": "unchanged",
+                    "rationale": "The exact current factual qualification is already recorded.", "citations": []} for row in entries]},
+                    "provenance": None, "kind": "exact_binding_reuse"}
+        result, provenance = await decide(operation.model, schema=CatalogImpactDecision,
+            **{key: request[key] for key in ("operation", "instructions", "sources", "context", "prompt_version")})
+        if scope:
+            self._verify_impact_receipt(operation.model, result, provenance)
+        self._validate_impact(result, entries, request["sources"])
+        return {"decision": result.model_dump(), "provenance": provenance}
+
+    @staticmethod
+    def _impact_request(state, requirements, *, scope=None):
+        snapshot = state["snapshot"]
         facts = snapshot["facts"]
         sources = [{**row, "source_id": "current:" + row["source_id"]} for row in facts]
         structure = achievement_inventory(snapshot["profile"])
@@ -513,20 +694,30 @@ class ManualRefresh:
                             "prior_assessment_id": previous["assessment_id"] if previous else None,
                             "before_inventory_id": baseline, "changed_source_ids": changed_ids,
                             "mandatory_reassessment": _mandatory(previous, requirement, snapshot["profile"], facts)})
-        # Exact recorded factual authority needs no semantic rejudgment. This
-        # also makes wording-only refreshes and unchanged manual retries free
-        # of impact/qualification calls while still checking the full catalog.
-        item_index = {qualification_key(row): row for row in requirements}
-        if all(not row["mandatory_reassessment"] and
-               snapshot["prior_assessments"][qualification_key(row)]["source_fingerprint"] ==
-               qualification_fingerprint(snapshot["profile"], item_index[qualification_key(row)], facts) for row in entries):
-            return {"decision": {"requirements": [{**qualification_binding(row), "verdict": "unchanged",
-                    "rationale": "The exact current factual qualification is already recorded.", "citations": []} for row in entries]},
-                    "provenance": None, "kind": "exact_binding_reuse"}
-        result, provenance = await decide(operation.model, operation="fit.catalog-impact", schema=CatalogImpactDecision,
-            instructions=CATALOG_IMPACT_INSTRUCTIONS, sources=sources,
-            context={"profile_id": state["profile_id"], "catalog_revision": state["catalog_revision"],
-                     "requirements": entries, "fact_semantics_version": snapshot["profile"]["fact_semantics_version"]})
+        return {"operation": "fit.catalog-impact", "response_schema": CatalogImpactDecision.model_json_schema(),
+                "instructions": CATALOG_IMPACT_INSTRUCTIONS + (IMPACT_SCOPE_INSTRUCTIONS if scope else ""), "sources": sources,
+                "context": {"profile_id": state["profile_id"], "catalog_revision": state["catalog_revision"],
+                            "requirements": entries, "fact_semantics_version": snapshot["profile"]["fact_semantics_version"],
+                            **({"selection_scope": scope} if scope else {})},
+                "prompt_version": IMPACT_SCOPE_VERSION if scope else "1", "lane": "scoring"}, entries
+
+    @staticmethod
+    def _verify_impact_receipt(model, result, provenance):
+        try:
+            receipt = model.receipt(provenance["receipt_id"])
+            canonical = CatalogImpactDecision.model_validate(receipt["value"])
+            valid = (receipt.get("status") == "succeeded" and receipt.get("operation") == "fit.catalog-impact"
+                     and receipt.get("prompt_version") == IMPACT_SCOPE_VERSION
+                     and all(receipt.get(key) == provenance.get(key) for key in (
+                         "provider", "model", "lane", "prompt_version", "input_fingerprint", "created_at"))
+                     and canonical.model_dump() == result.model_dump())
+        except (AppError, KeyError, TypeError, ValueError):
+            valid = False
+        if not valid:
+            raise AppError("fit_model_provenance_invalid", "The Fit impact-selection receipt cannot be verified.", 422)
+
+    @staticmethod
+    def _validate_impact(result, entries, sources):
         index = {qualification_key(row): row for row in entries}
         returned = [qualification_key(row.model_dump()) for row in result.requirements]
         if len(returned) != len(set(returned)) or set(returned) != set(index):
@@ -545,7 +736,6 @@ class ManualRefresh:
                 raise AppError("fit_change_citation_missing", "The impact decision did not cite a changed source from this assessment's baseline.", 422)
             if expected["mandatory_reassessment"] and row.verdict != "affected":
                 raise AppError("fit_refresh_dependency_invalid", "The impact decision retained an assessment without current exact dependencies.", 422)
-        return {"decision": result.model_dump(), "provenance": provenance}
 
     @staticmethod
     def _alias(state, requirement, selection):
@@ -556,7 +746,7 @@ class ManualRefresh:
         source_hash = qualification_fingerprint(snapshot["profile"], requirement, snapshot["facts"])
         if previous["source_fingerprint"] == source_hash:
             return previous
-        provenance = selection["provenance"]
+        provenance = _selection_authority(selection, requirement)["impact_selection_provenance"]
         sources = {row["source_id"]: row for row in snapshot["facts"]}
         rationale = next(row["rationale"] for row in selection["decision"]["requirements"]
                          if qualification_key(row) == qualification_key(requirement))

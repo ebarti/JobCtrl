@@ -88,7 +88,7 @@ class Qualification:
             current.update({qualification_key(row): row for row in published})
         return [current[qualification_key(row)] for row in requirements], reused
 
-    async def candidates(self, profile_snapshot, requirements: list[dict], *, model=None):
+    async def candidates(self, profile_snapshot, requirements: list[dict], *, model=None, request_policy=None):
         """Prepare one complete source-bound batch; the caller owns atomic publication."""
         if not requirements:
             return []
@@ -122,13 +122,18 @@ class Qualification:
                              for ident, row in inventory.items()],
         }
         context, transport_binding = encode_context(context, sources)
+        request = {"operation": "fit.qualification-batch", "instructions": QUALIFICATION_INSTRUCTIONS + TRANSPORT_INSTRUCTIONS,
+                   "sources": sources, "context": context, "response_schema": QualificationBatchDecision.model_json_schema(),
+                   "prompt_version": QUALIFICATION_PROMPT_VERSION, "lane": "scoring"}
+        if request_policy is not None:
+            request, transport_binding = request_policy(request, transport_binding)
         result, provenance = await decide(
-            authority_model, operation="fit.qualification-batch", schema=QualificationBatchDecision,
-            instructions=QUALIFICATION_INSTRUCTIONS + TRANSPORT_INSTRUCTIONS, sources=sources, context=context,
-            prompt_version=QUALIFICATION_PROMPT_VERSION,
+            authority_model, schema=QualificationBatchDecision,
+            **{key: request[key] for key in ("operation", "instructions", "sources", "context", "prompt_version")},
         )
         self._verify_batch_receipt(authority_model, result, provenance)
-        provenance = {**provenance, "context_transport_binding": transport_binding}
+        if transport_binding is not None:
+            provenance = {**provenance, "context_transport_binding": transport_binding}
         returned = [qualification_key(row.model_dump()) for row in result.requirements]
         if len(returned) != len(set(returned)) or set(returned) != set(index):
             raise AppError("fit_qualification_partition_invalid", "The Fit response must assess every requested requirement exactly once.", 422)

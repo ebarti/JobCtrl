@@ -233,19 +233,33 @@ The frozen inputs and checkpoints also include the selected jobs' direct
 Education and Languages demands. They remain job-local throughout impact,
 qualification, score publication and recovery.
 
-When factual qualification needs review, one source-bound `fit.catalog-impact`
-determination partitions the complete catalog into affected and unchanged
-requirements. It sees each prior assessment's own before-sources and the current
-facts. Newly added evidence can support requirements previously missing or
-unlinked. Missing exact dependencies require reassessment; literal unchanged
-dependencies alone cannot prove that new evidence is irrelevant. There are no
-per-requirement impact calls. The affected set without completed qualification
-checkpoints receives one complete qualification batch; unaffected decisions
-retain original semantic authority with a shared impact receipt and
-current-source revalidation. The complete batch map is checkpointed before its
+When factual qualification needs review, the complete frozen inventory first
+retains exact current qualifications and records enforced mandatory reassessments.
+One source-bound `fit.catalog-impact` determination partitions only the unresolved
+changed-fact items. It sees all current facts and each included prior assessment's
+own before-sources; exact current rows are not retransmitted. Newly added evidence
+can support requirements previously missing or unlinked. Missing exact dependencies
+require reassessment; literal unchanged dependencies alone cannot prove that new
+evidence is irrelevant. The original model-subset result and receipt remain
+distinct from the composed complete partition and its structural authority/hash.
+There are no per-requirement impact calls. The affected set without completed qualification
+checkpoints receives one complete qualification batch. Exact-current rows retain
+their existing assessment unchanged and acquire no new impact receipt. Only a
+source-changed row judged unchanged by the model retains its original semantic
+judgment with the impact receipt and explicit current-source revalidation lineage.
+The complete batch map is checkpointed before its
 individual requirement checkpoints. One batch consumes one model-call
 reservation; affected-item and deadline limits remain unchanged. Batching
 cannot expand the admitted operation or grant a new allowance on retry.
+
+Fresh operations freeze independent impact-scope and qualification-transport wire
+pins. Pre-pin operations keep the original full impact request. Qualification
+call-only recovery reconstructs both exact historical inline and shared-scope
+argument keys from frozen inputs and requires one retained match. A completed call
+replays its raw result; an unsettled, foreign or conflicting call refuses without
+new work. No missing binding is guessed, no call counter resets, and recovered
+inline authority receives no fabricated scope provenance. Existing batch
+checkpoints and qualification/currentness versions remain compatible.
 
 Candidates publish atomically after checking Profile, guidance, the complete
 catalog, selected job/posting snapshots and prior assessment/score heads.

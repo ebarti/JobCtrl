@@ -40,6 +40,8 @@ jobs:
         run: git fetch --no-tags --depth=1 origin 6f46b0ba5913383b7c57ffcce986729fa0bdbf0e
       - name: Fetch the fixed predecessor for Requirements v5 and Fit v4 authority replay
         run: git fetch --no-tags --depth=1 origin df06b08ae201f7a73dc2c359944c06daf517c69e
+      - name: Fetch the fixed predecessor for Fit impact and scoped qualification call recovery
+        run: git fetch --no-tags --depth=1 origin b49dc52e3d727356870317069304ac6ceb9f1237
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - name: Set up Node

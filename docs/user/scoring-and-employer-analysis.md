@@ -170,6 +170,13 @@ requirements and direct demands and preserves other jobs' scores and history.
 A previously scored job needs **Update affected matches** when saved changes
 require new qualification. Saving a Profile starts neither action.
 
+That explicit update keeps exact current qualifications and reassesses items whose
+recorded dependencies require it. Only uncertain changes need an impact decision;
+the complete catalog remains accounted for. Accepted results and operation limits
+survive failures and worker upgrades, and an interrupted model call cannot silently
+start another paid attempt. A score-only update can finish without preparing
+wording or resumes.
+
 The current formula is **`requirement-fit-v3-equal`**. Each distinct canonical
 Skills/Professional Experience requirement and each distinct job-local
 Education/Languages demand counts as one item. Repeated occurrences of one

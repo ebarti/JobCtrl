@@ -11,7 +11,7 @@ from .qualification import now
 from .serialization import encoded
 from .contract import CONTRACT_VERSION, qualification_key, require_contract
 from .models import QUALIFICATION_PROMPT_VERSION, QUALIFICATION_SEMANTICS_VERSION
-from .sources import FrozenFitProfileSnapshot, approved_fingerprint, dto, fact_fingerprint
+from .sources import FrozenFitProfileSnapshot, approved_fingerprint, dto, fact_fingerprint, fingerprint
 
 
 class RefreshStorage:
@@ -172,6 +172,15 @@ class RefreshStorage:
             state["calls"][key] = {"status": "started", "kind": kind}
             self._write_refresh(connection, state)
             return None
+
+    def pin_refresh_qualification_transport(self, operation_id, version, expected_calls_fingerprint):
+        with self._database.transaction() as connection:
+            state = self._running_refresh(connection, operation_id)
+            if (fingerprint(state["calls"]) != expected_calls_fingerprint
+                    or state.get("qualification_transport_version") not in {None, version}):
+                raise ConflictError("The retained qualification request changed before transport admission.")
+            state["qualification_transport_version"] = version
+            self._write_refresh(connection, state)
 
     def complete_refresh_call(self, operation_id, key, result):
         with self._database.transaction() as connection:

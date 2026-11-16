@@ -48,6 +48,9 @@ export type ApplicationStack = {
   }>;
   restartWorker(): Promise<{ previous: number; current: number }>;
   upgradeSource(): Promise<{ previous: number; current: number; backup: string; candidateOrigin: string; mode: "source" | "installed" }>;
+  armFitRecoveryPause(operation: "fit.catalog-impact" | "fit.qualification-batch"): Promise<void>;
+  waitForFitRecoveryPause(): Promise<void>;
+  fitRefreshCheckpoint(operationId: string): Promise<{ calls: Record<string, { kind: string; status: string; result?: { value: unknown; provenance: Record<string, unknown> } }>; checkpoints: Record<string, unknown>; impact_selection_scope_version?: string; qualification_transport_version?: string }>;
   databaseSchemaFingerprint(): Promise<string>;
   databaseSchemaInventory(): Promise<{ type: string; name: string; table: string; sql: string | null }[]>;
   requirementsReconciliation(operationId: string): Promise<{
@@ -86,6 +89,7 @@ type Fixtures = {
   discoveryTransport: "http" | "jobstreaming";
   nativeAccountingPreflight: boolean;
   sourceRevision: string | undefined;
+  fitRecoveryDebugger: boolean;
   expectedTransportFailures: {
     request: Request;
     errorText: "net::ERR_FAILED";
@@ -103,6 +107,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
   discoveryTransport: ["http", { option: true }],
   nativeAccountingPreflight: [false, { option: true }],
   sourceRevision: [undefined, { option: true }],
+  fitRecoveryDebugger: [false, { option: true }],
   expectedTransportFailures: async ({}, use) => {
     await use([]);
   },
@@ -165,10 +170,10 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     { scope: "worker", timeout: 60_000 },
   ],
   app: [
-    async ({ temporal, features, discoveryTransport, nativeAccountingPreflight, sourceRevision }, use, testInfo) => {
+    async ({ temporal, features, discoveryTransport, nativeAccountingPreflight, sourceRevision, fitRecoveryDebugger }, use, testInfo) => {
       const runtime: ApplicationStack = await applicationStack(
         temporal.address,
-        { features, discoveryTransport, nativeAccountingPreflight, sourceRevision },
+        { features, discoveryTransport, nativeAccountingPreflight, sourceRevision, fitRecoveryDebugger },
       );
       await testInfo.attach("runtime-setup", {
         contentType: "application/json",

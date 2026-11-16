@@ -159,6 +159,15 @@ preparation. Operation reads retain both frozen preparation flags. Previously
 frozen operations without the new flag retain enabled coverage and their existing
 request identity.
 
+Fresh refresh operations expose independent `impact_selection_scope_version` and
+`qualification_transport_version` pins. Complete frozen scope is preserved while
+exact current qualifications and mandatory reassessments are resolved before an
+optional single impact call over uncertain changed-fact items. Fixed decisions
+have structural provenance; the original subset model receipt remains separately
+bound to the composed complete partition. Pre-pin retained calls keep exact
+historical request recovery and unsettled-call refusal. These operation wire
+versions do not change accepted qualification/currentness policy or reset limits.
+
 ## Requirements Library And Associations
 
 The redesign candidate composes three public owners: Requirements supplies

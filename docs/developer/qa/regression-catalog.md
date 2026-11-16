@@ -102,10 +102,18 @@ explicit first assessment even when older shared authority predates saved
 changes. Require the no-prior-score fence, current-source and historical-head
 comparisons, retained history and unchanged scores for every other job. Saves
 and reads admit no work.
-One source-bound impact selection sees the complete catalog and saved evidence
-changes, including
-previously missing/unlinked requirements. Only selected requirements require
-new qualification; unaffected receipts retain their original semantic authority.
+Require complete frozen-catalog accounting, per-row exact current reuse and
+enforced mandatory reassessment before request construction. One source-bound
+impact selection sees only unresolved changed-fact items, their own before
+baselines and all current facts, including previously missing/unlinked support.
+Resolved current rows are not retransmitted. Fixed authority and the original
+model-subset receipt remain separately bound to the complete partition. Only
+selected requirements require new qualification; unaffected receipts retain their
+original semantic authority. Exercise a structurally oversized accepted catalog
+with a small mandatory set without raising the gateway guard or truncating facts.
+Real predecessor process pauses must prove completed and unsettled call-only
+recovery for both impact and qualification wires, with unchanged counters and
+no second provider call or fabricated scope provenance.
 Exact current approved-wording bindings are direct reuse. Group actual wording
 gaps by achievement and retain rejection/defer decisions across equivalent jobs.
 Current section-backed matches are not achievement expression gaps. Require an

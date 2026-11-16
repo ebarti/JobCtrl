@@ -14,6 +14,7 @@ import {
 } from "./core-data.js";
 import {
   catalogMatching,
+  legacyCatalogMatchingV5,
   citeSources,
   modelSources,
   typedExtraction,
@@ -293,6 +294,7 @@ export async function createScoredFit(
     missingOwnership = false,
     twoRequirements = false,
     sameAchievement = false,
+    legacyPartitionV5 = false,
   } = {},
 ) {
   const authored = structuredClone(baseline);
@@ -327,7 +329,7 @@ export async function createScoredFit(
   })) }));
   const matching = await modelCall(app, "requirements.match_catalog");
   matching.reply(
-    catalogMatching(
+    (legacyPartitionV5 ? legacyCatalogMatchingV5 : catalogMatching)(
       matching,
       Object.fromEntries(
         clauses.map((_, index) => [
