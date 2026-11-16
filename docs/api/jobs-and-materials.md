@@ -17,6 +17,32 @@ declares the catalog and job requirement routes; `features/fit/http.py`
 declares job fit, assessment, corrections and coverage. These declarations
 still need composed application and E2E verification.
 
+`GET /v1/jobs/{job_id}/snapshots` includes recorded capture attempts. A failed
+employer analysis keeps `failure_code: role_analysis_failed` and, when available,
+stores up to three underlying `{code, provider, model}` entries in
+`attempts[].data.failures`. Provider and model identify the actual frozen
+selection, including the default model. This diagnostic evidence excludes
+prompts, citations, source text and arbitrary exception context. Failure retains
+the last accepted analysis; reading the history starts no retry or model work.
+
+Recognized posting-fetch refusals retain `posting_fetch_blocked` or
+`posting_fetch_unavailable`; unclassified fetch exceptions retain
+`posting_fetch_failed` with an explicitly unknown cause. Their capture attempts
+include `data.captureFailure: {stage: "posting_fetch", kind, reason_code}` with
+only safe identifiers. Recognized blocking reasons come from the acquisition
+policy; unavailable or unclassified failures keep `reason_code: "unknown"`.
+HTTP 429/503 from a configured page provider describe that provider's rate limit
+or unavailability, not the target posting's status. Failed fetches preserve the
+accepted posting and start no model work or automatic retry.
+
+Fresh employer-analysis requests use `role-analysis-v3-offered-sources` (and the
+corresponding synthesis version). Their citation schema permits only the exact
+offered canonical source IDs; quote and semantic validation remain unchanged.
+Accepted v2 analyses remain readable and reusable when the current posting,
+provider/model/effort/configuration fingerprint, recorded source binding and
+immutable receipt/citation authority still match. This structural upgrade does
+not sweep existing jobs or promote an unaccepted v2 cached response.
+
 ## Typed Job Requirements
 
 `GET /v1/jobs/{job_id}/requirements` exposes the accepted job snapshot.
@@ -194,26 +220,28 @@ current navigation may follow a recorded alias. Old typed job snapshots report
 `consolidation_required` staleness and cannot supply new assessment authority.
 
 Consolidation retains semantic policy `requirements-capability-demand-v2` and uses
-wire/prompt `requirements-capability-demand-partition-v4`. Its strict raw
+wire/prompt `requirements-capability-demand-partition-v5`. Its strict raw
 `CatalogNormalizationSlots` result requires a property for every supplied member
-in `member_slots` and every occurrence in `occurrence_slots`; shared ID enums
-constrain aliases. Each slot is `root`, `same_as` or `unresolved`. Member roots
-own capability definitions; occurrence roots own combined demands. Aliases select
-supplied member/occurrence IDs, never invented groups or jobs. The owner derives
-the legacy grouping projection only by resolving these explicit graphs. Cycles,
-references without a real root, demand aliases across capabilities, multiple
-demand roots for one job/capability and genuine uncertainty refuse publication.
-Root citations select supplied `{source_id,segment_id}` references. The owner derives
-exact quotes from one source value/range using `requirements-citation-binding-v1`;
-the model never copies a quotation or calculates offsets. Full source evidence
-remains in the one complete request. Generic extraction, Fit and other feature
-citation formats are unchanged.
+in `member_slots` and every occurrence in `occurrence_slots`. Each slot is assigned
+to an independent pre-offered capability/demand group handle or explicitly
+unresolved. `capability_groups` and `demand_groups` require every offered handle:
+used groups contain terminal normalized definitions/citations/reuse choices;
+unused groups are null. No groups can alias other groups, so recursive cycles are
+unrepresentable. Capacity permits every input to remain separate, without setting
+a target count. Models choose all semantic memberships. The owner only joins
+those assignments to recorded input member/occurrence/job identities.
+Missing definitions, unused non-null groups, demand assignments across capabilities,
+multiple demands for one job/capability and uncertainty refuse publication.
+Group citations select supplied `{source_id,segment_id}` references. The owner
+derives exact quotes from one source value/range using
+`requirements-citation-binding-v1`; the model never copies a quotation or calculates
+offsets. Full source evidence remains in one complete determination per operation.
+Generic extraction, Fit and other feature citation formats are unchanged.
 
-The report's `partition_binding` is versioned `requirements-partition-binding-v1`
-and contains `raw_selection_fingerprint`, `intermediate_fingerprint`, resolved
-`member_roots`/`occurrence_roots` and `group_roots` mapping bounded projection
-handles to exact supplied root members. A projection handle is `capability:` plus
-the full fingerprint of `{root_member_id}`; its recorded join owns identity.
+The report's `partition_binding` is versioned `requirements-partition-binding-v2`
+and contains `raw_selection_fingerprint`, `intermediate_fingerprint`, exact
+`member_groups`/`occurrence_groups` assignments and derived `demand_capabilities`
+joins. Group handles carry no durable identity and never choose a persisted survivor.
 The report's `citation_binding` contains `binder_version`, `selection_fingerprint`,
 `derived_fingerprint`, `segment_catalog_fingerprint`, `source_fingerprint`,
 `source_context_fingerprint`, complete structural `source_context`, per-source
@@ -225,12 +253,12 @@ binding's intermediate fingerprint. The gateway accepted-result fingerprint
 always pins the raw slots. Raw model selection/cache/gateway authority is retained
 unchanged; intermediate selection, derived quotes and both bindings are stored
 separately in the existing reconciliation's JSON envelope, versioned
-`requirements-normalization-binding-v2`. Old v2/v3 history remains readable and
+`requirements-normalization-binding-v3`. Old v2/v3/v4 history remains readable and
 explicit pure validation remains tied to its original prompt/input. No SQL schema,
 capability identity policy or normalized-demand fingerprint changes are implied
 by the citation format. Durable Requirements action versions and idempotent input
-hashes include the partition wire so an old quote/array action cannot resume as a
-current required-slot action. This transport guarantees input accounting, not
+hashes include the partition wire so an old quote/array/graph action cannot resume as a
+current terminal-group action. This transport guarantees input accounting, not
 semantic correctness or a particular model latency.
 
 Reusable occurrences retain their original extracted definition and exact source

@@ -1,4 +1,4 @@
-import { test, expect, json, modelCall, action, completed, type ExternalCall } from "../harness/fixtures.js";
+import { test, expect, json, modelCall, action, completed, terminal, type ExternalCall } from "../harness/fixtures.js";
 import { captureReusePosting, acceptReuseRequirements, reusableModelCatalog, type CapturedPosting, type RequirementSnapshot } from "./reuse-data.js";
 import { citeSources, modelSources, NORMALIZATION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
 
@@ -115,7 +115,10 @@ test("Requirements exact content reuse keeps extraction destination bindings and
   assertDestination(effort.snapshot, differentEffort, semanticSourceId);
 });
 
-test("role analysis reuses exact body authority across Jobs while force and effort make fresh calls", async ({ api, app }) => {
+test.describe("role-analysis offered-source schema compatibility", () => {
+test.use({ features: "jobs", sourceRevision: "5d3fda5352fe4418332b989c05f710e0529f578c" });
+
+test("role analysis reuses exact body authority across Jobs while force and effort make fresh calls", async ({ api, app }, testInfo) => {
   reusableModelCatalog(app);
   const description = "Own workflow recovery and retain explicit operational review receipts.";
   const first = await captureReusePosting(api, "role-reuse-first", description);
@@ -164,4 +167,75 @@ test("role analysis reuses exact body authority across Jobs while force and effo
   reply(effort);
   expect((await changed).status()).toBe(200);
   expect(app.external.calls.filter((item) => item.body["operation"] === "jobs.role_analysis")).toHaveLength(3);
+
+  const legacy = await json<Analysis>(api, "get", `/v1/jobs/${third.job_id}/analysis`);
+  const upgraded = await app.upgradeSource();
+  expect(upgraded.current).not.toBe(upgraded.previous);
+  expect(await json<Analysis>(api, "get", `/v1/jobs/${third.job_id}/analysis`)).toEqual(legacy);
+  const beforeLegacyReuse = app.external.calls.length;
+  const reused = await analyze(third);
+  expect(reused.status(), await reused.text()).toBe(200);
+  expect((await reused.json() as Analysis).accepted).toEqual(legacy.accepted);
+  expect(app.external.calls).toHaveLength(beforeLegacyReuse);
+
+  // Restore the forced v2 analysis's exact selection and require its distinct
+  // immutable receipt to remain reusable too, without a provider determination.
+  const restoredSettings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", { expectedRevision: restoredSettings.revision,
+    codexReasoningEfforts: { [settings.providerModels.codex]: "high" } });
+  const beforeForcedReuse = app.external.calls.length;
+  const reusedForced = await analyze(second);
+  expect(reusedForced.status(), await reusedForced.text()).toBe(200);
+  expect((await reusedForced.json() as Analysis).accepted).toEqual(refreshed.accepted);
+  expect(app.external.calls).toHaveLength(beforeForcedReuse);
+  expect(app.external.calls.filter((item) => item.body["operation"] === "jobs.role_analysis")).toHaveLength(3);
+
+  const beforeFailure = await json<Analysis>(api, "get", `/v1/jobs/${second.job_id}/analysis`);
+  const refused = await action(api, "jobs.analyze", { job_id: second.job_id, expectedRevision: second.revision, force: true });
+  const invalid = await modelCall(app, "jobs.role_analysis");
+  expect(invalid.body["prompt_version"]).toBe("role-analysis-v3-offered-sources");
+  expect(invalid.body["context"]).toEqual({ qualified_requirements: [], refresh_identity: refused.runId });
+  const citations = citeSources(invalid, modelSources(invalid).map((row) => row.source_id));
+  const schema = invalid.body["response_schema"] as { $defs: { Citation: { properties: { source_id: { enum: string[] } } } } };
+  expect(schema.$defs.Citation.properties.source_id.enum).toEqual([citations[0]!.source_id]);
+  const statement = { text: description, citations, uncertainty: "Only the supplied current posting is considered." };
+  invalid.reply({
+    role_framing: { ...statement, citations: [{ ...citations[0]!, source_id: `${citations[0]!.source_id}:foreign` }] },
+    inferred_seniority: { value: "unknown", citations, rationale: "This posting does not establish a level." },
+    ideal_candidate_narrative: statement,
+    keywords: [],
+  });
+  expect(await terminal(api, refused.runId)).toMatchObject({ status: "failed", errorCode: "role_analysis_failed" });
+  const retained = await json<Analysis>(api, "get", `/v1/jobs/${second.job_id}/analysis`);
+  expect(retained.current).toBe(true);
+  expect(retained.accepted).toEqual(beforeFailure.accepted);
+  const history = await json<{ attempts: { failure_code: string; data: Record<string, unknown> }[] }>(api, "get", `/v1/jobs/${second.job_id}/snapshots`);
+  const attempt = history.attempts.find((row) => row.failure_code === "role_analysis_failed")!;
+  expect(attempt).toBeTruthy();
+  expect(attempt.data).toEqual({ operation: "role_analysis", failures: [{
+    code: "model_schema_violation", provider: invalid.body["provider"], model: invalid.body["model"],
+  }] });
+  expect(JSON.stringify(attempt.data)).not.toContain(description);
+  expect(JSON.stringify(attempt.data)).not.toContain(citations[0]!.source_id);
+  const beforeReads = app.external.calls.length;
+  await json(api, "get", `/v1/jobs/${second.job_id}/analysis`);
+  await json(api, "get", `/v1/jobs/${second.job_id}/snapshots`);
+  expect(app.external.calls).toHaveLength(beforeReads);
+  expect(app.external.calls.filter((item) => item.body["operation"] === "jobs.role_analysis")).toHaveLength(4);
+
+  const valid = await action(api, "jobs.analyze", { job_id: second.job_id, expectedRevision: second.revision, force: true });
+  const bound = await modelCall(app, "jobs.role_analysis");
+  expect(bound.body["prompt_version"]).toBe("role-analysis-v3-offered-sources");
+  expect((bound.body["response_schema"] as typeof schema).$defs.Citation.properties.source_id.enum).toEqual([citations[0]!.source_id]);
+  reply(bound);
+  await completed(api, valid.runId);
+  const acceptedV3 = await json<Analysis>(api, "get", `/v1/jobs/${second.job_id}/analysis`);
+  expect(acceptedV3.current).toBe(true);
+  expect(acceptedV3.accepted.provenance.receipt_id).not.toBe(retained.accepted.provenance.receipt_id);
+  expect(app.external.calls.filter((item) => item.body["operation"] === "jobs.role_analysis")).toHaveLength(5);
+  await testInfo.attach("role-analysis-failure-evidence", { contentType: "application/json",
+    body: Buffer.from(JSON.stringify({ runId: refused.runId, jobId: second.job_id, failure: attempt.data,
+      retainedReceiptId: retained.accepted.provenance.receipt_id,
+      legacyReceiptId: legacy.accepted.provenance.receipt_id, acceptedV3ReceiptId: acceptedV3.accepted.provenance.receipt_id }, null, 2)) });
+});
 });
