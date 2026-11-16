@@ -32,6 +32,8 @@ jobs:
         run: git fetch --no-tags --depth=1 origin 5b9db7ddfa20fa2d618687da1b311e2287286679
       - name: Fetch the fixed predecessor for citation selection replay
         run: git fetch --no-tags --depth=1 origin 6e4131061fb41aab4743701084a7c74a19fa21f3
+      - name: Fetch the fixed predecessor for required normalization slots
+        run: git fetch --no-tags --depth=1 origin 943c8b4d0c6f4a15521e10c04a015de726bfcbb9
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - name: Set up Node

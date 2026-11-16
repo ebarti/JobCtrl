@@ -194,25 +194,44 @@ current navigation may follow a recorded alias. Old typed job snapshots report
 `consolidation_required` staleness and cannot supply new assessment authority.
 
 Consolidation retains semantic policy `requirements-capability-demand-v2` and uses
-citation wire/prompt `requirements-capability-demand-citation-v3`. Its raw model
-result selects supplied `{source_id,segment_id}` references. The owner derives
+wire/prompt `requirements-capability-demand-partition-v4`. Its strict raw
+`CatalogNormalizationSlots` result requires a property for every supplied member
+in `member_slots` and every occurrence in `occurrence_slots`; shared ID enums
+constrain aliases. Each slot is `root`, `same_as` or `unresolved`. Member roots
+own capability definitions; occurrence roots own combined demands. Aliases select
+supplied member/occurrence IDs, never invented groups or jobs. The owner derives
+the legacy grouping projection only by resolving these explicit graphs. Cycles,
+references without a real root, demand aliases across capabilities, multiple
+demand roots for one job/capability and genuine uncertainty refuse publication.
+Root citations select supplied `{source_id,segment_id}` references. The owner derives
 exact quotes from one source value/range using `requirements-citation-binding-v1`;
 the model never copies a quotation or calculates offsets. Full source evidence
 remains in the one complete request. Generic extraction, Fit and other feature
 citation formats are unchanged.
 
+The report's `partition_binding` is versioned `requirements-partition-binding-v1`
+and contains `raw_selection_fingerprint`, `intermediate_fingerprint`, resolved
+`member_roots`/`occurrence_roots` and `group_roots` mapping bounded projection
+handles to exact supplied root members. A projection handle is `capability:` plus
+the full fingerprint of `{root_member_id}`; its recorded join owns identity.
 The report's `citation_binding` contains `binder_version`, `selection_fingerprint`,
 `derived_fingerprint`, `segment_catalog_fingerprint`, `source_fingerprint`,
 `source_context_fingerprint`, complete structural `source_context`, per-source
 `source_fingerprints` and the supplied `segment_catalog`. These pin real meaning
 and ordered family revisions, occurrence/snapshot IDs, extraction/correction and
-lineage references, and immutable posting revisions. Raw model selection/cache/
-gateway authority is retained unchanged; derived quotes and binding evidence are
-stored separately in the existing reconciliation's JSON envelope. No SQL schema,
+lineage references, and immutable posting revisions. The citation selection
+fingerprint pins the intermediate reference projection, equal to the partition
+binding's intermediate fingerprint. The gateway accepted-result fingerprint
+always pins the raw slots. Raw model selection/cache/gateway authority is retained
+unchanged; intermediate selection, derived quotes and both bindings are stored
+separately in the existing reconciliation's JSON envelope, versioned
+`requirements-normalization-binding-v2`. Old v2/v3 history remains readable and
+explicit pure validation remains tied to its original prompt/input. No SQL schema,
 capability identity policy or normalized-demand fingerprint changes are implied
 by the citation format. Durable Requirements action versions and idempotent input
-hashes include the citation wire so an old raw-quote action cannot resume as a
-current selection action.
+hashes include the partition wire so an old quote/array action cannot resume as a
+current required-slot action. This transport guarantees input accounting, not
+semantic correctness or a particular model latency.
 
 Reusable occurrences retain their original extracted definition and exact source
 evidence plus `normalized_demand` containing its definition, fingerprint, policy

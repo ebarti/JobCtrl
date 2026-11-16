@@ -152,6 +152,17 @@ accepted state. No reference may join source values, generate an offset, change
 whitespace or silently fall back to a literal quote. Retain old citation history
 and the one-call allowance through actual predecessor/recovery entrypoints.
 
+For required normalization response slots, remove a supplied member or occurrence
+key and supply a foreign key/reference: the actual provider schema must reject
+them before publication. Exercise opposing explicit root/same-as choices, alias
+cycles, cross-capability demand aliases and conflicting job demands. Explicit
+source uncertainty still preserves accepted state. Compare the immutable raw
+slot response, separately derived grouping and exact-quote projections, their
+distinct fingerprints and recorded source joins. Preserve actual v3 predecessor
+history and refuse incompatible durable replay without another call. Validate
+the final provider-adapted schema's required keys, shared enums and supported
+composition; an inventory listing or schema check does not prove model quality.
+
 Post-edit Fit refresh is manually admitted. Prove that saves, approvals, reads
 and the operation's own writes make no additional model calls or queued work.
 Exercise the complete-catalog impact decision, previously unsupported

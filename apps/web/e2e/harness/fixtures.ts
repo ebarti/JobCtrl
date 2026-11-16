@@ -48,7 +48,7 @@ export type ApplicationStack = {
     operation_id: string; action_fingerprint: string; input_fingerprint: string;
     captured_catalog_revision: number; published_catalog_revision: number; selection: unknown;
     authority_receipt: { value?: unknown; [key: string]: unknown };
-    stored_report: { storage_version?: string; report?: unknown; derived_decision?: unknown;
+    stored_report: { storage_version?: string; report?: unknown; intermediate_selection?: unknown; partition_binding?: unknown; derived_decision?: unknown;
       citation_binding?: unknown; [key: string]: unknown };
   }>;
   failRendering(): Promise<void>;

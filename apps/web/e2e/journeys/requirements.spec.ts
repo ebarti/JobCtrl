@@ -8,6 +8,8 @@ import {
 } from "../harness/fixtures.js";
 import {
   catalogMatching,
+  citationSelections,
+  memberRoots,
   typedExtraction,
   type CatalogContext,
 } from "./requirements-data.js";
@@ -287,6 +289,7 @@ test("one catalog determination resolves the full posting batch and more than tw
     "Implement payment processing.", "Develop mobile applications.", "Design API contracts.",
     "Operate search infrastructure.", "Lead engineering hiring.", "Maintain workflow recovery.",
   ];
+  const localIds = clauses.map((_, index) => index === 0 ? "x".repeat(120) : `capability-${index + 1}`);
   const seed = await json<Posting>(api, "post", "/v1/jobs/capture", {
     url: "https://example.com/jobs/full-catalog",
     title: "Synthetic Engineering Leader",
@@ -298,18 +301,19 @@ test("one catalog determination resolves the full posting batch and more than tw
   });
   const extracting = await modelCall(app, "requirements.extract");
   extracting.reply(typedExtraction(extracting, { requirements: clauses.map((text, index) => ({
-    localId: `capability-${index + 1}`, text,
+    localId: localIds[index]!, text,
   })) }));
   const seedMatching = await modelCall(app, "requirements.match_catalog");
   expect(
     (seedMatching.body["context"] as CatalogContext).incoming,
   ).toHaveLength(15);
+  expect((seedMatching.body["context"] as CatalogContext).members.some((row) => row.member_id === "incoming:" + localIds[0]!)).toBe(true);
   seedMatching.reply(
     catalogMatching(
       seedMatching,
       Object.fromEntries(
         clauses.map((_, index) => [
-          `capability-${index + 1}`,
+          localIds[index]!,
           { verdict: "new" as const },
         ]),
       ),
@@ -465,32 +469,29 @@ for (const defect of [
         requirementId: accepted.requirements[0]!.requirement_id,
       },
     });
-    const capability = value.capabilities[0]!;
+    const { memberId, slot: capability } = memberRoots(value)[0]!;
     if (defect === "unknown field")
       matching.reply({ ...value, unrequested: true });
     if (defect === "unknown category")
       matching.reply({
         ...value,
-        capabilities: [{ ...capability, category: "approximately_skill" }],
+        member_slots: { ...value.member_slots, [memberId]: { ...capability, category: "approximately_skill" } },
       });
     if (defect === "foreign source")
       matching.reply({
         ...value,
-        capabilities: [
-          {
+        member_slots: { ...value.member_slots, [memberId]: {
             ...capability,
             citations: [
               { ...capability.citations[0]!, source_id: "unrecorded:foreign" },
               ...capability.citations.slice(1),
             ],
-          },
-        ],
+          } },
       });
     if (defect === "foreign segment")
       matching.reply({
         ...value,
-        capabilities: [
-          {
+        member_slots: { ...value.member_slots, [memberId]: {
             ...capability,
             citations: [
               {
@@ -499,15 +500,24 @@ for (const defect of [
               },
               ...capability.citations.slice(1),
             ],
-          },
-        ],
+          } },
       });
-    if (defect === "uncertain")
+    if (defect === "uncertain") {
+      const context = matching.body["context"] as CatalogContext;
       matching.reply({
         ...value,
         status: "needs_review",
-        unresolved: [{ member_ids: capability.member_ids, reason: "Explicit source-bound uncertainty; no partial publication.", citations: capability.citations }],
+        member_slots: Object.fromEntries(context.members.map((member) => [member.member_id, { kind: "unresolved",
+          reason: "Explicit source-bound uncertainty; no partial publication.", citations: citationSelections(matching, [
+            { sourceId: context.catalog_inventory_source_id }, { sourceId: member.source_id,
+              valuePath: member.requirement_id === null ? ["definition"] : ["canonical", "definition"] },
+          ]) }])),
+        occurrence_slots: Object.fromEntries(context.occurrences.map((occurrence) => [occurrence.occurrence_id, { kind: "unresolved",
+          reason: "Explicit source-bound demand uncertainty; no partial publication.", citations: citationSelections(matching, [
+            { sourceId: context.catalog_inventory_source_id }, { sourceId: occurrence.source_id, valuePath: ["original", "spans", 0, "quote"] },
+          ]) }])),
       });
+    }
     if (defect === "stale revision")
       matching.reply({
         ...value,

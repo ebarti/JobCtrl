@@ -3586,6 +3586,25 @@ remain. Unknown, foreign or incompatible references refuse publication. A failed
 literal-citation receipt remains historical; it is not edited, partially accepted
 or repaired through another model call within the same operation.
 
+**Exhaustive response slots.** The provider response schema requires one property
+for every supplied member ID and occurrence ID. Each slot explicitly chooses a
+root, a supplied same-as reference or unresolved source meaning. A member root
+owns its normalized capability; an occurrence root owns its normalized demand.
+Capability and job bindings join the recorded input identities. Models do not
+invent group labels or job IDs. Shared schema definitions carry the finite ID
+choices without repeating their enums for every slot.
+
+The owner resolves only model-declared references into explicit roots and
+derives the existing grouping representation. Cycles, demand aliases across
+capabilities and conflicting demands for one job/capability refuse publication.
+Required slots prevent omitted input records; they do not establish semantic
+correctness or turn genuine uncertainty into acceptance. Raw slots and receipts
+remain immutable. A versioned partition binding records the raw-to-grouping
+projection separately from citation binding, with distinct raw, intermediate
+and exact-quote fingerprints. Both source joins and publication fences remain.
+The separately versioned transport fences incompatible durable work without
+changing capability policy, normalized-demand fingerprints or qualification.
+
 **Fit and wording.** Qualification reuse binds Profile, capability ID/revision,
 normalized demand, permitted factual sources and qualification-policy/prompt
 version. The existing complete missing-item batch handles all applicable demands;
