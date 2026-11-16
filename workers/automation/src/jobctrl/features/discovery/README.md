@@ -15,7 +15,7 @@ escape hatch.
 
 ## Retained capabilities
 
-- Saved boards, per-board limits, posting age, bounded source-family parallelism,
+- Saved boards, the shared new-job limit, posting age, bounded source-family parallelism,
   crawler identity and schedule settings retain optimistic revision fences.
   Source create-only writes cannot reactivate an existing disabled source.
 - Literal authored role queries remain exact queries. Additional track/function/
@@ -32,11 +32,26 @@ escape hatch.
   never label healthy boards failed or cancel their work. Older persisted runs
   retain their original unit identities; a missing age reference refuses an
   adapted request before network work and requires a new explicitly started run.
+- Newly admitted requests freeze `sourceFetchPolicy=source-native-v1`. Their
+  units carry `results_per_site=None`, translated to actual SDK
+  `results_wanted=None`; native page sizes and the SDK's 50-page safety bound
+  remain. Legacy saved/API/CLI result counts cannot affect new acquisition.
+  Unmarked admitted requests retain their finite units, exact SDK fingerprints
+  and resume semantics. Missing SDK support fails explicitly without a numeric
+  substitute. `SiteCompleteEvent.reason` is persisted before acknowledgement;
+  only `source_exhausted` establishes upstream exhaustion. Page/provider limits
+  and unknown termination remain explicit source failures with accepted jobs
+  retained, including recovery after the completion acknowledgement.
 - Final settlement reads fulfilled units and failed source IDs/codes from
   canonical storage, including registered ATS/careers sources. Recovery cannot
   forget a failure when another source has already filled the shared budget.
   At that limit, existing running units become `budget_exhausted`; failed units
   remain failed and unstarted/scoped-out sources do not count as completed.
+  The quota-filling admission transaction returns its committed budget state.
+  The consumer acknowledges that receipt before stopping acquisition, with
+  `termination=budget_exhaustion`. Concurrent family acquisition is cancelled
+  and the transactional gate refuses further receipts at capacity. Prefetched
+  SDK emissions can remain in flight without creating extra admissions.
   A completed empty source still constitutes completed acquisition. `partial`
   requires both fulfilled bounded work and a failed source; all-source failure
   remains `failed`, independently of how many jobs were accepted.
@@ -48,8 +63,9 @@ escape hatch.
   margin for discarded timezone/relative-day precision. Unknown, future or
   cutoff-overlapping dates become filtered receipts with reason/provenance.
   Glassdoor Remote+location is a board-local unsupported scope because returned
-  location text cannot establish eligibility. No lexical inference or extra
-  acquisition compensates for exclusions.
+  location text cannot establish eligibility. Exclusions consume no new-job
+  quota; traversal follows the frozen native or legacy finite source policy.
+  No lexical inference changes the authored criteria.
 - The actual pinned JobStreaming explicit-ack gateway is retained. Accepted or
   filtered receipts commit before provider acknowledgement. Provider cursor
   fingerprint/schema errors fail explicitly. Epoch-fenced admissions prevent an

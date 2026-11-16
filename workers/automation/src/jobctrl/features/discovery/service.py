@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import json
 
 from jobctrl.app.errors import AppError, ConflictError
-from jobctrl.features.discovery.domain import fingerprint, now, search_units, validate_settings
+from jobctrl.features.discovery.domain import SOURCE_FETCH_POLICY, fingerprint, now, search_units, validate_settings
 from jobctrl.features.discovery.remote_search import validate_remote_search_scope
 from jobctrl.features.discovery.targets import TargetPlanner
 from jobctrl.features.discovery.ports import DestinationPolicy, DiscoveryStore, ExecutionPort, JobsPort, ModelPort
@@ -407,9 +407,13 @@ class DiscoveryService:
                 "sources": self.list_sources()["sources"],
                 "command_hash": fingerprint(payload),
                 "boardUnitsVersion": 1,
+                "sourceFetchPolicy": SOURCE_FETCH_POLICY,
                 "criteriaAsOf": now(),
             }
-        units = search_units(request["settings"], isolate_boards=request.get("boardUnitsVersion") == 1)
+        units = search_units(
+            request["settings"], isolate_boards=request.get("boardUnitsVersion") == 1,
+            source_fetch_policy=request.get("sourceFetchPolicy"),
+        )
         execution_settings = {**request["settings"], "_criteriaAsOf": request.get("criteriaAsOf")}
         if not units and not any(
             s["state"] in {"active", "experimental"}
@@ -478,7 +482,8 @@ class DiscoveryService:
                         if error.code == "action_cancelled":
                             raise
                         failure = {"sourceFamily": "broad_boards", "unitId": unit["unit_id"], "boards": unit["sites"], "code": error.code, "message": error.message}
-                        self.repository.save_unit(lease, unit, status="failed", result={"failure": failure})
+                        recorded = self.repository.unit(run_id, unit["unit_id"])
+                        self.repository.save_unit(lease, unit, status="failed", result={**((recorded or {}).get("result") or {}), "failure": failure})
                         failures.append(failure)
                         for board in unit["sites"]:
                             self.repository.source_result(

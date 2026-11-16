@@ -54,7 +54,7 @@ corepack pnpm dev:setup
 
 `corepack pnpm dev:setup` installs the Node workspace dependencies and runs
 `uv --project workers/automation sync --extra dev`, which installs the Python
-worker, the pinned `jobstreaming==0.0.5` provider, its locked transitive
+worker, the pinned JobStreaming source dependency, its locked transitive
 dependencies, and the Python dev tools used by local checks. It does not install Temporal or
 Playwright browser binaries. Do not set `UV_EXCLUDE_NEWER` (or a global uv
 `exclude-newer` config): it makes uv treat `uv.lock` as needing re-resolution,
@@ -88,6 +88,14 @@ for the managed Codex vendor login; ordinary readiness checks do not launch it.
 Source dependency provisioning remains in `scripts/install` and
 `corepack pnpm dev:setup`. Browser installation uses `scripts/install` or the
 explicit pinned Playwright command above, outside provider setup.
+
+This source candidate uses JobStreaming 0.0.6 from the exact Git commit recorded
+in `workers/automation/pyproject.toml` and `uv.lock`. It provides automatic source
+traversal and explicit completion reasons. The SDK candidate is not a published
+package. Source setup and QA use that immutable Git override; before a native
+release, replace it with the exact published SDK version and hashed wheel lock.
+The native core installer continues to require hashes and prebuilt wheels, so
+this source override does not establish release-build readiness.
 
 ## Run
 

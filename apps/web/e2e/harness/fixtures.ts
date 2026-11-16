@@ -39,7 +39,13 @@ export type ApplicationStack = {
     setCatalog(value: { providers: Record<string, unknown>[] }): void;
     next(options?: { timeout?: number }): Promise<ExternalCall>;
   };
-  discoveryCheckpoint(runId: string): Promise<{ adapters: { site: string; state: Record<string, unknown>; emittedCount: number; completed: boolean }[]; receipts: Record<string, number> }>;
+  discoveryCheckpoint(runId: string): Promise<{
+    adapters: { unitId: string; site: string; state: Record<string, unknown>; emittedCount: number; completed: boolean; requestFingerprint: string; acknowledgedKeys: string[] }[];
+    receipts: Record<string, number>;
+    receiptKeys: { unitId: string; site: string; jobKey: string; isNew: boolean }[];
+    request: { fingerprint: string; sourceFetchPolicy?: string; settings: { resultsPerSite: number; newJobLimit: number } };
+    units: { unitId: string; status: string; resultsPerSite: number | null; sdkFingerprint: string; sdkResultsWanted: number | null; sdkMaxPages: number; result: { termination?: string; sourceTerminations?: Record<string, string> } | null }[];
+  }>;
   restartWorker(): Promise<{ previous: number; current: number }>;
   upgradeSource(): Promise<{ previous: number; current: number; backup: string; candidateOrigin: string; mode: "source" | "installed" }>;
   databaseSchemaFingerprint(): Promise<string>;

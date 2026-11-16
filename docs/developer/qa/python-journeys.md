@@ -46,8 +46,8 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **138 journeys in 45 project-file groups**:
-**137 Chromium cases in 44 spec files**, plus **one demo case in one file**.
+The current configured inventory is **144 journeys in 45 project-file groups**:
+**143 Chromium cases in 44 spec files**, plus **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts and keyboard-driven Profile saves. Listing
@@ -186,9 +186,18 @@ unrun**, with no individual assertion failure; it is not a complete suite pass.
 The hosted matrix now uses four standard Playwright shards. Native JSON
 listings measured **34 / 33 / 37 / 24 cases** in **11 / 9 / 12 / 10 project-file
 groups**. Their disjoint union equals the complete 128-case, 42-group inventory,
-with no missing, duplicate or extra case. One worker, zero retries, 90-second
-case and 720-second suite limits remain unchanged. The stable Browser aggregate
-requires all four jobs; the actual hosted rerun is required to qualify capacity.
+with no missing, duplicate or extra case. That configuration used one worker,
+zero retries, a 90-second ordinary case limit and a 720-second suite limit. The
+stable Browser aggregate requires all four jobs.
+
+On `6f46b0ba5`, the four shards assigned 37 / 33 / 44 / 24 cases. Shards 1 and
+3 reached the unchanged suite deadline with 36 and 39 passes respectively;
+shards 2 and 4 passed. The hosted invocation now uses two Playwright workers per
+shard while retaining the four shards, zero retries, existing case deadlines and
+720-second suite limit. Each worker owns its Temporal service and each journey
+its application workspace. The ordinary local invocation still defaults to one
+worker. A complete hosted run on the changed candidate is required to qualify
+the new scheduling capacity and exact-once inventory.
 
 ### QA workspaces and requirement lifecycle — 15 November 2026
 

@@ -34,6 +34,8 @@ jobs:
         run: git fetch --no-tags --depth=1 origin 6e4131061fb41aab4743701084a7c74a19fa21f3
       - name: Fetch the fixed predecessor for required normalization slots
         run: git fetch --no-tags --depth=1 origin 943c8b4d0c6f4a15521e10c04a015de726bfcbb9
+      - name: Fetch the fixed predecessor for finite source request replay
+        run: git fetch --no-tags --depth=1 origin 6f46b0ba5913383b7c57ffcce986729fa0bdbf0e
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - name: Set up Node
@@ -87,7 +89,7 @@ jobs:
       - name: Build once and run this shard of real application journeys
         # Reserve two minutes beyond the suite ceiling for build and owned cleanup.
         timeout-minutes: 14
-        run: corepack pnpm e2e -- --shard=${{ matrix.shard }}/4
+        run: corepack pnpm e2e -- --shard=${{ matrix.shard }}/4 --workers=2
       - name: Require unchanged dependency locks
         if: always()
         run: git diff --exit-code -- pnpm-lock.yaml workers/automation/uv.lock

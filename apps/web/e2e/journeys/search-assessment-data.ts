@@ -27,12 +27,16 @@ export async function servePostingAssessment(
     beforeQualification,
     pageRequest,
     invalidEvidence = false,
+    qualificationExpected = true,
+    catalogDecision,
   }: {
     kind?: "matched" | "missing";
     beforeFirstModel?: () => Promise<void>;
     beforeQualification?: (call: ExternalCall) => Promise<void>;
     pageRequest?: ExternalCall;
     invalidEvidence?: boolean;
+    qualificationExpected?: boolean;
+    catalogDecision?: (call: ExternalCall) => unknown;
   } = {},
 ) {
   const page = pageRequest ?? await app.external.next();
@@ -78,18 +82,20 @@ export async function servePostingAssessment(
   });
   const quality = await modelCall(app, "description_quality");
   quality.reply({ confidence: "high", citations: citeSources(quality, ["description"]), rationale: "This authored source describes one complete role." });
-  return serveSavedAssessment(app, library, { kind, invalidEvidence, ...(beforeQualification ? { beforeQualification } : {}) });
+  return serveSavedAssessment(app, library, { kind, invalidEvidence, qualificationExpected,
+    ...(catalogDecision ? { catalogDecision } : {}), ...(beforeQualification ? { beforeQualification } : {}) });
 }
 
 export async function serveSavedAssessment(
   app: ApplicationStack,
   library: Library,
-  { kind = "matched", invalidEvidence = false, beforeQualification, requirementId, qualificationExpected = true }: {
+  { kind = "matched", invalidEvidence = false, beforeQualification, requirementId, qualificationExpected = true, catalogDecision }: {
     kind?: "matched" | "missing";
     invalidEvidence?: boolean;
     beforeQualification?: (call: ExternalCall) => Promise<void>;
     requirementId?: string;
     qualificationExpected?: boolean;
+    catalogDecision?: (call: ExternalCall) => unknown;
   } = {},
 ) {
   const analysis = await modelCall(app, "jobs.role_analysis");
@@ -101,11 +107,20 @@ export async function serveSavedAssessment(
   const source = modelSources(extraction)[0]!;
   extraction.reply(typedExtraction(extraction, { requirements: [{ localId: "capability", text: source.text }] }));
   const matching = await modelCall(app, "requirements.match_catalog");
-  matching.reply(catalogMatching(matching, { capability: requirementId
+  matching.reply(catalogDecision ? catalogDecision(matching) : catalogMatching(matching, { capability: requirementId
     ? { verdict: "equivalent", requirementId }
     : { verdict: "new" } }));
   if (!qualificationExpected) return;
 
+  return serveQualification(app, library, { kind, invalidEvidence, ...(beforeQualification ? { beforeQualification } : {}) });
+}
+
+export async function serveQualification(app: ApplicationStack, library: Library,
+  { kind = "matched", invalidEvidence = false, beforeQualification }: {
+    kind?: "matched" | "missing";
+    invalidEvidence?: boolean;
+    beforeQualification?: (call: ExternalCall) => Promise<void>;
+  } = {}) {
   const qualification = await modelCall(app, "fit.qualification-batch");
   await beforeQualification?.(qualification);
   if (qualification.closed) return;

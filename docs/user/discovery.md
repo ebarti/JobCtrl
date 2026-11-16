@@ -52,7 +52,7 @@ request. A selected place is not work authorization and does not establish that
 a posting fits your location constraints.
 
 Profile owns target facts/preferences and their optimistic Profile version.
-Discovery owns boards, lookback, result/new-job limits, sources, schedules and
+Discovery owns boards, lookback, the new-job limit, sources, schedules and
 execution settings in its own SQLite rows. The connected screen composes those
 public owners rather than creating another settings store. An incomplete or
 conflicting save retains the draft; check saved state before retrying.
@@ -98,9 +98,11 @@ different boards, codes or messages remain separate notices.
 Source acquisition is partial when a source completes or the new-job limit ends
 acquisition, and another source fails. If no source completes or fulfils bounded
 work, acquisition is failed. Accepted jobs remain available in
-either case. A result limit bounds fetched observations, including those later
-excluded by the local date check; there are no extra requests to fill the limit.
-The limit is not a promise of that many suitable or newly admitted jobs.
+either case. New searches use each connector's native page size and continue
+past known or excluded listings until the shared new-job limit, confirmed source
+exhaustion or an explicit provider/safety stop. A page safety limit or unknown
+termination is recorded as an incomplete source, never as proof of exhaustion.
+The new-job limit is not a promise that enough new or suitable postings exist.
 
 The primary launch also binds the saved `expectedProfileVersion`. Queued or
 replayed planning refuses a changed Profile instead of silently absorbing new
@@ -147,15 +149,22 @@ Discovery has no dry-run mode; the CLI rejects Discover with
 The contextual **Search plans, schedules and source behavior** section keeps
 independent targets, query-plan review, one-off searches, automation and source
 execution controls available as separate disclosures. Job boards, posting age
-and result limits have one ordinary editor in **Search settings**. Opening a
-disclosure preserves its draft and starts no search or model work.
+and the maximum number of new jobs have one ordinary editor in **Search settings**.
+Source fetch limits are automatic; there is no per-board results control.
+Opening a disclosure preserves its draft and starts no search or model work.
 
 The task invokes the existing `discovery.search` action with a retained
 idempotency key and database identity. Queued means Temporal accepted the request,
 not that acquisition or person-fit assessment completed. The complete application
 keeps that one action active while the preparation owner enriches each newly
-saved job, records role context, extracts its requirements and assesses person
-fit. Search does not prepare wording or generate resumes. Source counts remain
+saved job, records role context and extracts its requirements. It completes this
+work for all newly saved jobs before assessing person fit, so a later posting's
+capability consolidation cannot invalidate an earlier score from the same search.
+It checks that accepted Fit results are still current before reporting successful
+assessment. A concurrent Profile, posting or requirement change is reported as an
+assessment failure requiring review; accepted scores remain in history and the
+search does not repeatedly rescore jobs. Search does not prepare wording or
+generate resumes. Source counts remain
 acquisition counts; source failures and per-job assessment failures are reported
 separately. A job whose assessment fails stays saved with its explicit outcome,
 and other jobs continue. A completed source alone cannot complete the overall
@@ -173,8 +182,9 @@ while its acquisition status and source failures remain failed and inspectable.
 
 Assessment reuses exact accepted results before making another model request.
 Requirements keeps content-based result reuse separate from each job's actual
-posting identity. Fit reuses current person assessments for shared canonical
-requirements and sends the entire missing set for one job together in one
+posting identity. Fit reuses current person assessments for the exact capability,
+normalized job demand and Profile evidence; different demands keep separate
+assessments. It sends the entire missing set for one job together in one
 qualification request. Every requirement retains its own evidence and result;
 no source text is shortened or replaced by word-overlap matching. See
 [Scoring](scoring-and-employer-analysis.md#how-the-score-is-calculated) for reuse,
@@ -271,7 +281,7 @@ when needed; none requires a separate ordinary Pipelines visit.
 | Control | Authority and effect |
 | --- | --- |
 | Roles, tracks/levels, locations/work arrangements and optional place bindings | Profile's versioned saved preferences; next explicitly started search. |
-| Boards, result limits, lookback and new-job limit | Discovery settings with `expectedRevision`; captured for the admitted search. |
+| Boards, lookback and new-job limit | Discovery settings with `expectedRevision`; captured for the admitted search. |
 | Source enablement, locator, quarantine and capture review | Feature-owned review/registry records; disabled/rejected intent is retained. |
 | Schedule | Explicitly enabled Discovery definition, reconciled by the worker; saving a schedule is not a manual search and does not normally require a restart. Saved and effective acknowledgement remain distinct. |
 | Shared automation/fit policy | Canonical runtime policy with `expectedPolicyRevision`; Discovery has no competing application-approval authority. |
@@ -340,9 +350,18 @@ and editability come from the current feature-owned settings response.
 capabilities and saved source policy. Saving a choice does not fetch a page.
 
 <a id="runtime-setting-results-per-board"></a>
-**Results per board.** Maximum requested for each query/location unit, not a
-promise of suitable or newly admitted results. The shared new-job limit bounds
-canonical new-job admission across source families.
+**Automatic source limits.** New searches use each connector's native page size
+and bounded pagination, without a separate total-emitted-results ceiling.
+Search preferences and advanced settings have no per-board results control.
+Legacy saved `resultsPerSite` values, API overrides and CLI `--results-per-site`
+remain readable for compatibility but do not limit new searches. Already admitted
+older searches retain their frozen finite request and checkpoint semantics.
+The shared maximum-new-jobs setting counts canonical new admissions across all
+source families. The final accepted job and receipt commit before provider
+acknowledgement and acquisition stops immediately afterward. In-flight provider
+work can still exist; no further job admission is allowed at capacity. Budget
+exhaustion, user cancellation and confirmed provider exhaustion remain distinct.
+Authentication, native source limits, pacing and cancellation remain enforced.
 
 <a id="runtime-setting-posting-lookback-hours"></a>
 **Posting lookback hours.** Requested age window where the provider supports it;

@@ -35,6 +35,7 @@ from jobstreaming import (
 
 from jobstreaming.batch import jobs_to_dataframe
 
+from jobctrl.app.errors import AppError
 from jobctrl.features.discovery.remote_search import RemoteSearchConfigurationError as RemoteSearchConfigurationError
 from jobctrl.features.discovery.remote_search import provider_scope, validate_remote_search_scope
 
@@ -46,7 +47,7 @@ class JobStreamingSearchSpec:
     sites: tuple[str, ...]
     query: str
     location: str
-    results_per_site: int
+    results_per_site: int | None
     hours_old: int | None = None
     remote_only: bool = False
     country_indeed: str = "usa"
@@ -61,7 +62,7 @@ class JobStreamingSearchSpec:
             not self.location.strip() and not (self.location == "" and self.remote_only)
         ):
             raise ValueError("location must be non-empty unless remote-only")
-        if self.results_per_site < 1:
+        if self.results_per_site is not None and self.results_per_site < 1:
             raise ValueError("results_per_site must be positive")
 
 
@@ -199,7 +200,18 @@ class JobStreamingGateway:
 
     @staticmethod
     def build_request(spec: JobStreamingSearchSpec) -> SearchRequest:
-        return build_search_request(
+        if spec.results_per_site is None:
+            try:
+                from jobstreaming import SiteTerminationReason  # noqa: F401
+
+                SearchRequest(site_type=spec.sites, results_wanted=None)
+            except (ImportError, ValueError, TypeError):
+                raise AppError(
+                    "discovery_source_policy_unsupported",
+                    "This search requires JobStreaming with uncapped results and typed source termination. Update the worker dependency before retrying.",
+                    503,
+                ) from None
+        request = build_search_request(
             site_name=list(spec.sites),
             search_term=spec.query,
             location=spec.location or None,
@@ -210,6 +222,9 @@ class JobStreamingGateway:
             description_format="markdown",
             linkedin_fetch_description=spec.linkedin_fetch_description,
         )
+        if spec.results_per_site is None and request.results_wanted is not None:
+            raise AppError("discovery_source_policy_unsupported", "The provider cannot retain the automatic source fetch policy.", 503)
+        return request
 
     def open_stream(
         self,

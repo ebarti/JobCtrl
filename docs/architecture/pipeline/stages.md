@@ -17,7 +17,17 @@ In the complete application, composition binds the existing `discovery.search`
 action to Preparation's `search` recipe. Acquisition and per-job initial
 assessment share the public run identity. The source owner can finish acquisition
 while the action remains active through enrichment, role analysis, requirements
-and Fit. Its frozen cohort contains only newly committed job IDs; it never scans
+and Fit. Search settles enrichment, role analysis and requirements for the entire
+frozen cohort before starting any Fit assessment: a later member's mandatory
+catalog consolidation may revise an earlier member's demand. Pending Fit inputs
+then pin each job's final requirement and posting versions. Only accepted
+normalization operations from this same cohort may advance its earlier
+requirement checkpoint; unrelated source changes remain conflicts. Replays keep
+those pins, stable stage identities and terminal failures. After every Fit stage,
+a final currentness check is required before reporting assessment success. A
+concurrent change produces an explicit partial outcome and preserves the
+accepted score; it never starts a convergence loop or extra model work.
+The frozen cohort contains only newly committed job IDs; it never scans
 unrelated pending jobs or automatically reassesses prior scores. Coverage,
 wording and resume stages are excluded. Preparation's explicit `assess` recipe
 uses the same prerequisites for selected saved IDs without acquisition.

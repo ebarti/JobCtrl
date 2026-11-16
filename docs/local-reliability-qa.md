@@ -30,10 +30,11 @@ ledger in [Python application journeys](developer/qa/python-journeys.md).
 
 Hosted Browser CI schedules that same inventory in four fixed, disjoint
 Playwright shards, `--shard=1/4` through `--shard=4/4`, on separate
-runners. Each invocation keeps one worker, zero retries, the existing case deadlines and the
-720-second global deadline; the ordinary unsharded local command is unchanged.
-Each shard builds once, owns its application/Temporal workspaces and retains
-separately named evidence. Matrix fail-fast is disabled so a failed shard does
+runners. Each hosted invocation uses two Playwright workers, zero retries, the
+existing case deadlines and the 720-second global deadline; the ordinary
+unsharded local command retains its one-worker default. Each shard builds once,
+each worker owns its Temporal service, and each journey owns its application
+workspace. Shards retain separately named evidence. Matrix fail-fast is disabled so a failed shard does
 not cancel its peers. The stable **Browser / UI checks** result passes only when
 all four shard jobs succeed; failure, cancellation or a skipped shard cannot
 qualify the complete inventory. A shard pass alone is partial proof. Record

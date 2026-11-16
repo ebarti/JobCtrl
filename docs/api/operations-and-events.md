@@ -26,6 +26,18 @@ failure with no new jobs keeps the action failed. Composite `ok` is true only
 when acquisition and assessment both completed successfully.
 Reduced Discovery-only compositions report `preparationAvailable: false`.
 
+New `discovery.search` requests freeze automatic source pagination. Legacy
+`resultsPerSite` settings/action fields and CLI `--results-per-site` are accepted
+for compatibility but cannot impose a provider-emission limit on a new search.
+The CLI option is hidden from help. Settings retain its saved numeric value,
+while both metadata views mark it `activation: inactive`, `editable: false`
+and `locked: true`; it is not an effective control for a new search.
+`newJobLimit` bounds committed canonical new jobs across source families. Known
+and filtered provider emissions do not consume that quota. Previously admitted
+finite requests resume unchanged. The recorded unit termination distinguishes
+`budget_exhaustion`, confirmed `source_exhausted` and provider safety stops;
+page/provider limits or unknown termination cannot report source exhaustion.
+
 `POST /v1/actions/preparation.run` also accepts the explicit saved-job recovery
 body `{"recipe":"assess","scope":"selected","job_ids":["JOB_ID"],"limit":100}`.
 It requires one to 1,000 exact saved IDs and performs enrichment, role analysis,

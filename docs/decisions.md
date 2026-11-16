@@ -2276,6 +2276,20 @@ unstarted or scoped-out sources do not count as completed. See the
 for exact source restrictions and precision rules. The historical migration
 decision below retains its original dependency version.
 
+Amended 2026-11-16: newly admitted requests freeze
+`sourceFetchPolicy=source-native-v1`. Their SDK requests use
+`results_wanted=None`, preserving connector-native page volume and bounded
+pagination; legacy `resultsPerSite` inputs cannot cap new acquisition. Unmarked
+admitted requests keep their original finite units and fingerprints. Discovery
+requires explicit SDK support rather than substituting an arbitrary large count.
+The transaction committing the last allowed new job also determines that the
+shared quota is full. Its receipt is acknowledged before acquisition stops;
+other families cannot admit beyond that transaction boundary. Persist
+`budget_exhaustion` separately from user cancellation and typed provider
+termination. Source completion reasons commit before their acknowledgements;
+page/provider limits and unknown termination never establish source exhaustion.
+Authentication, source intent, pacing and provider safety bounds remain intact.
+
 Decision: replace the `python-jobspy` provider with pinned JobStreaming 0.0.2,
 but keep execution reliability in JobCtrl. For Temporal-backed broad-board
 discovery, JobCtrl persists one immutable query/location/board unit under the
