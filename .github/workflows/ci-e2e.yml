@@ -34,6 +34,8 @@ jobs:
         run: git fetch --no-tags --depth=1 origin 6e4131061fb41aab4743701084a7c74a19fa21f3
       - name: Fetch the fixed predecessor for required normalization slots
         run: git fetch --no-tags --depth=1 origin 943c8b4d0c6f4a15521e10c04a015de726bfcbb9
+      - name: Fetch the fixed predecessor for terminal-root normalization replay
+        run: git fetch --no-tags --depth=1 origin 5d3fda5352fe4418332b989c05f710e0529f578c
       - name: Fetch the fixed predecessor for finite source request replay
         run: git fetch --no-tags --depth=1 origin 6f46b0ba5913383b7c57ffcce986729fa0bdbf0e
       - name: Set up pnpm

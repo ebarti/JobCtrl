@@ -46,12 +46,14 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **144 journeys in 45 project-file groups**:
-**143 Chromium cases in 44 spec files**, plus **one demo case in one file**.
+The current configured inventory is **149 journeys in 46 project-file groups**:
+**148 Chromium cases in 45 spec files**, plus **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
-screen layouts and keyboard-driven Profile saves. Listing
-these scenarios is not evidence that the complete current candidate passed.
+screen layouts, keyboard-driven Profile saves, posting-fetch refusals and the
+actual terminal-root v4 predecessor upgrade. The four hosted shard listings
+contain 39 / 36 / 37 / 37 cases and match the unsharded inventory exactly once.
+Listing these scenarios is not evidence that the complete current candidate passed.
 
 ### Capability consolidation — 15 November 2026
 
@@ -127,7 +129,28 @@ their exact recorded joins.
 ### Expanded screens and Profile editing — 15 November 2026
 
 The primary [surface inventory](../../../apps/web/e2e/journeys/redesign-surfaces.spec.ts)
-now includes Languages: 27 views at four viewport sizes, or 108 settled captures.
+includes Languages: 27 views at four viewport sizes, or 108 settled captures.
+Four independent viewport cases repeat the same synthetic setup and retain each
+route assertion, applicable expanded state, mobile filter interaction, no-extra-
+model-call check and accepted PDF check. Each owns a fresh workspace and the
+unchanged 90-second case deadline; two hosted workers can run cases concurrently.
+
+Hosted run `43945321817` on `5d3fda535` completed the first three widths and 16
+mobile routes before this formerly single case reached its deadline. The failure
+context showed Settings still loading connection data; the interrupted assertion
+had received 637 ms of its 10-second allowance. On the partitioned source, owned
+run `e2e-3uZrYJ` passed all four viewport cases with `--workers=2`, producing 27
+primary captures per width and all ten applicable expanded/search captures. The
+mobile Settings and searched Materials captures were inspected. Build / journeys /
+total were 8.434 / 30.033 / 40.370 seconds on macOS arm64, 12 logical CPUs,
+24 GiB RAM, Node 22.21.1; no retries occurred and the Python lock and web build
+remained unchanged. This run included the concurrent role-analysis source repair;
+its Python source digest was `09eb51234a7ac4d68389a80aebd8b8620880368691665d42834142500c3b3273`
+and the surface spec digest was `44fe0a90d4c0b4e4657a1b6ca54a89f576307a425ec34350276b8641e7b7bc25`.
+At that earlier snapshot, the four shard listings had 39 / 35 / 48 / 25 cases;
+their 147-case union matched the unsharded listing exactly once. This local run and
+listing do not establish a completed hosted CI pass.
+
 The [expanded workspace cases](../../../apps/web/e2e/journeys/expanded-layout.spec.ts),
 [auxiliary screens](../../../apps/web/e2e/journeys/auxiliary-layout.spec.ts),
 [operational screens](../../../apps/web/e2e/journeys/operational-layout.spec.ts)
