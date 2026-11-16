@@ -376,8 +376,8 @@ test.describe("retained public predecessor capability authority", () => {
     expect(response.status(), await response.text()).toBe(200);
     const report = await response.json() as ReconciliationReport;
     const notesRoot = [obsoleteId, notesId].sort()[0]!;
-    const notesGroup = Object.entries(report.partition_binding.group_roots).find(([, root]) => root === obsoleteId)![0];
-    const accessGroup = Object.entries(report.partition_binding.group_roots).find(([, root]) => root === accessId)![0];
+    const notesGroup = report.partition_binding.member_groups[obsoleteId]!;
+    const accessGroup = report.partition_binding.member_groups[accessId]!;
     const witness = decision.corrections[0]!;
     expect(report).toMatchObject({ input_member_count: 3, root_count: 2, corrections: [{ member_id: witness.member_id,
       retained_group_id: notesGroup, represented_by_group_id: accessGroup, unsupported_claim: witness.unsupported_claim, reason: witness.reason }],
@@ -482,8 +482,8 @@ test.describe("retained public predecessor capability authority", () => {
       const selection = citationSelections(request, [{ sourceId: reference.source_id, valuePath: ["original", "spans", 0, "quote"] }])[0]!;
       return { sourceId: reference.source_id, original: source.original, selection };
     };
-    const faults = ["omitted member", "foreign member", "omitted occurrence", "foreign occurrence", "member cycle", "occurrence cycle",
-      "wrong capability alias", "foreign member alias", "foreign occurrence alias", "schema", "uncertain", "uncertain occurrence", "blank normalized definition", "active correction",
+    const faults = ["omitted member", "foreign member", "omitted occurrence", "foreign occurrence", "member alias", "occurrence alias", "group alias", "missing capability definition", "missing demand definition", "unused capability definition", "unused demand definition",
+      "wrong capability assignment", "foreign capability handle", "foreign demand handle", "schema", "uncertain", "uncertain occurrence", "blank normalized definition", "active correction",
       "foreign occurrence segment", "wrong-source occurrence segment", "legacy quote field", "stale catalogue"] as const;
     for (const fault of faults) {
       const attempt = api.post("/v1/requirements/consolidate", { data: { expected_catalog_revision: catalogBefore.catalog_revision } });
@@ -496,13 +496,22 @@ test.describe("retained public predecessor capability authority", () => {
       if (fault === "foreign member") invalid.member_slots["foreign:unrecorded-member"] = invalid.member_slots[members[0]!]!;
       if (fault === "omitted occurrence") delete invalid.occurrence_slots[occurrences[0]!];
       if (fault === "foreign occurrence") invalid.occurrence_slots["foreign:unrecorded-occurrence"] = invalid.occurrence_slots[occurrences[0]!]!;
-      if (fault === "member cycle") for (let index = 0; index < 2; index++)
-        invalid.member_slots[members[index]!] = { kind: "same_as", member_id: members[1 - index]! };
-      if (fault === "occurrence cycle") for (let index = 0; index < 2; index++)
-        invalid.occurrence_slots[occurrences[index]!] = { kind: "same_as", occurrence_id: occurrences[1 - index]! };
-      if (fault === "wrong capability alias") invalid.occurrence_slots[occurrences[0]!] = { kind: "same_as", occurrence_id: occurrences[1]! };
-      if (fault === "foreign member alias") invalid.member_slots[members[0]!] = { kind: "same_as", member_id: "foreign:unrecorded-member" };
-      if (fault === "foreign occurrence alias") invalid.occurrence_slots[occurrences[0]!] = { kind: "same_as", occurrence_id: "foreign:unrecorded-occurrence" };
+      if (fault === "member alias") Object.assign(invalid.member_slots, {
+        [members[0]!]: { kind: "same_as", member_id: members[1]! }, [members[1]!]: { kind: "same_as", member_id: members[0]! } });
+      if (fault === "occurrence alias") Object.assign(invalid.occurrence_slots, {
+        [occurrences[0]!]: { kind: "same_as", occurrence_id: occurrences[1]! }, [occurrences[1]!]: { kind: "same_as", occurrence_id: occurrences[0]! } });
+      const capabilities = Object.keys(invalid.capability_groups), demands = Object.keys(invalid.demand_groups);
+      if (fault === "group alias") Object.assign(invalid.capability_groups, { [capabilities[0]!]: { kind: "same_as", capability_group_id: capabilities[1]! } });
+      if (fault === "missing capability definition") invalid.capability_groups[capabilities[0]!] = null;
+      if (fault === "missing demand definition") invalid.demand_groups[demands[0]!] = null;
+      if (fault === "unused capability definition") invalid.member_slots[members[0]!] = { kind: "assigned", capability_group_id: capabilities[1]! };
+      if (fault === "unused demand definition") invalid.occurrence_slots[occurrences[0]!] = { kind: "assigned", demand_group_id: demands[1]! };
+      if (fault === "wrong capability assignment") {
+        invalid.occurrence_slots[occurrences[0]!] = { kind: "assigned", demand_group_id: demands[1]! };
+        invalid.demand_groups[demands[0]!] = null;
+      }
+      if (fault === "foreign capability handle") invalid.member_slots[members[0]!] = { kind: "assigned", capability_group_id: "capability:foreign" };
+      if (fault === "foreign demand handle") invalid.occurrence_slots[occurrences[0]!] = { kind: "assigned", demand_group_id: "demand:foreign" };
       if (fault === "foreign occurrence segment" || fault === "wrong-source occurrence segment") {
         const source = multilineSource(call);
         const citation = occurrenceRoots(invalid).flatMap(({ slot }) => slot.citations).find((row) => row.source_id === source.sourceId)!;
@@ -544,21 +553,23 @@ test.describe("retained public predecessor capability authority", () => {
       if (fault === "schema") call.reply({ ...invalid, invented_authority: true });
       else if (fault === "legacy quote field") {
         const source = multilineSource(call);
-        call.reply({ ...invalid, occurrence_slots: Object.fromEntries(Object.entries(invalid.occurrence_slots).map(([id, slot]) => [id,
-          slot.kind === "root" ? { ...slot, citations: slot.citations.map((ref) => ref.source_id === source.sourceId
+        call.reply({ ...invalid, demand_groups: Object.fromEntries(Object.entries(invalid.demand_groups).map(([id, slot]) => [id,
+          slot !== null ? { ...slot, citations: slot.citations.map((ref) => ref.source_id === source.sourceId
             ? { ...ref, quote: source.original.name + "\n" + source.original.definition } : ref) } : slot,
         ])) });
       }
       else call.reply(invalid);
       const response = await attempt;
-      const schemaFault = ["omitted member", "foreign member", "omitted occurrence", "foreign occurrence", "foreign member alias", "foreign occurrence alias", "schema", "legacy quote field"].some((value) => value === fault);
+      const schemaFault = ["omitted member", "foreign member", "omitted occurrence", "foreign occurrence", "foreign capability handle", "foreign demand handle", "member alias", "occurrence alias", "group alias", "schema", "legacy quote field"].some((value) => value === fault);
       expect(response.status(), `${fault}: ${await response.text()}`).toBe(schemaFault ? 502 : fault === "stale catalogue" ? 409 : 422);
       expect(await response.json()).toMatchObject({ error: { code: {
         "omitted member": "model_schema_violation", "foreign member": "model_schema_violation",
         "omitted occurrence": "model_schema_violation", "foreign occurrence": "model_schema_violation",
-        "foreign member alias": "model_schema_violation", "foreign occurrence alias": "model_schema_violation",
-        "member cycle": "requirements_partition_cycle", "occurrence cycle": "requirements_partition_cycle",
-        "wrong capability alias": "requirements_demand_partition_invalid",
+        "foreign capability handle": "model_schema_violation", "foreign demand handle": "model_schema_violation",
+        "member alias": "model_schema_violation", "occurrence alias": "model_schema_violation", "group alias": "model_schema_violation",
+        "missing capability definition": "requirements_partition_reference_invalid", "missing demand definition": "requirements_partition_reference_invalid",
+        "unused capability definition": "requirements_partition_reference_invalid", "unused demand definition": "requirements_partition_reference_invalid",
+        "wrong capability assignment": "requirements_demand_partition_invalid",
         schema: "model_schema_violation", uncertain: "requirements_consolidation_uncertain", "uncertain occurrence": "requirements_consolidation_uncertain",
         "blank normalized definition": "blank_requirement_field", "active correction": "requirements_correction_witness_invalid",
         "foreign occurrence segment": "foreign_citation_segment_id", "wrong-source occurrence segment": "foreign_source_id",
@@ -585,9 +596,9 @@ test.describe("retained public predecessor capability authority", () => {
     const report = await published.json() as ReconciliationReport;
     expect(report.roots).toHaveLength(1);
     const input = merging.body["context"] as CatalogContext;
-    const projectedGroup = Object.entries(report.partition_binding.group_roots).find(([, rootMember]) => rootMember === ids[0]!)![0];
+    const projectedGroup = report.partition_binding.member_groups[ids[0]!]!;
     expect(projectedGroup.length).toBeLessThanOrEqual(120);
-    expect(report.partition_binding.group_roots).toEqual({ [projectedGroup]: ids[0]! });
+    expect(new Set(Object.values(report.partition_binding.member_groups))).toEqual(new Set([projectedGroup]));
     const inventoryCitation = { source_id: input.catalog_inventory_source_id, quote: `"catalog_revision":${input.catalog_revision}` };
     const { kind: _memberKind, ...capability } = memberRoots(normalized)[0]!.slot;
     const { kind: _occurrenceKind, ...demand } = occurrenceRoots(normalized)[0]!.slot;
@@ -610,8 +621,8 @@ test.describe("retained public predecessor capability authority", () => {
       accepted_result_fingerprint: normalizationFingerprint(normalized) });
     expect(report.partition_binding).toMatchObject({ binder_version: PARTITION_BINDER_VERSION,
       raw_selection_fingerprint: normalizationFingerprint(normalized), intermediate_fingerprint: normalizationFingerprint(expectedIntermediate),
-      member_roots: Object.fromEntries(ids.map((id) => [id, ids[0]!])),
-      occurrence_roots: Object.fromEntries(input.occurrences.map((row) => [row.occurrence_id, occurrenceRoots(normalized)[0]!.occurrenceId])) });
+      member_groups: Object.fromEntries(ids.map((id) => [id, projectedGroup])),
+      occurrence_groups: Object.fromEntries(input.occurrences.map((row) => [row.occurrence_id, occurrenceRoots(normalized)[0]!.groupId])) });
     const sourceDocuments = Object.fromEntries(modelSources(merging).map((item) => [item.source_id, item.text]));
     expect(report.citation_binding).toMatchObject({ binder_version: CITATION_BINDER_VERSION,
       selection_fingerprint: normalizationFingerprint(expectedIntermediate), derived_fingerprint: normalizationFingerprint(expectedDerived),

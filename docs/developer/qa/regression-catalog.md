@@ -69,12 +69,15 @@ cached selection authority omitting the maintained-head input. Retained alias
 history must not become current qualification or approval. See the
 [consolidation decision](../../decisions.md#capability-consolidation-and-source-demand).
 
-Normalization response schemas require every supplied member and occurrence slot;
-omitted or foreign keys cannot be schema-valid output. Source uncertainty remains
-explicit. Validate model-declared alias graphs, exact raw receipt equality and
-the separately bound grouping/quote projections; no fabricated group reference
-or projection may become authority. Preserve prior v3 history and reject
-incompatible durable work without another model call.
+Normalization response schemas require every supplied member and occurrence slot,
+with independent terminal capability/demand groups and no group aliases. Exercise
+opposing partitions, omitted/foreign inputs, forbidden alias shapes, unknown group
+handles, used-but-null and unused-defined groups, and inconsistent job/capability
+assignments through real public journeys. Preserve accepted artifacts on refusal.
+Actual pinned v4 upgrades must retain exact historical authority and refuse old
+durable replay before a fresh v5 determination. Provider-adapted schemas must keep
+all required input keys and terminal definitions; structural binding cannot invent
+meaning or choose representatives.
 
 Profile owns facts, attachments, confirmations, authored baseline and wording
 approval. Requirements owns qualified meanings and source occurrences. Fit

@@ -10,12 +10,13 @@ from jobctrl.app.errors import ConflictError
 
 from .domain import CONTRACT_VERSION, MEANING_KEYS, ModelCallBudget, RequirementError, canonical_json, fingerprint, meaning_data, now
 from .normalization_domain import (
-    NORMALIZATION_CITATION_PROMPT_VERSION, NORMALIZATION_INSTRUCTION, NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION,
+    NORMALIZATION_CITATION_PROMPT_VERSION, NORMALIZATION_INSTRUCTION, NORMALIZATION_PARTITION_V4_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION,
     CatalogNormalization, CatalogNormalizationSelection, bind_normalization_selection, bind_normalization_slots,
     demand_fingerprint, validate_normalization,
 )
 from .normalization_citations import citation_binding_report, citation_binding_summary, citation_segment_catalog, citation_source_context
-from .normalization_partitions import partition_binding_summary, partition_selection_schema
+from .normalization_partitions import partition_binding_summary, partition_group_handles, partition_selection_schema
+from .normalization_partitions_v4 import partition_selection_schema as partition_selection_schema_v4
 
 
 def _tokens(postings):
@@ -256,6 +257,7 @@ class CatalogNormalizationService:
         context, sources, _ = cls._normalization_input(captured, proposals or {}, incoming or [], postings, guidance)
         context["operation_id"] = operation_id
         context["normalization_prompt_version"] = NORMALIZATION_PROMPT_VERSION
+        context["partition_group_handles"] = partition_group_handles(context)
         context["citation_segments"] = citation_segment_catalog(sources,
             inventory_source_id=context["catalog_inventory_source_id"], catalog_revision=context["catalog_revision"])
         context["citation_catalog_fingerprint"] = fingerprint(context["citation_segments"])
@@ -267,9 +269,10 @@ class CatalogNormalizationService:
 
     @staticmethod
     def validate_catalog_consolidation(value, prepared):
-        if prepared["prompt_version"] == NORMALIZATION_PROMPT_VERSION:
-            result = partition_selection_schema(prepared["context"]).model_validate(value)
-            bind_normalization_slots(result, context=prepared["context"],
+        if prepared["prompt_version"] in (NORMALIZATION_PROMPT_VERSION, NORMALIZATION_PARTITION_V4_PROMPT_VERSION):
+            schema = partition_selection_schema if prepared["prompt_version"] == NORMALIZATION_PROMPT_VERSION else partition_selection_schema_v4
+            result = schema(prepared["context"]).model_validate(value)
+            bind_normalization_slots(result, context=prepared["context"], prompt_version=prepared["prompt_version"],
                 sources={row["source_id"]: row["text"] for row in prepared["sources"]})
             return result.model_dump()
         if prepared["prompt_version"] == NORMALIZATION_CITATION_PROMPT_VERSION:
@@ -288,10 +291,11 @@ class CatalogNormalizationService:
 
     @staticmethod
     def bind_catalog_consolidation(value, prepared):
-        if prepared["prompt_version"] != NORMALIZATION_PROMPT_VERSION:
+        if prepared["prompt_version"] not in (NORMALIZATION_PROMPT_VERSION, NORMALIZATION_PARTITION_V4_PROMPT_VERSION):
             raise RequirementError("requirements_citation_wire_changed")
-        selection = partition_selection_schema(prepared["context"]).model_validate(value)
-        derived, intermediate, partition_binding, citation_binding = bind_normalization_slots(selection, context=prepared["context"],
+        schema = partition_selection_schema if prepared["prompt_version"] == NORMALIZATION_PROMPT_VERSION else partition_selection_schema_v4
+        selection = schema(prepared["context"]).model_validate(value)
+        derived, intermediate, partition_binding, citation_binding = bind_normalization_slots(selection, context=prepared["context"], prompt_version=prepared["prompt_version"],
             sources={row["source_id"]: row["text"] for row in prepared["sources"]})
         return {"selection": selection.model_dump(), "intermediate_selection": intermediate.model_dump(),
                 "derived_decision": derived.model_dump(), "partition_binding": partition_binding,

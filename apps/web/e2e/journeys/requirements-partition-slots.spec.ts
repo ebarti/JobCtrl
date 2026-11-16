@@ -29,6 +29,22 @@ for (const partition of ["separate", "merged"] as const) {
       definition: group.definition, jobIds: [posting.job_id] })));
     expect(Object.keys(raw.member_slots).sort()).toEqual(context.members.map((row) => row.member_id).sort());
     expect(Object.keys(raw.occurrence_slots).sort()).toEqual(context.occurrences.map((row) => row.occurrence_id).sort());
+    const schema = normalization.body["response_schema"] as { $defs: Record<string, { properties?: Record<string, unknown>; required?: string[]; additionalProperties?: boolean; enum?: string[] }> };
+    for (const [name, inventory] of [["MemberSlots", context.members.map((row) => row.member_id)],
+      ["OccurrenceSlots", context.occurrences.map((row) => row.occurrence_id)],
+      ["CapabilityGroups", context.partition_group_handles.capabilities], ["DemandGroups", context.partition_group_handles.demands]] as const) {
+      expect(schema.$defs[name]!.required!.slice().sort()).toEqual(inventory.slice().sort());
+      expect(Object.keys(schema.$defs[name]!.properties!).sort()).toEqual(inventory.slice().sort());
+      expect(schema.$defs[name]!.additionalProperties).toBe(false);
+    }
+    expect(schema.$defs["CapabilityGroupId"]!.enum).toEqual(context.partition_group_handles.capabilities);
+    expect(schema.$defs["DemandGroupId"]!.enum).toEqual(context.partition_group_handles.demands);
+    expect(schema.$defs).not.toHaveProperty("MemberSameAs");
+    expect(schema.$defs).not.toHaveProperty("OccurrenceSameAs");
+    expect(Object.keys(raw.capability_groups)).toEqual(context.partition_group_handles.capabilities);
+    expect(Object.keys(raw.demand_groups)).toEqual(context.partition_group_handles.demands);
+    expect(Object.values(raw.capability_groups).filter((row) => row !== null)).toHaveLength(groups.length);
+    expect(Object.values(raw.demand_groups).filter((row) => row !== null)).toHaveLength(groups.length);
     normalization.reply(raw);
     const response = await pending;
     expect(response.status(), await response.text()).toBe(200);
@@ -53,14 +69,14 @@ for (const partition of ["separate", "merged"] as const) {
     expect(intermediate).toMatchObject({ status: "complete", catalog_revision: context.catalog_revision, corrections: [], unresolved: [] });
     expect(intermediate.capabilities).toHaveLength(groups.length);
     expect(intermediate.demands).toHaveLength(groups.length);
-    expect(Object.keys(report.partition_binding.member_roots).sort()).toEqual(context.members.map((row) => row.member_id).sort());
-    expect(Object.keys(report.partition_binding.occurrence_roots).sort()).toEqual(context.occurrences.map((row) => row.occurrence_id).sort());
-    expect(Object.values(report.partition_binding.group_roots).sort()).toEqual(groups.map((group) => group.memberIds[0]!).sort());
+    expect(Object.keys(report.partition_binding.member_groups).sort()).toEqual(context.members.map((row) => row.member_id).sort());
+    expect(Object.keys(report.partition_binding.occurrence_groups).sort()).toEqual(context.occurrences.map((row) => row.occurrence_id).sort());
+    expect(new Set(Object.values(report.partition_binding.member_groups)).size).toBe(groups.length);
     for (const group of groups) {
       const projected = intermediate.capabilities.find((row) => row.member_ids.includes(group.memberIds[0]!))!;
       expect(projected.member_ids.slice().sort()).toEqual(group.memberIds.slice().sort());
       expect(projected).toMatchObject({ category: group.category, name: group.name, definition: group.definition });
-      expect(report.partition_binding.group_roots[projected.group_id]).toBe(group.memberIds[0]);
+      expect(report.partition_binding.member_groups[group.memberIds[0]!]).toBe(projected.group_id);
       const demand = intermediate.demands.find((row) => row.group_id === projected.group_id)!;
       expect(demand.definition).toBe(group.definition);
       expect(demand.bindings).toEqual([{ job_id: posting.job_id, occurrence_ids: context.occurrences

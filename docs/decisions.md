@@ -3600,24 +3600,28 @@ remain. Unknown, foreign or incompatible references refuse publication. A failed
 literal-citation receipt remains historical; it is not edited, partially accepted
 or repaired through another model call within the same operation.
 
-**Exhaustive response slots.** The provider response schema requires one property
-for every supplied member ID and occurrence ID. Each slot explicitly chooses a
-root, a supplied same-as reference or unresolved source meaning. A member root
-owns its normalized capability; an occurrence root owns its normalized demand.
-Capability and job bindings join the recorded input identities. Models do not
-invent group labels or job IDs. Shared schema definitions carry the finite ID
-choices without repeating their enums for every slot.
+**Exhaustive terminal-group assignments.** The v5 provider response schema requires
+one property for every supplied member ID and occurrence ID. Each slot selects a
+pre-offered independent capability/demand handle or explicit unresolved meaning.
+Required group maps contain terminal semantic definitions for used handles and
+null for unused handles. No group can reference another group. This replaces the
+v4 recursive root/same-as wire, which permitted schema-valid all-alias cycles with
+no normalized definitions. Such v4 results remain rejected; code never chooses a
+root, collapses cycles or manufactures semantic authority.
 
-The owner resolves only model-declared references into explicit roots and
-derives the existing grouping representation. Cycles, demand aliases across
-capabilities and conflicting demands for one job/capability refuse publication.
-Required slots prevent omitted input records; they do not establish semantic
-correctness or turn genuine uncertainty into acceptance. Raw slots and receipts
-remain immutable. A versioned partition binding records the raw-to-grouping
-projection separately from citation binding, with distinct raw, intermediate
-and exact-quote fingerprints. Both source joins and publication fences remain.
-The separately versioned transport fences incompatible durable work without
-changing capability policy, normalized-demand fingerprints or qualification.
+The model owns all memberships, normalized prose, citations and reuse choices.
+The binder only joins selected handles to recorded inputs. Used-but-undefined or
+unused-defined groups, demands across capabilities and conflicting demands for one
+job/capability refuse publication. Required properties guarantee accounting, not
+semantic correctness. The one-determination operation budget, complete source
+inventory, citation/reuse validators and atomic publication fences remain.
+
+Prompt v5, partition binder v2 and report envelope v3 separate this transport from
+v4. Explicit historical dispatch retains v4 graph validation and older envelopes;
+old accepted artifacts remain readable and unchanged. Incompatible durable action
+replay is refused. Raw receipts remain immutable; raw, intermediate and exact-quote
+fingerprints stay distinct. Semantic policy v2, demand fingerprints and SQL schemas
+do not change, so accepted catalog certificates are not staled by the new wire.
 
 **Fit and wording.** Qualification reuse binds Profile, capability ID/revision,
 normalized demand, permitted factual sources and qualification-policy/prompt

@@ -2,12 +2,13 @@ import { test, expect, json, modelCall, completed } from "../harness/fixtures.js
 import { acceptBaseline, createBaseline } from "./core-data.js";
 import { captureReusePosting } from "./reuse-data.js";
 import { catalogMatching, citationSelections, CITATION_BINDER_VERSION, CITATION_SELECTION_PROMPT_VERSION, LEGACY_NORMALIZATION_PROMPT_VERSION,
-  memberRoots, PARTITION_BINDER_VERSION, NORMALIZATION_STORAGE_VERSION,
+  memberRoots, PARTITION_V4_PROMPT_VERSION, PARTITION_BINDER_VERSION, NORMALIZATION_STORAGE_VERSION,
   modelSources, normalizationFingerprint, NORMALIZATION_PROMPT_VERSION, typedExtraction, type CatalogContext } from "./requirements-data.js";
-import { acceptedPdf, CITATION_V2_PREDECESSOR, CITATION_V3_PREDECESSOR, legacyAuthoredPartitionV2, legacyAuthoredPartitionV3, NORMALIZATION_VERSION,
+import { acceptedPdf, CITATION_V2_PREDECESSOR, CITATION_V3_PREDECESSOR, legacyAuthoredPartitionV2, legacyAuthoredPartitionV3, legacyAuthoredPartitionV4, PARTITION_V4_PREDECESSOR, NORMALIZATION_VERSION,
   readCatalog, requirementsPath, type NormalizedSnapshot, type ReconciliationReport } from "./consolidation-data.js";
 
 for (const predecessor of [
+  { label: "terminal-root-v4", revision: PARTITION_V4_PREDECESSOR, partition: legacyAuthoredPartitionV4, prompt: PARTITION_V4_PROMPT_VERSION },
   { label: "literal-citation", revision: CITATION_V2_PREDECESSOR, partition: legacyAuthoredPartitionV2, prompt: LEGACY_NORMALIZATION_PROMPT_VERSION },
   { label: "citation-selection", revision: CITATION_V3_PREDECESSOR, partition: legacyAuthoredPartitionV3, prompt: CITATION_SELECTION_PROMPT_VERSION },
 ]) {
