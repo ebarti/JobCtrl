@@ -52,16 +52,6 @@ test("one capability preserves distinct job demands, reuses identical demand rec
   const sharedFingerprint = requirements.requirements[0]!.normalized_demand.demand_fingerprint;
   const achievement = library.roles[0]!.achievements[0]!;
   const assessBody = { expected_revision: 0, prepare_wording: false, prepare_coverage: false };
-  const assessing = api.post(`${fitPath(first.job_id)}/assess`, { data: assessBody });
-  const qualification = await modelCall(app, "fit.qualification-batch");
-  expect((qualification.body["context"] as { requirements: unknown[] }).requirements).toHaveLength(1);
-  qualification.reply(qualificationBatchDecision(qualification, () => ({ achievementIds: [achievement.achievement_id], evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] })));
-  expect((await assessing).status()).toBe(200);
-  const firstFit = await json<Fit>(api, "get", fitPath(first.job_id));
-  expect(firstFit).toMatchObject({ current: true, score: { score: 10, summary: { assessed_count: 1 }, assessments: [{ demand_fingerprint: sharedFingerprint }] } });
-  expect(firstFit.score!.assessments).toHaveLength(1);
-  expect(firstFit.score!.assessments[0]!.contribution.max_points).toBe(1);
-
   const second = await captureReusePosting(api, "demand-aircraft", constrainedDemand);
   const constrained = api.post(requirementsPath(second.job_id), { data: { expected_posting_revision: second.revision, expected_revision: 0 } });
   const secondExtraction = await modelCall(app, "requirements.extract");
@@ -77,6 +67,34 @@ test("one capability preserves distinct job demands, reuses identical demand rec
   const secondFingerprint = secondRequirements.requirements[0]!.normalized_demand.demand_fingerprint;
   expect(secondRequirements.requirements[0]!.requirement_id).toBe(canonicalId);
   expect(secondFingerprint).not.toBe(sharedFingerprint);
+  const beforeBrowsing = app.external.calls.length;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/requirements?requirement=${encodeURIComponent(canonicalId)}`);
+  const capabilityRow = page.getByRole("table", { name: "Saved requirements", exact: true }).locator("tbody tr[data-row-id]");
+  await expect(capabilityRow).toHaveCount(1);
+  await expect(capabilityRow.getByRole("cell", { name: /^Not assessed/ })).toBeVisible();
+  await expect(capabilityRow.getByText("2 job-specific demands", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Linked achievements 0", exact: true })).toBeVisible();
+  await captureDetailTop(page, testInfo, "requirements-unassessed-multiple-demands-1440");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByText("Profile match: Not assessed", { exact: true })).toBeVisible();
+  await captureDetailTop(page, testInfo, "requirements-unassessed-multiple-demands-390");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  expect(app.external.calls).toHaveLength(beforeBrowsing);
+
+  const assessing = api.post(`${fitPath(first.job_id)}/assess`, { data: assessBody });
+  const qualification = await modelCall(app, "fit.qualification-batch");
+  expect((qualification.body["context"] as { requirements: unknown[] }).requirements).toHaveLength(1);
+  qualification.reply(qualificationBatchDecision(qualification, () => ({ achievementIds: [achievement.achievement_id], evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] })));
+  expect((await assessing).status()).toBe(200);
+  const firstFit = await json<Fit>(api, "get", fitPath(first.job_id));
+  expect(firstFit).toMatchObject({ current: true, score: { score: 10, summary: { assessed_count: 1 }, assessments: [{ demand_fingerprint: sharedFingerprint }] } });
+  expect(firstFit.score!.assessments).toHaveLength(1);
+  expect(firstFit.score!.assessments[0]!.contribution.max_points).toBe(1);
+  const beforePartialRead = app.external.calls.length;
+  await page.reload();
+  await expect(capabilityRow.getByRole("cell", { name: /^Partially assessed/ })).toBeVisible();
+  expect(app.external.calls).toHaveLength(beforePartialRead);
   const beforeSecondFit = app.external.calls.length;
   const assessingSecond = api.post(`${fitPath(second.job_id)}/assess`, { data: assessBody });
   const missing = await modelCall(app, "fit.qualification-batch");
@@ -105,7 +123,7 @@ test("one capability preserves distinct job demands, reuses identical demand rec
   expect(app.external.calls).toHaveLength(beforeReuse);
 
   await page.goto(`/requirements?requirement=${encodeURIComponent(canonicalId)}`);
-  await expect(page.getByRole("cell", { name: "Varies by job", exact: true })).toBeVisible();
+  await expect(page.getByRole("cell", { name: /^Varies by job/ })).toBeVisible();
   const demandPanel = page.getByRole("region", { name: "Job-specific demands", exact: true });
   await expect(demandPanel).toBeVisible();
   await captureDetailTop(page, testInfo, "same-capability-distinct-demands-initial");
@@ -419,6 +437,16 @@ test.describe("retained public predecessor capability authority", () => {
       achievement_id: achievement.achievement_id, achievement_source_refs: achievement.source_refs, wording: null };
     const oldAssociation = await json<{ association_id: string; revision: number; current: boolean }>(api, "post", "/v1/fit/associations", oldAssociationRequest);
     expect(oldAssociation.current).toBe(true);
+    // This achievement has no assessment or coverage relationship. A removed
+    // manual link must stay in history without entering the displayed count.
+    const removedAchievement = library.roles[0]!.achievements[1]!;
+    const removedAssociation = await json<{ association_id: string; revision: number }>(api, "post", "/v1/fit/associations", {
+      ...oldAssociationRequest, association_id: "consolidation-removed-only-link",
+      achievement_id: removedAchievement.achievement_id, achievement_source_refs: removedAchievement.source_refs,
+    });
+    await json(api, "post", `/v1/fit/associations/${removedAssociation.association_id}/state`, {
+      profile_id: "default", expected_revision: removedAssociation.revision, state: "removed",
+    });
     const evidenceSourceId = `evidence:${achievement.source_refs[0]!.source_id}`;
     const assessing = api.post(`${fitPath(posting.job_id)}/assess`, { data: { expected_revision: 0, prepare_wording: false, prepare_coverage: false } });
     const oldQualification = await modelCall(app, "fit.qualification-batch");
@@ -663,6 +691,8 @@ test.describe("retained public predecessor capability authority", () => {
     const aliasRevise = await api.post(`/v1/fit/associations/${oldAssociation.association_id}/revisions`, { data: { ...oldAssociationRequest, expected_revision: oldAssociation.revision } });
     expect(aliasRevise.status(), await aliasRevise.text()).toBe(409);
     expect(await json(api, "get", `/v1/fit/associations/${oldAssociation.association_id}/history`)).toEqual(aliasHistory);
+    const removedHistory = await json<{ rows: { state: string; achievement_id: string; current: boolean }[] }>(api, "get", `/v1/fit/associations/${removedAssociation.association_id}/history`);
+    expect(removedHistory.rows[0]).toMatchObject({ state: "removed", achievement_id: removedAchievement.achievement_id, current: false });
     expect(app.external.calls).toHaveLength(callsBeforeAliasWrites);
     expect(await json(api, "get", "/v1/profile/wording")).toEqual(oldWording);
     expect(await json(api, "get", `${fitPath(posting.job_id)}/history`)).toEqual(oldHistory);
@@ -671,7 +701,46 @@ test.describe("retained public predecessor capability authority", () => {
 
     await page.goto(`/requirements?requirement=${encodeURIComponent(ids[0]!)}`);
     const detail = page.getByRole("region", { name: "Requirement details", exact: true });
-    await expect(detail.getByText("No achievements linked.", { exact: true })).toBeVisible();
+    await expect(detail.getByRole("heading", { name: "Linked achievements 1", exact: true })).toBeVisible();
+    await expect(detail.getByText("Profile match: Needs update", { exact: true })).toBeVisible();
+    const earlierCard = detail.locator(`.requirement-achievement[data-achievement-id='${achievement.achievement_id}']`);
+    await expect(detail.locator(".requirement-achievement")).toHaveCount(1);
+    await expect(earlierCard.locator(".requirement-achievement__fact")).toHaveText(library.variants.find((variant) => variant.variant_id === achievement.baseline_variant_id)!.text);
+    await expect(earlierCard.getByText("Earlier relationship · needs review", { exact: true })).toBeVisible();
+    await expect(detail.locator(`.requirement-achievement[data-achievement-id='${removedAchievement.achievement_id}']`)).toHaveCount(0);
+    await expect(detail.getByRole("button", { name: "Use as current wording", exact: true })).toHaveCount(0);
+    await expect(earlierCard.getByText("No current wording has been selected for this requirement.", { exact: true })).toBeVisible();
+    await page.getByRole("combobox", { name: "Filter a column", exact: true }).selectOption("support");
+    const matchFilter = page.getByRole("dialog", { name: "Profile match filter", exact: true });
+    await matchFilter.getByRole("checkbox", { name: "Needs update", exact: true }).check();
+    await page.keyboard.press("Escape");
+    await page.reload();
+    const retainedRow = page.getByRole("table", { name: "Saved requirements", exact: true }).locator("tbody tr[data-row-id]");
+    await expect(retainedRow).toHaveCount(1);
+    await expect(retainedRow.getByText("1 earlier · needs review", { exact: true })).toBeVisible();
+    await expect(earlierCard.getByText("Earlier relationship · needs review", { exact: true })).toBeVisible();
+    await detail.getByRole("button", { name: "← Back to requirements", exact: true }).click();
+    await expect(detail).toHaveCount(0);
+    await expect(retainedRow.getByText("1 earlier · needs review", { exact: true })).toBeVisible();
+    await testInfo.attach("requirements-retained-links-table-1280", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileRequirements = page.getByRole("list", { name: "Saved requirements", exact: true });
+    await expect(mobileRequirements.getByText("1 earlier · needs review", { exact: true })).toBeVisible();
+    await testInfo.attach("requirements-retained-links-list-390", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await retainedRow.click();
+    await expect(earlierCard.getByText("Earlier relationship · needs review", { exact: true })).toBeVisible();
+    await earlierCard.locator("summary").filter({ hasText: /^Recorded achievement identity$/ }).click();
+    await expect(earlierCard.getByText(achievement.achievement_id, { exact: true })).toBeVisible();
+    await earlierCard.locator("summary").filter({ hasText: /^Earlier relationship sources$/ }).click();
+    await expect(earlierCard.getByRole("heading", { name: `Recorded requirement: ${aliasId}`, exact: true })).toBeVisible();
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+      await earlierCard.scrollIntoViewIfNeeded();
+      expect(await earlierCard.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+      await testInfo.attach(`requirements-earlier-achievement-${width}`, { contentType: "image/png", body: await earlierCard.screenshot() });
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await captureDetailTop(page, testInfo, "consolidated-current-demand-without-inherited-support");
     const earlierSummary = detail.locator("summary").filter({ hasText: /^Earlier links and assessments$/ });
     await expect(earlierSummary.locator("..")).toHaveJSProperty("open", false);
@@ -689,7 +758,7 @@ test.describe("retained public predecessor capability authority", () => {
         await expect(region).toContainText(`Link ${oldAssociation.association_id} · revision ${oldAssociation.revision}`);
       }
     }
-    await detail.getByRole("heading", { name: `Recorded requirement: ${earlierRecords[0]!.requirement_id}`, exact: true }).scrollIntoViewIfNeeded();
+    await earlierSummary.locator("..").getByRole("heading", { name: `Recorded requirement: ${earlierRecords[0]!.requirement_id}`, exact: true }).scrollIntoViewIfNeeded();
     await testInfo.attach("historical-coverage-discoverable-without-current-authority", { contentType: "image/png", body: await page.screenshot() });
 
     const pending = await json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending");

@@ -81,15 +81,23 @@ or a source job preserve the same table context. Select a requirement to inspect
 - prior meaning revisions and original posting occurrences, including whether
   their saved revisions are still current.
 
-One reusable capability can carry different demands from different jobs. When
-multiple distinct demands are recorded in a ready catalog, the table says **Varies by job**. Open
-**Job-specific demands** to inspect each demand, its source jobs, assessment,
-evidence and freshness. Linked achievements include those recorded across the
-demands; their presence does not turn a job-specific assessment into a global
-judgment. When consolidation is required, any demands shown may be incomplete.
-**Earlier links and assessments** retains records bound to an older identity or
-source context for inspection. Those records are excluded from the linked-achievement
-count and do not establish current support for the consolidated requirement.
+**Profile match** compares saved Profile facts with each job-specific demand.
+It shows **Not assessed** when no assessment is recorded, **Needs update** when
+only earlier assessments remain, and **Partially assessed** when some demands
+have current assessments. When every demand has a current assessment, it shows
+their shared outcome or **Varies by job** if those outcomes differ. The number of
+job-specific demands appears separately; several demands do not imply different
+match outcomes. When consolidation is required, any demands shown may be incomplete.
+
+Open **Job-specific demands** to inspect each demand, its source jobs, assessment,
+evidence and freshness. Linked achievements include recorded relationships across
+those demands and **Earlier links and assessments**, deduplicated by achievement
+identity. Earlier-only relationships are marked **needs review** and keep their
+original IDs and provenance; they do not establish current support or wording
+coverage. Removed manual links and removed wording selections stay in history and
+do not contribute to the count unless another recorded relationship independently
+references the achievement. Consolidation never turns an earlier assessment,
+wording approval or manual link into current match authority.
 
 A requirement can link to several achievements, and an achievement can serve
 several requirements. One exact wording can cover several requirements. Missing

@@ -1,6 +1,6 @@
 import { test, expect, json, action, terminal } from "../harness/fixtures.js";
 import { observeSharedWorkerEventSource, sharedEventStreamTargets } from "../harness/shared-event-stream.js";
-import { createScoredFit } from "./fit-data.js";
+import { createScoredFit, type FitState } from "./fit-data.js";
 
 type Source = {
   sourceId: string;
@@ -11,11 +11,85 @@ type Source = {
 };
 type Digest = {
   staleScores: { count: number };
+  deepLinks: { staleScores: string };
   blockedSources: {
     count: number;
     sources: { sourceId: string; consecutiveFailures: number }[];
   };
 };
+
+test("Jobs attention opens and reloads the counted stale Fit cohort without starting work", async ({ api, app, page }, testInfo) => {
+  const { posting, fit } = await createScoredFit(api, app, "attention-fit-navigation");
+  const control = await json<{ job_id: string; title: string }>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/attention-unassessed-control",
+    title: "Synthetic Unassessed Attention Control",
+    company: "Synthetic Attention Company",
+    description: "Implement and maintain durable workflow recovery.",
+  });
+  const revised = await json<{ job_id: string; title: string }>(api, "patch", `/v1/jobs/${posting.job_id}`, {
+    expectedRevision: posting.revision,
+    description: "Implement and maintain durable workflow recovery. Document the current revision.",
+  });
+  const digest = await json<Digest>(api, "get", "/v1/digest");
+  expect(digest.staleScores.count).toBe(1);
+  const staleFit = await json<FitState>(api, "get", `/v1/jobs/${posting.job_id}/fit`);
+  expect(staleFit.current).toBe(false);
+  expect(staleFit.score).toEqual(fit.score);
+  const callsBeforeNavigation = app.external.calls.length;
+  const browserWrites: { method: string; path: string }[] = [];
+  page.on("request", (request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/v1/") && !["GET", "HEAD", "OPTIONS"].includes(request.method())) {
+      browserWrites.push({ method: request.method(), path: url.pathname });
+    }
+  });
+  await page.goto("/jobs?grid=v1&job_state=active&fit_state=all&sort=discovered_at&direction=desc&offset=0&limit=50");
+  const table = page.getByRole("table", { name: "Jobs table", exact: true });
+  await expect(table.getByRole("link", { name: revised.title, exact: true })).toBeVisible();
+  await expect(table.getByRole("link", { name: control.title, exact: true })).toBeVisible();
+  const notice = page.getByRole("link", { name: "1 fit assessment to update", exact: true });
+  await expect(notice).toHaveAttribute("href", digest.deepLinks.staleScores);
+
+  async function verifyDestination(navigate: () => Promise<unknown>) {
+    // Observe the real request on both click and reload, including the broken
+    // legacy request so a field mismatch fails directly instead of timing out.
+    const queried = page.waitForResponse((response) => response.request().method() === "GET"
+      && new URL(response.url()).pathname === "/v1/jobs/query"
+      && new URL(response.url()).searchParams.get("sort") === "fit_score");
+    await navigate();
+    const response = await queried;
+    expect(response.status()).toBe(200);
+    const query = new URL(response.url()).searchParams;
+    expect(query.get("job_state")).toBe("active");
+    expect(query.get("fit_state")).toBe("stale");
+    expect(query.has("state")).toBe(false);
+    const columnFilters = JSON.parse(query.get("column_filters") ?? "{}") as Record<string, unknown>;
+    expect(columnFilters).not.toHaveProperty("current_state");
+    const destination = await response.json() as {
+      total: number;
+      rows: { job: { job_id: string }; fit: { current: boolean }; scalars: { current_state: string | null } }[];
+    };
+    expect(destination.total).toBe(digest.staleScores.count);
+    expect(destination.rows.map((row) => row.job.job_id)).toEqual([posting.job_id]);
+    expect(destination.rows[0]!.fit.current).toBe(false);
+    // Factual Fit staleness must work independently of workflow state.
+    expect(destination.rows[0]!.scalars.current_state).not.toBe("stale");
+    const url = new URL(page.url());
+    expect(url.searchParams.get("grid")).toBe("v1");
+    expect(url.searchParams.get("fit_state")).toBe("stale");
+    await expect(table.locator("tbody tr")).toHaveCount(digest.staleScores.count);
+    await expect(table.getByRole("link", { name: revised.title, exact: true })).toBeVisible();
+    await expect(table.getByRole("link", { name: control.title, exact: true })).toHaveCount(0);
+  }
+
+  await verifyDestination(() => notice.click());
+  await verifyDestination(() => page.reload());
+  expect((await json<Digest>(api, "get", "/v1/digest")).staleScores.count).toBe(digest.staleScores.count);
+  expect((await json<FitState>(api, "get", `/v1/jobs/${posting.job_id}/fit`)).score).toEqual(staleFit.score);
+  expect(browserWrites).toEqual([]);
+  expect(app.external.calls).toHaveLength(callsBeforeNavigation);
+  await testInfo.attach("jobs-attention-stale-fit-destination", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
+});
 
 test("Jobs attention follows committed visibility and reviewed deletion events without reloading", async ({ api, app, page, browser }, testInfo) => {
   const { posting } = await createScoredFit(api, app, "attention-lifecycle");

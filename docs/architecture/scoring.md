@@ -177,8 +177,14 @@ Professional Experience meanings, Profile's immutable achievement/wording snapsh
 and exact coverage. It groups by achievement identity and shows original posting
 occurrences separately. Missing or stale relationships remain explicit.
 One capability can have several source-established demands. The library exposes
-their assessments separately, showing **Varies by job** instead of choosing the
-strongest/latest assessment. A missing or stale demand remains visible. Exact
+their assessments separately. **Profile match** reports assessment currentness
+before outcomes: Not assessed, Needs update for earlier-only assessments, or
+Partially assessed for mixed currentness. When all demands have current
+assessments, it reports the shared outcome or **Varies by job** for different
+outcomes, without choosing the strongest/latest assessment. Demand count is
+separate context. Recorded achievement relationships include retained historical
+records, with earlier-only contributions marked for review; they grant no current
+support or approval. A missing or stale demand remains visible. Exact
 wording coverage binds its demand and assessment, not merely their shared model
 batch receipt. A common maintained variant may retain multiple demand bindings;
 uncovered demands stay explicit gaps without automatic editorial alternatives.

@@ -46,8 +46,8 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **137 journeys in 45 project-file groups**:
-**136 Chromium cases in 44 spec files**, plus **one demo case in one file**.
+The current configured inventory is **138 journeys in 45 project-file groups**:
+**137 Chromium cases in 44 spec files**, plus **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts and keyboard-driven Profile saves. Listing
@@ -64,6 +64,10 @@ creates historical source records through its own public application. The new
 source must include hidden members, preserve independent technology, correct an
 old technical-practice category, retain original category/evidence/history, and
 publish recorded aliases without transferring assessment or approval authority.
+The library projection also distinguishes unassessed and stale demand sets
+from differing current Profile matches. Retained achievement relationships stay
+visible with a review status, deduplicate by achievement identity and do not
+become current qualification or wording authority.
 The historical-attribution witness has positive publication and exact replay
 coverage, plus active-member and unchanged-definition refusal controls. These
 controlled choices test validation and ownership; they do not grade a model's
@@ -809,7 +813,7 @@ cannot qualify all 57, and earlier failures remain part of the evidence.
 | Added journey | Authored assertions and boundary |
 | --- | --- |
 | [Appearance](../../../apps/web/e2e/journeys/appearance.spec.ts) | Exercise all ten color and ten font choices through the UI, verify actual font loading and persistence, restore Graphite + Geist, and compare the real Plate document geometry and accepted PDF bytes before/after. App presentation cannot change the document template or accepted export. |
-| [Jobs attention](../../../apps/web/e2e/journeys/jobs-attention.spec.ts) | Preserve deliberate inactive-source intent while showing quarantined or repeatedly failing sources as actionable. Inspect actual saved registry state and model/action counts; viewing attention cannot enable or rewrite sources. |
+| [Jobs attention](../../../apps/web/e2e/journeys/jobs-attention.spec.ts) | Preserve deliberate inactive-source intent while showing quarantined or repeatedly failing sources as actionable. Click the stale-Fit notice and verify its counted active-job cohort, canonical Fit filter, reload and unassessed control. Inspect actual saved registry state and model/action counts; attention reads and navigation cannot enable sources or admit work. |
 | [Profile workspace](../../../apps/web/e2e/journeys/profile-workspace.spec.ts) | Exercise peer sections, individual role/summary/date/skill/education fields, canonical saves/reload, exact wording proposals and decisions, and role/achievement remove/restore with original IDs and retained history. UI recovery, not direct database reconstruction, must preserve drafts and accepted work. |
 | [Whole-product surfaces](../../../apps/web/e2e/journeys/redesign-surfaces.spec.ts) | Load 26 retained surfaces at 1440 × 1000, 1860 × 1227, 2943 × 1227 and 390 × 844: 104 settled captures within one journey. Check mounted navigation, headings, meaningful loaded/explicit-empty content and page overflow, plus real saved-material search/clear/state, control geometry and Plate/PDF access. This does not judge visual craft: earlier passing inventory checks still exposed inner Profile and Materials control defects during image inspection. |
 | [Requirement associations](../../../apps/web/e2e/journeys/requirement-associations.spec.ts) | Create/revise/remove/restore many-to-many user intent through the real library/Profile flow. Keep exact requirement/source/optional-wording pins, stale history, achievement-based grouping and selected/filter/return context. Manual links never create assessment, coverage, score or model work. |
