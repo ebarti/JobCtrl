@@ -38,7 +38,7 @@ class DurableGap(pdb.Pdb):
         self.set_continue()
 
 
-debugger = DurableGap(nosigint=True, readrc=False, backend="settrace")
+debugger = DurableGap(nosigint=True, readrc=False)
 error = debugger.set_break(str(target), line_number)
 if error:
     raise RuntimeError(error)

@@ -89,6 +89,24 @@ boundary and scoped Python checks passed. This focused result does not qualify
 the full 160-case hosted inventory or prove real-provider semantic quality.
 Case deadlines, zero retries and the 720-second global limit remain unchanged.
 
+Hosted run `43978958221` on `79517f1ea` exposed two test-owned failures.
+Six recovery cases could not start their observer: Python 3.12's `Pdb` does
+not accept the newer `backend` argument. The typed-qualification journey
+expected an impact call even though its changed cited Language source required
+structural reassessment and the other four qualifications retained exact
+authority. The observer now uses the compatible default tracing backend; the
+typed journey verifies the full five-row partition, selected Language demand,
+four retained assessment/receipt IDs, one model call and unchanged sibling
+score. No application behavior or existing limits changed.
+
+Owned run `e2e-9OVjEb` passed all **7/7** affected journeys with two workers,
+zero retries and locked CPython 3.12.13 on macOS arm64. Its Python source digest
+`5f6548760dfc40fe06073b504e4f56b2da9f58de5a9b88fd4c3b97a2a933e006`
+matches both failed hosted jobs. Build / journeys / total were
+8.399 / 227.821 / 239.030 seconds; web artifacts and the Python lock remained
+unchanged. Web type and boundary checks passed. Hosted Linux CPython 3.12.16
+and the complete inventory still require their own final-candidate run.
+
 ### Source-role and permission-scope follow-up — 16 November 2026
 
 The inventory grows from 149 to 152: Requirements adds one two-job demand-citation
