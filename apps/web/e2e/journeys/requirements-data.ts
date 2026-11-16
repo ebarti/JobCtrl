@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { expect, type ExternalCall } from "../harness/fixtures.js";
 
 export type ModelSource = { source_id: string; text: string };
-export const NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v5";
+export const NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v6";
+export const PARTITION_V5_PROMPT_VERSION = "requirements-capability-demand-partition-v5";
 export const PARTITION_V4_PROMPT_VERSION = "requirements-capability-demand-partition-v4";
 export const CITATION_SELECTION_PROMPT_VERSION = "requirements-capability-demand-citation-v3";
 export const LEGACY_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-v2";
@@ -244,8 +245,17 @@ export const occurrenceRoots = (value: CatalogSlots) => Object.entries(value.dem
 /** Authors supply the complete semantic partition. Only live IDs, supplied
  * independent handles and verbatim citation selections are joined here. */
 export function catalogNormalization(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]): CatalogSlots {
+  return normalizationSlots(call, capabilities, demands, NORMALIZATION_PROMPT_VERSION);
+}
+
+/** Exact v5 transport while an actual pinned predecessor is running. */
+export function legacyCatalogNormalizationV5(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]): CatalogSlots {
+  return normalizationSlots(call, capabilities, demands, PARTITION_V5_PROMPT_VERSION);
+}
+
+function normalizationSlots(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[], prompt: string): CatalogSlots {
   expect(call.body["operation"]).toBe("requirements.match_catalog");
-  expect(call.body["prompt_version"]).toBe(NORMALIZATION_PROMPT_VERSION);
+  expect(call.body["prompt_version"]).toBe(prompt);
   const context = call.body["context"] as CatalogContext;
   const handles = context.partition_group_handles;
   expect(handles.capabilities).toHaveLength(context.members.length);
@@ -354,6 +364,14 @@ function normalizationResponse<Citation>(call: ExternalCall, capabilities: Capab
  * demands use their authored extraction definition unless the caller supplies
  * an explicit normalized/combined demandDefinition. No source text is matched. */
 export function catalogMatching(call: ExternalCall, choices: Record<string, CatalogChoice>) {
+  return matchingSlots(call, choices, catalogNormalization);
+}
+
+export function legacyCatalogMatchingV5(call: ExternalCall, choices: Record<string, CatalogChoice>) {
+  return matchingSlots(call, choices, legacyCatalogNormalizationV5);
+}
+
+function matchingSlots(call: ExternalCall, choices: Record<string, CatalogChoice>, normalize: typeof catalogNormalization) {
   const context = call.body["context"] as CatalogContext;
   expect(Object.keys(choices).sort()).toEqual(context.incoming.map((row) => row.local_id).sort());
   const groups: CapabilityChoice[] = context.candidates.map((candidate, index) => {
@@ -429,7 +447,7 @@ export function catalogMatching(call: ExternalCall, choices: Record<string, Cata
     else if (reuseDemandFingerprint) demand.reuseDemandFingerprint = reuseDemandFingerprint;
     demand.bindings.push({ jobId: occurrences[0]!.job_id, occurrenceIds: occurrences.map((row) => row.occurrence_id) });
   }
-  const result = catalogNormalization(call, groups, demands);
+  const result = normalize(call, groups, demands);
   const uncertain = context.incoming.filter((row) => choices[row.local_id]!.verdict === "uncertain");
   if (uncertain.length) {
     result.status = "needs_review";

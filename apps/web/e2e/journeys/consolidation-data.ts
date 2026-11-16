@@ -1,6 +1,6 @@
 import type { APIRequestContext } from "@playwright/test";
 import { expect, json, modelCall, type ApplicationStack, type ExternalCall } from "../harness/fixtures.js";
-import { catalogNormalization, catalogMemberMeaning, legacyCatalogMatching, legacyCatalogNormalizationV2, legacyCatalogNormalizationV3, legacyCatalogNormalizationV4, typedExtraction,
+import { catalogNormalization, catalogMemberMeaning, legacyCatalogMatching, legacyCatalogNormalizationV2, legacyCatalogNormalizationV3, legacyCatalogNormalizationV4, legacyCatalogNormalizationV5, typedExtraction,
   type CapabilityChoice, type CatalogChoice, type CatalogContext, type BoundCorrectionWitness, type DemandChoice, type ReusableDemand } from "./requirements-data.js";
 import type { CapturedPosting, RequirementSnapshot } from "./reuse-data.js";
 
@@ -8,6 +8,7 @@ export const CONSOLIDATION_PREDECESSOR = "5b9db7ddfa20fa2d618687da1b311e22872866
 export const CITATION_V2_PREDECESSOR = "6e4131061fb41aab4743701084a7c74a19fa21f3";
 export const CITATION_V3_PREDECESSOR = "943c8b4d0c6f4a15521e10c04a015de726bfcbb9";
 export const PARTITION_V4_PREDECESSOR = "5d3fda5352fe4418332b989c05f710e0529f578c";
+export const PARTITION_V5_PREDECESSOR = "df06b08ae201f7a73dc2c359944c06daf517c69e";
 export const NORMALIZATION_VERSION = "requirements-capability-demand-v2";
 export type CitationBindingSummary = { binder_version: string; selection_fingerprint: string; derived_fingerprint: string;
   segment_catalog_fingerprint: string; source_fingerprint: string; source_context_fingerprint: string };
@@ -97,6 +98,13 @@ export function legacyAuthoredPartitionV4(call: ExternalCall, groups: Capability
   groupId: string; definition: string; jobIds: string[]; reuseDemandFingerprint?: string;
 }[]) {
   return legacyCatalogNormalizationV4(call, groups, authoredDemandBindings(call, groups, demands));
+}
+
+/** Exact v5 transport before a real source upgrade. */
+export function legacyAuthoredPartitionV5(call: ExternalCall, groups: CapabilityChoice[], demands: {
+  groupId: string; definition: string; jobIds: string[]; reuseDemandFingerprint?: string;
+}[]) {
+  return legacyCatalogNormalizationV5(call, groups, authoredDemandBindings(call, groups, demands));
 }
 
 function authoredDemandBindings(call: ExternalCall, groups: CapabilityChoice[], demands: {

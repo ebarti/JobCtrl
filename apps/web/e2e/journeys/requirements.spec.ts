@@ -529,6 +529,7 @@ for (const defect of [
     expect(result.status(), await result.text()).toBe(
       defect === "unknown field" ||
         defect === "unknown category" ||
+        defect === "foreign source" ||
         defect === "provider unavailable"
         ? 502
         : defect === "stale revision"

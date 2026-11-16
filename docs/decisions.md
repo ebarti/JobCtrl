@@ -3623,6 +3623,23 @@ replay is refused. Raw receipts remain immutable; raw, intermediate and exact-qu
 fingerprints stay distinct. Semantic policy v2, demand fingerprints and SQL schemas
 do not change, so accepted catalog certificates are not staled by the new wire.
 
+**Role-specific citation references.** V6 retains the terminal-group shape and
+uses finite offered source-ID enums matching the existing citation authority.
+Demand evidence may select inventory, occurrence sources and eligible posting
+sources, with the final bound-group subset checked by the owner. Supplied accepted
+demand-definition documents support exact reuse selection, not original demand
+truth. They remain in the complete input and are excluded from demand citations.
+Other citation fields retain their broader source vocabulary and mandatory-source
+or correction-witness checks. Source roles follow recorded IDs/revisions; no prose
+classification is introduced. Exact source/segment binding is unchanged.
+
+This closes a mismatch in v5: the global citation vocabulary allowed real supplied
+prior definitions as extra demand evidence while publication correctly rejected
+their evidence role. The fix constrains the offered protocol; it neither strips
+citations from raw authority nor widens the validator. Exact v5 schemas remain in
+explicit historical dispatch. Prompt/schema v6 changes new request/action identity;
+partition binder v2, citation binder v1, envelope v3, semantic v2 and SQL remain.
+
 **Fit and wording.** Qualification reuse binds Profile, capability ID/revision,
 normalized demand, permitted factual sources and qualification-policy/prompt
 version. The existing complete missing-item batch handles all applicable demands;

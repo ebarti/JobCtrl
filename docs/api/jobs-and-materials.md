@@ -220,7 +220,7 @@ current navigation may follow a recorded alias. Old typed job snapshots report
 `consolidation_required` staleness and cannot supply new assessment authority.
 
 Consolidation retains semantic policy `requirements-capability-demand-v2` and uses
-wire/prompt `requirements-capability-demand-partition-v5`. Its strict raw
+wire/prompt `requirements-capability-demand-partition-v6`. Its strict raw
 `CatalogNormalizationSlots` result requires a property for every supplied member
 in `member_slots` and every occurrence in `occurrence_slots`. Each slot is assigned
 to an independent pre-offered capability/demand group handle or explicitly
@@ -238,6 +238,17 @@ derives exact quotes from one source value/range using
 offsets. Full source evidence remains in one complete determination per operation.
 Generic extraction, Fit and other feature citation formats are unchanged.
 
+V6 source-ID enums enforce citation roles before owner publication. Demand evidence
+can select inventory, occurrence sources and postings with a matching offered
+occurrence's job/revision/hash. The owner still checks every citation against the
+actual demand's bound occurrences and eligible postings. Supplied prior normalized
+demand definitions are reuse context only: select `reuse_demand_fingerprint` to
+request exact reuse, without citing that definition as original evidence. Other
+citation fields retain their broader supplied-source vocabulary and existing
+required-source/witness rules. Segment IDs keep their existing format; the exact
+source/segment binder remains authoritative. No model-selected citation is dropped
+or rewritten to make an invalid response acceptable.
+
 The report's `partition_binding` is versioned `requirements-partition-binding-v2`
 and contains `raw_selection_fingerprint`, `intermediate_fingerprint`, exact
 `member_groups`/`occurrence_groups` assignments and derived `demand_capabilities`
@@ -253,8 +264,10 @@ binding's intermediate fingerprint. The gateway accepted-result fingerprint
 always pins the raw slots. Raw model selection/cache/gateway authority is retained
 unchanged; intermediate selection, derived quotes and both bindings are stored
 separately in the existing reconciliation's JSON envelope, versioned
-`requirements-normalization-binding-v3`. Old v2/v3/v4 history remains readable and
-explicit pure validation remains tied to its original prompt/input. No SQL schema,
+`requirements-normalization-binding-v3`. Old v2/v3/v4/v5 history remains readable and
+explicit pure validation remains tied to its original prompt/input, including the
+exact v5 schema. V6 changes prompt/schema identity only; binder and envelope
+versions remain unchanged. No SQL schema,
 capability identity policy or normalized-demand fingerprint changes are implied
 by the citation format. Durable Requirements action versions and idempotent input
 hashes include the partition wire so an old quote/array/graph action cannot resume as a

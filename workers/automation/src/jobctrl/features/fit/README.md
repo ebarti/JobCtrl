@@ -77,6 +77,17 @@ category, revision, demand fingerprint and permitted evidence IDs. There are no 
 inventories, lexical judgments, per-item semantic retries or result replay cache.
 An all-current set makes zero qualification calls.
 
+Fresh requests use lossless `fit-permission-scopes-v1` context transport. Equal
+ordered permission-ID lists occur once in `permission_scopes`; each requirement
+references its own `permission_scope_id`. All original facts, canonical IDs,
+categories, alternatives and output fields remain unchanged. Exact inverse
+expansion and source/context hashes are checked before the model call. Version,
+hashes and counts are retained in opaque assessment provenance without fact text.
+The encoded-context hash/byte count excludes the binding itself to avoid a
+circular identity. This transport tag changes the model input fingerprint, while
+v4 qualification policy, semantic/source fingerprints and currentness stay
+unchanged. Earlier accepted v4 assessments remain current and reusable.
+
 The strict response remains `{ requirements: QualificationDecision[] }`. It must
 contain every requested ID/revision/demand binding exactly once. Decisions retain `kind`,
 `strength`, confidence, rationale, exact citations, supported achievement IDs and

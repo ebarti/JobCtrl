@@ -46,14 +46,54 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **149 journeys in 46 project-file groups**:
-**148 Chromium cases in 45 spec files**, plus **one demo case in one file**.
+The current configured inventory is **152 journeys in 47 project-file groups**:
+**151 Chromium cases in 46 spec files**, plus **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts, keyboard-driven Profile saves, posting-fetch refusals and the
-actual terminal-root v4 predecessor upgrade. The four hosted shard listings
-contain 39 / 36 / 37 / 37 cases and match the unsharded inventory exactly once.
+actual terminal-root v4 and terminal-group v5 predecessor upgrades, demand-citation
+role refusals, and Fit schema refusals. The four hosted shard listings
+contain 40 / 36 / 38 / 38 cases and match the unsharded inventory exactly once.
 Listing these scenarios is not evidence that the complete current candidate passed.
+
+### Source-role and permission-scope follow-up — 16 November 2026
+
+The inventory grows from 149 to 152: Requirements adds one two-job demand-citation
+role journey and one actual v5 predecessor upgrade; Fit adds one explicit schema
+refusal variant. The existing cold Fit batch case now exercises real v4 accepted
+authority before and after a source upgrade. Hosted setup explicitly fetches
+`df06b08ae201f7a73dc2c359944c06daf517c69e` for both upgrades, alongside every prior
+fixed predecessor. The exact commit is also allowlisted by the harness. This
+repairs historical-object availability in a shallow checkout; no retry, deadline,
+case or acceptance gate changes.
+
+The Requirements run `e2e-UckHqH` passed **16/16** cases with zero retries. It proves
+that an offered prior-definition citation cannot enter demand evidence, failed
+publication preserves the first job's accepted authority, and a fresh explicit
+operation succeeds with original evidence and the same exact reuse fingerprint.
+Valid cross-job demand bindings remain supported. The run also covers real v5/v4
+history and durable replay fences, exhaustive opposing partitions, structural
+refusals, historical correction, reuse, catalog races and cancellation. Build,
+journey and total times were **8.530 s / 62.069 s / 72.625 s**.
+
+Fit's focused run `e2e-xwsgah` passed **6/6** cases, and its final explicit schema
+refusal run `e2e-NpmIwE` passed **1/1**, with zero retries. These exercise source-scope
+transport, accepted v4 authority reuse across the real upgrade, typed category
+routes and source permissions, and refusal without partial authority. Requirements
+uses prompt/schema v6 with exact v5 historical dispatch; partition/citation binders,
+semantic policy, demand fingerprints and SQL remain unchanged. The provider-strict
+schema proof confirms role enums survive adaptation and historical v5 schemas
+remain structurally identical to the predecessor.
+
+The final combined Python source digest is
+`ef701bf55c514393be4784169ceff80f7205b660f8e3b24e9268cf70b2f71f02`;
+the Requirements run's source-candidate digest is
+`0e208e8c5cb77be5beb3ba62f1be31106351f73f7becf189f799c43ac3d3d58e`.
+The unchanged web digest is
+`038f6813b05ce0de699c0efc2b5e6216cf41e8936eb3e997923c359b327234cf`;
+dependency locks also stayed unchanged. Ruff, TypeScript and web boundary checks
+passed. These are affected-path local proofs, not a completed 152-case hosted
+run or a claim that a real provider has accepted the pending v6 recovery.
 
 ### Capability consolidation — 15 November 2026
 

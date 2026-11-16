@@ -2,7 +2,7 @@ import type { APIRequestContext } from "@playwright/test";
 import { test, expect, json, modelCall, action, completed, terminal, type ApplicationStack } from "../harness/fixtures.js";
 import { baseline, createBaseline, type Profile } from "./core-data.js";
 import { catalogMatching, typedExtraction, modelSources } from "./requirements-data.js";
-import { qualificationBatchDecision, type QualificationBinding, type QualificationChoice } from "./qualification-data.js";
+import { qualificationBatchDecision, qualificationBindings, type QualificationBinding, type QualificationChoice } from "./qualification-data.js";
 import { captureReusePosting, type RequirementSnapshot } from "./reuse-data.js";
 import { groupedCoverageDecision, impactPartition, refreshPayload, startRefresh, type PendingRefresh, type RefreshOperation } from "./fit-data.js";
 
@@ -67,7 +67,7 @@ async function typedJob(api: APIRequestContext, app: ApplicationStack, slug: str
   };
   const assessing = api.post(`/v1/jobs/${posting.job_id}/fit/assess`, { data: assess });
   const batch = await modelCall(app, "fit.qualification-batch");
-  const bindings = (batch.body["context"] as { requirements: QualificationBinding[] }).requirements;
+  const bindings = qualificationBindings(batch);
   expect(bindings).toHaveLength(5);
   expect(new Set(bindings.map((row) => row.category))).toEqual(new Set(["skill", "professional_experience", "education", "language"]));
   expect(bindings.find((row) => row.category === "language")!.permitted_evidence_ids).toEqual([`evidence:${evidence.language.source_id}`]);

@@ -142,7 +142,7 @@ authority. There is no top-k selection, paging, chunking, lexical fallback or
 separate novelty judgment. Existing-only repair and every semantic ingestion or
 correction use this mandatory gate.
 
-The v5 immutable model result, `CatalogNormalizationSlots`, contains `status`, exact
+The v6 immutable model result, `CatalogNormalizationSlots`, contains `status`, exact
 `catalog_revision`, `member_slots`, `occurrence_slots`, `capability_groups`,
 `demand_groups` and `corrections`. Its strict operation-specific schema requires a
 property for every supplied member and occurrence. Each slot is `assigned` or
@@ -181,6 +181,19 @@ preview locates a long-value segment. Inventory citations use an exact serialize
 epoch fragment. Models select offered segment IDs, never calculate offsets,
 copy/paraphrase quotes, or join fields.
 
+V6 citation source IDs are finite offered enums, scoped to the output field's
+existing authority. Demand evidence permits only inventory, occurrence sources,
+and postings with a matching offered occurrence's job/revision/hash. The final
+validator still checks the narrower actual demand's bound occurrence/posting set.
+Accepted-demand definition documents stay available for verbatim copying and
+`reuse_demand_fingerprint`; they are never offered as original demand evidence.
+Capability, correction and unresolved citations retain their broader supplied-source
+vocabulary and existing mandatory-source/witness checks. Segment IDs retain their
+existing string format and exact source/segment binding; the schema does not repeat
+the entire segment inventory in enums. Unknown sources fail schema validation;
+foreign segments, mismatched source/segment pairs and unauthorized bound sources
+still fail the existing owner checks. No citation is silently removed or repaired.
+
 The deterministic `requirements-citation-binding-v1` binder validates the source,
 path, range and catalog fingerprints, then derives exact `Citation` quote fields
 in a separate `CatalogNormalization` projection. Generic extraction and other
@@ -194,9 +207,12 @@ fingerprint pins the exact-quote projection. The reconciliation keeps raw slots
 in `decision_json` and stores `intermediate_selection`, `derived_decision`,
 `partition_binding` and `citation_binding` separately in the existing report JSON
 envelope, versioned `requirements-normalization-binding-v3`. Frozen SQL schemas
-do not change. Old flat reports and v2/v3/v4 envelopes remain readable. Pure historical
-validation dispatches explicitly by the original prompt version, including the
-unchanged v4 graph decoder. Runtime never falls back to an old wire.
+do not change. Old flat reports, citation-binding-v1 and normalization-binding-v2/v3
+envelopes remain readable. Pure historical validation dispatches explicitly by
+the original prompt version, including the unchanged v4 graph decoder and exact
+v5 schema. The v6 prompt/schema supplies a fresh request and durable action identity
+without changing any binder, semantic policy or accepted-demand fingerprint.
+Runtime never falls back to an old wire.
 The public report exposes `partition_binding` with both fingerprints, explicit
 `member_groups`, `occurrence_groups` and derived `demand_capabilities` joins, plus `citation_binding`
 fingerprints, the complete structural `source_context`,
@@ -345,7 +361,7 @@ writes admit no Fit followup.
 | `POST /v1/jobs/{job_id}/requirements/{occurrence_id}/binding` | Versioned explicit binding correction with selected target and reason. |
 | `POST /v1/jobs/{job_id}/requirements/corrections` | Source-bound one-to-one correction of selected occurrence meanings and bindings. |
 | `POST /v1/requirements/{requirement_id}/revisions` | Versioned source-bound canonical correction. Proposed shape is the extracted requirement plus exact spans. |
-| `requirements.consolidate`, `requirements.refresh`, `requirements.correct_binding`, `requirements.correct_occurrences`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2:requirements-capability-demand-v2:requirements-capability-demand-partition-v5`. Durable consolidation uses the run identity and accepts `expected_catalog_revision`. |
+| `requirements.consolidate`, `requirements.refresh`, `requirements.correct_binding`, `requirements.correct_occurrences`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2:requirements-capability-demand-v2:requirements-capability-demand-partition-v6`. Durable consolidation uses the run identity and accepts `expected_catalog_revision`. |
 
 Public owner methods also include nullable `find_job_requirements`, required
 `get_job_requirements`, exact/historical `get_requirement`, full

@@ -79,6 +79,14 @@ durable replay before a fresh v5 determination. Provider-adapted schemas must ke
 all required input keys and terminal definitions; structural binding cannot invent
 meaning or choose representatives.
 
+Citation-role proof includes a two-job complete-catalog request with accepted prior
+demand definitions still supplied. A prior-definition citation in demand evidence
+must fail before publication; the first job's accepted catalog/snapshot/receipt must
+remain unchanged. A new explicit operation using original evidence and the same
+exact reuse fingerprint must succeed, including valid cross-job demand bindings.
+Check offered source enums in provider-adapted schemas, exact source/segment checks,
+and an actual v5 predecessor upgrade with unchanged history and refused old replay.
+
 Profile owns facts, attachments, confirmations, authored baseline and wording
 approval. Requirements owns qualified meanings and source occurrences. Fit
 owns factual support and exact approved-wording coverage relations. Resumes

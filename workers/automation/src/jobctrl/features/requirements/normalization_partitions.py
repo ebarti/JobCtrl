@@ -35,7 +35,37 @@ def partition_group_handles(context):
             "demands": [f"demand:{index + 1}" for index in range(len(context["occurrences"]))]}
 
 
+def _citation_type(name, source_ids, context):
+    catalog = context["citation_segments"]
+    if not source_ids or not set(source_ids).issubset(catalog):
+        raise RequirementError("citation_segment_catalog_invalid")
+    return create_model(name + "Citation", __base__=(CitationSelection, SlotValue),
+        source_id=(_id_type(name + "SourceId", source_ids), ...))
+
+
+def _demand_evidence_sources(context):
+    # Source roles come only from recorded joins. A supplied prior definition
+    # is copy/reuse context, never original demand evidence.
+    allowed = {context["catalog_inventory_source_id"]}
+    allowed.update(row["source_id"] for row in context["occurrences"])
+    for posting in context["posting_sources"]:
+        if any((row["job_id"], row["posting_revision"], row["posting_hash"])
+                == (posting["job_id"], posting["revision"], posting["source_hash"])
+                for row in context["occurrences"]):
+            allowed.add(posting["source_id"])
+    return tuple(ident for ident in context["citation_segments"] if ident in allowed)
+
+
 def partition_selection_schema(context):
+    return _partition_selection_schema(context, offered_citations=True)
+
+
+def partition_selection_schema_v5(context):
+    """Exact historical v5 schema; never a fallback for a current response."""
+    return _partition_selection_schema(context, offered_citations=False)
+
+
+def _partition_selection_schema(context, *, offered_citations):
     member_ids = tuple(row["member_id"] for row in context["members"])
     occurrence_ids = tuple(row["occurrence_id"] for row in context["occurrences"])
     if len(set(member_ids)) != len(member_ids) or len(set(occurrence_ids)) != len(occurrence_ids):
@@ -44,25 +74,34 @@ def partition_selection_schema(context):
     member_id = _id_type("MemberId", member_ids)
     capability_id = _id_type("CapabilityGroupId", handles["capabilities"])
     demand_id = _id_type("DemandGroupId", handles["demands"])
-    capability = create_model("CapabilityGroup", __base__=(CapabilityGroup, SlotValue),
-                              reuse_requirement_id=(member_id | None, ...))
+    citation, demand, unresolved = CitationSelection, DemandGroup, UnresolvedSlot
+    capability_fields = {"reuse_requirement_id": (member_id | None, ...)}
+    if offered_citations:
+        citation = _citation_type("Offered", tuple(context["citation_segments"]), context)
+        demand_citation = _citation_type("DemandEvidence", _demand_evidence_sources(context), context)
+        capability_fields["citations"] = (list[citation], Field(min_length=1))
+        demand = create_model("DemandGroup", __base__=(DemandGroup, SlotValue),
+                              citations=(list[demand_citation], Field(min_length=1)))
+        unresolved = create_model("UnresolvedSlot", __base__=(UnresolvedSlot, SlotValue),
+                                  citations=(list[citation], Field(min_length=1)))
+    capability = create_model("CapabilityGroup", __base__=(CapabilityGroup, SlotValue), **capability_fields)
     member_assignment = create_model("MemberAssignment", __base__=SlotValue,
         kind=(Literal["assigned"], ...), capability_group_id=(capability_id, ...))
     occurrence_assignment = create_model("OccurrenceAssignment", __base__=SlotValue,
         kind=(Literal["assigned"], ...), demand_group_id=(demand_id, ...))
     members = create_model("MemberSlots", __base__=SlotValue,
-        **{ident: (member_assignment | UnresolvedSlot, ...) for ident in member_ids})
+        **{ident: (member_assignment | unresolved, ...) for ident in member_ids})
     occurrences = create_model("OccurrenceSlots", __base__=SlotValue,
-        **{ident: (occurrence_assignment | UnresolvedSlot, ...) for ident in occurrence_ids})
+        **{ident: (occurrence_assignment | unresolved, ...) for ident in occurrence_ids})
     capabilities = create_model("CapabilityGroups", __base__=SlotValue,
         **{ident: (capability | None, ...) for ident in handles["capabilities"]})
     demands = create_model("DemandGroups", __base__=SlotValue,
-        **{ident: (DemandGroup | None, ...) for ident in handles["demands"]})
+        **{ident: (demand | None, ...) for ident in handles["demands"]})
     correction = create_model("PartitionCorrection", __base__=SlotValue,
         member_id=(member_id, ...), represented_by_member_id=(member_id, ...),
         unsupported_claim=(StrictStr, Field(min_length=1, max_length=2500)),
         reason=(StrictStr, Field(min_length=1, max_length=6000)),
-        citations=(list[CitationSelection], Field(min_length=2)))
+        citations=(list[citation], Field(min_length=2)))
     return create_model("CatalogNormalizationSlots", __base__=SlotValue,
         status=(Literal["complete", "needs_review"], ...), catalog_revision=(StrictInt, Field(ge=0)),
         member_slots=(members, ...), occurrence_slots=(occurrences, ...),

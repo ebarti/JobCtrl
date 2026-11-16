@@ -149,6 +149,15 @@ Direct demands also bind their job-local identities, exact posting source and
 revision. They cannot reuse another job's qualification or gain reusable catalog
 identity from similar fields.
 
+The `fit-permission-scopes-v1` context transport shares only identical ordered
+permission-ID lists. Each row references a defined scope; inverse expansion must
+reproduce its canonical context exactly, with every factual source, category and
+alternative retained. Opaque provenance records the transport version,
+context/source/scope hashes and counts. The encoded-context hash excludes its own
+binding. This version changes model request identity, while the v4 qualification
+prompt policy, source fingerprints, output schema and currentness checks remain
+unchanged. Accepted v4 authority stays reusable without a refresh.
+
 Each accepted row keeps its own assessment identity and canonical revision.
 Its demand fingerprint and qualification policy remain explicit. All lookup,
 head, replay and publication guards use that same demand binding; adding a hash
