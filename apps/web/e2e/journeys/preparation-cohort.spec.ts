@@ -11,6 +11,58 @@ import { cohortCitationSelection, qualificationBatchDecision, qualificationBindi
 
 const SERIAL_PREDECESSOR = "38ef94613ebb7c0413d8d5ee89987ef860f53b13";
 
+test.describe("saved posting detail upgrade", () => {
+  test.use({ sourceRevision: SERIAL_PREDECESSOR });
+
+  test("rediscovery preserves accepted detail and recovers earlier listing downgrades", async ({ api, app }) => {
+    const { posting, fit } = await createScoredFit(api, app, "preserve-rediscovered-detail");
+    const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+    await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 1 });
+    const path = `/v1/jobs/${posting.job_id}`;
+    const detail = await json<{ revision: number; source_hash: string; description: string; content_state: string }>(api, "get", path);
+    const savedRequirements = await json<NormalizedSnapshot>(api, "get", `${path}/requirements`);
+    async function rediscover() {
+      const run = await action(api, "discovery.search", {
+        queries: ["Synthetic engineer"], locations: [{ location: "Madrid", remote: true }],
+      });
+      const source = await app.external.next();
+      expect(source.path).toBe("/discovery");
+      source.respond({ complete: true, cursor: null, jobs: [{ job_key: "preserve-rediscovered-detail",
+        url: posting.url, title: posting.title, company: posting.company, location: "Madrid", description: "A short search result summary." }] });
+      const result = await completed(api, run.runId);
+      expect(result["result"]).toMatchObject({ newJobs: 0 });
+      return run.runId;
+    }
+
+    const firstRun = await rediscover();
+    const downgraded = await json<typeof detail>(api, "get", path);
+    expect(downgraded).toMatchObject({ revision: detail.revision + 1, content_state: "listing_only", description: "A short search result summary." });
+    expect((await json<FitState>(api, "get", `${path}/fit`)).current).toBe(false);
+
+    const callsBeforeUpgrade = app.external.calls.length;
+    const upgrade = await app.upgradeSource();
+    expect(upgrade.current).not.toBe(upgrade.previous);
+    const recovered = await json<typeof detail>(api, "get", path);
+    expect(recovered).toMatchObject({ revision: downgraded.revision + 1, source_hash: detail.source_hash,
+      description: detail.description, content_state: "accepted_detail" });
+    expect(await json<NormalizedSnapshot>(api, "get", `${path}/requirements`)).toEqual(savedRequirements);
+    expect(await json<FitState>(api, "get", `${path}/fit`)).toMatchObject({
+      current: true, requirements_current: true, stale_reasons: [], score: fit.score,
+    });
+    expect(app.external.calls).toHaveLength(callsBeforeUpgrade);
+
+    const secondRun = await rediscover();
+    expect(await json<typeof detail>(api, "get", path)).toEqual(recovered);
+    const history = await json<{ snapshots: { revision: number }[]; observations: { run_id: string | null; posting_revision: number }[] }>(api, "get", `${path}/snapshots`);
+    expect(history.snapshots.map((row) => row.revision)).toEqual([recovered.revision, downgraded.revision, detail.revision]);
+    expect(history.observations.filter((row) => row.run_id !== null)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ run_id: firstRun, posting_revision: downgraded.revision }),
+      expect.objectContaining({ run_id: secondRun, posting_revision: recovered.revision }),
+    ]));
+    expect(app.external.calls.slice(callsBeforeUpgrade).map((call) => call.path)).toEqual(["/discovery"]);
+  });
+});
+
 async function requirementAttempts(app: ApplicationStack, runId: string) {
   const owner = JSON.parse((await app.file(".jobctrl-e2e-owned.json")).toString());
   expect(owner.workspace).toBe(app.workspace);

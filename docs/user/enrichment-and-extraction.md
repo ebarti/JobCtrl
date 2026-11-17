@@ -52,6 +52,12 @@ A failed fetch or exhausted cascade records a retryable attempt without
 manufacturing a snapshot. Failure remains isolated to that job, so useful
 results from the rest of the source batch survive.
 
+When a search rediscovers a saved job, JobCtrl records the new observation and
+keeps the accepted full posting. A search card can contain description text
+without establishing a new accepted detail capture. For older jobs demoted by
+search ingestion, the upgrade restores the original accepted detail as a new
+revision and keeps the complete history.
+
 Downstream role analysis and requirement extraction can reuse a verified model
 result when their complete source text, context and execution settings are
 exactly identical. This is separate from deciding whether two leads are the

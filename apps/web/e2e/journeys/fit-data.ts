@@ -10,8 +10,8 @@ import {
   baseline,
   createBaseline,
   type Library,
-  type Posting,
 } from "./core-data.js";
+import type { CapturedPosting } from "./reuse-data.js";
 import {
   catalogMatching,
   legacyCatalogMatchingV5,
@@ -41,6 +41,8 @@ export type FitAssessment = {
 };
 export type FitState = {
   current: boolean;
+  requirements_current: boolean;
+  stale_reasons: string[];
   score: { revision: number; score: number; assessments: FitAssessment[] };
   coverage: { wording_gaps: unknown[] };
 };
@@ -313,7 +315,7 @@ export async function createScoredFit(
       ? ["Establish explicit review ownership for operational changes."]
       : []),
   ];
-  const posting = await json<Posting>(api, "post", "/v1/jobs/capture", {
+  const posting = await json<CapturedPosting & { title: string; company: string; url: string }>(api, "post", "/v1/jobs/capture", {
     url: `https://example.com/jobs/${slug}`,
     title: "Synthetic Reliability Engineer",
     company: "Synthetic Refresh Company",

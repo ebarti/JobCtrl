@@ -40,6 +40,12 @@ detail acquisition; it cannot merge jobs. An unfamiliar refresh redirect needs
 source-bound identity evidence. An unknown/different redirect preserves the last
 accepted posting.
 
+Discovery observations without accepted detail attach to the saved full posting.
+This includes provider summaries with nonempty description text. The upgrade
+recovers earlier discovery-only downgrades by appending the exact retained
+accepted detail as a new head. Historical revisions and observations keep their
+original identities, and the recovery uses the saved capture rationale.
+
 Typed manual fields remain an explicit user source. Captured pages use strict
 page interpretation, exact source-range description selection and a separate
 source-bound quality determination. Citation and structural failures preserve

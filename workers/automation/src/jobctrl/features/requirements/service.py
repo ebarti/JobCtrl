@@ -72,7 +72,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
             reasons = ["consolidation_required"]
         return {**snapshot, "stale": stale, "stale_reasons": reasons, "latest_attempt": self.store.latest_attempt(job_id, connection)}
 
-    def job_bindings(self, job_ids, connection=None, *, postings=None) -> dict:
+    def job_bindings(self, job_ids, connection=None, *, postings=None, scored=None) -> dict:
         """Bounded list-query authority without per-job feature/private reads.
 
         Accepted artifacts only are returned. Callers may provide the Jobs
@@ -87,20 +87,19 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         identifiers = list(dict.fromkeys(job_ids))
         if connection is None:
             with self.store.read_session() as connection:
-                return self.job_bindings(identifiers, connection, postings=postings)
+                return self.job_bindings(identifiers, connection, postings=postings, scored=scored)
         if not identifiers:
             return {}
         if postings is None:
             postings = self.jobs.get_job_snapshots(identifiers, connection=connection)
         if not isinstance(postings, dict):
             raise AppError("invalid_posting_snapshots", "Requirement bindings need the public posting snapshot map.")
-        bindings = self.store.job_bindings(identifiers, connection)
+        bindings = self.store.job_bindings(identifiers, connection, scored=scored)
         for job_id, binding in bindings.items():
             posting = postings.get(job_id)
-            if (
-                not isinstance(posting, dict) or posting.get("job_id") != job_id or posting.get("deleted")
-                or posting.get("revision") != binding["posting_revision"] or posting.get("source_hash") != binding["posting_hash"]
-            ):
+            available = isinstance(posting, dict) and posting.get("job_id") == job_id and not posting.get("deleted")
+            binding["posting_available"] = available
+            if not available or posting["source_hash"] != binding["posting_hash"]:
                 binding["stale"] = True
                 binding["stale_reasons"].append("posting_changed_or_unavailable")
         return bindings
@@ -112,9 +111,11 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         self.store.assert_snapshot_current(snapshot, connection)
         if snapshot.get("normalization_version") != NORMALIZATION_VERSION:
             raise ConflictError("The accepted requirement snapshot needs complete catalog consolidation.", reason="consolidation_required")
-        self.jobs.assert_posting_current(
-            snapshot["job_id"], snapshot["posting_revision"], snapshot["posting_hash"], connection=connection,
-        )
+        # A restored immutable posting can have a newer revision with the
+        # exact original source hash. New extraction writes still pin the head.
+        posting = self.jobs.get_posting_snapshot(snapshot["job_id"], connection=connection)
+        if posting["source_hash"] != snapshot["posting_hash"]:
+            raise ConflictError("The posting source has changed.")
 
     def get_requirement(self, requirement_id, revision=None, connection=None):
         if connection is None:

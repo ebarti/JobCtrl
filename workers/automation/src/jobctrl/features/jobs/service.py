@@ -246,7 +246,7 @@ class JobsService:
         guard=None,
         on_accepted=None,
         connection=None,
-        allow_deleted_observation=False,
+        discovery_observation=False,
     ) -> dict:
         # Authored fields are an explicit user source. This path does not invent
         # availability, employer identity, quality or semantic equivalence.
@@ -266,8 +266,9 @@ class JobsService:
                 guard=guard,
                 on_accepted=on_accepted,
                 connection=connection,
+                discovery_observation=discovery_observation,
             )
-            if result.get("deleted") and not allow_deleted_observation:
+            if result.get("deleted") and not discovery_observation:
                 raise AppError("job_deleted", "Restore the saved job before capturing or refreshing this locator.", 409)
             return result
         except ValueError:
@@ -276,7 +277,7 @@ class JobsService:
     def ingest(self, data: dict, *, receipt_key=None, guard=None, connection=None) -> dict:
         """Public Discovery adapter port; all canonical writes still belong here."""
         return self.capture(
-            data, receipt_key=receipt_key, guard=guard, connection=connection, allow_deleted_observation=True
+            data, receipt_key=receipt_key, guard=guard, connection=connection, discovery_observation=True
         )
 
     async def capture_external(

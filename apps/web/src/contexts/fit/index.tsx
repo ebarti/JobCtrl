@@ -50,6 +50,7 @@ const coverageSchema = z.object({
 }).passthrough();
 const fitSchema = z.object({
   job_id: z.string(), current: z.boolean(), stale_reasons: z.array(z.string()),
+  requirements_current: z.boolean().optional(),
   contract_version: z.string().optional(), synthetic: z.boolean().optional(),
   score: scoreSchema.nullable(), coverage: coverageSchema.nullable(),
 }).passthrough();
@@ -314,6 +315,7 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
     {unsupportedLanguage ? <p role="status">Person fit was skipped because this posting was identified as non-English. No zero score was assigned. Review the posting-language evidence in requirement details.</p> : null}
     {historical ? <p role="status">The requirements contract changed. This historical result cannot establish current fit or resume readiness. Refresh requirements, then manually update affected matches to obtain a current assessment.</p>
       : fit && !fit.current && fit.score ? <p role="status">This assessment is out of date: {fit.stale_reasons.map(fitStatusLabel).join("; ") || "a source changed"}. Update affected matches manually; the prior assessment remains available.</p> : null}
+    {fit?.score && fit.current && fit.requirements_current === false ? <p role="status">This score reflects the last analyzed requirements. Analyze the current posting before preparing materials.</p> : null}
     {fit?.score ? <>
       <div className="fit-score-summary" aria-label={historical || unsupportedLanguage ? "Historical person-fit result" : "Saved person-fit result"}>
         <div className="fit-score-summary__score">{historical || unsupportedLanguage ? <span>Historical assessment</span> : null}

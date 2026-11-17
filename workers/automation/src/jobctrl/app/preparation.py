@@ -268,7 +268,8 @@ class PreparationService:
         if recipe == "analyze":
             return not self.jobs.get_analysis(job_id).get("current", False)
         if recipe == "score":
-            return not self.fit.get_job_fit(job_id, include_coverage=False).get("current", False)
+            fit = self.fit.get_job_fit(job_id, include_coverage=False)
+            return not fit["qualifications_current"] or not fit["requirements_current"]
         return not any(r.get("accepted_revision_id") for r in self.resumes.list(job_id))
 
 
@@ -322,7 +323,7 @@ class PreparationService:
             if not baseline_only:
                 fit = self.fit.get_job_fit(job_id, include_coverage=False)
                 score = fit.get("score")
-                if not fit.get("current") or not score:
+                if not fit.get("qualifications_current") or not fit.get("requirements_current") or not score:
                     raise AppError("fit_not_current", "Current person fit is required before resume preparation.", 409)
                 expected_fit = (prior.get("fit", {}).get("result") or {}).get("revision")
                 if expected_fit is not None and score["revision"] != expected_fit:

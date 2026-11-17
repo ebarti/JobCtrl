@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 from contextlib import contextmanager
 
-from jobctrl.app.errors import ConflictError, NotFoundError
+from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 
-from .domain import CONTRACT_VERSION, MEANING_KEYS, RequirementError, canonical_json, current_contract, fingerprint, now
+from .domain import (CONTRACT_VERSION, MEANING_KEYS, RequirementError, canonical_json, current_contract,
+                     fingerprint, now, regrouped_original_demands, snapshot_demand_fingerprints)
 from .normalization_storage import NormalizationStore
 from .cohort_storage import CohortStorage
 from .normalization_domain import NORMALIZATION_VERSION
@@ -34,7 +35,7 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
         ).fetchone()
         return json.loads(row[0]) if row else None
 
-    def job_bindings(self, job_ids, connection):
+    def job_bindings(self, job_ids, connection, *, scored=None):
         if not job_ids:
             return {}
         placeholders = ",".join("?" for _ in job_ids)
@@ -49,7 +50,7 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
             "FROM requirements_accepted a JOIN requirements_snapshots s ON s.job_id=a.job_id AND s.revision=a.revision "
             f"WHERE a.job_id IN ({placeholders})", tuple(job_ids),
         ).fetchall()
-        bindings = {}
+        bindings, comparisons, snapshots = {}, [], {}
         for row in rows:
             records = json.loads(row["bindings_json"])
             accepted = {(item["requirement_id"], item["accepted_revision"]) for item in records}
@@ -64,18 +65,64 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
                 reasons.append("requirement_revised")
             direct = [{"requirement_id": item["requirement_id"], "requirement_revision": item["revision"]}
                       for field in ("education", "languages") for item in snapshot.get(field, [])] if current_contract(snapshot) else []
+            try:
+                job_demands = snapshot_demand_fingerprints(snapshot)
+            except (RequirementError, AppError):
+                job_demands = None
             bindings[row["job_id"]] = {
                 "contract_version": snapshot.get("contract_version"), "normalization_version": snapshot.get("normalization_version"),
                 "status": snapshot.get("status"),
                 "stale_reasons": reasons,
                 "revision": row["revision"], "posting_revision": row["posting_revision"], "posting_hash": row["posting_hash"],
                 "stale": bool(reasons),
+                "job_demands": job_demands,
+                "regrouped": False,
                 "requirement_revisions": [{"requirement_id": ident, "requirement_revision": revision,
                     "demand_fingerprint": demands.get(ident)} for ident, revision in sorted(accepted)] + direct,
                 "current_requirement_revisions": [{"requirement_id": ident, "requirement_revision": revision,
                     "demand_fingerprint": demands.get(ident)} for ident, revision in sorted(current)] + direct,
             }
+            basis = (scored or {}).get(row["job_id"])
+            if (basis and job_demands is not None and basis["job_demands"] != job_demands
+                    and basis["revision"] < row["revision"] and basis["posting_hash"] == row["posting_hash"]):
+                comparisons.append({"job_id": row["job_id"], "before": basis["revision"], "after": row["revision"]})
+                snapshots[row["job_id"]] = snapshot
+        if comparisons:
+            for row in self._regrouping_sources(comparisons, connection):
+                job_id = row["job_id"]
+                earlier = json.loads(row["snapshot_json"])
+                try:
+                    checked = snapshot_demand_fingerprints(earlier)
+                except (RequirementError, AppError):
+                    continue
+                if checked == scored[job_id]["job_demands"]:
+                    bindings[job_id]["regrouped"] = regrouped_original_demands(earlier, snapshots[job_id])
         return bindings
+
+    @staticmethod
+    def _regrouping_sources(comparisons, connection):
+        # Every intervening snapshot must be an accepted catalog replacement
+        # of the same extracted posting. A job proposal uses its own attempt
+        # ID, and an explicit canonical correction has a separate action row.
+        return connection.execute("""
+            SELECT old.job_id, old.snapshot_json
+            FROM json_each(?) requested
+            JOIN requirements_snapshots old ON old.job_id=json_extract(requested.value,'$.job_id')
+                AND old.revision=json_extract(requested.value,'$.before')
+            WHERE NOT EXISTS (
+                SELECT 1 FROM requirements_snapshots revised
+                LEFT JOIN requirements_reconciliations reconciliation
+                    ON reconciliation.operation_id=json_extract(revised.snapshot_json,'$.normalization_provenance.reconciliation_id')
+                LEFT JOIN requirements_revision_actions correction ON correction.action_id=reconciliation.operation_id
+                WHERE revised.job_id=old.job_id AND revised.revision>old.revision
+                    AND revised.revision<=json_extract(requested.value,'$.after')
+                    AND (revised.posting_hash<>old.posting_hash
+                        OR revised.extraction_determination_id<>old.extraction_determination_id
+                        OR reconciliation.operation_id IS NULL
+                        OR revised.attempt_id<>('normalization:' || reconciliation.operation_id || ':' || old.job_id)
+                        OR correction.action_id IS NOT NULL)
+            )
+        """, (canonical_json(comparisons),))
 
     def get_meaning(self, requirement_id, revision=None, connection=None):
         if connection is None:

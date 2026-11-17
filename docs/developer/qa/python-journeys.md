@@ -58,15 +58,38 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **175 journeys in 49 project-file groups**.
-It includes **174 Chromium cases in 48 spec files** and **one demo case in one file**.
+The current configured inventory is **178 journeys in 49 project-file groups**.
+It includes **177 Chromium cases in 48 spec files** and **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts, keyboard-driven Profile saves, posting-fetch refusals and the
 actual terminal-root v4 and terminal-group v5 predecessor upgrades, demand-citation
-role refusals, and Fit schema refusals. The four hosted shard listings
-contain 48 / 50 / 34 / 43 cases and match the unsharded inventory exactly once.
+role refusals, Fit schema refusals, rediscovery recovery and accepted-score
+currentness. The four hosted shard listings contain 48 / 53 / 34 / 43 cases
+and match the unsharded inventory exactly once.
 Listing these scenarios is not evidence that the complete current candidate passed.
+
+### Accepted postings and Fit currentness
+
+The [predecessor upgrade journey](../../../apps/web/e2e/journeys/preparation-cohort.spec.ts)
+starts with a scored full posting, downgrades it through the predecessor's real
+search action and upgrades the same workspace. It checks exact restored posting
+content, unchanged score and requirement records, and later rediscovery that
+keeps the full posting current while recording its observation.
+
+The [Jobs attention journey](../../../apps/web/e2e/journeys/jobs-attention.spec.ts)
+checks equivalent catalog revisions and a contact edit against the saved score.
+A new posting awaits analysis while the score describes its last accepted
+demands. A confirmed requirement change updates the grid, detail and notice,
+with a Profile reason appearing only after an evidence edit. The
+[search completion guard](../../../apps/web/e2e/journeys/search-assessment.spec.ts)
+still refuses a superseded posting during final publication.
+
+The regrouping journey merges two assessed items while preserving the original
+posting and evidence. It checks the saved score and history, zero extra model
+calls, the Jobs warning count and pending qualifications for the combined item.
+An explicit assessment then qualifies the combined item against its current
+source.
 
 ### Initial search cohorts — 17 November 2026
 

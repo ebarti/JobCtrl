@@ -355,6 +355,14 @@ commands, plus `/v1/fit/evidence-map`. Exact request fields live in
 journey. Fit consumes public Profile and Requirements services and publishes
 bounded IDs and revisions, not private evidence, in events.
 
+The Fit grid, detail and attention reads share the accepted-score currentness
+rule. Evidence is compared using the criteria recorded on the score. Demand
+comparison first checks the accepted normalized job demands and direct criteria.
+When consolidation changes the groups, Requirements compares the exact source
+snapshot used by the score with the accepted snapshot. A verified regrouping of
+the same extracted demands keeps the saved score current. Preparation and
+application work also checks the grouped qualifications and posting source.
+
 ## Selected-cohort comparison stays outside scoring
 
 Selected job demand and Learning milestones are separate observations with their

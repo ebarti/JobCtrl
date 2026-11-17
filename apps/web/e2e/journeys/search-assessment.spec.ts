@@ -264,7 +264,7 @@ test.describe("cohort final currentness guard", () => {
     }
 
     // Observe the real final guard after both scores publish. A source edit in
-    // this durable gap must leave the changed score stored but explicitly stale.
+    // this durable gap must leave the score tied to the last analyzed requirements.
     const changed = await action(api, "discovery.search", payload);
     const third = { job_key: "cohort-concurrent-first", url: "https://example.com/jobs/cohort-concurrent-first", title: "Synthetic Source Change Engineer", company: "Synthetic Cohort Company", description: "Operate source-owned incident response.", location: "Madrid" };
     const fourth = { job_key: "cohort-concurrent-second", url: "https://example.com/jobs/cohort-concurrent-second", title: "Synthetic Concurrent Sibling Engineer", company: "Synthetic Cohort Company", description: "Maintain documented deployment ownership.", location: "Madrid" };
@@ -302,7 +302,7 @@ test.describe("cohort final currentness guard", () => {
     expect(partial["result"]).toMatchObject({ ok: false, status: "partial", acquisitionStatus: "completed",
       preparation: { status: "partial", assessedJobs: 1, failedJobs: 1, failures: [{ jobId: changedCohort[0], stage: "fit", code: expect.any(String) }] } });
     const after = await json<FitState>(api, "get", `/v1/jobs/${changedCohort[0]}/fit`);
-    expect(after.current).toBe(false);
+    expect(after).toMatchObject({ current: true, requirements_current: false, stale_reasons: [] });
     expect(after.score).toEqual(beforeChange!.score);
     expect((await json<FitState>(api, "get", `/v1/jobs/${changedCohort[1]}/fit`)).current).toBe(true);
     for (const [index, jobId] of cohort.entries()) {
