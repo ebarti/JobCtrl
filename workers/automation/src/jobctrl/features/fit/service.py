@@ -55,7 +55,17 @@ def unique_requirements(snapshot: dict) -> list[dict]:
     return list(rows.values())
 
 
-def score_stale_reasons(score, profile, guidance_fingerprint, requirements):
+def scored_demands(score):
+    if not current_contract(score) or score.get("formula_version") != FORMULA_VERSION:
+        return None
+    if any(not current_qualification(row) for row in score["assessments"]):
+        return None
+    binding = score["source_binding"]
+    return {"revision": binding["requirements_revision"], "posting_hash": binding["posting_hash"],
+            "job_demands": job_demand_fingerprints(score["assessments"])}
+
+
+def score_stale_reasons(score, profile, guidance_fingerprint, requirements, scored):
     if not current_contract(score) or score.get("formula_version") != FORMULA_VERSION:
         return ["contract_changed"]
     if requirements is None or not requirements["posting_available"] or profile is None:
@@ -67,7 +77,7 @@ def score_stale_reasons(score, profile, guidance_fingerprint, requirements):
 
     binding, assessments = score["source_binding"], score["assessments"]
     reasons = []
-    semantics_changed = any(not current_qualification(row) for row in assessments)
+    semantics_changed = scored is None
     if semantics_changed:
         reasons.append("qualification_semantics_changed")
     if guidance_fingerprint != binding["scoring_guidance_fingerprint"]:
@@ -75,7 +85,7 @@ def score_stale_reasons(score, profile, guidance_fingerprint, requirements):
     elif not semantics_changed and job_fingerprint(profile, assessments) != binding["source_fingerprint"]:
         # Use the score's original criteria to test only a change in evidence.
         reasons.append("profile_facts_changed")
-    if not semantics_changed and job_demand_fingerprints(assessments) != requirements["job_demands"]:
+    if scored is not None and scored["job_demands"] != requirements["job_demands"] and not requirements["regrouped"]:
         reasons.append("requirements_changed")
     return reasons
 
@@ -280,7 +290,8 @@ class FitService(InitialCohortService):
     def _get_job_fit(self, read, job_id, profile_id="default", *, include_coverage=True):
         score = read.latest_score(job_id)
         result = {"contract_version": CONTRACT_VERSION, "job_id": job_id, "current": False,
-                  "requirements_current": False, "stale_reasons": [], "score": score, "coverage": None}
+                  "requirements_current": False, "qualifications_current": False,
+                  "stale_reasons": [], "score": score, "coverage": None}
         threshold = read.settings_snapshot().get("minFitScore", 7)
         result["selection"] = {"min_fit_score": threshold, "ready_for_materials": False}
         if score is None:
@@ -298,16 +309,18 @@ class FitService(InitialCohortService):
             result["stale_reasons"].append("source_unavailable")
             return result
         profile = dto(profile_snapshot)
-        requirements = read.requirement_bindings([job_id]).get(job_id)
-        reasons = score_stale_reasons(score, profile, fingerprint(profile_snapshot.scoring_guidance), requirements)
+        scored = scored_demands(score)
+        requirements = read.requirement_bindings([job_id], scored={job_id: scored}).get(job_id)
+        reasons = score_stale_reasons(score, profile, fingerprint(profile_snapshot.scoring_guidance), requirements, scored)
         if requirements and not reasons and read.superseded_assessments(binding["assessment_ids"]):
             reasons.append("qualification_changed")
         result["stale_reasons"] = reasons
         result["current"] = not reasons
         result["requirements_current"] = bool(requirements and not requirements["stale"]
                                              and requirements["job_demands"] is not None)
+        result["qualifications_current"] = not reasons and not requirements["regrouped"]
         result["selection"]["ready_for_materials"] = (
-            result["current"] and result["requirements_current"] and score["score"] is not None and score["score"] >= threshold
+            result["qualifications_current"] and result["requirements_current"] and score["score"] is not None and score["score"] >= threshold
             and score["eligibility"]["status"] != "blocked"
         )
         if include_coverage and requirements and requirements["posting_available"] and requirements["job_demands"] is not None:
@@ -605,7 +618,8 @@ class FitService(InitialCohortService):
     def _query_summaries(self, read, job_ids, *, postings=None):
         ids = list(dict.fromkeys(job_ids))
         scores = read.score_batch(ids)
-        requirement_bindings = read.requirement_bindings(list(scores), postings=postings)
+        scored = {ident: scored_demands(score) for ident, score in scores.items()}
+        requirement_bindings = read.requirement_bindings(list(scores), postings=postings, scored=scored)
         profiles = {}
         for profile_id in {score["source_binding"]["profile_id"] for score in scores.values()}:
             try:
@@ -618,12 +632,12 @@ class FitService(InitialCohortService):
             for ident in score["source_binding"]["assessment_ids"]
         ])
         result = {ident: {"contract_version": CONTRACT_VERSION, "job_id": ident, "current": False,
-                          "stale_reasons": [], "score": None, "normalized_keywords": []} for ident in ids}
+                          "qualifications_current": False, "stale_reasons": [], "score": None, "normalized_keywords": []} for ident in ids}
         for ident, score in scores.items():
             source = score["source_binding"]
             profile, guidance = profiles[source["profile_id"]]
             current_requirements = requirement_bindings.get(ident)
-            reasons = score_stale_reasons(score, profile, guidance, current_requirements)
+            reasons = score_stale_reasons(score, profile, guidance, current_requirements, scored[ident])
             if not reasons and superseded.intersection(source["assessment_ids"]):
                 reasons.append("qualification_changed")
             keywords = [] if {"contract_changed", "unsupported_posting_language", "qualification_semantics_changed",
@@ -634,6 +648,7 @@ class FitService(InitialCohortService):
                                                    "eligibility", "created_at", "source_binding")}
             summary.update({key: score[key] for key in ("contract_version", "formula_version", "policy_version", "summary") if key in score})
             result[ident] = {"contract_version": CONTRACT_VERSION, "job_id": ident, "current": not reasons,
+                             "qualifications_current": not reasons and not current_requirements["regrouped"],
                              "stale_reasons": reasons, "score": summary, "normalized_keywords": keywords}
         return result
 
@@ -694,7 +709,7 @@ class FitService(InitialCohortService):
                 for job_id, score in scores.items():
                     if score["source_binding"]["profile_id"] != profile_id:
                         continue
-                    current = summaries[job_id]["current"]
+                    current = summaries[job_id]["qualifications_current"]
                     for row in score["assessments"]:
                         binding = {"job_id": job_id, "current": current, "score_revision": score["revision"],
                                    "requirement_id": row["requirement_id"], "requirement_revision": row["requirement_revision"]}
@@ -751,10 +766,11 @@ class FitService(InitialCohortService):
         current = self.get_job_fit(recorded["job_id"], recorded["score"]["source_binding"]["profile_id"],
                                    include_coverage=False)
         result = {**recorded, "operation_reused": True, "requirements_current": current["requirements_current"],
-                  "selection": current["selection"]}
+                  "qualifications_current": current["qualifications_current"], "selection": current["selection"]}
         if current["score"] is None or current["score"]["revision"] != recorded["score"]["revision"]:
             result.update({"current": False, "stale_reasons": ["superseded"],
                            "current_revision": current["score"]["revision"] if current["score"] else None})
+            result["qualifications_current"] = False
             result["selection"]["ready_for_materials"] = False
         else:
             result.update({"current": current["current"], "stale_reasons": current["stale_reasons"]})
@@ -766,6 +782,7 @@ class FitService(InitialCohortService):
             result.update({"current": False, "stale_reasons": ["superseded"],
                            "current_revision": result["score"]["revision"] if result["score"] else None,
                            "score": deepcopy(accepted)})
+            result["qualifications_current"] = False
             result["selection"]["ready_for_materials"] = False
         return result
 

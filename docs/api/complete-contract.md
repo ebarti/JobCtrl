@@ -69,7 +69,10 @@ achievement-wording gap and wording does not lower person fit. The
 `/v1/jobs/{job_id}/fit` read compares the score's original evidence inputs
 with the current evidence and compares the accepted demands independently.
 For saved scores, `requirements_current` reports whether the accepted
-requirements still bind the posting source for new work. The adapter also
+requirements still bind the posting source for new work. A verified regrouping
+of unchanged source demands keeps `current` true. `qualifications_current`
+reports whether the saved score also used the currently accepted demand groups
+for preparation. The adapter also
 declares assessment, correction, history and coverage routes. Post-edit
 reassessment uses the durable `fit.refresh` action,
 an expected saved-input stamp, explicit job scope and finite work limits.

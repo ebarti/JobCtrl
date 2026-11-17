@@ -259,7 +259,7 @@ def _snapshot_items(snapshot: dict):
 
 
 def job_demand_fingerprints(items):
-    """Compare the actual score items independently of catalog names and revisions."""
+    """Compare the grouped score items independently of catalog names and revisions."""
     demands = {}
     for item in items:
         category = item["category"]
@@ -279,6 +279,32 @@ def job_demand_fingerprints(items):
 
 def snapshot_demand_fingerprints(snapshot: dict):
     return job_demand_fingerprints(_snapshot_items(snapshot))
+
+
+def _original_demand_partition(snapshot):
+    sources, groups, bindings = [], {}, {}
+    for row in snapshot["requirements"]:
+        # Use exact extracted fields and their recorded evidence. Consolidation
+        # regenerates occurrence IDs and can change which group contains them.
+        source = fingerprint([
+            row["local_id"], row["category"], row["definition"], row["basis"], row["source_note"],
+            row["extraction_determination_id"], row["evidence_refs"], row["spans"], row["canonical"]["category"],
+        ])
+        sources.append(source)
+        groups.setdefault(row["requirement_id"], []).append(source)
+        bindings[row["requirement_id"]] = row["normalized_demand"]["demand_fingerprint"]
+    demands = {tuple(sorted(members)): bindings[ident] for ident, members in groups.items()}
+    return sorted(sources), demands
+
+
+def regrouped_original_demands(scored, current):
+    """Compare two validated snapshots from the same original extraction."""
+    if any(scored[field] != current[field] for field in ("education", "languages")):
+        return False
+    earlier_sources, earlier_groups = _original_demand_partition(scored)
+    current_sources, current_groups = _original_demand_partition(current)
+    return (earlier_sources == current_sources and earlier_groups.keys() != current_groups.keys()
+            and all(earlier_groups[key] == current_groups[key] for key in earlier_groups.keys() & current_groups.keys()))
 
 
 def validate_citations(citations: list[Citation], sources: dict[str, str], required: set[str] | None = None,

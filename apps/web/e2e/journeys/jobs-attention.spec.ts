@@ -2,9 +2,11 @@ import type { APIRequestContext } from "@playwright/test";
 import { test, expect, json, action, terminal, modelCall } from "../harness/fixtures.js";
 import { observeSharedWorkerEventSource, sharedEventStreamTargets } from "../harness/shared-event-stream.js";
 import { createScoredFit, type FitState } from "./fit-data.js";
-import type { Profile } from "./core-data.js";
+import { createBaseline, type Profile } from "./core-data.js";
 import { authoredPartition, readCatalog, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
 import { typedExtraction, type CatalogContext } from "./requirements-data.js";
+import { qualificationBatchDecision } from "./qualification-data.js";
+import { acceptReuseRequirements, captureReusePosting } from "./reuse-data.js";
 
 type Source = {
   sourceId: string;
@@ -90,6 +92,74 @@ test("Fit flags accepted demand and evidence changes without treating catalog re
   await reviseRecoveryEvidence(api, saved);
   await verify(["profile_facts_changed", "requirements_changed"], true);
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
+});
+
+test("Fit keeps the saved score when consolidation only regroups the job's original demands", async ({ api, app, page }) => {
+  const { library } = await createBaseline(api);
+  const demands = [
+    { localId: "workflow", text: "Implement durable workflow recovery." },
+    { localId: "readiness", text: "Verify operational readiness for durable workflow recovery." },
+  ];
+  const posting = await captureReusePosting(api, "attention-regrouped-demands", demands.map((row) => row.text).join("\n"));
+  const path = `/v1/jobs/${posting.job_id}`;
+  const { snapshot } = await acceptReuseRequirements(api, app, posting, demands, {
+    workflow: { verdict: "new" }, readiness: { verdict: "new" },
+  });
+  const assess = (expected_revision: number) => api.post(`${path}/fit/assess`, {
+    data: { expected_revision, prepare_wording: false, prepare_coverage: false },
+  });
+  const first = assess(0);
+  const initial = await modelCall(app, "fit.qualification-batch");
+  const achievement = library.roles[0]!.achievements[0]!;
+  initial.reply(qualificationBatchDecision(initial, () => ({
+    achievementIds: [achievement.achievement_id],
+    evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`],
+  })));
+  const admitted = await first;
+  expect(admitted.status(), await admitted.text()).toBe(200);
+  const fit = await admitted.json() as FitState;
+  expect(fit.score.assessments).toHaveLength(2);
+  expect(fit).toMatchObject({ qualifications_current: true, selection: { ready_for_materials: true } });
+  const history = await json(api, "get", `${path}/fit/history`);
+  const catalog = await readCatalog(api);
+  const merge = api.post("/v1/requirements/consolidate", { data: { expected_catalog_revision: catalog.catalog_revision } });
+  const call = await modelCall(app, "requirements.match_catalog");
+  const ids = snapshot.requirements.map((row) => row.requirement_id).sort();
+  const group = { ...retainedCapability(call, ids[0]!, "recovery"), memberIds: ids };
+  call.reply(authoredPartition(call, [group], [{
+    groupId: group.groupId, definition: "Implement durable workflow recovery and verify its operational readiness.",
+    jobIds: [posting.job_id],
+  }]));
+  const merged = await merge;
+  expect(merged.status(), await merged.text()).toBe(200);
+  const current = await json<NormalizedSnapshot>(api, "get", `${path}/requirements`);
+  expect(current.posting_hash).toBe(snapshot.posting_hash);
+  expect(current.requirements.map((row) => row.spans)).toEqual(snapshot.requirements.map((row) => row.spans));
+  expect(new Set(current.requirements.map((row) => row.requirement_id)).size).toBe(1);
+  const callsBeforeRead = app.external.calls.length;
+  expect(await json(api, "get", `${path}/fit`)).toMatchObject({
+    current: true, requirements_current: true, qualifications_current: false, stale_reasons: [], score: fit.score,
+    selection: { ready_for_materials: false },
+  });
+  expect(await json(api, "get", `${path}/fit/history`)).toEqual(history);
+  expect((await json<Digest>(api, "get", "/v1/digest")).staleScores.count).toBe(0);
+  await page.goto("/jobs");
+  const table = page.getByRole("table", { name: "Jobs table", exact: true });
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  await expect(table.getByText(`${fit.score.score}/10`, { exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: /fit assessment to update/ })).toHaveCount(0);
+  expect(app.external.calls).toHaveLength(callsBeforeRead);
+
+  const second = assess(fit.score.revision);
+  const combined = await modelCall(app, "fit.qualification-batch");
+  expect((combined.body["context"] as { requirements: unknown[] }).requirements).toHaveLength(1);
+  combined.reply(qualificationBatchDecision(combined, () => ({ kind: "missing" })));
+  const qualified = await second;
+  expect(qualified.status(), await qualified.text()).toBe(200);
+  expect(await qualified.json()).toMatchObject({
+    current: true, qualifications_current: true,
+    score: { score: 1, assessments: [{ requirement_id: ids[0], kind: "missing" }] },
+  });
 });
 
 test("Jobs attention opens and reloads the counted stale Fit cohort without starting work", async ({ api, app, page }, testInfo) => {

@@ -23,10 +23,11 @@ current accepted job demand items. It compares one normalized reusable demand
 per scored capability, plus the literal Education and Language criteria. Catalog
 head revisions, display names, posting revision counters and occurrence order
 do not independently invalidate the score. Explicit corrections to a bound
-qualification are recorded as changed support. When a new posting awaits
-analysis, `requirements_current` reports source readiness independently of the
-saved score. New qualification, coverage, preparation and application writes
-still require their exact source and approval guards.
+qualification are recorded as changed support. The Requirements owner can verify
+a regrouping of the original extracted demands from accepted history. Its saved
+score stays current with the original breakdown. `qualifications_current`
+tracks current group inputs for new preparation and application work, and
+`requirements_current` checks the analyzed posting source.
 
 The reusable catalog contains only `skill` and `professional_experience`.
 `education` and `language` are direct, job-local demands. Their namespaced IDs

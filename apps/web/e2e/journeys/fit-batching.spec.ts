@@ -77,7 +77,9 @@ test("Fit batches cold requirements once, shares exact receipts and reuses only 
   const legacyRead = await json<Fit>(api, "get", fitPath(seed.posting));
   const upgrade = await app.upgradeSource();
   expect(upgrade.current).not.toBe(upgrade.previous);
-  expect(await json<Fit>(api, "get", fitPath(seed.posting))).toEqual({ ...legacyRead, requirements_current: true });
+  expect(await json<Fit>(api, "get", fitPath(seed.posting))).toEqual({
+    ...legacyRead, requirements_current: true, qualifications_current: true,
+  });
   const beforeUpgradeReuse = app.external.calls.length;
   const sameJob = await json<Fit>(api, "post", `${fitPath(seed.posting)}/assess`, { ...assessBody, expected_revision: first.score!.revision });
   expect(sameJob.score).toEqual(first.score);

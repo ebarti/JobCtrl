@@ -101,6 +101,9 @@ full posting. The Fit grid, detail and attention count must agree on changes
 to the scored evidence or accepted job demands. A same-demand catalog revision
 keeps the score current. A newer posting can await analysis independently of
 the score, and new material preparation still requires current Requirements.
+An accepted regrouping of the same source criteria preserves the score, makes
+zero new model calls on read and leaves new grouped qualifications pending.
+Subsequent qualification requires assessment of those exact groups.
 
 Post-edit refresh of previously scored jobs requires explicit manual admission.
 A job with no prior score may resolve only its fixed requirement set during

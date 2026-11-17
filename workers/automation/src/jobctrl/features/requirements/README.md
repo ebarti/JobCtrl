@@ -399,6 +399,10 @@ Public owner methods also include nullable `find_job_requirements`, required
 `assert_current_demand_catalog`, `normalization_status`, `assert_current`, and bounded
 `job_bindings`. Bindings include generation/status, accepted/current revisions,
 the normalized job demand fingerprints used by Fit and explicit source readiness.
+When the scored and accepted groups differ, this read can prove continuity from
+the exact immutable extraction, typed direct criteria and published catalog
+replacements. A new extraction or explicit correction requires comparison of
+the new accepted demands.
 Restoring an accepted posting with the exact original source hash keeps its
 evidence valid at the new posting revision. New extraction and publication pin
 the actual posting head. Returned JSON is detached and reads make no provider

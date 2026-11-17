@@ -72,7 +72,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
             reasons = ["consolidation_required"]
         return {**snapshot, "stale": stale, "stale_reasons": reasons, "latest_attempt": self.store.latest_attempt(job_id, connection)}
 
-    def job_bindings(self, job_ids, connection=None, *, postings=None) -> dict:
+    def job_bindings(self, job_ids, connection=None, *, postings=None, scored=None) -> dict:
         """Bounded list-query authority without per-job feature/private reads.
 
         Accepted artifacts only are returned. Callers may provide the Jobs
@@ -87,14 +87,14 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         identifiers = list(dict.fromkeys(job_ids))
         if connection is None:
             with self.store.read_session() as connection:
-                return self.job_bindings(identifiers, connection, postings=postings)
+                return self.job_bindings(identifiers, connection, postings=postings, scored=scored)
         if not identifiers:
             return {}
         if postings is None:
             postings = self.jobs.get_job_snapshots(identifiers, connection=connection)
         if not isinstance(postings, dict):
             raise AppError("invalid_posting_snapshots", "Requirement bindings need the public posting snapshot map.")
-        bindings = self.store.job_bindings(identifiers, connection)
+        bindings = self.store.job_bindings(identifiers, connection, scored=scored)
         for job_id, binding in bindings.items():
             posting = postings.get(job_id)
             available = isinstance(posting, dict) and posting.get("job_id") == job_id and not posting.get("deleted")

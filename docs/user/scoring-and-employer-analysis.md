@@ -292,9 +292,11 @@ person-fit work to selected saved Job IDs without another search. Existing score
 that need updating require the manual affected-matches decision. Fit checks the
 Profile evidence allowed for the scored criteria and the job's accepted demands.
 Renaming or revising a shared capability leaves the score current when those
-demands and the relevant evidence are still the same. A newer posting can await
-analysis while the score continues to describe the last analyzed requirements.
-Preparing materials from the new posting requires current source analysis.
+demands and the relevant evidence are still the same. Combining or splitting
+internal groups also keeps the score current when the same saved posting
+criteria are preserved. Preparing tailored materials uses qualifications for
+the latest grouping. A newer posting can await analysis while the score
+continues to describe the last analyzed requirements.
 
 Review the recorded results on the current product surfaces:
 

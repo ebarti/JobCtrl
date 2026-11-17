@@ -357,10 +357,11 @@ bounded IDs and revisions, not private evidence, in events.
 
 The Fit grid, detail and attention reads share the accepted-score currentness
 rule. Evidence is compared using the criteria recorded on the score. Demand
-comparison uses the accepted normalized job demands and the literal direct
-criteria, preserving the number of score items when meanings merge or split.
-Currentness of the posting's Requirements source is separate and still fences
-new preparation and application work.
+comparison first checks the accepted normalized job demands and direct criteria.
+When consolidation changes the groups, Requirements compares the exact source
+snapshot used by the score with the accepted snapshot. A verified regrouping of
+the same extracted demands keeps the saved score current. Preparation and
+application work also checks the grouped qualifications and posting source.
 
 ## Selected-cohort comparison stays outside scoring
 

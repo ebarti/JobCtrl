@@ -660,8 +660,8 @@ class SqliteFitReadSession:
     def settings_snapshot(self):
         return self._store.settings.snapshot(self._connection) if self._store.settings is not None else {}
 
-    def requirement_bindings(self, job_ids, *, postings=None):
-        return self._store.requirements.job_bindings(job_ids, connection=self._connection, postings=postings)
+    def requirement_bindings(self, job_ids, *, postings=None, scored=None):
+        return self._store.requirements.job_bindings(job_ids, connection=self._connection, postings=postings, scored=scored)
 
     def validate_sources(self, profile_snapshot, requirements_snapshot, assessment=None, *, facts_only=True):
         self._store._assert_sources(self._connection, profile_snapshot, requirements_snapshot, full_profile=not facts_only)
