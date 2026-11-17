@@ -531,17 +531,46 @@ export async function applicationStack(
         if (!cohortBoundaryDebugger) throw new Error("The cohort guard debugger is not enabled.");
         await writeFile(cohortArm, "final-currentness-guard", { mode: 0o600, flag: "wx" });
       },
-      async waitForCohortBoundaryPause() {
+      async armCohortReceiptPause() {
+        if (!cohortBoundaryDebugger) throw new Error("The cohort receipt debugger is not enabled.");
+        await writeFile(cohortArm, "fit-receipt", { mode: 0o600, flag: "wx" });
+      },
+      async waitForCohortBoundaryPause(boundary = "final-currentness-guard") {
         await waitFor(async () => {
-          try { return JSON.parse(await readFile(cohortPaused, "utf8")).pid === worker.pid; }
+          try { const pause = JSON.parse(await readFile(cohortPaused, "utf8")); return pause.pid === worker.pid && pause.boundary === boundary; }
           catch (error) { if (error.code === "ENOENT") return false; throw error; }
-        }, "owned cohort guard pause");
+        }, `owned cohort ${boundary} pause`);
       },
       async resumeCohortBoundary() {
         if (!cohortBoundaryDebugger || JSON.parse(await readFile(cohortPaused, "utf8")).pid !== worker.pid)
           throw new Error("The paused cohort worker identity did not match.");
         process.kill(worker.pid, "SIGCONT");
         await rm(cohortPaused);
+      },
+      async cohortReceiptCheckpoint(runId) {
+        const inspected = await execFile(pythonExecutable, ["-c", `
+import json, os, pathlib, sqlite3, sys
+root = pathlib.Path(sys.argv[1])
+owner = json.loads((root / '.jobctrl-e2e-owned.json').read_text())
+assert root.resolve() == root and owner['workspace'] == str(root) and owner['token'] == os.environ['JOBCTRL_E2E_TOKEN']
+file = root / 'jobctrl.db'
+assert file.is_file() and not file.is_symlink()
+with sqlite3.connect(file.as_uri() + '?mode=ro', uri=True) as conn:
+    conn.execute('PRAGMA query_only=ON')
+    conn.row_factory = sqlite3.Row
+    phase = conn.execute("SELECT status,input_json FROM preparation_steps WHERE run_id=? AND job_id='' AND stage='fit_qualify'", (sys.argv[2],)).fetchone()
+    assert phase is not None
+    operation = json.loads(phase['input_json'])['_operation_id']
+    row = conn.execute('SELECT state_json FROM fit_initial_cohort_operations WHERE operation_id=?', (operation,)).fetchone()
+    assert row is not None
+    state = json.loads(row['state_json'])
+    call = state['call']
+    receipts = [dict(row) for row in conn.execute("SELECT receipt_id,status,operation,input_fingerprint FROM app_model_calls WHERE input_fingerprint=? ORDER BY receipt_id", (call['input_fingerprint'],))]
+    print(json.dumps({'operationId': operation, 'phaseStatus': phase['status'], 'stateStatus': state['status'],
+                      'callStatus': call['status'], 'inputFingerprint': call['input_fingerprint'],
+                      'storedReceiptId': (call.get('result') or {}).get('provenance', {}).get('receipt_id'), 'receipts': receipts}))
+`, workspace, runId], { env, timeout: 5_000, maxBuffer: 100_000 });
+        return JSON.parse(inspected.stdout);
       },
       async armFitRecoveryPause(operation) {
         if (!recoveryDebuggerEnabled || !["fit.catalog-impact", "fit.qualification-batch"].includes(operation))

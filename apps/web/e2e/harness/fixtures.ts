@@ -51,8 +51,11 @@ export type ApplicationStack = {
   armFitRecoveryPause(operation: "fit.catalog-impact" | "fit.qualification-batch"): Promise<void>;
   waitForFitRecoveryPause(): Promise<void>;
   armCohortBoundaryPause(): Promise<void>;
-  waitForCohortBoundaryPause(): Promise<void>;
+  armCohortReceiptPause(): Promise<void>;
+  waitForCohortBoundaryPause(boundary?: "final-currentness-guard" | "fit-receipt"): Promise<void>;
   resumeCohortBoundary(): Promise<void>;
+  cohortReceiptCheckpoint(runId: string): Promise<{ operationId: string; phaseStatus: string; stateStatus: string; callStatus: string;
+    inputFingerprint: string; storedReceiptId: string | null; receipts: { receipt_id: string; status: string; operation: string; input_fingerprint: string }[] }>;
   fitRefreshCheckpoint(operationId: string): Promise<{ calls: Record<string, { kind: string; status: string; result?: { value: unknown; provenance: Record<string, unknown> } }>; checkpoints: Record<string, unknown>; impact_selection_scope_version?: string; qualification_transport_version?: string }>;
   databaseSchemaFingerprint(): Promise<string>;
   databaseSchemaInventory(): Promise<{ type: string; name: string; table: string; sql: string | null }[]>;

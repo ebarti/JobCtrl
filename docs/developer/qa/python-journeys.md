@@ -58,20 +58,20 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **171 journeys in 49 project-file groups**:
-**170 Chromium cases in 48 spec files**, plus **one demo case in one file**.
+The current configured inventory is **173 journeys in 49 project-file groups**:
+**172 Chromium cases in 48 spec files**, plus **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts, keyboard-driven Profile saves, posting-fetch refusals and the
 actual terminal-root v4 and terminal-group v5 predecessor upgrades, demand-citation
 role refusals, and Fit schema refusals. The four hosted shard listings
-contain 48 / 46 / 36 / 41 cases and match the unsharded inventory exactly once.
+contain 48 / 48 / 34 / 43 cases and match the unsharded inventory exactly once.
 Listing these scenarios is not evidence that the complete current candidate passed.
 
 ### Initial search cohorts — 17 November 2026
 
 [Preparation cohort journeys](../../../apps/web/e2e/journeys/preparation-cohort.spec.ts)
-add eleven cases using real application actions and controlled external responses.
+add thirteen cases using real application actions and controlled external responses.
 Two independently sourced postings can each use the local extraction ID `r1`;
 their job-scoped members join one complete normalization, followed by one shared
 qualification and current per-job scores. A later acquired job explicitly reuses
@@ -106,6 +106,17 @@ and the same unchanged web build and lockfile. The 18-case run took
 **7.937 s build / 145.521 s journeys / 155.044 s total**; the corrected
 predecessor case took **8.336 s / 38.792 s / 48.831 s**. These focused results
 do not establish a full hosted pass or real-provider quality or latency.
+
+A further owned run, `e2e-kXxkGa`, passed three cases with two workers and zero
+retries. The worker was paused after the canonical shared Fit receipt had
+succeeded but before its local cohort call checkpoint, then killed and replaced.
+Read-only inspection confirmed the original operation, input fingerprint and
+receipt ID survived; no model call was redispatched and both scores became
+current. A separate Profile edit during the held shared batch produced a
+revision conflict, retained the previously accepted score and Requirements,
+and published no new score. The existing final source-change guard also passed
+with the expanded observer. This run used the same Python and web digests above;
+build / journeys / total were **8.794 s / 45.530 s / 56.146 s**.
 
 ### Bounded Fit impact scope and durable call recovery — 17 November 2026
 

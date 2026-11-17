@@ -1,5 +1,5 @@
 import { test, expect, json, action, completed, terminal } from "../harness/fixtures.js";
-import { createBaseline } from "./core-data.js";
+import { createBaseline, type Profile } from "./core-data.js";
 import { createScoredFit, type FitState } from "./fit-data.js";
 import { servePostingAssessment, serveQualification } from "./search-assessment-data.js";
 import { authoredPartition, readCatalog, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
@@ -406,5 +406,101 @@ test("an actual predecessor upgrade preserves a failed job while a replacement w
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.match_catalog")).toHaveLength(2);
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
 });
+});
 
+test.describe("shared Fit receipt recovery", () => {
+  test.use({ cohortBoundaryDebugger: true });
+
+  test("a settled shared Fit receipt survives worker loss before its local checkpoint without redispatch", async ({ api, app }) => {
+    const { library } = await createBaseline(api);
+    const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+    await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 2 });
+    const started = await action(api, "discovery.search", { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }] });
+    const source = await app.external.next();
+    expect(source.path).toBe("/discovery");
+    const postings = [posting(61), posting(62)];
+    source.respond({ jobs: postings, cursor: null, complete: true });
+    const matching = await untilNormalization(app, postings);
+    const run = await json<{ jobIds: string[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
+    expect(run.jobIds).toHaveLength(2);
+    const input = matching.body["context"] as CatalogContext;
+    matching.reply(authoredPartition(matching, [{ groupId: "recovery", memberIds: input.incoming.map((row) => row.member_id),
+      category: "professional_experience", name: COMMON_DEMAND, definition: COMMON_DEMAND }],
+    [{ groupId: "recovery", definition: COMMON_DEMAND, jobIds: run.jobIds }]));
+    const batch = await app.external.next();
+    expect(batch.path).toBe("/model");
+    expect(batch.body["operation"]).toBe("fit.qualification-batch");
+    const achievement = library.roles[0]!.achievements[0]!;
+    const selection = qualificationBatchDecision(batch, () => ({ achievementIds: [achievement.achievement_id],
+      evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] }));
+    await app.armCohortReceiptPause();
+    batch.reply(selection);
+    await app.waitForCohortBoundaryPause("fit-receipt");
+    const before = await app.cohortReceiptCheckpoint(started.runId);
+    expect(before).toMatchObject({ phaseStatus: "running", stateStatus: "prepared", callStatus: "started", storedReceiptId: null });
+    expect(before.receipts).toHaveLength(1);
+    expect(before.receipts[0]).toMatchObject({ status: "succeeded", operation: "fit.qualification-batch", input_fingerprint: before.inputFingerprint });
+    for (const id of run.jobIds) expect((await json<{ score: null }>(api, "get", `/v1/jobs/${id}/fit`)).score).toBeNull();
+    const beforeCalls = app.external.calls.filter((call) => call.path !== "/catalog").length;
+    const replacement = await app.restartWorker();
+    expect(replacement.current).not.toBe(replacement.previous);
+    const outcome = await completed(api, started.runId);
+    expect(outcome["result"]).toMatchObject({ ok: true, status: "completed", preparation: { assessedJobs: 2, failedJobs: 0 } });
+    const after = await app.cohortReceiptCheckpoint(started.runId);
+    expect(after).toMatchObject({ operationId: before.operationId, inputFingerprint: before.inputFingerprint,
+      phaseStatus: "succeeded", stateStatus: "qualified", callStatus: "completed", storedReceiptId: before.receipts[0]!.receipt_id });
+    expect(after.receipts).toEqual(before.receipts);
+    const scores = await Promise.all(run.jobIds.map((id) => json<FitState>(api, "get", `/v1/jobs/${id}/fit`)));
+    for (const fit of scores) {
+      expect(fit).toMatchObject({ current: true, score: { score: 10 } });
+      expect(fit.score.assessments[0]!.provenance.receipt_id).toBe(before.receipts[0]!.receipt_id);
+    }
+    expect(scores[0]!.score.assessments[0]!.assessment_id).toBe(scores[1]!.score.assessments[0]!.assessment_id);
+    expect(app.external.calls.filter((call) => call.path !== "/catalog")).toHaveLength(beforeCalls);
+    expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
+  });
+});
+
+test("a Profile edit during shared qualification refuses stale authority and preserves prior scores", async ({ api, app }) => {
+  const seed = await createScoredFit(api, app, "cohort-profile-race");
+  const previous = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${seed.posting.job_id}/requirements`);
+  const priorScore = await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`);
+  const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 2 });
+  const started = await action(api, "discovery.search", { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }] });
+  const source = await app.external.next();
+  expect(source.path).toBe("/discovery");
+  const postings = [posting(71), posting(72)];
+  source.respond({ jobs: postings, cursor: null, complete: true });
+  const matching = await untilNormalization(app, postings);
+  const run = await json<{ jobIds: string[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
+  expect(run.jobIds).toHaveLength(2);
+  const input = matching.body["context"] as CatalogContext;
+  const prior = previous.requirements[0]!;
+  const retained = retainedCapability(matching, prior.requirement_id, "retained");
+  matching.reply(authoredPartition(matching, [retained, { groupId: "incoming", memberIds: input.incoming.map((row) => row.member_id),
+    category: "professional_experience", name: COMMON_DEMAND, definition: COMMON_DEMAND }], [
+    { groupId: "retained", definition: prior.normalized_demand.definition, jobIds: [seed.posting.job_id], reuseDemandFingerprint: prior.normalized_demand.demand_fingerprint },
+    { groupId: "incoming", definition: COMMON_DEMAND, jobIds: run.jobIds },
+  ]));
+  const batch = await app.external.next();
+  expect(batch.body["operation"]).toBe("fit.qualification-batch");
+  const requirements = await Promise.all(run.jobIds.map((id) => json<NormalizedSnapshot>(api, "get", `/v1/jobs/${id}/requirements`)));
+  const profile = await json<Profile>(api, "get", "/v1/profile");
+  await json(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion, profile: { ...profile.profile,
+    resume: { ...profile.profile.resume, experience_entries: profile.profile.resume.experience_entries.map((row, index) => index ? row
+      : { ...row, summary: "Maintained services with a newly reviewed operational summary." }) } } });
+  const achievement = seed.library.roles[0]!.achievements[0]!;
+  batch.reply(qualificationBatchDecision(batch, () => ({ achievementIds: [achievement.achievement_id],
+    evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] })));
+  expect((await completed(api, started.runId))["result"]).toMatchObject({ ok: false, status: "partial",
+    preparation: { status: "partial", assessedJobs: 0, failedJobs: 2 } });
+  const recorded = await json<{ steps: { stage: string; status: string; errorCode: string | null }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
+  expect(recorded.steps.find((step) => step.stage === "fit_qualify")).toMatchObject({ status: "failed", errorCode: "revision_conflict" });
+  for (const [index, id] of run.jobIds.entries()) {
+    expect(await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${id}/requirements`)).toEqual(requirements[index]);
+    expect((await json<{ score: null }>(api, "get", `/v1/jobs/${id}/fit`)).score).toBeNull();
+  }
+  expect((await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).score).toEqual(priorScore.score);
+  expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(2);
 });
