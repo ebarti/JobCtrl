@@ -50,3 +50,6 @@ class Feature:
     # Incompatible feature contracts fence durable replay without rewriting
     # historical payloads, accepted results, or database schemas.
     action_versions: dict[str, str] = field(default_factory=dict)
+    # Synchronous feature admission in the new action's transaction. Existing
+    # identities return before this hook; it must never start external work.
+    action_admissions: dict[str, Callable[[str, dict, Any], None]] = field(default_factory=dict)

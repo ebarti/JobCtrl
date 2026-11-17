@@ -28,6 +28,14 @@ STAGES = {
 DISCOVERY_RECIPES = {"run", "discover", "search"}
 DISCOVERY_KEYS = {"queries", "locations", "boards", "newJobLimit", "resultsPerSite", "hoursOld", "expectedProfileVersion"}
 TERMINAL_STEPS = {"succeeded", "skipped", "warning"}
+COHORT_POLICY = "search-cohort-v1"
+COHORT_PRODUCERS = ("enrich", "role_analysis", "requirements_extract")
+SEARCH_JOB_LIMIT = 10_000
+# Larger searches retain the established per-job preparation policy. The
+# gateway independently checks the full admitted semantic payload for size.
+COHORT_JOB_LIMIT = 10
+PREPARATION_OPTIONS = {"recipe", "job_ids", "scope", "discovery", "limit", "force",
+                       "min_fit_score", "allow_below_threshold", "resume_mode"}
 
 
 def _operation(run_id: str, job_id: str, stage: str) -> str:
@@ -41,15 +49,15 @@ def _error_code(error: BaseException) -> str:
     return "preparation_stage_failed"
 
 
-def _validate(raw: dict) -> dict:
-    if not isinstance(raw, dict) or set(raw) - {"recipe", "job_ids", "scope", "discovery", "limit", "force", "min_fit_score", "allow_below_threshold", "resume_mode"}:
+def _validate(raw: dict, *, selection_limit=1000) -> dict:
+    if not isinstance(raw, dict) or set(raw) - PREPARATION_OPTIONS:
         raise AppError("invalid_preparation", "Choose a supported preparation recipe and options.")
     recipe = raw.get("recipe")
     if not isinstance(recipe, str) or recipe not in RECIPES:
         raise AppError("invalid_preparation_recipe", "Choose a supported preparation recipe.")
     ids = raw.get("job_ids", [])
-    if not isinstance(ids, list) or len(ids) > 1000 or any(not isinstance(i, str) or not i.strip() or len(i) > 120 for i in ids):
-        raise AppError("invalid_job_selection", "Select up to 1,000 saved jobs.")
+    if not isinstance(ids, list) or len(ids) > selection_limit or any(not isinstance(i, str) or not i.strip() or len(i) > 120 for i in ids):
+        raise AppError("invalid_job_selection", f"Select up to {selection_limit:,} saved jobs.")
     ids = list(dict.fromkeys(ids))
     scope = raw.get("scope", "selected" if ids else "pending")
     if not isinstance(scope, str) or scope not in {"selected", "pending"} or scope == "selected" and not ids or scope == "pending" and ids:
@@ -57,7 +65,7 @@ def _validate(raw: dict) -> dict:
     if recipe == "assess" and scope != "selected":
         raise AppError("explicit_job_selection_required", "Select the saved jobs to assess.")
     limit = raw.get("limit", max(100, len(ids)))
-    maximum = 10000 if recipe == "search" else 1000
+    maximum = SEARCH_JOB_LIMIT if recipe == "search" else 1000
     if type(limit) is not int or not 1 <= limit <= maximum:
         raise AppError("invalid_preparation_limit", f"Use a limit from 1 to {maximum:,}.")
     if scope == "selected" and len(ids) > limit:
@@ -90,20 +98,94 @@ class PreparationService:
     def bind_run_reader(self, reader: RunReader):
         self.run_reader = reader
 
-    def _owner_reclaimable(self, run_id):
+    def admit(self, run_id, raw, settings, connection):
+        # Only initial acquisition owns a new-job cohort. Forced/selected
+        # recipes retain their existing explicit single-job semantics.
+        if raw.get("recipe") != "search":
+            return
+        request = _validate(raw)
+        if request["scope"] != "pending" or request["force"]:
+            return
+        request.update(contract_version="requirements-v2",
+                       resume_mode=request.get("resume_mode", settings.get("resumeMode", "tailored")),
+                       min_fit_score=request["min_fit_score"] or settings.get("minFitScore", 7),
+                       execution_policy={"version": COHORT_POLICY,
+                                         "producer_mode": "serial" if settings.get("dailyBudgetUsd", 0) else "cross_lane"})
+        self.checkpoints.admit_run(run_id, request, connection)
+
+    def admit_search(self, run_id, payload, settings, connection):
+        self.admit(run_id, {"recipe": "search", "scope": "pending", "discovery": payload, "limit": SEARCH_JOB_LIMIT},
+                   settings, connection)
+
+    def admit_retry(self, run_id, payload, connection):
+        parent = payload.get("run_id")
+        if not isinstance(parent, str):
+            return
+        original = self.checkpoints.request(parent, connection=connection)
+        if original is None or self._cohort_policy(original) is None:
+            return
+        _, requested = self._retry_options(payload)
+        previous = self.checkpoints.get_run(parent, connection=connection)
+        if (previous["status"] not in {"failed", "partial", "cancelled"}
+                or not self._owner_reclaimable(parent, connection=connection)):
+            raise ConflictError("Only an unsuccessful or cancelled run can be retried after it settles.")
+        discovery = self.checkpoints.step(parent, "", "discover", connection=connection)
+        if discovery and discovery["status"] in TERMINAL_STEPS:
+            acquisition = discovery["result"]
+        else:
+            acquisition = self.discovery.search_outcome(parent) if self.discovery is not None else None
+            if acquisition and acquisition["status"] == "failed" and not acquisition.get("newJobIds"):
+                acquisition = None
+        targets = previous["jobIds"] if previous["cohortFrozen"] else None
+        if targets is None and acquisition is not None:
+            targets = self._search_targets(original, acquisition)
+        if requested is not None and set(requested) != set(targets or []):
+            raise AppError("preparation_cohort_retry_scope_required",
+                           "Retry the complete original cohort to retain its admitted model operations. Completed jobs are reused.", 409)
+        completed = {step["jobId"] for step in previous["steps"]
+                     if step["stage"] == "fit" and step["status"] in TERMINAL_STEPS}
+        if targets is not None and set(targets).issubset(completed):
+            raise AppError("nothing_to_retry", "All preparation jobs in the original search are complete.", 409)
+        request = {**original, "job_ids": targets or [], "scope": "selected" if targets else "pending"}
+        if targets is not None and "target_route" not in request:
+            request["target_route"] = self._target_route(targets)
+        self.checkpoints.admit_run(run_id, request, connection, parent=parent, targets=targets)
+        if acquisition is not None and (not discovery or discovery["status"] not in TERMINAL_STEPS):
+            status = "succeeded" if acquisition["status"] == "completed" else "warning"
+            self.checkpoints.finish_step(run_id, "", "discover", status, result=acquisition, connection=connection)
+
+    def finalize(self, run_id, status, error_code, connection):
+        if status == "cancelled" and self.run_reader is not None:
+            request = self.checkpoints.request(run_id, connection=connection)
+            if (request and self._cohort_policy(request) is not None
+                    and self.run_reader(run_id, connection=connection)["status"] == "running"):
+                return  # The active owner must unwind before its claims can be released.
+        self.checkpoints.finalize_run(run_id, status, error_code, connection)
+
+    @staticmethod
+    def _cohort_policy(request):
+        policy = request.get("execution_policy")
+        if policy is None:
+            return None
+        if (not isinstance(policy, dict) or set(policy) != {"version", "producer_mode"}
+                or policy["version"] != COHORT_POLICY or policy["producer_mode"] not in {"serial", "cross_lane"}):
+            raise AppError("action_contract_changed", "The admitted preparation policy is unsupported.", 409)
+        return policy
+
+    def _owner_reclaimable(self, run_id, connection=None):
         if self.run_reader is None:
             return False
         try:
-            return self.run_reader(run_id)["status"] in {"succeeded", "failed", "cancelled"}
+            return self.run_reader(run_id, connection=connection)["status"] in {"succeeded", "failed", "cancelled"}
         except NotFoundError:
             raise AppError("preparation_owner_unknown", "The prior preparation owner needs inspection.", 409) from None
 
-    def _user_cancelled(self, context):
+    def _user_cancelled(self, context, connection=None):
         # Worker shutdown is recoverable. Only an explicit saved user request
         # becomes terminal; a cancelled asyncio task alone does not prove it.
         if self.run_reader is None:
             return context.cancelled()
-        return bool(self.run_reader(context.run_id)["cancellationRequested"])
+        return bool(self.run_reader(context.run_id, connection=connection)["cancellationRequested"])
 
     def _work_cancelled(self, context):
         return context.cancelled() or self._user_cancelled(context)
@@ -122,6 +204,14 @@ class PreparationService:
 
     @staticmethod
     def _describe_run(run):
+        policy = PreparationService._cohort_policy({"execution_policy": run.get("executionPolicy")})
+        if policy and run.get("targetRoute") != "per_job":
+            stages = [{"stage": stage, "scope": "job"} for stage in COHORT_PRODUCERS]
+            stages.extend([{"stage": "requirements_normalize", "scope": "run"},
+                           {"stage": "requirements", "scope": "job"},
+                           {"stage": "fit_qualify", "scope": "run"}, {"stage": "fit", "scope": "job"}])
+            stages.insert(0, {"stage": "discover", "scope": "run"})
+            return {**run, "stagePlan": stages, "jobConcurrency": 3 if policy["producer_mode"] == "cross_lane" else 1}
         stages = [{"stage": stage, "scope": "job"} for stage in STAGES[run["recipe"]]]
         if run["recipe"] in DISCOVERY_RECIPES:
             stages.insert(0, {"stage": "discover", "scope": "run"})
@@ -130,16 +220,24 @@ class PreparationService:
     def job_summaries(self, job_ids, connection=None):
         return self.checkpoints.job_summaries(job_ids, connection=connection)
 
+    @staticmethod
+    def _search_targets(request, discovery_result):
+        # Only newly committed Jobs belong to an initial assessment.
+        ids = list(dict.fromkeys((discovery_result or {}).get("newJobIds") or []))
+        if len(ids) > request["limit"]:
+            raise AppError("search_assessment_limit_exceeded", "The saved search cohort exceeds its assessment limit.", 409)
+        return ids
+
+    @staticmethod
+    def _target_route(ids):
+        return "cohort" if len(ids) <= COHORT_JOB_LIMIT else "per_job"
+
     def _target_ids(self, run_id, request, discovery_result):
         saved = self.checkpoints.targets(run_id)
         if saved is not None:
-            return saved
+            return saved, request.get("target_route")
         if request["recipe"] == "search" and request["scope"] != "selected":
-            # Initial search assessment owns only its newly committed jobs.
-            # Existing scores becoming stale never admits an implicit refresh.
-            ids = list(dict.fromkeys((discovery_result or {}).get("newJobIds") or []))
-            if len(ids) > request["limit"]:
-                raise AppError("search_assessment_limit_exceeded", "The saved search cohort exceeds its assessment limit.", 409)
+            ids = self._search_targets(request, discovery_result)
         elif request["scope"] == "selected":
             ids = list(dict.fromkeys([*request["job_ids"], *((discovery_result or {}).get("newJobIds") or [])]))[:request["limit"]]
         else:
@@ -157,7 +255,8 @@ class PreparationService:
             ids = ids[:request["limit"]]
         # Snapshot the actual selected identities before processing. A resumed
         # workflow must not silently pick up unrelated newer jobs.
-        return self.checkpoints.save_targets(run_id, ids)
+        route = self._target_route(ids) if self._cohort_policy(request) else None
+        return self.checkpoints.save_targets(run_id, ids, route=route)
 
 
     def _pending(self, job, request):
@@ -299,9 +398,18 @@ class PreparationService:
                 raise ConflictError("The accepted requirement snapshot is stale.")
             return {"revision": value["revision"], "postingRevision": value["posting_revision"],
                     "postingHash": value["posting_hash"], "status": value.get("status", "complete")}
+        if stage == "requirements_extract":
+            inputs.pop("force", None)
+            return await self.requirements.prepare_cohort_job(job_id, **inputs, operation_id=op,
+                                                              cancelled=cancelled, heartbeat=context.heartbeat)
         if stage == "fit":
             inputs.pop("_requirements_binding", None)
-            value = await self.fit.assess_job(job_id, **inputs, operation_id=op, cancelled=cancelled)
+            cohort_operation = inputs.pop("_cohort_operation_id", None)
+            if cohort_operation:
+                value = await self.fit.assess_cohort_job(job_id, cohort_operation_id=cohort_operation,
+                    expected_revision=inputs["expected_revision"], operation_id=op, cancelled=cancelled)
+            else:
+                value = await self.fit.assess_job(job_id, **inputs, operation_id=op, cancelled=cancelled)
             summary = {"revision": value["score"]["revision"], "score": value["score"]["score"],
                        "coverageFailureCode": value.get("coverage_failure_code")}
             if value.get("coverage_failure_code") and request["resume_mode"] != "baseline":
@@ -339,7 +447,7 @@ class PreparationService:
         return {"resume_id": value["resume_id"], "version": value["version"], "artifact_id": attempt["artifact_id"]}
 
 
-    def _prepare_search_fit(self, context, targets, request):
+    def _prepare_search_fit(self, context, targets, request, *, shared=False):
         """Pin the complete cohort after all requirement-producing work settles.
 
         Another cohort member may have consolidated an earlier snapshot. Only
@@ -348,8 +456,13 @@ class PreparationService:
         """
         prior = {job_id: {stage: self.checkpoints.step(context.run_id, job_id, stage)
                           for stage in STAGES["search"]} for job_id in targets}
+        cohort_operation = self._cohort_qualification_operation(context, targets) if shared else None
         operations = {_operation(context.run_id, job_id, "requirements") for job_id in targets
                       if (prior[job_id]["requirements"] or {}).get("status") == "succeeded"}
+        normalization = self.checkpoints.step(context.run_id, "", "requirements_normalize")
+        if normalization and normalization["status"] == "succeeded":
+            result = normalization["result"] or {}
+            operations.update(value for value in (result.get("operation_id"), result.get("reconciliation_id")) if value)
         for job_id, steps in prior.items():
             if self._work_cancelled(context):
                 raise asyncio.CancelledError()
@@ -362,8 +475,8 @@ class PreparationService:
                 if (current["posting_revision"] != produced["postingRevision"]
                         or produced.get("postingHash", current["posting_hash"]) != current["posting_hash"]):
                     raise ConflictError("The posting changed before cohort fit assessment.")
-                if (current["revision"] != produced["revision"]
-                        and current.get("normalization_provenance", {}).get("reconciliation_id") not in operations):
+                if (current["revision"] != produced["revision"] and (shared
+                        or current.get("normalization_provenance", {}).get("reconciliation_id") not in operations)):
                     raise ConflictError("Requirements changed outside the admitted search cohort.")
                 self.requirements.assert_current(current)
                 final_steps = {**steps, "requirements": {**steps["requirements"], "result": {
@@ -371,39 +484,273 @@ class PreparationService:
                 inputs = self._inputs(job_id, "fit", request, final_steps)
                 inputs["_requirements_binding"] = {key: current[key] for key in ("revision", "posting_revision", "posting_hash")}
                 inputs["_operation_id"] = _operation(context.run_id, job_id, "fit")
+                if cohort_operation:
+                    inputs["_cohort_operation_id"] = cohort_operation
                 self.checkpoints.prepare_step(context.run_id, job_id, "fit", inputs)
             except Exception as error:
                 self.checkpoints.finish_step(context.run_id, job_id, "fit", "failed", error_code=_error_code(error))
 
-    def _assert_search_binding(self, job_id, inputs):
+    def _assert_search_binding(self, job_id, inputs, connection=None):
         binding = inputs.get("_requirements_binding")
         if binding is not None:
-            current = self.requirements.get_job_requirements(job_id)
+            current = self.requirements.get_job_requirements(job_id, connection=connection)
             if any(current[key] != value for key, value in binding.items()):
                 raise ConflictError("Requirements changed after the search cohort was prepared.")
-            self.requirements.assert_current(current)
+            self.requirements.assert_current(current, connection=connection)
 
-    def _verify_search_fit(self, context, targets):
+    def _verify_search_fit(self, context, targets, connection=None):
         """Read-only final guard; never retry model work or replace accepted scores."""
         failed = False
         for job_id in targets:
-            if self._work_cancelled(context):
+            if context.cancelled() or self._user_cancelled(context, connection=connection):
                 raise asyncio.CancelledError()
-            step = self.checkpoints.step(context.run_id, job_id, "fit")
+            step = self.checkpoints.step(context.run_id, job_id, "fit", connection=connection)
             if not step or step["status"] not in {"succeeded", "skipped"}:
+                if connection is not None:
+                    failed = True
                 continue
             try:
-                self._assert_search_binding(job_id, step["input"] or {})
+                inputs = step["input"] or {}
+                if connection is not None and not inputs.get("_requirements_binding"):
+                    raise ConflictError("The completed result has no frozen Requirements binding.")
+                self._assert_search_binding(job_id, inputs, connection=connection)
                 if step["status"] == "skipped":
                     continue
-                current = self.fit.get_job_fit(job_id, include_coverage=False)
+                current = self.fit.get_job_fit(job_id, connection=connection, include_coverage=False)
                 if not current["current"] or not current["score"] or current["score"]["revision"] != step["result"]["revision"]:
                     raise AppError("search_fit_not_current", "The saved fit changed before search completion. Review its current inputs.", 409)
             except Exception as error:
                 self.checkpoints.finish_step(context.run_id, job_id, "fit", "failed",
-                                             result=step["result"], error_code=_error_code(error))
+                                             result=step["result"], error_code=_error_code(error), connection=connection)
                 failed = True
+        if connection is not None and (context.cancelled() or self._user_cancelled(context, connection=connection)):
+            raise asyncio.CancelledError()
         return failed
+
+    async def _cohort_step(self, context, job_id, stage, prepare, execute):
+        """Execute one pinned phase; terminal refusals never become retries."""
+        step = self.checkpoints.step(context.run_id, job_id, stage)
+        if step and step["status"] in TERMINAL_STEPS:
+            return True
+        if step and step["status"] in {"failed", "blocked", "cancelled"}:
+            return False
+        if self._work_cancelled(context):
+            raise asyncio.CancelledError()
+        try:
+            inputs = step["input"] if step and step["input"] is not None else prepare()
+            self._assert_search_binding(job_id, inputs)
+            if inputs.get("skip"):
+                self.checkpoints.finish_step(context.run_id, job_id, stage, "skipped", result=inputs)
+                return True
+            inputs.setdefault("_operation_id", _operation(context.run_id, job_id, stage))
+            inputs = self.checkpoints.start_step(context.run_id, job_id, stage, inputs)
+            context.heartbeat({"jobId": job_id or None, "stage": stage})
+            result = await execute(inputs)
+            if self._work_cancelled(context):
+                raise asyncio.CancelledError()
+            self.checkpoints.finish_step(context.run_id, job_id, stage, "succeeded", result=result)
+            return True
+        except asyncio.CancelledError:
+            if self._user_cancelled(context):
+                self.checkpoints.finish_step(context.run_id, job_id, stage, "cancelled", error_code="action_cancelled")
+            raise
+        except Exception as error:
+            if self._work_cancelled(context):
+                if self._user_cancelled(context):
+                    self.checkpoints.finish_step(context.run_id, job_id, stage, "cancelled", error_code="action_cancelled")
+                raise asyncio.CancelledError() from None
+            self.checkpoints.finish_step(context.run_id, job_id, stage, "failed", error_code=_error_code(error))
+            return False
+
+    def _cohort_block(self, context, job_id, stages, *, code="upstream_stage_failed", status="blocked"):
+        for stage in stages:
+            prior = self.checkpoints.step(context.run_id, job_id, stage)
+            if not prior or prior["status"] in {"pending", "running"}:
+                self.checkpoints.finish_step(context.run_id, job_id, stage, status, error_code=code)
+
+    async def _cohort_producer(self, context, job_id, stage, request):
+        prior = {name: self.checkpoints.step(context.run_id, job_id, name) for name in COHORT_PRODUCERS}
+        prerequisites = COHORT_PRODUCERS[:COHORT_PRODUCERS.index(stage)]
+        if any((prior[name] or {}).get("status") not in TERMINAL_STEPS for name in prerequisites):
+            self._cohort_block(context, job_id, [stage])
+            return False
+        return await self._cohort_step(context, job_id, stage,
+            lambda: self._inputs(job_id, "requirements" if stage == "requirements_extract" else stage,
+                                 request, {name: value for name, value in prior.items() if value}),
+            lambda inputs: self._execute_stage(context, job_id, stage, inputs, request))
+
+    async def _cohort_producers(self, context, targets, request, claimed):
+        def claim(job_id):
+            if self._work_cancelled(context):
+                raise asyncio.CancelledError()
+            try:
+                self.checkpoints.claim_job(context.run_id, job_id, self._owner_reclaimable)
+                claimed.add(job_id)
+                return True
+            except Exception as error:
+                unfinished = [stage for stage in (*COHORT_PRODUCERS, "requirements", "fit")
+                              if (self.checkpoints.step(context.run_id, job_id, stage) or {}).get("status") not in TERMINAL_STEPS]
+                if unfinished:
+                    self._cohort_block(context, job_id, unfinished[:1], code=_error_code(error), status="failed")
+                    self._cohort_block(context, job_id, unfinished[1:])
+                return False
+
+        if self._cohort_policy(request)["producer_mode"] == "serial" or self.settings().get("dailyBudgetUsd", 0) > 0:
+            for job_id in targets:
+                if claim(job_id):
+                    for stage in COHORT_PRODUCERS:
+                        await self._cohort_producer(context, job_id, stage, request)
+            return
+        # Exactly one worker owns each distinct model lane. Queue backpressure
+        # bounds in-flight jobs independently of the admitted cohort size.
+        analysis_queue, extraction_queue = asyncio.Queue(maxsize=1), asyncio.Queue(maxsize=1)
+
+        async def enrich():
+            for job_id in targets:
+                if claim(job_id):
+                    await self._cohort_producer(context, job_id, "enrich", request)
+                    await analysis_queue.put(job_id)
+            await analysis_queue.put(None)
+
+        async def consume(queue, stage, following=None):
+            while (job_id := await queue.get()) is not None:
+                await self._cohort_producer(context, job_id, stage, request)
+                if following is not None:
+                    await following.put(job_id)
+            if following is not None:
+                await following.put(None)
+
+        tasks = [asyncio.create_task(enrich()),
+                 asyncio.create_task(consume(analysis_queue, "role_analysis", extraction_queue)),
+                 asyncio.create_task(consume(extraction_queue, "requirements_extract"))]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _cohort_normalize(self, context, targets, claimed):
+        prepared = []
+        for job_id in targets:
+            accepted = self.checkpoints.step(context.run_id, job_id, "requirements")
+            if accepted and accepted["status"] in TERMINAL_STEPS | {"failed", "blocked", "cancelled"}:
+                continue
+            extraction = self.checkpoints.step(context.run_id, job_id, "requirements_extract")
+            if extraction and extraction["status"] == "succeeded":
+                prepared.append(extraction["result"])
+            else:
+                self._cohort_block(context, job_id, ["requirements", "fit"])
+
+        async def normalize(inputs):
+            expected = {item["job_id"]: item for item in inputs["prepared"]}
+            if not claimed.issuperset(expected):
+                raise AppError("preparation_job_busy", "Another preparation owns a job in the frozen request.", 409)
+            result = await self.requirements.finalize_cohort(inputs["prepared"], operation_id=inputs["_operation_id"],
+                cancelled=lambda: self._work_cancelled(context), heartbeat=context.heartbeat)
+            jobs = result["jobs"]
+            if (result["operation_id"] != inputs["_operation_id"] or len(jobs) != len(expected)
+                    or {item["job_id"] for item in jobs} != set(expected)
+                    or any(item[key] != expected[item["job_id"]][key] for item in jobs
+                           for key in ("posting_revision", "posting_hash"))):
+                raise AppError("requirements_cohort_result_invalid", "The normalized result does not cover its admitted cohort.", 409)
+            return result
+
+        succeeded = await self._cohort_step(context, "", "requirements_normalize",
+            lambda: {"prepared": prepared} if prepared else {"skip": "no_pending_requirement_producers"}, normalize)
+        phase = self.checkpoints.step(context.run_id, "", "requirements_normalize")
+        if not succeeded:
+            for item in (phase["input"] or {}).get("prepared", prepared):
+                self._cohort_block(context, item["job_id"], ["requirements"],
+                                   code=phase["errorCode"] or "requirements_cohort_failed", status="failed")
+                self._cohort_block(context, item["job_id"], ["fit"])
+            return
+        if phase["status"] == "skipped":
+            return
+        # The saved phase inputs, rather than today's pending set, own replay
+        # after a committed normalization and a lost projection acknowledgement.
+        for item in phase["result"]["jobs"]:
+            existing = self.checkpoints.step(context.run_id, item["job_id"], "requirements")
+            if existing and existing["status"] in TERMINAL_STEPS | {"failed", "blocked", "cancelled"}:
+                continue
+            self.checkpoints.finish_step(context.run_id, item["job_id"], "requirements", "succeeded", result={
+                "revision": item["revision"], "postingRevision": item["posting_revision"],
+                "postingHash": item["posting_hash"], "status": item["status"]})
+
+    def _cohort_qualification_operation(self, context, targets):
+        phase = self.checkpoints.step(context.run_id, "", "fit_qualify")
+        identities = {(phase["input"] or {}).get("_operation_id")} if phase else set()
+        for job_id in targets:
+            step = self.checkpoints.step(context.run_id, job_id, "fit")
+            if step:
+                identities.add((step["input"] or {}).get("_cohort_operation_id"))
+        identities.discard(None)
+        if len(identities) > 1:
+            raise ConflictError("The cohort qualification belongs to inconsistent admitted operations.")
+        return next(iter(identities), _operation(context.run_id, "", "fit_qualify"))
+
+    async def _cohort_qualify(self, context, targets, claimed):
+        operation_id = self._cohort_qualification_operation(context, targets)
+        job_ids, expected_requirements, expected_score_revisions = [], {}, {}
+        for job_id in targets:
+            step = self.checkpoints.step(context.run_id, job_id, "fit")
+            if step and step["status"] in {"pending", "running"} and not (step["input"] or {}).get("skip"):
+                if (step["input"] or {}).get("_cohort_operation_id") == operation_id:
+                    job_ids.append(job_id)
+                    expected_requirements[job_id] = step["input"]["_requirements_binding"]
+                    expected_score_revisions[job_id] = step["input"]["expected_revision"]
+
+        async def qualify(inputs):
+            if not claimed.issuperset(inputs["job_ids"]):
+                raise AppError("preparation_job_busy", "Another preparation owns a job in the frozen request.", 409)
+            for job_id in inputs["job_ids"]:
+                pin = self.checkpoints.step(context.run_id, job_id, "fit")["input"]
+                if (pin["_cohort_operation_id"] != inputs["_operation_id"]
+                        or pin["_requirements_binding"] != inputs["expected_requirements"][job_id]
+                        or pin["expected_revision"] != inputs["expected_score_revisions"][job_id]):
+                    raise ConflictError("The cohort qualification does not match its frozen score inputs.")
+                self._assert_search_binding(job_id, pin)
+            return await self.fit.qualify_cohort(inputs["job_ids"], expected_requirements=inputs["expected_requirements"],
+                expected_score_revisions=inputs["expected_score_revisions"],
+                operation_id=inputs["_operation_id"],
+                cancelled=lambda: self._work_cancelled(context), heartbeat=context.heartbeat)
+
+        succeeded = await self._cohort_step(context, "", "fit_qualify",
+            lambda: {"job_ids": job_ids, "expected_requirements": expected_requirements,
+                     "expected_score_revisions": expected_score_revisions, "_operation_id": operation_id}
+            if job_ids else {"skip": "no_pending_cohort_qualifications"}, qualify)
+        if not succeeded:
+            phase = self.checkpoints.step(context.run_id, "", "fit_qualify")
+            for job_id in (phase["input"] or {}).get("job_ids", job_ids):
+                self._cohort_block(context, job_id, ["fit"], code=phase["errorCode"] or "fit_cohort_failed", status="failed")
+
+    async def _run_cohort(self, context, targets, request, failed):
+        claimed = set()
+        abandoned = False
+        try:
+            await self._cohort_producers(context, targets, request, claimed)
+            await self._cohort_normalize(context, targets, claimed)
+            self._prepare_search_fit(context, targets, request, shared=True)
+            await self._cohort_qualify(context, targets, claimed)
+            for job_id in targets:
+                step = self.checkpoints.step(context.run_id, job_id, "fit")
+                if step is None:
+                    self._cohort_block(context, job_id, ["fit"])
+                    continue
+                await self._cohort_step(context, job_id, "fit", lambda: step["input"],
+                    lambda inputs: self._execute_stage(context, job_id, "fit", inputs, request))
+            failed = failed or any(step["status"] in {"failed", "blocked", "cancelled"}
+                                   for step in self.checkpoints.get_run(context.run_id)["steps"])
+            return self.checkpoints.settle_search(context.run_id, failed,
+                lambda connection: self._verify_search_fit(context, targets, connection=connection))
+        except asyncio.CancelledError:
+            abandoned = not self._user_cancelled(context)
+            raise
+        finally:
+            if not abandoned:
+                for job_id in claimed:
+                    self.checkpoints.release_job(context.run_id, job_id)
 
 
     async def _run_job(self, context, job_id, request, *, stages=None):
@@ -473,10 +820,11 @@ class PreparationService:
 
 
     async def run(self, context, raw, *, parent=None):
-        request = _validate(raw)
-        request["contract_version"] = "requirements-v2"
         # The action keeps the configured mode and threshold throughout replay.
         frozen = self.checkpoints.request(context.run_id)
+        selection_limit = SEARCH_JOB_LIMIT if parent and frozen and self._cohort_policy(frozen) else 1000
+        request = _validate(raw, selection_limit=selection_limit)
+        request["contract_version"] = "requirements-v2"
         if frozen is not None:
             if frozen.get("contract_version") != request["contract_version"]:
                 raise AppError("action_contract_changed", "Start a new preparation run for the revised matching contract. The earlier run remains in history.", 409)
@@ -499,13 +847,16 @@ class PreparationService:
                 # global preference while a queued action starts or replays.
                 request["resume_mode"] = request.get("resume_mode", settings.get("resumeMode", "tailored"))
             request["min_fit_score"] = request["min_fit_score"] or settings.get("minFitScore", 7)
+        policy = self._cohort_policy(request)
         self.checkpoints.open_run(context.run_id, request, parent)
-        if parent:
+        if parent and not policy:
             # Successful work from the prior run is evidence, not permission to
             # repeat it. Each later stage still rechecks its current sources.
             self.checkpoints.inherit_retry_steps(context.run_id, parent, request["job_ids"])
         failed = False
         try:
+            if policy and self._work_cancelled(context):
+                raise asyncio.CancelledError()
             discovered = None
             if request["recipe"] in DISCOVERY_RECIPES:
                 if self.discovery is None:
@@ -515,6 +866,8 @@ class PreparationService:
                     discovered = prior["result"]
                     failed = prior["status"] == "warning"
                 else:
+                    if policy and request.get("target_route"):
+                        raise ConflictError("The original acquisition outcome is missing from the frozen search.")
                     inputs = self.checkpoints.start_step(context.run_id, "", "discover", request["discovery"])
                     discovery_id = context.run_id if request["recipe"] == "search" else _operation(context.run_id, "", "discover")
                     child = ActionContext(discovery_id, context.request_id,
@@ -530,8 +883,10 @@ class PreparationService:
                         self.checkpoints.finish_step(context.run_id, "", "discover", state, result=discovered)
                         failed = state == "warning"
                     except Exception as error:
-                        if self._user_cancelled(context):
-                            self.checkpoints.finish_step(context.run_id, "", "discover", "cancelled", error_code="action_cancelled")
+                        user_cancelled = self._user_cancelled(context)
+                        if user_cancelled or (policy and context.cancelled()):
+                            if user_cancelled:
+                                self.checkpoints.finish_step(context.run_id, "", "discover", "cancelled", error_code="action_cancelled")
                             raise asyncio.CancelledError() from None
                         outcome = self.discovery.search_outcome(discovery_id) if (
                             request["recipe"] == "search" and getattr(error, "code", None) == "discovery_sources_failed"
@@ -547,20 +902,25 @@ class PreparationService:
                         else:
                             self.checkpoints.finish_step(context.run_id, "", "discover", "failed", error_code=_error_code(error))
                             raise
-            targets = self._target_ids(context.run_id, request, discovered)
-            if request["recipe"] == "search":
-                # Consolidation can replace another cohort member's demand.
-                # Settle every producer before any Fit, then freeze final pins.
+            targets, route = self._target_ids(context.run_id, request, discovered)
+            if policy and route == "cohort":
+                failed = await self._run_cohort(context, targets, request, failed)
+            else:
+                if policy and route != "per_job":
+                    raise ConflictError("The frozen search preparation route is missing or unsupported.")
+                if request["recipe"] == "search":
+                    # Consolidation can replace another cohort member's demand.
+                    # Settle every producer before any Fit, then freeze final pins.
+                    for job_id in targets:
+                        if await self._run_job(context, job_id, request, stages=STAGES["search"][:-1]):
+                            failed = True
+                    self._prepare_search_fit(context, targets, request)
                 for job_id in targets:
-                    if await self._run_job(context, job_id, request, stages=STAGES["search"][:-1]):
+                    if await self._run_job(context, job_id, request):
                         failed = True
-                self._prepare_search_fit(context, targets, request)
-            for job_id in targets:
-                if await self._run_job(context, job_id, request):
+                if request["recipe"] == "search" and self._verify_search_fit(context, targets):
                     failed = True
-            if request["recipe"] == "search" and self._verify_search_fit(context, targets):
-                failed = True
-            self.checkpoints.set_status(context.run_id, "partial" if failed else "succeeded")
+                self.checkpoints.set_status(context.run_id, "partial" if failed else "succeeded")
             if failed:
                 raise AppError("preparation_partial", "Some preparation steps need attention. Inspect the run for each outcome.", 409)
             return self.get_run(context.run_id)
@@ -580,7 +940,7 @@ class PreparationService:
         try:
             # Discovery's authored new-job limit already bounds this cohort to
             # 10,000. Do not silently impose the manual selection default of 100.
-            run = await self.run(context, {"recipe": "search", "scope": "pending", "discovery": payload, "limit": 10000})
+            run = await self.run(context, {"recipe": "search", "scope": "pending", "discovery": payload, "limit": SEARCH_JOB_LIMIT})
         except AppError as error:
             if error.code != "preparation_partial":
                 raise
@@ -588,6 +948,12 @@ class PreparationService:
         discovered = self.checkpoints.step(context.run_id, "", "discover")["result"]
         failures = [{"jobId": step["jobId"], "stage": step["stage"], "code": step["errorCode"]}
                     for step in run["steps"] if step["jobId"] and step["status"] == "failed"]
+        if run.get("targetRoute") == "cohort":
+            reported = {failure["jobId"] for failure in failures}
+            completed = {step["jobId"] for step in run["steps"]
+                         if step["stage"] == "fit" and step["status"] in TERMINAL_STEPS}
+            failures.extend({"jobId": job_id, "stage": "fit", "code": "preparation_incomplete"}
+                            for job_id in run["jobIds"] if job_id not in reported | completed)
         assessed = sum(step["stage"] == "fit" and step["status"] == "succeeded"
                        and type((step.get("result") or {}).get("score")) in {int, float} for step in run["steps"])
         skipped = [{"jobId": step["jobId"], "reason": "unsupported_posting_language"}
@@ -604,15 +970,23 @@ class PreparationService:
                 "preparationAvailable": True, "preparation": preparation}
 
 
-    async def retry(self, context, payload):
+    @staticmethod
+    def _retry_options(payload):
         if not isinstance(payload, dict) or set(payload) - {"run_id", "job_ids"} or not isinstance(payload.get("run_id"), str):
             raise AppError("invalid_preparation_retry", "Supply a previous run ID and optional job IDs.")
-        previous = self.get_run(payload["run_id"])
-        if previous["status"] not in {"failed", "partial", "cancelled"}:
-            raise ConflictError("Only an unsuccessful or cancelled run can be retried.")
         requested = payload.get("job_ids")
         if requested is not None and (not isinstance(requested, list) or not all(isinstance(i, str) for i in requested)):
             raise AppError("invalid_job_selection", "Select jobs from the previous run.")
+        return payload["run_id"], requested
+
+    async def retry(self, context, payload):
+        parent, requested = self._retry_options(payload)
+        frozen = self.checkpoints.request(context.run_id)
+        if frozen and self._cohort_policy(frozen):
+            return await self.run(context, {key: frozen[key] for key in PREPARATION_OPTIONS if key in frozen}, parent=parent)
+        previous = self.get_run(parent)
+        if previous["status"] not in {"failed", "partial", "cancelled"}:
+            raise ConflictError("Only an unsuccessful or cancelled run can be retried.")
         failed_ids = {step["jobId"] for step in previous["steps"] if step["jobId"] and step["status"] in {"failed", "blocked", "cancelled"}}
         if previous["status"] == "cancelled":
             for job_id in previous["jobIds"]:
@@ -621,11 +995,13 @@ class PreparationService:
                 if not set(STAGES[previous["recipe"]]).issubset(completed):
                     failed_ids.add(job_id)
         selected = list(dict.fromkeys(requested)) if requested is not None else [i for i in previous["jobIds"] if i in failed_ids]
-        if any(i not in failed_ids for i in selected):
-            raise AppError("invalid_job_selection", "Retry only unfinished jobs from that run.")
-        original = self.checkpoints.request(payload["run_id"])
+        original = self.checkpoints.request(parent)
         if original is None:
             raise NotFoundError("The prior preparation run does not exist.")
+        if self._cohort_policy(original):
+            raise AppError("action_contract_changed", "Retry the original search with a new action admission.", 409)
+        if any(i not in failed_ids for i in selected):
+            raise AppError("invalid_job_selection", "Retry only unfinished jobs from that run.")
         discovery_failed = any(step["stage"] == "discover" and step["status"] in {"failed", "warning", "cancelled"}
                                for step in previous["steps"])
         if not selected and not discovery_failed:
@@ -636,4 +1012,4 @@ class PreparationService:
         raw.update(recipe=recipe, job_ids=selected, scope="selected" if selected else "pending")
         if recipe not in DISCOVERY_RECIPES:
             raw["discovery"] = {}
-        return await self.run(context, raw, parent=payload["run_id"])
+        return await self.run(context, raw, parent=parent)

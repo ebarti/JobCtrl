@@ -202,11 +202,11 @@ def approved_fingerprint(profile: dict) -> str:
 class FrozenFitProfileSnapshot:
     """Durable Fit-owned copy of a public Profile snapshot and its guidance."""
 
-    def __init__(self, value: dict, guidance: str, operation_id=None):
+    def __init__(self, value: dict, guidance: str, operation_id=None, *, manual_refresh=True):
         self.refresh_operation_id = operation_id
         self._value = deepcopy(value)
         self.scoring_guidance = guidance
-        self.manual_refresh = True
+        self.manual_refresh = manual_refresh
         for name in ("profile_id", "profile_revision", "fact_semantics_version", "fingerprint"):
             setattr(self, name, value[name])
 

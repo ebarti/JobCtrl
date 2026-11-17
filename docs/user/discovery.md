@@ -184,11 +184,23 @@ Assessment reuses exact accepted results before making another model request.
 Requirements keeps content-based result reuse separate from each job's actual
 posting identity. Fit reuses current person assessments for the exact capability,
 normalized job demand and Profile evidence; different demands keep separate
-assessments. It sends the entire missing set for one job together in one
-qualification request. Every requirement retains its own evidence and result;
+assessments. A newly admitted search with up to ten new jobs stages their source-bound
+extractions, then consolidates all its incoming reusable requirements with the
+complete retained catalog in one determination. After final demands are frozen,
+Fit sends the cohort's distinct missing qualification bindings together, with
+Profile evidence supplied once. Each requirement retains its own evidence and result;
 no source text is shortened or replaced by word-overlap matching. See
 [Scoring](scoring-and-employer-analysis.md#how-the-score-is-calculated) for reuse,
 validation and score calculation. Search still performs no wording preparation.
+
+Independent preparation stages may overlap across different model lanes while
+respecting their saved capacities. A finite daily spending cap retains serial
+model work. Shared catalog publication remains ordered, and Fit waits for the
+complete cohort's Requirements results. The action remains active through score
+publication and the final currentness check; acquisition completion is not an
+assessment-completion signal. Legacy queued work and retries retain their
+original execution policy and recorded request identities. Larger searches keep
+per-job matching and qualification, with the same overall acquisition limit.
 
 The cohort contains only jobs newly saved by this search. Existing accepted
 scores are not reassessed because a Profile or catalog changed; use the explicit

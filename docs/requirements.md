@@ -185,6 +185,23 @@ publication identity and guards. No lexical fallback, truncation, chunks or
 rewritten shared receipt may establish authority. See the
 [batching and reuse decision](decisions.md#_2026-11-13-batch-missing-qualifications-and-separate-exact-reuse-from-publication).
 
+Cold-search cohort clarification (2026-11-17): new search admissions freeze an
+execution policy and exact new-job cohort. Stage each source-bound extraction,
+then consolidate the complete incoming cohort with the complete retained
+catalog once. Namespace extraction-local IDs by their destination source/job;
+never infer identity from matching local labels. Freeze the final demands and
+Profile before one shared missing-qualification request and atomically validate
+all included source, initial-score and assessment-head guards. Publish each
+score only from those exact frozen accepted assessments, without another model
+call. Preserve legacy pending requests, retries, raw receipts and failed-refresh
+history. Bounded independent stages may overlap across model lanes, without
+raising saved capacities; finite monetary caps retain serial model work.
+Source refusal, an unsettled call or a changed input cannot trigger hidden
+retry, truncated work, a weaker model or another allowance. Fresh-path timing
+includes all required stages and failures; unchanged-cohort reuse is measured
+separately. See the
+[cohort preparation decision](decisions.md#_2026-11-17-bounded-cold-search-cohort-preparation).
+
 Active Requirements library clarification (2026-11-15): a reusable canonical
 meaning appears in the active library only while at least one accepted
 occurrence belongs to an existing nondeleted Job. Hidden Jobs count. Soft

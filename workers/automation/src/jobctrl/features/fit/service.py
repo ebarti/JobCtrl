@@ -25,6 +25,7 @@ from .sources import (
     achievements, approved_fingerprint, dto, fact_fingerprint, fact_sources, fingerprint, requirement_source,
     job_fingerprint, qualification_fingerprint, semantic_sources, wording_eligible,
 )
+from .cohort import InitialCohortService
 
 
 def unique_requirements(snapshot: dict) -> list[dict]:
@@ -53,7 +54,7 @@ def unique_requirements(snapshot: dict) -> list[dict]:
     return list(rows.values())
 
 
-class FitService:
+class FitService(InitialCohortService):
     def __init__(self, *, store: FitStorePort, model: ModelPort, profile: ProfilePort,
                  requirements: RequirementsPort, settings: SettingsPort | None = None):
         self.store, self.model = store, model

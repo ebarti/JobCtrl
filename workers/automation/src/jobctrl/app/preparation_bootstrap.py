@@ -15,7 +15,11 @@ def build_feature(runtime: Runtime, *, profile, jobs, requirements, fit, resumes
         profile=profile, jobs=jobs, requirements=requirements, fit=fit,
         resumes=resumes, discovery=discovery,
     )
+    def admit(run_id, payload, connection):
+        service.admit(run_id, payload, runtime.settings.snapshot(connection), connection)
+
     return Feature("preparation", service, build_routes(service),
                    {"preparation.run": service.run, "preparation.retry": service.retry},
-                   action_finalizers={"preparation.run": checkpoints.finalize_run, "preparation.retry": checkpoints.finalize_run},
-                   action_versions={"preparation.run": "requirements-v2", "preparation.retry": "requirements-v2"})
+                   action_finalizers={"preparation.run": service.finalize, "preparation.retry": service.finalize},
+                   action_versions={"preparation.run": "requirements-v2", "preparation.retry": "requirements-v2"},
+                   action_admissions={"preparation.run": admit, "preparation.retry": service.admit_retry})

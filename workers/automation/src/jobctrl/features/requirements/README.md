@@ -265,6 +265,32 @@ uses a narrow extraction-authorized snapshot publication instead: it makes no
 canonical, alias or certificate changes and no normalization call. Its original
 posting and accepted-head fences still apply.
 
+## Initial Search cohort
+
+Preparation calls `prepare_cohort_job` for each frozen job. Each posting keeps
+its original extraction local IDs, immutable source hash, extraction receipt and
+expected accepted revision. A job-scoped member ID distinguishes an `r1` from
+another job's `r1`. Staging a receipt leaves the accepted snapshot untouched.
+
+`finalize_cohort` submits one complete retained catalog and all staged reusable
+occurrences to `requirements.match_catalog`. Its
+`requirements-capability-demand-partition-v7-cohort` wire stores repeated exact
+source strings and citation path descriptors in request-local dictionaries. The
+owner verifies that expansion restores every original document and the complete
+context. The model can explicitly select a retained capability or demand
+definition with a `reuse` group. Its original membership, category, source
+roles, citations and exact definition must pass the full partition validator.
+The reconciliation records the raw selection, expanded group fingerprint and
+source-bound citation projection.
+
+The commit checks the complete catalog, posting and accepted snapshot versions.
+Direct-only and language-excluded jobs retain their own extraction authority.
+If the cohort has no reusable incoming rows, its new snapshots commit together
+using the extraction receipts. Recovery reads the committed revisions or an
+exact successful gateway receipt under the original request identity. An
+unsettled dispatch retains its one-call reservation. Permanent job removal
+erases affected private staging and keeps an operation tombstone to fence replay.
+
 ## Generations, history and publication
 
 Existing SQL schema strings remain unchanged. A separately initialized

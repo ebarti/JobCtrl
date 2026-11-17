@@ -9,6 +9,7 @@ from pydantic import Field, StrictInt, StrictStr
 
 from .domain import Citation, QualifiedMeaning, RequirementError, Value, _nonblank, fingerprint, validate_citations
 from .normalization_citations import CitationSelection, bind_citation_selections
+from .cohort_transport import COHORT_PROMPT_VERSION, expand_group_references
 from .normalization_partitions import bind_partition_selection
 from .normalization_partitions_v4 import bind_partition_selection as bind_partition_selection_v4
 
@@ -112,13 +113,15 @@ def bind_normalization_selection(value: CatalogNormalizationSelection, *, contex
 
 
 def bind_normalization_slots(value, *, context, sources, prompt_version=NORMALIZATION_PROMPT_VERSION):
-    if prompt_version in (NORMALIZATION_PROMPT_VERSION, NORMALIZATION_PARTITION_V5_PROMPT_VERSION):
-        binder = bind_partition_selection
+    if prompt_version == COHORT_PROMPT_VERSION:
+        expanded = expand_group_references(value.model_dump(), context, sources)
+        intermediate, partition_binding = bind_partition_selection(value, context=context, expanded=expanded)
+    elif prompt_version in (NORMALIZATION_PROMPT_VERSION, NORMALIZATION_PARTITION_V5_PROMPT_VERSION):
+        intermediate, partition_binding = bind_partition_selection(value, context=context)
     elif prompt_version == NORMALIZATION_PARTITION_V4_PROMPT_VERSION:
-        binder = bind_partition_selection_v4
+        intermediate, partition_binding = bind_partition_selection_v4(value, context=context)
     else:
         raise RequirementError("requirements_citation_wire_changed")
-    intermediate, partition_binding = binder(value, context=context)
     projected = CatalogNormalizationSelection.model_validate(intermediate)
     result, citation_binding = bind_normalization_selection(projected, context=context, sources=sources)
     return result, projected, partition_binding, citation_binding

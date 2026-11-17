@@ -46,6 +46,7 @@ integrated parity.
 
 **Backend domain model (DDD + hexagonal)**
 
+- [Bounded Cold-Search Cohort Preparation](#_2026-11-17-bounded-cold-search-cohort-preparation) · 2026-11-17
 - [DDD + Hexagonal Architecture Adopted](#_2026-05-06-ddd-hexagonal-architecture-adopted) · 2026-05-06
 - [Per-Aggregate Repositories](#_2026-05-06-per-aggregate-repositories) · 2026-05-06
 - [In-Process EventPublisher + Read-Model Projections](#_2026-05-06-in-process-eventpublisher-read-model-projections) · 2026-05-06
@@ -3703,3 +3704,65 @@ The [scoring reference](architecture/scoring.md#profile-edits-and-explicit-refre
 and [QA ledger](developer/qa/python-journeys.md) own implementation and observed
 proof. This decision alone does not establish real-provider recovery or hosted
 qualification of a future head.
+
+## 2026-11-17: Bounded Cold-Search Cohort Preparation
+
+**Decision.** Treat a fixed cohort of up to ten newly discovered jobs as one
+Requirements and qualification scope. Larger cohorts retain per-job
+preparation. Persist the route with the discovered target IDs before admitting
+assessment work. Per-job enrichment, role context and
+source-bound extraction remain independently inspectable. One normalization
+determination receives every incoming cohort member and the complete retained
+catalog; it publishes all affected Requirements snapshots atomically. Incoming
+member identities include their job/extraction/local identity so two jobs' local
+`r1` values cannot collide. Direct-only and unsupported-language results retain
+their own explicit outcomes without fabricated matching receipts.
+
+Freeze the final accepted demands, Profile/guidance, assessment heads and score
+heads after the Requirements producer barrier. Reuse exact current person
+authority and submit the distinct missing qualification bindings together.
+Publish new qualifications atomically under every captured source/head guard.
+Individual score commits then use only those frozen accepted assessments and
+existing deterministic arithmetic. They must not call the ordinary recapturing
+assessment path: changed or missing authority fails stale without another
+model call. Valid earlier score commits remain accepted if a later job fails;
+the outer action reports partial work truthfully.
+
+Persist the new execution policy only during first action admission, using the
+same transaction connection as the action insertion. Idempotent existing-action
+lookup returns before that hook. Pre-stored pending preparations explicitly
+promote to running and can finalize cancellation. Old queued/running requests
+and their retries retain their prior policy, operation IDs and request wires;
+deploying new code does not authorize new paid attempts.
+
+Durable cohort manifests distinguish staged extraction, frozen model inputs,
+completed raw receipts, domain publication and per-job score publication.
+Recovery checks accepted owner publication before recapturing inputs and
+retains the exact original request/call identity. Completed calls recover;
+unsettled, mismatched or conflicting calls refuse without another allowance.
+Transport compaction may share exact IDs/citations through explicit mappings;
+raw model selections and expanded owner decisions retain separate provenance,
+and the existing complete-partition/category/source validators still apply.
+
+Independent stages may overlap across distinct model lanes with bounded
+workers, ordered inputs and retained prerequisite/claim/cancellation guards.
+Saved lane capacities, selected model/effort, payload limits and live spend
+admission remain unchanged. Finite daily spending caps retain serial model
+execution. This does not parallelize durable source consumers, introduce a
+semantic repair loop, remove a source or move required work after completion.
+
+**Reason.** Per-requirement batching alone left repeated full-catalog
+normalization and per-job qualification on the fresh-search critical path.
+Whole-job serialization also exceeded the actual dependency between different
+lanes. A zero-call unchanged-cohort result cannot prove this path's speed.
+
+**Proof and limits.** Measure a public fresh five-new-job search using the real
+configured Profile/provider after owned application failure/recovery/race
+journeys pass. Include acquisition, every required stage, failures/recovery
+gaps and final canonical currentness on the clock; report actual new/reused
+qualification counts and model receipts. Do not describe one operational
+sample as a universal latency guarantee. The [concurrency reference](architecture/pipeline/concurrency.md#new-search-cohort-preparation),
+[Requirements owner](../workers/automation/src/jobctrl/features/requirements/README.md),
+[Fit owner](../workers/automation/src/jobctrl/features/fit/README.md) and
+[QA ledger](developer/qa/python-journeys.md) own the implementation and observed
+evidence for [#1473](https://github.com/ebarti/JobCtrl/issues/1473).

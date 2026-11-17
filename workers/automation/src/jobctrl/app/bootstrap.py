@@ -111,6 +111,8 @@ def create_application(workspace: Path | str, *, enabled_features: Collection[st
                 feature.actions["discovery.search"] = services["preparation"].search
                 feature.action_finalizers["discovery.search"] = preparation_finalizer
                 feature.action_versions["discovery.search"] = preparation_version
+                feature.action_admissions["discovery.search"] = lambda run_id, payload, connection: services["preparation"].admit_search(
+                    run_id, payload, runtime.settings.snapshot(connection), connection)
     if "jobs" in services:
         jobs = services["jobs"]
         if "fit" in services:

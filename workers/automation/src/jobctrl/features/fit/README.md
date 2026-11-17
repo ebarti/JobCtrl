@@ -138,6 +138,28 @@ publication fences score revision zero and both current and historical heads.
 A previously scored job with changed inputs requires manual refresh. Force never
 bypasses accepted authority or refresh admission.
 
+## Initial Search cohort
+
+`qualify_cohort` receives the complete frozen job list, posting and Requirements
+revisions and hashes, and each job's original score revision. It captures the
+Profile, scoring guidance and current and historical qualification heads.
+Eligible jobs share an assessment only when the exact binding, semantic
+requirement source and permitted factual inputs agree. Existing current
+qualifications are reused. One `fit.qualification-batch` call covers the
+remaining bindings. Publishing that batch rechecks all captured heads in one
+transaction. Each subsequent `assess_cohort_job` uses its pinned assessments
+and the existing equal-item formula.
+
+The cohort wire `fit-qualification-citation-refs-v1` also accepts an explicit
+reference to the complete supplied source or a numbered line in that source.
+The binder restores exact literal quotes and validates the original evidence
+roles, category permissions and verdicts. Each record retains the raw batch,
+raw row and expanded batch fingerprints, the expanded row fingerprint and the
+source selections. A worker recovering a reserved call reads its original
+gateway fingerprint and immutable successful receipt before publication. A
+call without a successful receipt keeps its reservation. Permanent job removal
+clears affected cohort staging and prevents the operation from restarting.
+
 ## Equal scores and user corrections
 
 `domain.calculate_score` persists `requirement-fit-v3-equal`. Every distinct

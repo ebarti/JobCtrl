@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 
 from jobctrl.app.errors import ConflictError
 
@@ -60,14 +61,14 @@ class NormalizationStore:
                 "snapshots": [row for row in snapshots if current_contract(row)]}
 
     def publish_empty_snapshot(self, *, posting, expected_revision, fields, extraction_receipt, attempt_id,
-                               cancelled, posting_guard):
+                               cancelled, posting_guard, connection=None):
         """Publish a proved empty reusable set without inventing semantic work.
 
         Language exclusions and direct-only/empty postings create no capability
         or normalized reusable demand. The extraction receipt is their complete
         authority; retained catalog identity and its certificate stay untouched.
         """
-        with self.database.transaction() as connection:
+        with (self.database.transaction() if connection is None else nullcontext(connection)) as connection:
             if cancelled():
                 raise RequirementError("cancelled")
             posting_guard(posting["job_id"], posting["revision"], posting["source_hash"], connection=connection)
@@ -136,9 +137,9 @@ class NormalizationStore:
             return {"input_fingerprint": row["input_fingerprint"], "operation": row["operation"],
                     "result": json.loads(row["result_json"]), "provenance": json.loads(row["provenance_json"])}
 
-    def reserve_normalization_call(self, operation_id, input_fingerprint, guard):
+    def reserve_normalization_call(self, operation_id, input_fingerprint, guard, connection=None):
         """An interrupted unreceipted dispatch cannot spend another allowance."""
-        with self.database.transaction() as connection:
+        with (self.database.transaction() if connection is None else nullcontext(connection)) as connection:
             guard(connection)
             previous = connection.execute("SELECT * FROM requirements_normalization_intents WHERE operation_id=?", (operation_id,)).fetchone()
             if previous is not None:

@@ -12,10 +12,11 @@ from .serialization import encoded
 from .refresh_storage import RefreshStorage
 from .association_storage import AssociationStorage
 from .current_wording_storage import CurrentWordingStorage
+from .cohort_storage import InitialCohortStorage
 from .contract import CONTRACT_VERSION, current_contract, current_qualification, qualification_key, require_contract
 
 
-class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
+class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage, InitialCohortStorage):
     def __init__(self, database, events, profile, requirements, settings=None):
         if events is None or profile is None or requirements is None:
             raise RuntimeError("Fit requires committed events and public Profile/Requirements ports.")
@@ -482,6 +483,10 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage):
                 return self.delete_job_data(job_id, conn)
         for table in ("fit_operation_receipts", "fit_correction_anchors", "fit_score_versions"):
             connection.execute(f"DELETE FROM {table} WHERE job_id=?", (job_id,))
+        connection.execute("""
+            UPDATE fit_initial_cohort_operations SET state_json='{"status":"source_deleted"}'
+            WHERE EXISTS(SELECT 1 FROM json_each(state_json,'$.request.job_ids') WHERE value=?)
+            """, (job_id,))
         connection.execute(
             "DELETE FROM fit_refresh_operations WHERE EXISTS(SELECT 1 FROM json_each(state_json,'$.job_ids') WHERE value=?)", (job_id,),
         )
