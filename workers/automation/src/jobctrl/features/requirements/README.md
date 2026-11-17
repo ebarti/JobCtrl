@@ -288,8 +288,12 @@ Direct-only and language-excluded jobs retain their own extraction authority.
 If the cohort has no reusable incoming rows, its new snapshots commit together
 using the extraction receipts. Recovery reads the committed revisions or an
 exact successful gateway receipt under the original request identity. An
-unsettled dispatch retains its one-call reservation. Permanent job removal
-erases affected private staging and keeps an operation tombstone to fence replay.
+unsettled dispatch retains its one-call reservation. A refused extraction keeps
+its own receipt ID so a retry of that operation preserves the validation error.
+Preparation settles the corresponding attempt with its terminal failure or
+cancellation in the same transaction. Interrupted workers can resume the original
+attempt. Permanent job removal erases affected private staging and keeps an
+operation tombstone to fence replay.
 
 ## Generations, history and publication
 

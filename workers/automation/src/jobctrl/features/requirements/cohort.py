@@ -14,6 +14,10 @@ EXTRACTION_VERSION = "requirements-v2-extract-v5-content-bound"
 
 
 class RequirementsCohortService:
+    def record_cohort_attempts(self, job_operations, state, failure_code, connection):
+        """Record a Preparation outcome alongside its checkpoint, under the original attempt IDs."""
+        self.store.record_cohort_attempts(job_operations, state, failure_code, connection)
+
     def _cohort_posting(self, state, connection=None, *, allow_accepted=False):
         request = state["request"]
         posting = self.jobs.assert_posting_current(request["job_id"], request["expected_posting_revision"],
@@ -73,6 +77,9 @@ class RequirementsCohortService:
             budget=ModelCallBudget(input_hash, 1, reserve=lambda value:
                 self.store.reserve_cohort_call(operation_id, value, request_pin, guard)),
             retained_request=state.get("model_request"), pin_request=request_pin.update,
+            refused_receipt_id=state.get("refused_extraction_receipt_id"),
+            pin_refusal=lambda receipt_id: self.store.update_cohort_operation(
+                operation_id, {"refused_extraction_receipt_id": receipt_id}),
             publication_posting=self._publication_identity(posting), source_binding=source)
         extraction = bind_extraction(selection, source_id=source["source_id"], text=text)
         result = {"contract_version": CONTRACT_VERSION, "cohort_version": COHORT_VERSION,

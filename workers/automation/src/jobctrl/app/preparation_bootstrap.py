@@ -9,7 +9,7 @@ from jobctrl.app.preparation_store import SCHEMA, PreparationStore
 def build_feature(runtime: Runtime, *, profile, jobs, requirements, fit, resumes,
                   discovery=None, **_ports) -> Feature:
     runtime.database.initialize_feature("preparation", SCHEMA)
-    checkpoints = PreparationStore(runtime.database, runtime.events)
+    checkpoints = PreparationStore(runtime.database, runtime.events, requirements.record_cohort_attempts)
     service = PreparationService(
         checkpoints, runtime.settings.snapshot,
         profile=profile, jobs=jobs, requirements=requirements, fit=fit,

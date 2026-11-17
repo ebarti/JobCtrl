@@ -1,13 +1,96 @@
-import { test, expect, json, action, completed, terminal } from "../harness/fixtures.js";
+import { realpath } from "node:fs/promises";
+import path from "node:path";
+import { test, expect, json, action, completed, terminal, type ApplicationStack } from "../harness/fixtures.js";
 import { createBaseline, type Profile } from "./core-data.js";
 import { createScoredFit, type FitState } from "./fit-data.js";
 import { servePostingAssessment, serveQualification } from "./search-assessment-data.js";
 import { authoredPartition, readCatalog, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
-import { catalogMatching, memberRoots, modelSources, normalizationFingerprint, type CatalogContext } from "./requirements-data.js";
-import { COMMON_DEMAND, posting, untilNormalization, type CohortPosting } from "./preparation-cohort-data.js";
+import { catalogMatching, memberRoots, modelSources, normalizationFingerprint, typedExtraction, type CatalogContext } from "./requirements-data.js";
+import { COMMON_DEMAND, posting, respondProducer, untilNormalization, type CohortPosting } from "./preparation-cohort-data.js";
 import { cohortCitationSelection, qualificationBatchDecision, qualificationBindings } from "./qualification-data.js";
 
 const SERIAL_PREDECESSOR = "38ef94613ebb7c0413d8d5ee89987ef860f53b13";
+
+async function requirementAttempts(app: ApplicationStack, runId: string) {
+  const owner = JSON.parse((await app.file(".jobctrl-e2e-owned.json")).toString());
+  expect(owner.workspace).toBe(app.workspace);
+  const file = path.join(app.workspace, "jobctrl.db");
+  expect(await realpath(file)).toBe(file);
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    return db.prepare(`SELECT a.job_id, a.attempt_id, a.state, a.failure_code, a.completed_at,
+      json_extract(o.state_json,'$.model_request.input_fingerprint') AS extraction_fingerprint,
+      g.receipt_id AS refused_receipt_id, g.status AS refused_receipt_status FROM preparation_steps s
+      JOIN requirements_attempts a ON a.job_id=s.job_id AND a.attempt_id=json_extract(s.input_json,'$._operation_id')
+      JOIN requirements_cohort_operations o ON o.operation_id=a.attempt_id
+      LEFT JOIN app_model_calls g ON g.receipt_id=json_extract(o.state_json,'$.refused_extraction_receipt_id')
+        AND g.input_fingerprint=json_extract(o.state_json,'$.model_request.input_fingerprint')
+      WHERE s.run_id=? AND s.stage='requirements_extract' ORDER BY a.started_at, a.attempt_id`).all(runId);
+  } finally {
+    db.close();
+  }
+}
+
+test("a refused cohort extraction and an explicit cancellation settle only the corresponding Requirements attempts", async ({ api, app }) => {
+  await createBaseline(api);
+  const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 3 });
+  const started = await action(api, "discovery.search", { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }] });
+  const source = await app.external.next();
+  expect(source.path).toBe("/discovery");
+  const first = posting(101);
+  const postings = [first, { ...posting(102), description: first.description }, posting(103)];
+  source.respond({ jobs: postings, cursor: null, complete: true });
+  let extracted = 0;
+  let current = first;
+  for (;;) {
+    const call = await app.external.next();
+    if (call.path === "/posting-page") {
+      const page = postings.find((row) => row.url === call.body["url"]);
+      expect(page).toBeDefined();
+      current = page!;
+    }
+    if (call.body?.["operation"] === "requirements.extract") {
+      extracted++;
+      if (extracted === 3) break;
+      if (extracted === 1) {
+        call.reply(typedExtraction(call, { requirements: [{ localId: "r1", text: COMMON_DEMAND, basis: "inferred", rationale: null }] }));
+        continue;
+      }
+    }
+    respondProducer(call, [current]);
+  }
+  const run = await json<{ jobIds: string[]; steps: { jobId: string; stage: string; status: string; errorCode: string | null }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
+  expect(run.steps.find((step) => step.jobId === run.jobIds[0] && step.stage === "requirements_extract"))
+    .toMatchObject({ status: "failed", errorCode: "inference_rationale_missing" });
+  const refused = { job_id: run.jobIds[0], state: "blocked", failure_code: "inference_rationale_missing",
+    completed_at: expect.any(String), refused_receipt_id: expect.any(String), refused_receipt_status: "succeeded" };
+  const running = (job_id: string) => ({ job_id, state: "running", failure_code: null, completed_at: null });
+  const attempts = await requirementAttempts(app, started.runId);
+  expect(attempts).toMatchObject([refused, running(run.jobIds[1]!), running(run.jobIds[2]!)]);
+  expect(attempts[0]!["extraction_fingerprint"]).toEqual(expect.any(String));
+  expect(attempts[1]!["extraction_fingerprint"]).toBe(attempts[0]!["extraction_fingerprint"]);
+  await json(api, "post", `/v1/action-runs/${started.runId}/cancel`, {});
+  expect(await terminal(api, started.runId)).toMatchObject({ status: "cancelled" });
+  const cancelled = (job_id: string) => ({ job_id, state: "cancelled", failure_code: "action_cancelled", completed_at: expect.any(String) });
+  expect(await requirementAttempts(app, started.runId)).toMatchObject([refused, cancelled(run.jobIds[1]!), cancelled(run.jobIds[2]!)]);
+  for (const id of run.jobIds) expect(await json(api, "get", `/v1/jobs/${id}/requirements`)).toBeNull();
+  expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.extract")).toHaveLength(3);
+  expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.match_catalog")).toHaveLength(0);
+
+  // The retry revalidates the exact refused receipt and reuses the staged
+  // sibling. The unresolved provider spend still prevents normalization.
+  const retry = await action(api, "preparation.retry", { run_id: started.runId });
+  expect(await terminal(api, retry.runId)).toMatchObject({ status: "failed", errorCode: "preparation_partial", cancellationRequested: false });
+  const after = await requirementAttempts(app, retry.runId);
+  expect(after).toMatchObject([{ ...refused, refused_receipt_id: attempts[0]!["refused_receipt_id"] },
+    { job_id: run.jobIds[1], state: "blocked", failure_code: "spend_accounting_unresolved", completed_at: expect.any(String) },
+    { job_id: run.jobIds[2], state: "blocked", failure_code: "requirements_cohort_interrupted", completed_at: expect.any(String), refused_receipt_id: null }]);
+  expect(after.map((row) => row["attempt_id"])).toEqual(attempts.map((row) => row["attempt_id"]));
+  expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.extract")).toHaveLength(3);
+  expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.match_catalog")).toHaveLength(0);
+});
 
 test("a new search normalizes repeated local IDs together and shares one qualification before reusing it exactly", async ({ api, app }) => {
   const { library } = await createBaseline(api);
@@ -114,8 +197,10 @@ test("a new search normalizes repeated local IDs together and shares one qualifi
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
 });
 
-for (const fault of ["missing member", "foreign member", "foreign citation"] as const) {
-  test(`cohort normalization refuses a ${fault} without publishing partial authority`, async ({ api, app }) => {
+for (const fault of ["missing member", "foreign member", "foreign citation", "worker interruption"] as const) {
+  const title = fault === "worker interruption" ? "worker interruption during cohort normalization preserves accepted authority"
+    : `cohort normalization refuses a ${fault} without publishing partial authority`;
+  test(title, async ({ api, app }) => {
     const seed = await createScoredFit(api, app, `cohort-normalization-${fault.replaceAll(" ", "-")}`);
     const accepted = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${seed.posting.job_id}/requirements`);
     const priorScore = await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`);
@@ -141,16 +226,30 @@ for (const fault of ["missing member", "foreign member", "foreign citation"] as 
     if (fault === "missing member") delete invalid.member_slots[context.incoming[0]!.member_id];
     if (fault === "foreign member") invalid.member_slots["incoming:foreign-job:r1"] = structuredClone(invalid.member_slots[context.incoming[0]!.member_id]!);
     if (fault === "foreign citation") memberRoots(invalid)[0]!.slot.citations.push({ source_id: "foreign-source", segment_id: "foreign-segment" });
-    matching.reply(invalid);
-    expect((await completed(api, started.runId))["result"]).toMatchObject({ ok: false, status: "partial",
+    const refusal = fault === "worker interruption" ? "requirements_cohort_interrupted" : "model_schema_violation";
+    const calls = app.external.calls.filter((call) => call.body?.["operation"] === "requirements.match_catalog").length;
+    if (fault === "worker interruption") {
+      expect(await requirementAttempts(app, started.runId)).toMatchObject(run.jobIds.map((job_id) => ({
+        job_id, state: "running", failure_code: null, completed_at: null,
+      })));
+      const replacement = await app.restartWorker();
+      expect(replacement.current).not.toBe(replacement.previous);
+    } else matching.reply(invalid);
+    const outcome = await completed(api, started.runId);
+    expect(outcome["cancellationRequested"]).toBe(false);
+    expect(outcome["result"]).toMatchObject({ ok: false, status: "partial",
       preparation: { status: "partial", assessedJobs: 0, failedJobs: 2 } });
     const recorded = await json<{ steps: { jobId: string | null; stage: string; status: string; errorCode: string | null }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-    expect(recorded.steps.find((step) => step.stage === "requirements_normalize")).toMatchObject({ status: "failed", errorCode: "model_schema_violation" });
+    expect(recorded.steps.find((step) => step.stage === "requirements_normalize")).toMatchObject({ status: "failed", errorCode: refusal });
     expect(recorded.steps.filter((step) => step.stage === "requirements" && step.status === "failed")).toHaveLength(2);
+    expect(await requirementAttempts(app, started.runId)).toMatchObject(run.jobIds.map((job_id) => ({
+      job_id, state: "blocked", failure_code: refusal, completed_at: expect.any(String),
+    })));
     for (const id of run.jobIds) expect((await json<{ score: null }>(api, "get", `/v1/jobs/${id}/fit`)).score).toBeNull();
     expect(await readCatalog(api)).toEqual(catalogBefore);
     expect(await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${seed.posting.job_id}/requirements`)).toEqual(accepted);
     expect((await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).score).toEqual(priorScore.score);
+    expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.match_catalog")).toHaveLength(calls);
     expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
   });
 }

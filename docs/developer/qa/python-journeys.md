@@ -58,20 +58,20 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **173 journeys in 49 project-file groups**:
-**172 Chromium cases in 48 spec files**, plus **one demo case in one file**.
+The current configured inventory is **175 journeys in 49 project-file groups**.
+It includes **174 Chromium cases in 48 spec files** and **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts, keyboard-driven Profile saves, posting-fetch refusals and the
 actual terminal-root v4 and terminal-group v5 predecessor upgrades, demand-citation
 role refusals, and Fit schema refusals. The four hosted shard listings
-contain 48 / 48 / 34 / 43 cases and match the unsharded inventory exactly once.
+contain 48 / 50 / 34 / 43 cases and match the unsharded inventory exactly once.
 Listing these scenarios is not evidence that the complete current candidate passed.
 
 ### Initial search cohorts — 17 November 2026
 
 [Preparation cohort journeys](../../../apps/web/e2e/journeys/preparation-cohort.spec.ts)
-add thirteen cases using real application actions and controlled external responses.
+add fifteen cases using real application actions and controlled external responses.
 Two independently sourced postings can each use the local extraction ID `r1`;
 their job-scoped members join one complete normalization, followed by one shared
 qualification and current per-job scores. A later acquired job explicitly reuses
@@ -125,6 +125,16 @@ IDs passed together in `e2e-Aw2fmm` (8/8). The saved-search browser journey and
 real predecessor upgrade passed in `e2e-HpNSfw` (2/2). They assert live progress
 through the shared catalog and Fit calls, preservation of the original schema
 and history, and the exact additions needed to stage cohorts.
+
+The attempt-lifecycle regression first reproduced in `e2e-FfkRen` with
+`inference_rationale_missing` recorded for the extraction step and the attached
+Requirements attempt still running. The repaired run `e2e-JAvzFA` passed six
+journeys with zero retries in **108.331 s of journeys / 118.075 s total**. An exact
+retry preserved the original rejection even after a sibling cached a valid
+result for identical input. Explicit cancellation settled unpublished attempts,
+shared normalization refusal settled every affected attempt, and actual worker
+loss retained the original reservation until recovery. Accepted snapshots stayed
+intact.
 
 ### Bounded Fit impact scope and durable call recovery — 17 November 2026
 

@@ -31,8 +31,21 @@ def _json(value):
 
 
 class PreparationStore:
-    def __init__(self, database, events):
+    def __init__(self, database, events, record_cohort_attempts):
         self.database, self.events = database, events
+        self.record_cohort_attempts = record_cohort_attempts
+
+    @staticmethod
+    def _extraction_attempts(connection, run_id, job_id=None):
+        return connection.execute(
+            "SELECT job_id,json_extract(input_json,'$._operation_id') FROM preparation_steps "
+            "WHERE run_id=? AND stage='requirements_extract' AND json_extract(input_json,'$._operation_id') IS NOT NULL "
+            "AND (? IS NULL OR job_id=?)", (run_id, job_id, job_id)).fetchall()
+
+    @staticmethod
+    def _normalization_attempts(inputs):
+        return [(item["job_id"], item["operation_id"]) for item in (inputs or {}).get("prepared", [])
+                if item["status"] == "prepared"]
 
     def claim_job(self, run_id, job_id, owner_reclaimable):
         with self.database.transaction() as conn:
@@ -126,6 +139,10 @@ class PreparationStore:
                 (status, error_code, now(), run_id, step["job_id"], step["stage"]),
             )
             self._event(connection, run_id, status, job_id=step["job_id"] or None, stage=step["stage"])
+        # A staged sibling can still be awaiting publication when a terminal
+        # action ends before its shared normalization checkpoint was created.
+        self.record_cohort_attempts(self._extraction_attempts(connection, run_id),
+                                    "cancelled" if status == "cancelled" else "blocked", error_code, connection)
         connection.execute("DELETE FROM preparation_job_claims WHERE run_id=?", (run_id,))
         self._event(connection, run_id, status)
 
@@ -170,6 +187,8 @@ class PreparationStore:
                 saved = inputs
                 conn.execute("INSERT INTO preparation_steps VALUES(?,?,?,?,?,?,?,?)",
                              (run_id, job_id, stage, "running", _json(inputs), None, None, now()))
+            if stage == "requirements_normalize":
+                self.record_cohort_attempts(self._normalization_attempts(saved), "running", None, conn)
             self._event(conn, run_id, "running", job_id=job_id or None, stage=stage)
             return saved
 
@@ -179,6 +198,13 @@ class PreparationStore:
             conn.execute("INSERT INTO preparation_steps VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(run_id,job_id,stage) "
                          "DO UPDATE SET status=excluded.status,result_json=excluded.result_json,error_code=excluded.error_code,updated_at=excluded.updated_at",
                          (run_id, job_id, stage, status, None, _json(result) if result is not None else None, error_code, now()))
+            if stage in {"requirements_extract", "requirements_normalize"} and status in {"failed", "cancelled"}:
+                if stage == "requirements_extract":
+                    attempts = self._extraction_attempts(conn, run_id, job_id)
+                else:
+                    recorded = self.step(run_id, job_id, stage, connection=conn)
+                    attempts = self._normalization_attempts(recorded["input"])
+                self.record_cohort_attempts(attempts, "cancelled" if status == "cancelled" else "blocked", error_code, conn)
             self._event(conn, run_id, status, job_id=job_id or None, stage=stage)
 
 

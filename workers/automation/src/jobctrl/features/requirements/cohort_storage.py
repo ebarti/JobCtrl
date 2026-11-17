@@ -4,7 +4,7 @@ import json
 
 from jobctrl.app.errors import ConflictError
 
-from .domain import RequirementError, canonical_json
+from .domain import RequirementError, canonical_json, now
 
 SCHEMA = """
 CREATE TABLE requirements_cohort_operations (
@@ -14,6 +14,22 @@ CREATE TABLE requirements_cohort_operations (
 
 
 class CohortStorage:
+    def record_cohort_attempts(self, job_operations, state, failure_code, connection):
+        if state == "running":
+            # An explicit retry can inherit a completed extraction and resume
+            # its original normalization without issuing another extraction.
+            connection.executemany(
+                "UPDATE requirements_attempts SET state='running',failure_code=NULL,completed_at=NULL "
+                "WHERE job_id=? AND attempt_id=? AND state IN ('blocked','cancelled')", job_operations)
+        elif state in {"blocked", "cancelled"}:
+            stamp = now()
+            connection.executemany(
+                "UPDATE requirements_attempts SET state=?,failure_code=?,completed_at=? "
+                "WHERE job_id=? AND attempt_id=? AND state='running'",
+                ((state, failure_code, stamp, job_id, operation_id) for job_id, operation_id in job_operations))
+        else:
+            raise ValueError("Unknown cohort attempt state")
+
     def cohort_operation(self, operation_id, input_fingerprint=None, connection=None):
         if connection is None:
             with self.database.connect() as connection:
