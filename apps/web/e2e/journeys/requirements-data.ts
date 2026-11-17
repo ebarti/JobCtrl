@@ -2,12 +2,14 @@ import { createHash } from "node:crypto";
 import { expect, type ExternalCall } from "../harness/fixtures.js";
 
 export type ModelSource = { source_id: string; text: string };
-export const NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v4";
+export const NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v6";
+export const PARTITION_V5_PROMPT_VERSION = "requirements-capability-demand-partition-v5";
+export const PARTITION_V4_PROMPT_VERSION = "requirements-capability-demand-partition-v4";
 export const CITATION_SELECTION_PROMPT_VERSION = "requirements-capability-demand-citation-v3";
 export const LEGACY_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-v2";
 export const CITATION_BINDER_VERSION = "requirements-citation-binding-v1";
-export const PARTITION_BINDER_VERSION = "requirements-partition-binding-v1";
-export const NORMALIZATION_STORAGE_VERSION = "requirements-normalization-binding-v2";
+export const PARTITION_BINDER_VERSION = "requirements-partition-binding-v2";
+export const NORMALIZATION_STORAGE_VERSION = "requirements-normalization-binding-v3";
 export const modelSources = (call: ExternalCall) =>
   call.body["sources"] as ModelSource[];
 
@@ -104,6 +106,7 @@ export function citeSources(call: ExternalCall, sourceIds: string[]) {
 }
 
 export type CatalogContext = {
+  partition_group_handles: { capabilities: string[]; demands: string[] };
   catalog_revision: number;
   catalog_inventory_source_id: string;
   posting?: { model_source_id: string };
@@ -222,26 +225,69 @@ type NormalizationCorrection<Citation> = { member_id: string; retained_group_id:
 export type CorrectionWitness = { member_id: string; represented_by_member_id: string; unsupported_claim: string;
   reason: string; citations: CitationSelection[] };
 export type BoundCorrectionWitness = NormalizationCorrection<ReturnType<typeof citeSources>[number]>;
-export type MemberRootSlot = { kind: "root"; category: "skill" | "professional_experience"; name: string;
+export type MemberRootSlot = { kind: "group"; category: "skill" | "professional_experience"; name: string;
   definition: string; reuse_requirement_id: string | null; reason: string; citations: CitationSelection[] };
-export type OccurrenceRootSlot = { kind: "root"; definition: string; reuse_demand_fingerprint: string | null; citations: CitationSelection[] };
+export type OccurrenceRootSlot = { kind: "group"; definition: string; reuse_demand_fingerprint: string | null; citations: CitationSelection[] };
 type UnresolvedSlot = { kind: "unresolved"; reason: string; citations: CitationSelection[] };
-export type MemberSlot = MemberRootSlot | { kind: "same_as"; member_id: string } | UnresolvedSlot;
-export type OccurrenceSlot = OccurrenceRootSlot | { kind: "same_as"; occurrence_id: string } | UnresolvedSlot;
+export type MemberSlot = { kind: "assigned"; capability_group_id: string } | UnresolvedSlot;
+export type OccurrenceSlot = { kind: "assigned"; demand_group_id: string } | UnresolvedSlot;
 export type CatalogSlots = { status: "complete" | "needs_review"; catalog_revision: number;
-  member_slots: Record<string, MemberSlot>; occurrence_slots: Record<string, OccurrenceSlot>; corrections: CorrectionWitness[] };
-export const memberRoots = (value: CatalogSlots) => Object.entries(value.member_slots).flatMap(([memberId, slot]) =>
-  slot.kind === "root" ? [{ memberId, slot }] : []);
-export const occurrenceRoots = (value: CatalogSlots) => Object.entries(value.occurrence_slots).flatMap(([occurrenceId, slot]) =>
-  slot.kind === "root" ? [{ occurrenceId, slot }] : []);
+  member_slots: Record<string, MemberSlot>; occurrence_slots: Record<string, OccurrenceSlot>;
+  capability_groups: Record<string, MemberRootSlot | null>; demand_groups: Record<string, OccurrenceRootSlot | null>;
+  corrections: CorrectionWitness[] };
+export const memberRoots = (value: CatalogSlots) => Object.entries(value.capability_groups).flatMap(([groupId, slot]) =>
+  slot === null ? [] : [{ groupId, memberId: Object.entries(value.member_slots).find(([, assignment]) =>
+    assignment.kind === "assigned" && assignment.capability_group_id === groupId)![0], slot }]);
+export const occurrenceRoots = (value: CatalogSlots) => Object.entries(value.demand_groups).flatMap(([groupId, slot]) =>
+  slot === null ? [] : [{ groupId, occurrenceId: Object.entries(value.occurrence_slots).find(([, assignment]) =>
+    assignment.kind === "assigned" && assignment.demand_group_id === groupId)![0], slot }]);
 
-/** Authors supply the complete semantic partition. This binds only live IDs,
- * exhaustive inventory accounting and verbatim citations, never meaning. */
+/** Authors supply the complete semantic partition. Only live IDs, supplied
+ * independent handles and verbatim citation selections are joined here. */
 export function catalogNormalization(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]): CatalogSlots {
+  return normalizationSlots(call, capabilities, demands, NORMALIZATION_PROMPT_VERSION);
+}
+
+/** Exact v5 transport while an actual pinned predecessor is running. */
+export function legacyCatalogNormalizationV5(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]): CatalogSlots {
+  return normalizationSlots(call, capabilities, demands, PARTITION_V5_PROMPT_VERSION);
+}
+
+function normalizationSlots(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[], prompt: string): CatalogSlots {
   expect(call.body["operation"]).toBe("requirements.match_catalog");
-  expect(call.body["prompt_version"]).toBe(NORMALIZATION_PROMPT_VERSION);
+  expect(call.body["prompt_version"]).toBe(prompt);
+  const context = call.body["context"] as CatalogContext;
+  const handles = context.partition_group_handles;
+  expect(handles.capabilities).toHaveLength(context.members.length);
+  expect(handles.demands).toHaveLength(context.occurrences.length);
   const authored = normalizationResponse(call, capabilities, demands, (references) => citationSelections(call, references));
   const member_slots: CatalogSlots["member_slots"] = {};
+  const capability_groups: CatalogSlots["capability_groups"] = Object.fromEntries(handles.capabilities.map((id) => [id, null]));
+  authored.capabilities.forEach((group, index) => {
+    const groupId = handles.capabilities[index]!;
+    capability_groups[groupId] = { kind: "group", category: group.category, name: group.name, definition: group.definition,
+      reuse_requirement_id: group.reuse_requirement_id, reason: group.reason, citations: group.citations };
+    for (const memberId of group.member_ids) member_slots[memberId] = { kind: "assigned", capability_group_id: groupId };
+  });
+  const occurrence_slots: CatalogSlots["occurrence_slots"] = {};
+  const demand_groups: CatalogSlots["demand_groups"] = Object.fromEntries(handles.demands.map((id) => [id, null]));
+  authored.demands.forEach((demand, index) => {
+    const groupId = handles.demands[index]!;
+    demand_groups[groupId] = { kind: "group", definition: demand.definition,
+      reuse_demand_fingerprint: demand.reuse_demand_fingerprint, citations: demand.citations };
+    for (const occurrenceId of demand.bindings.flatMap((binding) => binding.occurrence_ids))
+      occurrence_slots[occurrenceId] = { kind: "assigned", demand_group_id: groupId };
+  });
+  return { status: "complete", catalog_revision: authored.catalog_revision, member_slots, occurrence_slots,
+    capability_groups, demand_groups, corrections: [] };
+}
+
+/** Exact graph wire, used only while the pinned v4 predecessor is running. */
+export function legacyCatalogNormalizationV4(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]) {
+  expect(call.body["operation"]).toBe("requirements.match_catalog");
+  expect(call.body["prompt_version"]).toBe(PARTITION_V4_PROMPT_VERSION);
+  const authored = normalizationResponse(call, capabilities, demands, (references) => citationSelections(call, references));
+  const member_slots: Record<string, { kind: "root" } & Omit<MemberRootSlot, "kind"> | { kind: "same_as"; member_id: string }> = {};
   for (const group of authored.capabilities) {
     const representative = group.member_ids[0]!;
     expect(representative).toBeTruthy();
@@ -250,7 +296,7 @@ export function catalogNormalization(call: ExternalCall, capabilities: Capabilit
         reuse_requirement_id: group.reuse_requirement_id, reason: group.reason, citations: group.citations }
       : { kind: "same_as", member_id: representative };
   }
-  const occurrence_slots: CatalogSlots["occurrence_slots"] = {};
+  const occurrence_slots: Record<string, { kind: "root" } & Omit<OccurrenceRootSlot, "kind"> | { kind: "same_as"; occurrence_id: string }> = {};
   for (const demand of authored.demands) {
     const occurrences = demand.bindings.flatMap((binding) => binding.occurrence_ids);
     const representative = occurrences[0]!;
@@ -318,6 +364,14 @@ function normalizationResponse<Citation>(call: ExternalCall, capabilities: Capab
  * demands use their authored extraction definition unless the caller supplies
  * an explicit normalized/combined demandDefinition. No source text is matched. */
 export function catalogMatching(call: ExternalCall, choices: Record<string, CatalogChoice>) {
+  return matchingSlots(call, choices, catalogNormalization);
+}
+
+export function legacyCatalogMatchingV5(call: ExternalCall, choices: Record<string, CatalogChoice>) {
+  return matchingSlots(call, choices, legacyCatalogNormalizationV5);
+}
+
+function matchingSlots(call: ExternalCall, choices: Record<string, CatalogChoice>, normalize: typeof catalogNormalization) {
   const context = call.body["context"] as CatalogContext;
   expect(Object.keys(choices).sort()).toEqual(context.incoming.map((row) => row.local_id).sort());
   const groups: CapabilityChoice[] = context.candidates.map((candidate, index) => {
@@ -393,7 +447,7 @@ export function catalogMatching(call: ExternalCall, choices: Record<string, Cata
     else if (reuseDemandFingerprint) demand.reuseDemandFingerprint = reuseDemandFingerprint;
     demand.bindings.push({ jobId: occurrences[0]!.job_id, occurrenceIds: occurrences.map((row) => row.occurrence_id) });
   }
-  const result = catalogNormalization(call, groups, demands);
+  const result = normalize(call, groups, demands);
   const uncertain = context.incoming.filter((row) => choices[row.local_id]!.verdict === "uncertain");
   if (uncertain.length) {
     result.status = "needs_review";

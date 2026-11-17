@@ -10,6 +10,8 @@ from bs4 import BeautifulSoup
 from pydantic import ValidationError
 
 from jobctrl.app.errors import AppError
+from jobctrl.network.fetch_failures import PublicFetchFailureKind
+from jobctrl.network.ports import PolitenessOutcome
 from jobctrl.semantic import Citation, DeterminationFailure, Source, validate_citations
 from jobctrl.features.jobs.domain.capture import DetailPage
 from jobctrl.features.jobs.domain.analysis import RefreshIdentity
@@ -21,8 +23,16 @@ from jobctrl.features.jobs.domain.page_interpretation import (
     PostingSelectionExtraction,
 )
 from jobctrl.features.jobs.domain.postings import normalize_url, posting_url, utc_now
-from jobctrl.features.jobs.adapters.page_fetcher import PlaywrightDetailPageFetcher
+from jobctrl.features.jobs.adapters.page_fetcher import (
+    DetailPageFetchBlocked,
+    DetailPageFetchUnavailable,
+    PlaywrightDetailPageFetcher,
+)
 from jobctrl.features.jobs.adapters.posting_sources import posting_page_sources, rendered_page_text
+
+
+_FETCH_BLOCK_REASONS = ({value.value for value in PolitenessOutcome if value != PolitenessOutcome.ALLOWED}
+                        | {value.value for value in PublicFetchFailureKind} | {"unsafe_redirect"})
 
 
 class SourceBoundPostingAcquirer:
@@ -60,6 +70,24 @@ class SourceBoundPostingAcquirer:
             self.fetcher if session is None else PlaywrightDetailPageFetcher(session=session, raise_on_unavailable=True)
         )
 
+    async def _fetch_page(self, url, *, session=None):
+        try:
+            return await asyncio.to_thread(self._request_fetcher(session).fetch, url)
+        except AppError:
+            raise
+        except DetailPageFetchBlocked as error:
+            reason = error.reason_code if isinstance(error.reason_code, str) and error.reason_code in _FETCH_BLOCK_REASONS else "unknown"
+            raise AppError("posting_fetch_blocked", "The posting fetch was blocked; review its recorded acquisition reason.", 409,
+                           {"captureFailure": {"stage": "posting_fetch", "kind": "blocked", "reason_code": reason}}) from None
+        except DetailPageFetchUnavailable:
+            raise AppError("posting_fetch_unavailable", "The posting fetch was unavailable; no replacement source was accepted.", 503,
+                           {"captureFailure": {"stage": "posting_fetch", "kind": "unavailable", "reason_code": "unknown"}}) from None
+        except Exception:
+            # An unclassified runtime error cannot establish a network or policy
+            # cause. Do not copy exception messages, remote bodies or credentials.
+            raise AppError("posting_fetch_failed", "The posting fetch failed for an unknown reason.", 502,
+                           {"captureFailure": {"stage": "posting_fetch", "kind": "unknown", "reason_code": "unknown"}}) from None
+
     async def source_page(self, url, *, session=None, captured=None, cancelled=None):
         url = posting_url(url)
         if captured is not None:
@@ -76,8 +104,7 @@ class SourceBoundPostingAcquirer:
                 status_visibility_verified=captured.get("visibility_verified") is True,
             )
         else:
-            fetcher = self._request_fetcher(session)
-            page = await asyncio.to_thread(fetcher.fetch, url)
+            page = await self._fetch_page(url, session=session)
         if cancelled and cancelled():
             raise AppError("action_cancelled", "Source acquisition was cancelled.", 409)
         sources, origins = posting_page_sources(page, entity_id=url)
@@ -145,7 +172,7 @@ class SourceBoundPostingAcquirer:
                 raw_html_hash=hashlib.sha256(captured.encode()).hexdigest(),
             )
         else:
-            page = await asyncio.to_thread(self._request_fetcher().fetch, url)
+            page = await self._fetch_page(url)
         if cancelled and cancelled():
             raise AppError("action_cancelled", "Capture was cancelled.", 409)
         if not page.html and not page.json_ld:
@@ -276,7 +303,7 @@ class SourceBoundPostingAcquirer:
         }
 
     async def availability(self, posting, *, cancelled=None):
-        page = await asyncio.to_thread(self._request_fetcher().fetch, posting["url"])
+        page = await self._fetch_page(posting["url"])
         if cancelled and cancelled():
             raise AppError("action_cancelled", "Posting verification was cancelled.", 409)
         aliases = {normalize_url(url) for url in (posting["url"], posting.get("canonical_url")) if url}

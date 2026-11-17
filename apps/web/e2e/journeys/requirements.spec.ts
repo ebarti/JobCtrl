@@ -469,18 +469,18 @@ for (const defect of [
         requirementId: accepted.requirements[0]!.requirement_id,
       },
     });
-    const { memberId, slot: capability } = memberRoots(value)[0]!;
+    const { groupId, slot: capability } = memberRoots(value)[0]!;
     if (defect === "unknown field")
       matching.reply({ ...value, unrequested: true });
     if (defect === "unknown category")
       matching.reply({
         ...value,
-        member_slots: { ...value.member_slots, [memberId]: { ...capability, category: "approximately_skill" } },
+        capability_groups: { ...value.capability_groups, [groupId]: { ...capability, category: "approximately_skill" } },
       });
     if (defect === "foreign source")
       matching.reply({
         ...value,
-        member_slots: { ...value.member_slots, [memberId]: {
+        capability_groups: { ...value.capability_groups, [groupId]: {
             ...capability,
             citations: [
               { ...capability.citations[0]!, source_id: "unrecorded:foreign" },
@@ -491,7 +491,7 @@ for (const defect of [
     if (defect === "foreign segment")
       matching.reply({
         ...value,
-        member_slots: { ...value.member_slots, [memberId]: {
+        capability_groups: { ...value.capability_groups, [groupId]: {
             ...capability,
             citations: [
               {
@@ -529,6 +529,7 @@ for (const defect of [
     expect(result.status(), await result.text()).toBe(
       defect === "unknown field" ||
         defect === "unknown category" ||
+        defect === "foreign source" ||
         defect === "provider unavailable"
         ? 502
         : defect === "stale revision"

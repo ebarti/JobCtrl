@@ -210,7 +210,7 @@ candidate keeps criteria, source/limit policy and its blocked launch together.*
 
 Target roles are separate repeatable inputs with Enter-to-add/focus. Career
 tracks and levels use explicit selections. Each location/work-arrangement row
-retains independent validation. Search boards, lookback, results-per-site and
+retains independent validation. Search boards, lookback and
 maximum-new-job limits sit with these targets instead of requiring another setup
 page.
 

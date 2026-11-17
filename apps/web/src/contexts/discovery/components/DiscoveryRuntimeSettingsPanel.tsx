@@ -42,13 +42,22 @@ const BOARD_OPTIONS: Array<{ value: DiscoverySettings["boards"][number]; label: 
 
 const RUNTIME_FIELDS = [
   "boards",
-  "resultsPerSite",
   "hoursOld",
   "maxParallelFamilies",
   "useBrowserHeaders",
   "schedulingEnabled",
   "scheduleCron",
 ] as const;
+
+type RuntimeSettingsValues = Pick<DiscoverySettingsUpdateRequest, typeof RUNTIME_FIELDS[number]>;
+const runtimeSettingsSchema = DiscoverySettingsUpdateRequestSchema.pick({
+  boards: true,
+  hoursOld: true,
+  maxParallelFamilies: true,
+  useBrowserHeaders: true,
+  schedulingEnabled: true,
+  scheduleCron: true,
+});
 
 const DISCOVERY_GUIDE_URL = "https://jobctrl.dev/user/discovery";
 
@@ -58,12 +67,6 @@ const RUNTIME_SETTING_HELP = {
     description:
       "Select which broad-board providers run for each generated target query. The next Discover run snapshots this selection.",
     href: `${DISCOVERY_GUIDE_URL}#runtime-setting-job-boards`,
-  },
-  resultsPerSite: {
-    title: "Results per board",
-    description:
-      "Set the maximum results requested from each selected board for a search unit. The next Discover run snapshots the new limit.",
-    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-results-per-board`,
   },
   hoursOld: {
     title: "Posting lookback hours",
@@ -97,11 +100,10 @@ const RUNTIME_SETTING_HELP = {
   },
 } satisfies Record<string, DiscoverySettingHelpContent>;
 
-function toFormValues(response: DiscoverySettingsResponse): DiscoverySettingsUpdateRequest {
+function toFormValues(response: DiscoverySettingsResponse): RuntimeSettingsValues {
   const { settings, effectiveSettings } = response;
-  const values: DiscoverySettingsUpdateRequest = {
+  const values: RuntimeSettingsValues = {
     boards: settings.boards,
-    resultsPerSite: settings.resultsPerSite,
     hoursOld: settings.hoursOld,
     schedulingEnabled: settings.schedulingEnabled,
     scheduleCron: settings.scheduleCron,
@@ -158,7 +160,7 @@ export function DiscoveryRuntimeSettingsForm({ initial, includeSearchSettings = 
     defaultValues: acceptedValues.current,
     validators: {
       onSubmit: ({ value }) => {
-        const result = DiscoverySettingsUpdateRequestSchema.safeParse(value);
+        const result = runtimeSettingsSchema.safeParse(value);
         return result.success ? undefined : (result.error.issues[0]?.message ?? "Invalid runtime settings");
       },
     },
@@ -166,12 +168,12 @@ export function DiscoveryRuntimeSettingsForm({ initial, includeSearchSettings = 
       setStatusMessage("");
       const submitted = { ...value, boards: value.boards?.slice() };
       const editedFields = RUNTIME_FIELDS.filter((field) => formApi.getFieldMeta(field)?.isDirty);
-      let savedValues: DiscoverySettingsUpdateRequest;
+      let savedValues: RuntimeSettingsValues;
       let scheduleChanged: boolean;
       try {
         const outcome = await baseline.runSave(async () => {
           const latest = baseline.currentValues();
-          const request: DiscoverySettingsUpdateRequest = {};
+          const request: RuntimeSettingsValues = {};
           for (const field of editedFields) Object.assign(request, { [field]: submitted[field] });
           const response = await updateSettings.mutateAsync(request);
           const saved = baseline.acknowledge(toValues(response));
@@ -266,9 +268,6 @@ export function DiscoveryRuntimeSettingsForm({ initial, includeSearchSettings = 
               </FieldSet>
             );
           }}
-        </form.Field>
-        <form.Field name="resultsPerSite">
-          {(field) => <NumberControl help={RUNTIME_SETTING_HELP.resultsPerSite} id="discovery-results" name="resultsPerSite" label="Results per board" min={1} max={1000} value={field.state.value ?? 50} metadata={effective.resultsPerSite} onChange={field.handleChange} />}
         </form.Field>
         <form.Field name="hoursOld">
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.hoursOld} id="discovery-lookback" name="hoursOld" label="Posting lookback hours" min={0} max={8760} value={field.state.value ?? 72} metadata={effective.hoursOld} onChange={field.handleChange} />}
@@ -413,7 +412,7 @@ function DiscoverySettingLegend({
 
 function NumberControl({ help, name, id, label, min, max, metadata, value, onChange }: {
   help: DiscoverySettingHelpContent;
-  name: "resultsPerSite" | "hoursOld" | "maxParallelFamilies";
+  name: "hoursOld" | "maxParallelFamilies";
   id: string;
   label: string;
   min: number;

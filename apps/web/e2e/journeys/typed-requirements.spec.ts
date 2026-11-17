@@ -2,7 +2,7 @@ import type { APIRequestContext } from "@playwright/test";
 import { test, expect, json, modelCall, action, completed, terminal, type ApplicationStack } from "../harness/fixtures.js";
 import { baseline, createBaseline, type Profile } from "./core-data.js";
 import { catalogMatching, typedExtraction, modelSources } from "./requirements-data.js";
-import { qualificationBatchDecision, type QualificationBinding, type QualificationChoice } from "./qualification-data.js";
+import { qualificationBatchDecision, qualificationBindings, type QualificationBinding, type QualificationChoice } from "./qualification-data.js";
 import { captureReusePosting, type RequirementSnapshot } from "./reuse-data.js";
 import { groupedCoverageDecision, impactPartition, refreshPayload, startRefresh, type PendingRefresh, type RefreshOperation } from "./fit-data.js";
 
@@ -67,7 +67,7 @@ async function typedJob(api: APIRequestContext, app: ApplicationStack, slug: str
   };
   const assessing = api.post(`/v1/jobs/${posting.job_id}/fit/assess`, { data: assess });
   const batch = await modelCall(app, "fit.qualification-batch");
-  const bindings = (batch.body["context"] as { requirements: QualificationBinding[] }).requirements;
+  const bindings = qualificationBindings(batch);
   expect(bindings).toHaveLength(5);
   expect(new Set(bindings.map((row) => row.category))).toEqual(new Set(["skill", "professional_experience", "education", "language"]));
   expect(bindings.find((row) => row.category === "language")!.permitted_evidence_ids).toEqual([`evidence:${evidence.language.source_id}`]);
@@ -153,19 +153,45 @@ test("typed qualifications share one batch, use permitted Profile sections and r
   expect(app.external.calls).toHaveLength(beforeSave);
   expect((await json<{ runs: unknown[] }>(api, "get", "/v1/action-runs?action=fit.refresh")).runs).toEqual([]);
   const run = await startRefresh(api, { ...refreshPayload(pending, [seed.posting.job_id], { max_model_calls: 2, max_requirements: 1 }), prepare_wording: true }, "typed-direct-manual");
-  const impact = await modelCall(app, "fit.catalog-impact");
-  const input = impact.body["context"] as { requirements: { requirement_id: string }[] };
-  expect(input.requirements.map((row) => row.requirement_id).sort()).toEqual([...seed.snapshot.requirements, ...seed.snapshot.education, ...seed.snapshot.languages].map((row) => row.requirement_id).sort());
   const languageId = seed.snapshot.languages[0]!.requirement_id;
-  impact.reply(impactPartition(impact, Object.fromEntries(input.requirements.map((row) => [row.requirement_id, row.requirement_id === languageId ? "affected" : "unchanged"]))));
   const languageBatch = await modelCall(app, "fit.qualification-batch");
   expect((languageBatch.body["context"] as { requirements: QualificationBinding[] }).requirements.map((row) => row.requirement_id)).toEqual([languageId]);
   languageBatch.reply(qualificationBatchDecision(languageBatch, () => ({ kind: "missing" })));
   await completed(api, run.runId);
-  expect(await json<RefreshOperation>(api, "get", `/v1/fit/refresh/operations/${run.runId}`)).toMatchObject({ status: "completed", counters: { model_calls: 2, requirements_assessed: 1 } });
-  expect((await json<Fit>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).score).toMatchObject({ score: 7, summary: { assessed_count: 5, qualification_coverage: 0.69 } });
+  expect(await json<RefreshOperation>(api, "get", `/v1/fit/refresh/operations/${run.runId}`)).toMatchObject({
+    status: "completed", selected_requirement_ids: [languageId],
+    counters: { model_calls: 1, requirements_assessed: 1, qualifications_reused: 4 },
+  });
+  const checkpoint = await app.fitRefreshCheckpoint(run.runId);
+  const selection = checkpoint.checkpoints["selection"] as {
+    kind: string;
+    decision: { requirements: { requirement_id: string; verdict: string }[] };
+    fixed_authorities: Record<string, { kind: string }>;
+    model_decision: { requirements: unknown[] };
+  };
+  expect(selection.kind).toBe("structural");
+  expect(selection.model_decision.requirements).toEqual([]);
+  expect(selection.decision.requirements.map((row) => row.requirement_id).sort()).toEqual(
+    [...seed.snapshot.requirements, ...seed.snapshot.education, ...seed.snapshot.languages].map((row) => row.requirement_id).sort(),
+  );
+  expect(selection.decision.requirements.map((row) => [row.requirement_id, row.verdict]).sort()).toEqual(
+    selection.decision.requirements.map((row) => [row.requirement_id, row.requirement_id === languageId ? "affected" : "unchanged"]).sort(),
+  );
+  expect(Object.values(selection.fixed_authorities).map((row) => row.kind).sort()).toEqual([
+    "exact_binding_reuse", "exact_binding_reuse", "exact_binding_reuse", "exact_binding_reuse", "mandatory_reassessment",
+  ]);
+  const refreshed = await json<Fit>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`);
+  expect(refreshed.score).toMatchObject({ score: 7, summary: { assessed_count: 5, qualification_coverage: 0.69 } });
+  expect(refreshed.score!.assessments.find((row) => row.requirement_id === languageId)).toMatchObject({
+    kind: "missing", impact_selection_kind: "mandatory_reassessment",
+    impact_selection_provenance: { kind: "structural", selection_kind: "mandatory_reassessment" },
+  });
+  const preservedAuthority = (fit: Fit) => fit.score!.assessments
+    .filter((row) => row.requirement_id !== languageId)
+    .map((row) => [row.requirement_id, row.assessment_id, row.provenance.receipt_id]).sort();
+  expect(preservedAuthority(refreshed)).toEqual(preservedAuthority(seed.fit));
   expect((await json<Fit>(api, "get", `/v1/jobs/${duplicate.job_id}/fit`)).score).toEqual(duplicateFit.score);
-  expect(operations(app, beforeSave)).toEqual(["fit.catalog-impact", "fit.qualification-batch"]);
+  expect(operations(app, beforeSave)).toEqual(["fit.qualification-batch"]);
   await page.goto("/requirements");
   const requirementsTable = page.getByRole("table", { name: "Saved requirements", exact: true });
   await expect(requirementsTable.locator("tbody tr[data-row-id]")).toHaveCount(2);

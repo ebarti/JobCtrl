@@ -80,8 +80,10 @@ deletes twice or pretends a cleanup failure rolled back committed data.
 
 `SourceBoundRoleAnalysis` uses `posting-content:v1:<fingerprint>` over the
 complete exact description as its semantic source. Prompt
-`role-analysis-v2-content-bound` binds that source, all supplied qualified
+`role-analysis-v3-offered-sources` binds that source, all supplied qualified
 requirements, strict output schema and a frozen execution descriptor.
+Every citation source ID is restricted to the exact offered source by a
+request-local enum, retained by the native provider's strict-schema adaptation.
 Provider/model, effective saved reasoning effort and the digest of allowlisted
 nonsecret provider configuration are resolved once for both exact lookup and
 native invocation. Credentials stay outside that identity, and admission uses
@@ -90,6 +92,11 @@ different execution inputs.
 
 Ordinary analysis first reuses a current same-job result with the same request
 fingerprint, or revalidates an exact succeeded gateway receipt across postings.
+The structural v3 upgrade preserves an accepted v2 same-job result only when
+its legacy request identity still matches the current source/selection, its
+destination/content binding is unchanged, and every observation and accepted
+result still matches immutable receipt metadata/value and exact citations.
+Accepted reads remain unchanged; an unaccepted old cache entry gains no authority.
 Receipt identity, strict schema, verbatim citations and qualified-reference
 membership must pass. Gateway success alone cannot establish owner acceptance;
 an invalid raw observation is not reusable, and a separately admitted attempt
@@ -97,7 +104,7 @@ may make only its planned call without a repair loop. A force action binds a
 new `refresh_identity`; replay of that durable action retains the same identity.
 
 Configured single- or multi-model observation order is preserved. When more
-than one observation succeeds, `role-analysis-synthesis-v2-content-bound` can
+than one observation succeeds, `role-analysis-synthesis-v3-offered-sources` can
 reuse only the exact ordered observations, complete source/requirement context
 and frozen synthesis execution. Model agreement does not establish a fact.
 Partial failures remain recorded and do not invent a successful perspective.

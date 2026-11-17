@@ -274,7 +274,7 @@ def discover(
     location: list[str] = typer.Option([], "--location"),
     board: list[str] = typer.Option([], "--board"),
     limit: int | None = typer.Option(None, "--limit", min=1, max=1000),
-    results_per_site: int | None = typer.Option(None, "--results-per-site", min=1, max=1000),
+    results_per_site: int | None = typer.Option(None, "--results-per-site", min=1, max=1000, hidden=True),
     hours_old: int | None = typer.Option(None, "--hours-old", min=1),
     wait: bool = typer.Option(False, "--wait"),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key"),

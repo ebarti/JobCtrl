@@ -3,7 +3,7 @@ import { test, expect, json, modelCall, action, terminal, completed } from "../h
 import { createBaseline, type Profile } from "./core-data.js";
 import { qualificationBatchDecision, qualificationKey, type QualificationBinding } from "./qualification-data.js";
 import { captureReusePosting, acceptReuseRequirements, type CapturedPosting, type RequirementSnapshot } from "./reuse-data.js";
-import { catalogMatching, modelSources, type CatalogContext } from "./requirements-data.js";
+import { catalogMatching, legacyCatalogMatchingV5, typedExtraction, modelSources, type CatalogContext } from "./requirements-data.js";
 import { createScoredFit, impactPartition, refreshPayload, startRefresh, type PendingRefresh, type RefreshOperation } from "./fit-data.js";
 
 const definitions = [
@@ -23,16 +23,28 @@ const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(
   : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => [key, canonical(entry)])) : value;
 const fingerprint = (value: unknown) => createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 
-async function cold(api: Parameters<typeof json>[0], app: Parameters<typeof modelCall>[0], slug: string) {
+async function cold(api: Parameters<typeof json>[0], app: Parameters<typeof modelCall>[0], slug: string, predecessor = false) {
   const { library } = await createBaseline(api);
   const posting = await captureReusePosting(api, slug, definitions.map((row) => row.text).join("\n"));
-  const { snapshot } = await acceptReuseRequirements(api, app, posting, definitions, choices);
+  let snapshot: RequirementSnapshot;
+  if (predecessor) {
+    const pending = api.post(`/v1/jobs/${posting.job_id}/requirements`, { data: { expected_posting_revision: posting.revision, expected_revision: 0 } });
+    const extracting = await modelCall(app, "requirements.extract");
+    extracting.reply(typedExtraction(extracting, { requirements: definitions }));
+    const matching = await modelCall(app, "requirements.match_catalog");
+    matching.reply(legacyCatalogMatchingV5(matching, choices));
+    const accepted = await pending;
+    expect(accepted.status(), await accepted.text()).toBe(200);
+    snapshot = await accepted.json() as RequirementSnapshot;
+  } else ({ snapshot } = await acceptReuseRequirements(api, app, posting, definitions, choices));
   const achievement = library.roles[0]!.achievements[0]!;
   return { posting, snapshot, library, choose: (_binding: QualificationBinding) => ({ achievementIds: [achievement.achievement_id], evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] }) };
 }
 
-test("Fit batches cold requirements once, shares exact receipts and reuses only current authority across Jobs", async ({ api, app }) => {
-  const seed = await cold(api, app, "batch-cold");
+test.describe("permission transport preserves accepted v4 authority", () => {
+test.use({ sourceRevision: "df06b08ae201f7a73dc2c359944c06daf517c69e" });
+test("Fit batches cold requirements once, shares exact receipts and reuses only current authority across Jobs", async ({ api, app }, testInfo) => {
+  const seed = await cold(api, app, "batch-cold", true);
   const before = app.external.calls.length;
   const pending = api.post(`${fitPath(seed.posting)}/assess`, { data: assessBody });
   const batch = await modelCall(app, "fit.qualification-batch");
@@ -62,6 +74,16 @@ test("Fit batches cold requirements once, shares exact receipts and reuses only 
   expect(factualSources.length).toBeGreaterThan(1);
   expect(new Set(factualSources.map((row) => row.source_id)).size).toBe(factualSources.length);
 
+  const legacyRead = await json<Fit>(api, "get", fitPath(seed.posting));
+  const upgrade = await app.upgradeSource();
+  expect(upgrade.current).not.toBe(upgrade.previous);
+  expect(await json<Fit>(api, "get", fitPath(seed.posting))).toEqual(legacyRead);
+  const beforeUpgradeReuse = app.external.calls.length;
+  const sameJob = await json<Fit>(api, "post", `${fitPath(seed.posting)}/assess`, { ...assessBody, expected_revision: first.score!.revision });
+  expect(sameJob.score).toEqual(first.score);
+  expect(sameJob.current).toBe(true);
+  expect(app.external.calls).toHaveLength(beforeUpgradeReuse);
+
   const equivalent = Object.fromEntries(definitions.map((row, index) => [row.localId, { verdict: "equivalent" as const, requirementId: seed.snapshot.requirements[index]!.requirement_id }]));
   const second = await captureReusePosting(api, "batch-exact-peer", definitions.map((row) => row.text).join("\n"));
   await acceptReuseRequirements(api, app, second, definitions, equivalent, { extract: false });
@@ -79,6 +101,9 @@ test("Fit batches cold requirements once, shares exact receipts and reuses only 
   const beforeMixed = app.external.calls.length;
   const assessingMixed = api.post(`${fitPath(mixed)}/assess`, { data: assessBody });
   const onlyMissing = await modelCall(app, "fit.qualification-batch");
+  const wire = onlyMissing.body["context"] as { context_transport_version: string; context_transport_binding: Record<string, unknown>; permission_scopes: unknown[] };
+  expect(wire.context_transport_version).toBe("fit-permission-scopes-v1");
+  expect(wire.permission_scopes).toHaveLength(1);
   expect((onlyMissing.body["context"] as { requirements: QualificationBinding[] }).requirements.map((row) => row.requirement_id)).toEqual([missingId]);
   onlyMissing.reply(qualificationBatchDecision(onlyMissing, () => ({ kind: "missing" })));
   expect((await assessingMixed).status()).toBe(200);
@@ -86,6 +111,10 @@ test("Fit batches cold requirements once, shares exact receipts and reuses only 
   for (const row of first.score!.assessments) expect(mixedFit.score!.assessments.find((item) => item.requirement_id === row.requirement_id)).toMatchObject({ assessment_id: row.assessment_id, provenance: row.provenance });
   expect(mixedFit.score!.assessments.find((row) => row.requirement_id === missingId)).toMatchObject({ kind: "missing" });
   expect(app.external.calls.slice(beforeMixed).map((call) => call.body["operation"])).toEqual(["fit.qualification-batch"]);
+  expect(mixedFit.score!.assessments.find((row) => row.requirement_id === missingId)!.provenance).toMatchObject({ context_transport_binding: wire.context_transport_binding });
+  await testInfo.attach("qualification-permission-transport", { contentType: "application/json",
+    body: Buffer.from(JSON.stringify({ acceptedV4Retained: true, binding: wire.context_transport_binding }, null, 2)) });
+});
 });
 
 async function saveChangedFacts(api: Parameters<typeof json>[0]) {
@@ -204,7 +233,7 @@ test("a held initial Job batch cannot replace a concurrently published historica
   expect(app.external.calls.slice(before).map((call) => call.body["operation"])).toEqual(["fit.qualification-batch", "fit.qualification-batch"]);
 });
 
-for (const defect of ["incomplete", "duplicate", "foreign requirement", "cross-row citation", "non-verbatim evidence", "stale revision"] as const) {
+for (const defect of ["schema", "incomplete", "duplicate", "foreign requirement", "cross-row citation", "non-verbatim evidence", "stale revision"] as const) {
   test(`Fit qualification batch ${defect} publishes no partial authority and keeps accepted scores`, async ({ api, app }) => {
     const seed = await createScoredFit(api, app, `batch-guard-${defect.replaceAll(" ", "-")}`, { twoRequirements: true });
     const original = await json<Fit>(api, "get", fitPath(seed.posting as CapturedPosting));
@@ -219,6 +248,7 @@ for (const defect of ["incomplete", "duplicate", "foreign requirement", "cross-r
     const achievement = seed.library.roles[0]!.achievements[0]!;
     const response = qualificationBatchDecision(batch, () => ({ achievementIds: [achievement.achievement_id], evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] }));
     const first = response.requirements[0]!;
+    if (defect === "schema") Object.assign(response.requirements[1]!, { kind: "unoffered-support-kind" });
     if (defect === "incomplete") response.requirements.pop();
     if (defect === "duplicate") response.requirements[1] = structuredClone(first);
     if (defect === "foreign requirement") response.requirements[1]!.requirement_id = "unrequested-canonical-requirement";
@@ -226,7 +256,7 @@ for (const defect of ["incomplete", "duplicate", "foreign requirement", "cross-r
     if (defect === "non-verbatim evidence") response.requirements[1]!.evidence[0]!.quote = "This factual quote never occurred in any supplied source.";
     if (defect === "stale revision") response.requirements[1]!.requirement_revision = "999";
     batch.reply(response);
-    const expectedCode = { incomplete: "fit_qualification_partition_invalid", duplicate: "fit_qualification_partition_invalid", "foreign requirement": "fit_qualification_partition_invalid", "cross-row citation": "fit_foreign_source_id", "non-verbatim evidence": "fit_non_verbatim_quote", "stale revision": "fit_qualification_partition_invalid" }[defect];
+    const expectedCode = { schema: "model_schema_violation", incomplete: "fit_qualification_partition_invalid", duplicate: "fit_qualification_partition_invalid", "foreign requirement": "fit_qualification_partition_invalid", "cross-row citation": "fit_foreign_source_id", "non-verbatim evidence": "fit_non_verbatim_quote", "stale revision": "fit_qualification_partition_invalid" }[defect];
     expect(await terminal(api, run.runId)).toMatchObject({ status: "failed", errorCode: expectedCode });
     const retained = await json<Fit>(api, "get", fitPath(seed.posting as CapturedPosting));
     expect(retained.score).toEqual(original.score);

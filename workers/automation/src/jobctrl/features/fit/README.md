@@ -77,6 +77,17 @@ category, revision, demand fingerprint and permitted evidence IDs. There are no 
 inventories, lexical judgments, per-item semantic retries or result replay cache.
 An all-current set makes zero qualification calls.
 
+Fresh requests use lossless `fit-permission-scopes-v1` context transport. Equal
+ordered permission-ID lists occur once in `permission_scopes`; each requirement
+references its own `permission_scope_id`. All original facts, canonical IDs,
+categories, alternatives and output fields remain unchanged. Exact inverse
+expansion and source/context hashes are checked before the model call. Version,
+hashes and counts are retained in opaque assessment provenance without fact text.
+The encoded-context hash/byte count excludes the binding itself to avoid a
+circular identity. This transport tag changes the model input fingerprint, while
+v4 qualification policy, semantic/source fingerprints and currentness stay
+unchanged. Earlier accepted v4 assessments remain current and reusable.
+
 The strict response remains `{ requirements: QualificationDecision[] }`. It must
 contain every requested ID/revision/demand binding exactly once. Decisions retain `kind`,
 `strength`, confidence, rationale, exact citations, supported achievement IDs and
@@ -204,10 +215,17 @@ The chosen flags remain frozen in operation state and visible in operation reads
 Missing flags in previously frozen state preserve coverage's existing enabled
 behavior; omitted or explicit `true` does not change the existing request hash.
 
-One complete source-bound impact determination selects affected items, including
-previously unsupported meanings that new facts may support. Exact unaffected
-source bindings require no semantic call. Unchanged judgments retain their
-original receipt, with an explicit revalidation lineage when sources change.
+The complete frozen inventory is accounted for before impact request construction.
+Each exact current qualification is retained unchanged. Items whose exact
+dependencies already require reassessment use the existing mandatory-affected
+rule. One source-bound impact determination partitions only the remaining
+uncertain changed-fact items, including previously unsupported meanings that new
+facts may support. It receives all current factual sources and each included
+item's own prior baseline; resolved rows are not retransmitted. No lexical rule
+decides whether changed facts affect support. Exact-current assessments stay
+unchanged with no new impact receipt. Only a source-changed judgment the model
+marks unchanged receives an explicit impact receipt and revalidation lineage
+while retaining its original semantic authority.
 Every pending selected item enters one qualification batch; the complete map is
 checkpointed before individual rows. Publication updates only selected job scores.
 
@@ -216,7 +234,21 @@ qualification structurally. That case skips the impact model call, records
 `initial_qualification` with structural `all_prior_assessment_ids_absent`
 provenance and no fabricated selection receipt, then makes the one complete
 qualification batch. Item/call/deadline limits, cancellation and source/head
-guards still apply. Mixed or existing assessment sets retain impact selection.
+guards still apply. Mixed sets record fixed structural authority separately from
+the original model-subset decision/receipt and a fingerprinted complete partition.
+Only actual impact and qualification calls consume model-call reservations.
+
+New operations pin `impact_selection_scope_version` and independently pin
+`qualification_transport_version`. An older operation keeps its exact original
+impact request/call key, including a completed call without a selection checkpoint.
+For qualification call-only recovery, the frozen inputs reconstruct the exact
+historical inline and permission-scoped request keys. Exactly one retained match
+reuses its original raw result or retains an unsettled-call refusal; mismatched or
+conflicting calls cannot obtain another allowance. A recovered inline receipt
+does not acquire scoped transport provenance. With no retained qualification
+call, the current transport is atomically pinned before its first reservation.
+Existing batch checkpoints, qualification versions and accepted currentness stay
+unchanged. These wire pins are per operation, not a global semantic invalidation.
 
 Reservations precede external I/O and counters/checkpoints survive restart. A lost
 external acknowledgement cannot spend a fresh allowance. Input/catalog/posting/

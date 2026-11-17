@@ -14,6 +14,7 @@ import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvai
 import "../../styles/redesign-fit.css";
 import type { HttpPort } from "../../shared/ports/HttpPort.js";
 export { AffectedMatchesPanel } from "./refresh.js";
+export { applicableAchievementIds, linkedAchievementIds, earlierAchievementRecords, earlierOnlyAchievementCount, requirementProfileMatch } from "./requirement-presentation.js";
 export { useRequirementLibrary, useRequirementAssociationActions, useRequirementAssociationHistory,
   requirementRelationshipKeys, useCurrentWordingActions, useCurrentWordingHistory } from "./requirement-library.js";
 export type { RequirementLibrary, RequirementLibraryEntry, RequirementAssociation, RequirementAssessment,

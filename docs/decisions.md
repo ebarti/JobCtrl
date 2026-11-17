@@ -2276,6 +2276,20 @@ unstarted or scoped-out sources do not count as completed. See the
 for exact source restrictions and precision rules. The historical migration
 decision below retains its original dependency version.
 
+Amended 2026-11-16: newly admitted requests freeze
+`sourceFetchPolicy=source-native-v1`. Their SDK requests use
+`results_wanted=None`, preserving connector-native page volume and bounded
+pagination; legacy `resultsPerSite` inputs cannot cap new acquisition. Unmarked
+admitted requests keep their original finite units and fingerprints. Discovery
+requires explicit SDK support rather than substituting an arbitrary large count.
+The transaction committing the last allowed new job also determines that the
+shared quota is full. Its receipt is acknowledged before acquisition stops;
+other families cannot admit beyond that transaction boundary. Persist
+`budget_exhaustion` separately from user cancellation and typed provider
+termination. Source completion reasons commit before their acknowledgements;
+page/provider limits and unknown termination never establish source exhaustion.
+Authentication, source intent, pacing and provider safety bounds remain intact.
+
 Decision: replace the `python-jobspy` provider with pinned JobStreaming 0.0.2,
 but keep execution reliability in JobCtrl. For Temporal-backed broad-board
 discovery, JobCtrl persists one immutable query/location/board unit under the
@@ -3586,24 +3600,45 @@ remain. Unknown, foreign or incompatible references refuse publication. A failed
 literal-citation receipt remains historical; it is not edited, partially accepted
 or repaired through another model call within the same operation.
 
-**Exhaustive response slots.** The provider response schema requires one property
-for every supplied member ID and occurrence ID. Each slot explicitly chooses a
-root, a supplied same-as reference or unresolved source meaning. A member root
-owns its normalized capability; an occurrence root owns its normalized demand.
-Capability and job bindings join the recorded input identities. Models do not
-invent group labels or job IDs. Shared schema definitions carry the finite ID
-choices without repeating their enums for every slot.
+**Exhaustive terminal-group assignments.** The v5 provider response schema requires
+one property for every supplied member ID and occurrence ID. Each slot selects a
+pre-offered independent capability/demand handle or explicit unresolved meaning.
+Required group maps contain terminal semantic definitions for used handles and
+null for unused handles. No group can reference another group. This replaces the
+v4 recursive root/same-as wire, which permitted schema-valid all-alias cycles with
+no normalized definitions. Such v4 results remain rejected; code never chooses a
+root, collapses cycles or manufactures semantic authority.
 
-The owner resolves only model-declared references into explicit roots and
-derives the existing grouping representation. Cycles, demand aliases across
-capabilities and conflicting demands for one job/capability refuse publication.
-Required slots prevent omitted input records; they do not establish semantic
-correctness or turn genuine uncertainty into acceptance. Raw slots and receipts
-remain immutable. A versioned partition binding records the raw-to-grouping
-projection separately from citation binding, with distinct raw, intermediate
-and exact-quote fingerprints. Both source joins and publication fences remain.
-The separately versioned transport fences incompatible durable work without
-changing capability policy, normalized-demand fingerprints or qualification.
+The model owns all memberships, normalized prose, citations and reuse choices.
+The binder only joins selected handles to recorded inputs. Used-but-undefined or
+unused-defined groups, demands across capabilities and conflicting demands for one
+job/capability refuse publication. Required properties guarantee accounting, not
+semantic correctness. The one-determination operation budget, complete source
+inventory, citation/reuse validators and atomic publication fences remain.
+
+Prompt v5, partition binder v2 and report envelope v3 separate this transport from
+v4. Explicit historical dispatch retains v4 graph validation and older envelopes;
+old accepted artifacts remain readable and unchanged. Incompatible durable action
+replay is refused. Raw receipts remain immutable; raw, intermediate and exact-quote
+fingerprints stay distinct. Semantic policy v2, demand fingerprints and SQL schemas
+do not change, so accepted catalog certificates are not staled by the new wire.
+
+**Role-specific citation references.** V6 retains the terminal-group shape and
+uses finite offered source-ID enums matching the existing citation authority.
+Demand evidence may select inventory, occurrence sources and eligible posting
+sources, with the final bound-group subset checked by the owner. Supplied accepted
+demand-definition documents support exact reuse selection, not original demand
+truth. They remain in the complete input and are excluded from demand citations.
+Other citation fields retain their broader source vocabulary and mandatory-source
+or correction-witness checks. Source roles follow recorded IDs/revisions; no prose
+classification is introduced. Exact source/segment binding is unchanged.
+
+This closes a mismatch in v5: the global citation vocabulary allowed real supplied
+prior definitions as extra demand evidence while publication correctly rejected
+their evidence role. The fix constrains the offered protocol; it neither strips
+citations from raw authority nor widens the validator. Exact v5 schemas remain in
+explicit historical dispatch. Prompt/schema v6 changes new request/action identity;
+partition binder v2, citation binder v1, envelope v3, semantic v2 and SQL remain.
 
 **Fit and wording.** Qualification reuse binds Profile, capability ID/revision,
 normalized demand, permitted factual sources and qualification-policy/prompt
@@ -3632,3 +3667,39 @@ recovery through real application entrypoints in owned synthetic workspaces.
 Controlled external choices establish structural/authority behavior; a separate
 configured-provider run is needed to assess the reported semantic failure.
 Neither schema validation nor a passing browser suite proves semantic infallibility.
+
+## 2026-11-17: Resolve Exact Fit Authority Before Impact Inference
+
+Explicit manual refresh still freezes and accounts for the complete active
+reusable catalog and selected jobs' direct demands. Resolve each exact current
+qualification unchanged, and mark items with the existing mandatory dependency
+predicate for reassessment, before constructing model sources. One source-bound
+impact determination covers only genuinely unresolved changed-fact items with
+all current facts and each included item's own prior baseline. This refines the
+10/13 November full-catalog policy: complete accounting does not require a model
+to repeat already fixed work decisions. No lexical rule, omission, truncation,
+chunking, relaxed input guard or semantic fallback is introduced.
+
+Keep fixed structural authority distinct from the raw model-subset receipt and
+the composed complete partition. Recompute the frozen predicates, exact binding
+partition, request/receipt joins and fingerprints on checkpoint recovery before
+qualification. All selected affected items remain one qualification batch, and
+publication retains the complete source/head/cancellation fences and unchanged
+unrelated scores.
+
+Pin impact scope and qualification transport independently per operation. Older
+operations retain the exact original impact call key. Reconstruct both historical
+inline and shared-scope qualification keys from frozen inputs when recovering an
+unpinned call-only operation: exactly one retained match replays its completed
+raw result or retains an unsettled-call refusal. Mismatched/conflicting calls
+cannot spend another allowance. No call means atomically pinning the current
+wire before reservation. Do not infer a wire from missing derived provenance or
+attach a scope binding to an inline result. Qualification policy/currentness,
+accepted receipts, operation counters and existing batch checkpoints remain
+unchanged.
+
+The [scoring reference](architecture/scoring.md#profile-edits-and-explicit-refresh),
+[Fit owner](../workers/automation/src/jobctrl/features/fit/README.md#manual-bounded-refresh)
+and [QA ledger](developer/qa/python-journeys.md) own implementation and observed
+proof. This decision alone does not establish real-provider recovery or hosted
+qualification of a future head.

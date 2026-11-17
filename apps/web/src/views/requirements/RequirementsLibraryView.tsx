@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   AssociationStateAction, RequirementAssociationPicker, requirementQualifierText, achievementChoices,
+  applicableAchievementIds, linkedAchievementIds, earlierAchievementRecords, earlierOnlyAchievementCount, requirementProfileMatch,
   useCurrentWordingActions, useCurrentWordingHistory, useRequirementAssociationHistory, useRequirementLibrary,
   type AchievementChoice, type LibraryRequirement, type UserAssociation,
 } from "../../contexts/fit/index.js";
@@ -28,26 +29,8 @@ const DEFAULT_TABLE_PRESENTATION: SavedTablePresentation = {
   density: null, grouping: null, colorRules: [],
 };
 
-function linkedAchievementIds(requirement: LibraryRequirement) {
-  return [...new Set([
-    ...(requirement.assessment?.achievement_ids ?? []),
-    ...(requirement.demand_assessments ?? []).flatMap((demand) => demand.assessment?.achievement_ids ?? []),
-    ...requirement.coverage.map((item) => item.achievement_id),
-    ...requirement.current_wordings.map((item) => item.achievement_id),
-    ...requirement.associations.filter((item) => item.state === "active").map((item) => item.achievement_id),
-  ])];
-}
-
 function categoryLabel(requirement: LibraryRequirement) {
   return requirement.category === "skill" ? "Skill" : "Professional experience";
-}
-
-function supportLabel(requirement: LibraryRequirement) {
-  if (requirement.assessment_scope === "varies_by_job") return "Varies by job";
-  if (requirement.assessment_scope === "consolidation_required") return "Consolidation required";
-  if (requirement.assessment_scope === "not_applicable") return "No current job demand";
-  if (!requirement.assessment) return "Not assessed";
-  return `${requirement.assessment.current ? "" : "Earlier · "}${readable(requirement.assessment.kind)}`;
 }
 
 function readable(value: string) {
@@ -227,13 +210,13 @@ function EarlierWording({ assignment }: { assignment: EarlierRecords["wording_as
   </details>;
 }
 
-function EarlierFitRecords({ records }: { records: EarlierRecords[] }) {
+function EarlierFitRecords({ records, title = "Earlier links and assessments", regionLabel = "Earlier records" }: { records: EarlierRecords[]; title?: string; regionLabel?: string }) {
   const saved = records.filter((group) => group.assessments.length || group.associations.length || group.wording_assignments.length || group.coverage.length);
   if (!saved.length) return null;
-  return <details className="requirement-history"><summary>Earlier links and assessments</summary>
+  return <details className="requirement-history"><summary>{title}</summary>
     <div className="requirement-history__content">
       <p>These retained records belong to an earlier identity or source binding. They do not establish current support or wording coverage.</p>
-      {saved.map((group, groupIndex) => <section className="requirement-alias-history" key={group.requirement_id} aria-label={`Earlier records ${groupIndex + 1}`}>
+      {saved.map((group, groupIndex) => <section className="requirement-alias-history" key={group.requirement_id} aria-label={`${regionLabel} ${groupIndex + 1}`}>
         <h4>Recorded requirement: {group.requirement_id}</h4>
         {group.assessments.map((assessment) => <details key={assessment.assessment_id}>
           <summary>Earlier assessment{assessment.kind ? ` · ${readable(assessment.kind)}` : ""}</summary>
@@ -338,10 +321,14 @@ function LinkedAchievement({ library, requirement, achievementId, achievement, o
   const coverage = requirement.coverage.filter((row) => row.achievement_id === achievementId);
   const assignments = requirement.current_wordings.filter((row) => row.achievement_id === achievementId);
   const associations = requirement.associations.filter((row) => row.achievement_id === achievementId && row.state === "active");
-  return <article className="requirement-achievement">
+  const earlier = earlierAchievementRecords(requirement, achievementId);
+  const earlierOnly = !applicableAchievementIds(requirement).includes(achievementId);
+  return <article className="requirement-achievement" data-achievement-id={achievementId}>
     <div className="requirement-achievement__heading"><div><h4>{achievement?.roleLabel ?? (sourceState === "loading" ? "Loading achievement…" : "Unavailable achievement")}</h4>{achievement?.dateRange ? <p className="muted">{achievement.dateRange}</p> : null}</div>
       {achievement && onOpenAchievement ? <Button type="button" variant="ghost" size="sm" onClick={() => onOpenAchievement(achievement.roleId, achievementId)}>Open achievement →</Button> : null}</div>
     <p className="requirement-achievement__fact">{achievement?.text ?? (sourceState === "loading" ? "Loading saved achievement details…" : sourceState === "error" ? "The achievement could not be loaded." : "This achievement is no longer available in the saved Profile.")}</p>
+    {earlierOnly ? <><span className="requirement-badge">Earlier relationship · needs review</span>
+      <p className="muted">This retained relationship does not establish a current Profile match or wording coverage. Its original evidence remains available below.</p></> : null}
     {assessment ? <div className="requirement-assessment"><span className="requirement-badge">{assessment.current ? "Factual assessment" : "Earlier assessment · needs review"}: {readable(assessment.kind)}</span>
       <details><summary>Assessment and evidence</summary><p>{assessment.rationale}</p>
         {assessment.evidence_refs.map((ref, index) => <blockquote key={`${ref.source_id}:${ref.revision}:${index}`}>{ref.quote}<footer>Source {ref.source_id} · revision {ref.revision}</footer></blockquote>)}
@@ -351,7 +338,10 @@ function LinkedAchievement({ library, requirement, achievementId, achievement, o
     {associations.filter((association) => !association.wording).map((association) => <AssociationRecord key={association.association_id} association={association} onEdit={canLink && achievement ? () => onEditLink(achievementId) : undefined} />)}
     <div className="requirement-section-heading"><h5>Wordings for this requirement</h5>
       {achievement && canLink ? <Button type="button" variant="outline" size="sm" onClick={() => onLinkWording(achievementId)}>Link wording</Button> : null}</div>
-    <WordingConnections library={library} requirement={requirement} achievementId={achievementId} canLink={canLink} coverage={coverage} associations={associations} assignments={assignments} achievement={achievement} sourceState={sourceState} recordsAligned={recordsAligned} onEditLink={canLink && achievement ? () => onEditLink(achievementId) : undefined} />
+    {earlierOnly ? <p className="muted">No current wording has been selected for this requirement.</p>
+      : <WordingConnections library={library} requirement={requirement} achievementId={achievementId} canLink={canLink} coverage={coverage} associations={associations} assignments={assignments} achievement={achievement} sourceState={sourceState} recordsAligned={recordsAligned} onEditLink={canLink && achievement ? () => onEditLink(achievementId) : undefined} />}
+    {earlier.length ? <details className="requirement-achievement__identity"><summary>Recorded achievement identity</summary><p>{achievementId}</p></details> : null}
+    <EarlierFitRecords records={earlier} title="Earlier relationship sources" regionLabel="Earlier achievement sources" />
   </article>;
 }
 
@@ -363,9 +353,7 @@ function JobSpecificDemands({ requirement, filter, returnTable }: { requirement:
     <h3>Job-specific demands</h3>
     <p className="muted">{requirement.assessment_scope === "consolidation_required"
       ? "Some saved job demands need consolidation. The recorded demands below may be incomplete."
-      : requirement.assessment_scope === "varies_by_job"
-        ? "Factual support varies with the demand recorded for each job."
-        : "This recorded demand is shared by the listed jobs."}</p>
+      : "Each demand records what the listed jobs require. Its Profile match depends on the saved assessment and its freshness."}</p>
     <ol className="requirement-demands__list">{demands.map((demand, index) => {
       const assessment = demand.assessment;
       const status = demand.state === "profile_required" ? "Profile required"
@@ -410,6 +398,8 @@ function RequirementDetail({ library, requirement, aliases, choices, canLink, on
       <p>{requirement.definition}</p>
       <p>{requirementQualifierText(requirement)}</p>
       <details><summary>Definition identity</summary><p>Requirement {requirement.requirement_id} · revision {requirement.revision}</p></details>
+      <p><strong>Profile match: {requirementProfileMatch(requirement)}</strong></p>
+      <p className="muted">Profile match compares saved Profile facts with each job-specific demand. Earlier assessments need review; an achievement link alone does not prove a match.</p>
     </div>
     {requirement.demand_assessments?.length ? <JobSpecificDemands requirement={requirement} filter={filter} returnTable={returnTable} /> : requirement.assessment ? <section className="requirement-assessment" aria-label="Recorded factual support">
       <h3>Factual support</h3>
@@ -424,6 +414,7 @@ function RequirementDetail({ library, requirement, aliases, choices, canLink, on
     </section> : null}
     <div className="requirement-section-heading"><h3>Linked achievements <span className="requirement-count">{achievementIds.length}</span></h3>
       {canLink ? <Button type="button" variant="outline" size="sm" onClick={onLinkAchievement}>Link achievement</Button> : null}</div>
+    <p className="requirement-relationship-help muted">Includes earlier recorded relationships that need review. Removed links stay in history; this count does not assert current support.</p>
     {!achievementIds.length ? <div className="requirement-empty"><strong>No achievements linked.</strong><p>{requirement.assessment?.wording_support === "section" ? "The recorded support comes from a Profile section. An achievement link is optional." : "You can link a saved achievement. A link remains unassessed until you manually update affected matches."}</p></div> : null}
     <div className="requirements-achievements">{achievementIds.map((achievementId) => <LinkedAchievement key={achievementId} library={library} requirement={requirement} achievementId={achievementId}
       achievement={choices.find((choice) => choice.achievementId === achievementId)} onOpenAchievement={onOpenAchievement}
@@ -512,11 +503,12 @@ export function RequirementsLibraryView({ selectedRequirementId, onSelectRequire
     { id: "definition", label: "Definition", width: 340, minWidth: 200,
       getSortValue: (row) => row.definition, getFilterValue: (row) => row.definition,
       render: (row) => <span className="requirements-table__definition">{row.definition}</span> },
-    { id: "support", label: "Factual support", width: 190, minWidth: 160, getSortValue: supportLabel, getFilterValue: supportLabel,
-      render: (row) => <span>{supportLabel(row)}{row.assessment?.wording_support === "section" ? <small className="requirements-table__secondary">Profile section support</small> : null}</span> },
+    { id: "support", label: "Profile match", width: 190, minWidth: 160, getSortValue: requirementProfileMatch, getFilterValue: requirementProfileMatch,
+      filterDescription: "Recorded support from saved Profile facts for each job demand. Earlier assessments need review.",
+      render: (row) => <span>{requirementProfileMatch(row)}{row.demand_assessments?.length ? <small className="requirements-table__secondary">{row.demand_assessments.length} job-specific {row.demand_assessments.length === 1 ? "demand" : "demands"}</small> : null}{row.assessment?.current && row.assessment.wording_support === "section" ? <small className="requirements-table__secondary">Profile section support</small> : null}</span> },
     { id: "achievements", label: "Linked achievements", width: 170, minWidth: 150,
       getSortValue: (row) => linkedAchievementIds(row).length, getFilterValue: (row) => String(linkedAchievementIds(row).length),
-      render: (row) => linkedAchievementIds(row).length },
+      render: (row) => <span>{linkedAchievementIds(row).length}{earlierOnlyAchievementCount(row) ? <small className="requirements-table__secondary">{earlierOnlyAchievementCount(row)} earlier · needs review</small> : null}</span> },
     { id: "wordings", label: "Current wordings", width: 160, minWidth: 140,
       getSortValue: (row) => row.current_wordings.length, getFilterValue: (row) => String(row.current_wordings.length),
       render: (row) => <span>{row.current_wordings.length}{row.current_wordings.some((item) => !item.current) ? <small className="requirements-table__secondary">Needs review</small> : null}</span> },
@@ -540,6 +532,7 @@ export function RequirementsLibraryView({ selectedRequirementId, onSelectRequire
       {profile.error || wording.error ? <p className="requirement-error" role="alert">Achievement details could not be refreshed. Saved requirement records remain available.</p> : null}
       {mismatch ? <p role="status">The Profile and requirement records are from different revisions. Refresh them before changing links or wording. <Button type="button" variant="outline" size="sm" onClick={() => { void Promise.all([library.refetch(), profile.refetch(), wording.refetch()]); }}>Refresh records</Button></p> : null}
       {library.data?.readiness === "profile_required" ? <p className="muted">Save a Profile to link achievements to requirements.</p> : null}
+      <p className="muted">Profile match compares saved Profile facts with job-specific demands. Linked achievements includes earlier recorded relationships that need review; links alone do not prove a match.</p>
       <div className="requirements-library__layout">
         <div className="requirements-library__table" ref={tableRef} tabIndex={-1}>
           <FilterableDataGrid title="Saved requirements" data={shown} columns={columns} getRowId={(row) => row.requirement_id}
@@ -558,7 +551,7 @@ export function RequirementsLibraryView({ selectedRequirementId, onSelectRequire
             onRowActivate={(row) => select(row.requirement_id)} rowActivationLabel={(row) => `Open ${row.name}`}
             mobileLayout="cards" mobileListLabel="Saved requirements"
             renderMobileRow={(row) => <><strong className="requirements-table__name">{row.name}</strong><span className="requirements-table__secondary">{categoryLabel(row)}</span>
-              <dl className="requirements-table__mobile-facts"><div><dt>Factual support</dt><dd>{supportLabel(row)}</dd></div><div><dt>Linked achievements</dt><dd>{linkedAchievementIds(row).length}</dd></div><div><dt>Current wordings</dt><dd>{row.current_wordings.length}{row.current_wordings.some((item) => !item.current) ? " · Needs review" : ""}</dd></div></dl></>}
+              <dl className="requirements-table__mobile-facts"><div><dt>Profile match</dt><dd>{requirementProfileMatch(row)}{row.demand_assessments?.length ? <small className="requirements-table__secondary">{row.demand_assessments.length} job-specific {row.demand_assessments.length === 1 ? "demand" : "demands"}</small> : null}</dd></div><div><dt>Linked achievements</dt><dd>{linkedAchievementIds(row).length}{earlierOnlyAchievementCount(row) ? <small className="requirements-table__secondary">{earlierOnlyAchievementCount(row)} earlier · needs review</small> : null}</dd></div><div><dt>Current wordings</dt><dd>{row.current_wordings.length}{row.current_wordings.some((item) => !item.current) ? " · Needs review" : ""}</dd></div></dl></>}
             toolbarActions={<><label className="requirements-table-search"><span className="sr-only">Find a requirement</span><Input value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder="Filter saved requirements" /></label>
               {hasFilters ? <Button type="button" variant="ghost" size="sm" onClick={() => changeTable({ ...navigation, q: "", column_filters: {}, page: 1 })}>Clear all filters</Button> : null}
               <SavedTableViewsControl tableId={REQUIREMENTS_TABLE_ID} useViewsStore={useRequirementsTableViewsStore} columnOptions={columns.map((column) => ({ id: column.id, label: column.label }))}

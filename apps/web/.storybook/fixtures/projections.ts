@@ -1905,7 +1905,7 @@ export const sampleDiscoverySettingsResponse: DiscoverySettingsResponse = {
     autoApply: { value: false, source: "persisted", activation: "next_poll", editable: true, locked: false },
     applyApprovalRequired: { value: true, source: "persisted", activation: "next_apply_job", editable: false, locked: true },
     boards: { value: ["indeed", "linkedin", "zip_recruiter"], source: "persisted", activation: "next_run", editable: true, locked: false },
-    resultsPerSite: { value: 50, source: "persisted", activation: "next_run", editable: true, locked: false },
+    resultsPerSite: { value: 50, source: "persisted", activation: "inactive", editable: false, locked: true },
     hoursOld: { value: 72, source: "persisted", activation: "next_run", editable: true, locked: false },
     schedulingEnabled: { value: false, source: "persisted", activation: "restart", editable: true, locked: false },
     scheduleCron: { value: "0 7 * * *", source: "persisted", activation: "restart", editable: true, locked: false },

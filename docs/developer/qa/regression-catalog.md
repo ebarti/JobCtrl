@@ -69,12 +69,23 @@ cached selection authority omitting the maintained-head input. Retained alias
 history must not become current qualification or approval. See the
 [consolidation decision](../../decisions.md#capability-consolidation-and-source-demand).
 
-Normalization response schemas require every supplied member and occurrence slot;
-omitted or foreign keys cannot be schema-valid output. Source uncertainty remains
-explicit. Validate model-declared alias graphs, exact raw receipt equality and
-the separately bound grouping/quote projections; no fabricated group reference
-or projection may become authority. Preserve prior v3 history and reject
-incompatible durable work without another model call.
+Normalization response schemas require every supplied member and occurrence slot,
+with independent terminal capability/demand groups and no group aliases. Exercise
+opposing partitions, omitted/foreign inputs, forbidden alias shapes, unknown group
+handles, used-but-null and unused-defined groups, and inconsistent job/capability
+assignments through real public journeys. Preserve accepted artifacts on refusal.
+Actual pinned v4 upgrades must retain exact historical authority and refuse old
+durable replay before a fresh v5 determination. Provider-adapted schemas must keep
+all required input keys and terminal definitions; structural binding cannot invent
+meaning or choose representatives.
+
+Citation-role proof includes a two-job complete-catalog request with accepted prior
+demand definitions still supplied. A prior-definition citation in demand evidence
+must fail before publication; the first job's accepted catalog/snapshot/receipt must
+remain unchanged. A new explicit operation using original evidence and the same
+exact reuse fingerprint must succeed, including valid cross-job demand bindings.
+Check offered source enums in provider-adapted schemas, exact source/segment checks,
+and an actual v5 predecessor upgrade with unchanged history and refused old replay.
 
 Profile owns facts, attachments, confirmations, authored baseline and wording
 approval. Requirements owns qualified meanings and source occurrences. Fit
@@ -91,10 +102,18 @@ explicit first assessment even when older shared authority predates saved
 changes. Require the no-prior-score fence, current-source and historical-head
 comparisons, retained history and unchanged scores for every other job. Saves
 and reads admit no work.
-One source-bound impact selection sees the complete catalog and saved evidence
-changes, including
-previously missing/unlinked requirements. Only selected requirements require
-new qualification; unaffected receipts retain their original semantic authority.
+Require complete frozen-catalog accounting, per-row exact current reuse and
+enforced mandatory reassessment before request construction. One source-bound
+impact selection sees only unresolved changed-fact items, their own before
+baselines and all current facts, including previously missing/unlinked support.
+Resolved current rows are not retransmitted. Fixed authority and the original
+model-subset receipt remain separately bound to the complete partition. Only
+selected requirements require new qualification; unaffected receipts retain their
+original semantic authority. Exercise a structurally oversized accepted catalog
+with a small mandatory set without raising the gateway guard or truncating facts.
+Real predecessor process pauses must prove completed and unsettled call-only
+recovery for both impact and qualification wires, with unchanged counters and
+no second provider call or fabricated scope provenance.
 Exact current approved-wording bindings are direct reuse. Group actual wording
 gaps by achievement and retain rejection/defer decisions across equivalent jobs.
 Current section-backed matches are not achievement expression gaps. Require an

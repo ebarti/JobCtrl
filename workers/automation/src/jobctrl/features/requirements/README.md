@@ -142,31 +142,33 @@ authority. There is no top-k selection, paging, chunking, lexical fallback or
 separate novelty judgment. Existing-only repair and every semantic ingestion or
 correction use this mandatory gate.
 
-The immutable model result, `CatalogNormalizationSlots`, contains `status`, exact
-`catalog_revision`, `member_slots`, `occurrence_slots` and `corrections`. Its
-operation-specific strict schema requires one named property for every supplied
-member and occurrence. Shared `$defs` enumerate the supplied IDs once; slot
-variants use nested `anyOf`. Each slot is `root`, `same_as` or `unresolved`. A
-member root owns normalized category/name/core, reason, citations and nullable
-exact reuse authority; another equivalent member names a supplied member through
-`same_as.member_id`. An occurrence root owns normalized combined demand, citations
-and nullable exact reuse authority; another equivalent occurrence names a supplied
-occurrence through `same_as.occurrence_id`. No model-authored group or job ID is
-accepted. Root citations cover the inventory and every resolved member/occurrence.
+The v6 immutable model result, `CatalogNormalizationSlots`, contains `status`, exact
+`catalog_revision`, `member_slots`, `occurrence_slots`, `capability_groups`,
+`demand_groups` and `corrections`. Its strict operation-specific schema requires a
+property for every supplied member and occurrence. Each slot is `assigned` or
+`unresolved`. Assigned members select a supplied `capability_group_id`; assigned
+occurrences select a supplied `demand_group_id`. The independent handles are
+pre-offered in `context.partition_group_handles` and shared schema enums. Capacity
+allows every input to remain separate; it is not a target group count.
 
-`requirements-partition-binding-v1` follows only declared edges, rejects cycles
-and references without a real root, and derives capability/job bindings from the
-recorded occurrence/member joins. Demand aliases must resolve within one
-capability; every job/capability has exactly one demand root. Equivalent jobs may
-share a demand root, while materially different demands remain separate. The
-legacy group projection uses a bounded `capability:` handle plus the full
-fingerprint of `{root_member_id}`; `partition_binding.group_roots` records each
-handle's exact supplied root. The hash formats an identity after the model's
-choice and never decides equivalence. Code selects a stable existing persisted
-survivor after that choice. Explicit unresolved slots preserve genuine source
-uncertainty and refuse publication; required slots establish accounting, not
-semantic correctness. Missing/foreign properties, invalid reuse, foreign segment
-references, stale targets and uncertainty also refuse the complete result.
+Both group maps require every offered handle. Unused handles are null; every used
+handle has one terminal `kind: group` definition. Capability definitions own
+normalized category/name/core, reason, citations and nullable exact reuse authority.
+Demand definitions own complete normalized demand, citations and nullable exact
+reuse authority. A group cannot alias another group or choose a representative.
+The model alone selects membership. `requirements-partition-binding-v2` joins
+those selections to the recorded occurrence/member/job identities. All occurrences
+assigned to one demand group must share one capability, and every job/capability
+must select one demand group. Used-but-null and non-null unused groups refuse
+publication. Equivalent jobs may explicitly share a demand group.
+
+Group handles carry no durable identity. Code selects the stable persisted
+survivor only after the model's partition. No recursive graph or inferred root
+exists in v5. Explicit unresolved slots refuse publication; required slots
+establish accounting, not semantic correctness. Missing/foreign properties,
+invalid reuse, foreign citation references, stale targets and uncertainty also
+refuse the complete result. One determination is allowed per admitted operation;
+invalid output never triggers a repair loop or partial publication.
 
 The input's `citation_segments[source_id][segment_id]` catalog selects exact
 locations in the source, without duplicating full prose. A path array means one
@@ -178,6 +180,19 @@ the same request; there is no semantic paging or call fanout. A short literal
 preview locates a long-value segment. Inventory citations use an exact serialized
 epoch fragment. Models select offered segment IDs, never calculate offsets,
 copy/paraphrase quotes, or join fields.
+
+V6 citation source IDs are finite offered enums, scoped to the output field's
+existing authority. Demand evidence permits only inventory, occurrence sources,
+and postings with a matching offered occurrence's job/revision/hash. The final
+validator still checks the narrower actual demand's bound occurrence/posting set.
+Accepted-demand definition documents stay available for verbatim copying and
+`reuse_demand_fingerprint`; they are never offered as original demand evidence.
+Capability, correction and unresolved citations retain their broader supplied-source
+vocabulary and existing mandatory-source/witness checks. Segment IDs retain their
+existing string format and exact source/segment binding; the schema does not repeat
+the entire segment inventory in enums. Unknown sources fail schema validation;
+foreign segments, mismatched source/segment pairs and unauthorized bound sources
+still fail the existing owner checks. No citation is silently removed or repaired.
 
 The deterministic `requirements-citation-binding-v1` binder validates the source,
 path, range and catalog fingerprints, then derives exact `Citation` quote fields
@@ -191,12 +206,15 @@ The intermediate fingerprint joins the two binders, and the final derived
 fingerprint pins the exact-quote projection. The reconciliation keeps raw slots
 in `decision_json` and stores `intermediate_selection`, `derived_decision`,
 `partition_binding` and `citation_binding` separately in the existing report JSON
-envelope, versioned `requirements-normalization-binding-v2`. Frozen SQL schemas
-do not change. Old flat reports and `requirements-citation-binding-v1` envelopes
-remain readable. Pure historical validation dispatches explicitly by the old
-v2/v3 input's prompt version; runtime never falls back to an old wire.
-The public report exposes `partition_binding` with both fingerprints, resolved
-member/occurrence roots and group-handle joins, plus `citation_binding`
+envelope, versioned `requirements-normalization-binding-v3`. Frozen SQL schemas
+do not change. Old flat reports, citation-binding-v1 and normalization-binding-v2/v3
+envelopes remain readable. Pure historical validation dispatches explicitly by
+the original prompt version, including the unchanged v4 graph decoder and exact
+v5 schema. The v6 prompt/schema supplies a fresh request and durable action identity
+without changing any binder, semantic policy or accepted-demand fingerprint.
+Runtime never falls back to an old wire.
+The public report exposes `partition_binding` with both fingerprints, explicit
+`member_groups`, `occurrence_groups` and derived `demand_capabilities` joins, plus `citation_binding`
 fingerprints, the complete structural `source_context`,
 per-source fingerprints and the exact segment catalog. Context pins recorded
 meaning IDs/revisions, ordered retained families, occurrence/snapshot identities,
@@ -211,7 +229,7 @@ unsupported attribution from a retained historical member only when that member
 has no accepted occurrence, including on deleted jobs. It pins the exact old
 claim, its own original source, `member_id`, separately source-supported
 `represented_by_member_id` and reason; retained/preservation groups derive from
-those declared member graphs. All genuine current demands still participate in the complete partition;
+those declared capability assignments. All genuine current demands still participate in the complete partition;
 the witness cannot split current occurrences or invent a technical subtype.
 Reconciliation/certificate and root-revision provenance retain the correction,
 including when the surviving core text is otherwise unchanged.
@@ -343,7 +361,7 @@ writes admit no Fit followup.
 | `POST /v1/jobs/{job_id}/requirements/{occurrence_id}/binding` | Versioned explicit binding correction with selected target and reason. |
 | `POST /v1/jobs/{job_id}/requirements/corrections` | Source-bound one-to-one correction of selected occurrence meanings and bindings. |
 | `POST /v1/requirements/{requirement_id}/revisions` | Versioned source-bound canonical correction. Proposed shape is the extracted requirement plus exact spans. |
-| `requirements.consolidate`, `requirements.refresh`, `requirements.correct_binding`, `requirements.correct_occurrences`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2:requirements-capability-demand-v2:requirements-capability-demand-partition-v4`. Durable consolidation uses the run identity and accepts `expected_catalog_revision`. |
+| `requirements.consolidate`, `requirements.refresh`, `requirements.correct_binding`, `requirements.correct_occurrences`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2:requirements-capability-demand-v2:requirements-capability-demand-partition-v6`. Durable consolidation uses the run identity and accepts `expected_catalog_revision`. |
 
 Public owner methods also include nullable `find_job_requirements`, required
 `get_job_requirements`, exact/historical `get_requirement`, full

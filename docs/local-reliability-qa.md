@@ -30,10 +30,11 @@ ledger in [Python application journeys](developer/qa/python-journeys.md).
 
 Hosted Browser CI schedules that same inventory in four fixed, disjoint
 Playwright shards, `--shard=1/4` through `--shard=4/4`, on separate
-runners. Each invocation keeps one worker, zero retries, the existing case deadlines and the
-720-second global deadline; the ordinary unsharded local command is unchanged.
-Each shard builds once, owns its application/Temporal workspaces and retains
-separately named evidence. Matrix fail-fast is disabled so a failed shard does
+runners. Each hosted invocation uses two Playwright workers, zero retries, the
+existing case deadlines and the 720-second global deadline; the ordinary
+unsharded local command retains its one-worker default. Each shard builds once,
+each worker owns its Temporal service, and each journey owns its application
+workspace. Shards retain separately named evidence. Matrix fail-fast is disabled so a failed shard does
 not cancel its peers. The stable **Browser / UI checks** result passes only when
 all four shard jobs succeed; failure, cancellation or a skipped shard cannot
 qualify the complete inventory. A shard pass alone is partial proof. Record
@@ -165,8 +166,10 @@ composition; an inventory listing or schema check does not prove model quality.
 
 Post-edit Fit refresh is manually admitted. Prove that saves, approvals, reads
 and the operation's own writes make no additional model calls or queued work.
-Exercise the complete-catalog impact decision, previously unsupported
-requirements made relevant by new evidence, reuse of unaffected decisions,
+Exercise complete-catalog accounting, exact current and mandatory per-item work
+selection, the single unresolved semantic impact partition with all factual
+sources, previously unsupported requirements made relevant by new evidence,
+separate structural/model provenance, reuse of unaffected decisions,
 and grouped wording preparation. Check fixed input versions and job selection,
 including the selected jobs' exact direct-demand snapshots,
 duplicate admission, persisted call/item/deadline limits, cancellation and real
@@ -174,6 +177,11 @@ worker restart. Changes while queued or running must refuse stale work without
 expanding the operation. Report recorded monetary spend separately from work
 limits; ordinary lane/daily spend admission is not a guaranteed per-operation
 maximum charge.
+Real fixed-predecessor worker pauses must cover completed/unsettled call-only
+recovery across impact and qualification transport changes. Reuse the exact
+retained request or refuse; no counter reset, guessed wire or duplicate call is
+permitted. A debugger may observe/pause the unmodified owned predecessor process;
+it cannot alter locals, results, production code or domain rows.
 
 A controlled boundary proves authority and failure handling. Real SDK/provider
 compatibility, authentication, a provider/model change and pre-release readiness

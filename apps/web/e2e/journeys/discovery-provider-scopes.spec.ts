@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { DiscoverySettingsResponseSchema } from "@jobctrl/contracts";
 import { test, expect, json, completed, terminal, action, type ApplicationStack } from "../harness/fixtures.js";
 import { baseline, createBaseline } from "./core-data.js";
 import type { APIRequestContext } from "@playwright/test";
@@ -38,6 +39,175 @@ async function runResult(api: APIRequestContext, runId: string) {
   const done = await completed(api, runId);
   return done.result as SearchResult;
 }
+
+function expectAcknowledgedReceipts(checkpoint: Awaited<ReturnType<ApplicationStack["discoveryCheckpoint"]>>) {
+  for (const adapter of checkpoint.adapters) {
+    const unit = checkpoint.units.find((row) => row.unitId === adapter.unitId)!;
+    expect(adapter.requestFingerprint).toBe(unit.sdkFingerprint);
+    const receipts = checkpoint.receiptKeys.filter((row) => row.unitId === adapter.unitId && row.site === adapter.site);
+    expect(new Set(adapter.acknowledgedKeys)).toEqual(new Set(receipts.map((row) => row.jobKey)));
+    expect(adapter.emittedCount).toBe(receipts.length);
+  }
+}
+
+for (const legacyCap of [1, 100]) {
+  test(`native source pagination ignores legacy cap ${legacyCap}, commits exactly five new jobs after known and filtered listings, and acknowledges before stopping`, async ({ api, app }, testInfo) => {
+    await preferences(api);
+    await settings(api, ["indeed"], { resultsPerSite: legacyCap, newJobLimit: 1 });
+    const saved = await json<{ effectiveSettings: { resultsPerSite: unknown }; effective: { resultsPerSite: unknown } }>(api, "get", "/v1/discovery/settings");
+    expect(DiscoverySettingsResponseSchema.safeParse(saved).success).toBe(true);
+    expect(saved.effectiveSettings.resultsPerSite).toEqual({ value: legacyCap, source: "persisted", activation: "inactive", editable: false, locked: true });
+    expect(saved.effective.resultsPerSite).toEqual(saved.effectiveSettings.resultsPerSite);
+    if (legacyCap === 1) {
+      const help = await app.cli(["discover", "--help"]);
+      expect(help.exitCode, help.stderr).toBe(0);
+      expect(help.stdout).not.toContain("--results-per-site");
+      const legacy = await app.cli(["discover", "--results-per-site", "1", "--help"]);
+      expect(legacy.exitCode, legacy.stderr).toBe(0);
+      expect(legacy.stdout).not.toContain("--results-per-site");
+    }
+    const body = { queries: ["Synthetic Reliability Engineer"], locations: [{ location: "Madrid", remote: true }] };
+    const known = posting("PreviouslyKnown", Date.now());
+    const seed = await action(api, "discovery.search", body);
+    (await indeedRequest(app)).respond(pageOf([known]));
+    expect(await runResult(api, seed.runId)).toMatchObject({ status: "completed", newJobs: 1 });
+
+    await settings(api, ["indeed"], { resultsPerSite: legacyCap, newJobLimit: 5 });
+    // The public action override is retained for compatibility but cannot
+    // reactivate a provider-emission ceiling on a newly admitted search.
+    const started = await action(api, "discovery.search", { ...body, resultsPerSite: legacyCap });
+    const first = await indeedRequest(app);
+    expect(String(first.body["query"])).toContain("limit: 100");
+    first.respond(pageOf([known, ...Array.from({ length: 99 }, (_, index) => posting(`Excluded${index}`, null))], "fresh-page"));
+    const fresh = await indeedRequest(app);
+    expect(String(fresh.body["query"])).toContain('cursor: "fresh-page"');
+    expect(String(fresh.body["query"])).toContain("limit: 100");
+    await expect.poll(async () => (await app.discoveryCheckpoint(started.runId)).receipts).toEqual({ accepted: 1, filtered: 99 });
+    const before = await app.discoveryCheckpoint(started.runId);
+    expect(before.request).toMatchObject({ sourceFetchPolicy: "source-native-v1", settings: { resultsPerSite: legacyCap } });
+    expect(before.units).toEqual([expect.objectContaining({ resultsPerSite: null, sdkResultsWanted: null, sdkMaxPages: 50 })]);
+    expectAcknowledgedReceipts(before);
+    fresh.respond(pageOf([...Array.from({ length: 5 }, (_, index) => posting(`Fresh${index}`, Date.now())), posting("BeyondQuota", Date.now())], "held-after-quota"));
+    // A prefetched request may be in flight. Completion must not need its
+    // response or a sixth admission attempt to notice that capacity is full.
+    const result = await runResult(api, started.runId);
+    expect(result).toMatchObject({ status: "completed", newJobs: 5, observedJobs: 6, failures: [] });
+    const checkpoint = await app.discoveryCheckpoint(started.runId);
+    expect(checkpoint.receipts).toEqual({ accepted: 6, filtered: 99 });
+    expect(checkpoint.receiptKeys.filter((row) => row.isNew)).toHaveLength(5);
+    expect(checkpoint.units).toEqual([expect.objectContaining({ status: "budget_exhausted", result: { termination: "budget_exhaustion" } })]);
+    expectAcknowledgedReceipts(checkpoint);
+    expect(checkpoint.adapters[0]!.completed).toBe(false);
+    expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(0);
+    await testInfo.attach("native-pagination-budget-receipts", { contentType: "application/json", body: JSON.stringify(checkpoint) });
+  });
+}
+
+test("native source pagination distinguishes confirmed exhaustion from the SDK page safety limit", async ({ api, app }) => {
+  await preferences(api);
+  await settings(api, ["indeed"], { resultsPerSite: 1 });
+  const body = { queries: ["Synthetic Reliability Engineer"], locations: [{ location: "Madrid", remote: true }] };
+  const empty = await action(api, "discovery.search", body);
+  (await indeedRequest(app)).respond(pageOf([]));
+  expect(await runResult(api, empty.runId)).toMatchObject({ status: "completed", newJobs: 0 });
+  expect((await app.discoveryCheckpoint(empty.runId)).units).toEqual([expect.objectContaining({ status: "completed", result: { termination: "source_exhausted", sourceTerminations: { indeed: "source_exhausted" } } })]);
+
+  const bounded = await action(api, "discovery.search", body);
+  for (let index = 0; index < 50; index++) {
+    const call = await indeedRequest(app);
+    expect(String(call.body["query"])).toContain("limit: 100");
+    call.respond(pageOf([posting(`SafetyFiltered${index}`, null)], `safety-page-${index + 2}`));
+  }
+  expect((await terminal(api, bounded.runId)).status).toBe("failed");
+  const checkpoint = await app.discoveryCheckpoint(bounded.runId);
+  expect(checkpoint.receipts).toEqual({ filtered: 50 });
+  expect(checkpoint.units).toEqual([expect.objectContaining({ status: "failed", sdkMaxPages: 50,
+    result: expect.objectContaining({ termination: "page_limit", sourceTerminations: { indeed: "page_limit" }, failure: expect.objectContaining({ code: "discovery_provider_page_limit" }) }) })]);
+  expectAcknowledgedReceipts(checkpoint);
+  expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(51);
+});
+
+test.describe("frozen finite source-policy predecessor", () => {
+  test.use({ sourceRevision: "6f46b0ba5913383b7c57ffcce986729fa0bdbf0e" });
+
+  test("an actual predecessor search resumes its finite cap and fingerprint unchanged after upgrade", async ({ api, app }) => {
+    await preferences(api);
+    await settings(api, ["indeed"], { resultsPerSite: 3, newJobLimit: 5 });
+    const started = await action(api, "discovery.search", { queries: ["Synthetic Reliability Engineer"], locations: [{ location: "Madrid", remote: true }] });
+    (await indeedRequest(app)).respond(pageOf([posting("LegacyFirst", Date.now()), posting("LegacySecond", Date.now())], "legacy-page-two"));
+    const held = await indeedRequest(app);
+    expect(String(held.body["query"])).toContain('cursor: "legacy-page-two"');
+    await expect.poll(async () => (await app.discoveryCheckpoint(started.runId)).adapters[0]).toMatchObject({ emittedCount: 2, state: { cursor: "legacy-page-two" } });
+    const before = await app.discoveryCheckpoint(started.runId);
+    expect(before.request.sourceFetchPolicy).toBeUndefined();
+    expect(before.units).toEqual([expect.objectContaining({ resultsPerSite: 3, sdkResultsWanted: 3 })]);
+    expectAcknowledgedReceipts(before);
+
+    await app.upgradeSource();
+    const resumed = await indeedRequest(app, 45_000);
+    expect(String(resumed.body["query"])).toContain('cursor: "legacy-page-two"');
+    resumed.respond(pageOf([posting("LegacyThird", Date.now()), posting("LegacyBeyondCap", Date.now())], "legacy-never-needed"));
+    expect(await runResult(api, started.runId)).toMatchObject({ status: "completed", newJobs: 3, observedJobs: 3 });
+    const after = await app.discoveryCheckpoint(started.runId);
+    expect(after.request).toEqual(before.request);
+    expect(after.adapters[0]!.requestFingerprint).toBe(before.adapters[0]!.requestFingerprint);
+    expect(after.units[0]!.unitId).toBe(before.units[0]!.unitId);
+    expect(after.units[0]!.sdkResultsWanted).toBe(3);
+    expect(after.receipts).toEqual({ accepted: 3 });
+    expectAcknowledgedReceipts(after);
+  });
+});
+
+test("concurrent native board and registered ATS families share exactly five new-job admissions", async ({ api, app, playwright }) => {
+  await preferences(api);
+  await settings(api, ["indeed"], { newJobLimit: 5, resultsPerSite: 1, maxParallelFamilies: 3 });
+  await json(api, "post", "/v1/discovery/sources", { sourceId: "greenhouse:synthetic-race", kind: "ats_api", state: "active", seedUrl: "https://boards.greenhouse.io/synthetic-race", adapterConfig: { atsKind: "greenhouse", board: "synthetic-race", useLiveBrowser: true }, createOnly: true });
+  const pairing = await api.get("/v1/extension/pairing-token", { headers: { "Sec-Fetch-Site": "same-origin" } });
+  expect(pairing.status()).toBe(200);
+  const { token } = await pairing.json() as { token: string };
+  const installation = randomUUID();
+  const headers = { "x-jobctrl-extension-installation": installation, "x-jobctrl-extension-version": "synthetic-e2e" };
+  const extension = await playwright.request.newContext({ baseURL: app.baseURL, extraHTTPHeaders: { Origin: "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "Sec-Fetch-Site": "cross-site", Authorization: `Bearer ${token}` } });
+  try {
+    await json(extension, "post", "/v1/extension/discovery/claim", { installationId: installation, extensionVersion: "synthetic-e2e", replace: true });
+    const started = await action(api, "discovery.search", { queries: ["Synthetic Reliability Engineer"], locations: [{ location: "Madrid", remote: true }] });
+    let provider: Awaited<ReturnType<typeof indeedRequest>> | undefined;
+    for (let index = 0; index < 2; index++) {
+      const call = await app.external.next();
+      if (call.path === "/jobstreaming/indeed") provider = call;
+      else {
+        expect(call.path).toBe("/dns");
+        call.respond({ addresses: ["1.1.1.1"] });
+      }
+    }
+    expect(provider).toBeDefined();
+    await expect.poll(async () => (await json<{ pendingTasks: number }>(api, "get", "/v1/discovery/browser-extension/status")).pendingTasks).toBe(1);
+    const polling = extension.get("/v1/extension/discovery/tasks/next", { headers });
+    const claimDns = await app.external.next();
+    expect(claimDns.path).toBe("/dns");
+    claimDns.respond({ addresses: ["1.1.1.1"] });
+    const response = await polling;
+    expect(response.status()).toBe(200);
+    const task = await response.json() as { taskId: string; leaseId: string; request: { url: string } };
+    const delivering = extension.post(`/v1/extension/discovery/tasks/${task.taskId}/result`, { headers, data: { leaseId: task.leaseId, result: { status: "succeeded", finalUrl: task.request.url, statusCode: 200, contentType: "application/json", bodyText: JSON.stringify({ jobs: Array.from({ length: 4 }, (_, index) => ({ id: 7400 + index, title: `Synthetic ATS Race ${index} Engineer`, absolute_url: `https://example.com/jobs/ats-race-${index}`, company_name: "Synthetic ATS Company", location: { name: "Madrid" }, content: "<p>Maintain durable workflows.</p>" })) }) } } });
+    const deliveryDns = await app.external.next();
+    expect(deliveryDns.path).toBe("/dns");
+    deliveryDns.respond({ addresses: ["1.1.1.1"] });
+    provider!.respond(pageOf(Array.from({ length: 4 }, (_, index) => posting(`BoardRace${index}`, Date.now())), "held-race-page"));
+    expect((await delivering).status()).toBe(200);
+    const result = await runResult(api, started.runId);
+    expect(result).toMatchObject({ status: "completed", newJobs: 5, observedJobs: 5 });
+    expect(new Set(result.jobIds).size).toBe(5);
+    const checkpoint = await app.discoveryCheckpoint(started.runId);
+    expect(checkpoint.receipts).toEqual({ accepted: 5 });
+    expect(checkpoint.receiptKeys.filter((row) => row.isNew)).toHaveLength(5);
+    expect(new Set(checkpoint.receiptKeys.map((row) => row.site))).toEqual(new Set(["indeed", "greenhouse:synthetic-race"]));
+    expectAcknowledgedReceipts(checkpoint);
+    expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(0);
+  } finally {
+    await extension.dispose();
+  }
+});
 
 test("Remote posting-age search uses the pinned SDK, isolates auth and unsupported boards in either order, and preserves exact date evidence", async ({ api, app, page }, testInfo) => {
   await preferences(api);
@@ -241,23 +411,20 @@ test("pinned SDK Discovery retains its run and acknowledged cursor across worker
 });
 
 
-test("pinned SDK restart preserves earlier source failures after the shared new-job budget is full", async ({ api, app, page }) => {
+test("pinned SDK quota completion preserves earlier source failures without awaiting another provider event", async ({ api, app, page }) => {
   await preferences(api);
   await settings(api, ["zip_recruiter", "indeed"], { newJobLimit: 1 });
   const started = await action(api, "discovery.search", { queries: ["Synthetic Reliability Engineer"], locations: [{ location: "Madrid", remote: true }] });
   (await indeedRequest(app)).respond(pageOf([posting("FillsBudget", Date.now())], "held-after-budget"));
-  const held = await indeedRequest(app);
-  expect(String(held.body["query"])).toContain('cursor: "held-after-budget"');
   await expect.poll(async () => {
     const runs = await json<{ runs: { runId: string; newJobs: number }[] }>(api, "get", "/v1/discovery/runs");
     return runs.runs.find((run) => run.runId === started.runId)?.newJobs;
   }).toBe(1);
-  const before = app.external.calls.filter((call) => call.path === "/jobstreaming/indeed").length;
-  const restarted = await app.restartWorker();
-  expect(restarted.current).not.toBe(restarted.previous);
   const result = await runResult(api, started.runId);
   expect(result).toMatchObject({ status: "partial", newJobs: 1, observedJobs: 1, failures: [expect.objectContaining({ boards: ["zip_recruiter"], code: "discovery_provider_authentication_configuration" })] });
-  expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(before);
+  const checkpoint = await app.discoveryCheckpoint(started.runId);
+  expect(checkpoint.units).toContainEqual(expect.objectContaining({ status: "budget_exhausted", result: { termination: "budget_exhaustion" } }));
+  expectAcknowledgedReceipts(checkpoint);
   await page.goto("/jobs");
   const progress = page.getByRole("region", { name: "Job search progress", exact: true });
   await expect(progress).toContainText("Search completed · some sources unavailable");
@@ -311,7 +478,7 @@ test("pinned SDK failure remains partial after a completed registered ATS fills 
     await expect.poll(async () => {
       const telemetry = await json<Telemetry>(api, "get", "/v1/telemetry/pipeline");
       const run = telemetry.discovery.runs.find((item) => item.runId === started.runId);
-      return run?.sourceStatusCounts["failed"] === 1 ? run.families.find((family) => family.sourceFamily === "ats_api")?.statusCounts["completed"] : undefined;
+      return run?.sourceStatusCounts["failed"] === 1 ? run.families.find((family) => family.sourceFamily === "ats_api")?.statusCounts["budget_exhausted"] : undefined;
     }).toBe(1);
     const before = app.external.calls.length;
     const restarted = await app.restartWorker();
@@ -323,7 +490,7 @@ test("pinned SDK failure remains partial after a completed registered ATS fills 
     expect(history.observations).toEqual([expect.objectContaining({ run_id: started.runId, source_id: atsId, provenance: expect.objectContaining({ sourceKind: "canonical_ats_api" }) })]);
     const telemetry = await json<Telemetry>(api, "get", "/v1/telemetry/pipeline");
     const families = telemetry.discovery.runs.find((run) => run.runId === started.runId)!.families;
-    expect(families).toEqual(expect.arrayContaining([expect.objectContaining({ sourceFamily: "ats_api", statusCounts: { completed: 1 } }), expect.objectContaining({ sourceFamily: "smart_extract", statusCounts: { budget_exhausted: 1 } })]));
+    expect(families).toEqual(expect.arrayContaining([expect.objectContaining({ sourceFamily: "ats_api", statusCounts: { budget_exhausted: 1 } }), expect.objectContaining({ sourceFamily: "smart_extract", statusCounts: { budget_exhausted: 1 } })]));
     await page.goto("/jobs");
     await expect(page.getByRole("region", { name: "Job search progress", exact: true })).toContainText("Search completed · some sources unavailable");
     await expect(page.getByRole("link", { name: "Synthetic Registered Capacity Engineer", exact: true })).toBeVisible();
@@ -378,8 +545,6 @@ test("registered ATS failure survives restart after a pinned SDK board fills the
       return source?.lastRunId === started.runId ? source.lastErrorClass : undefined;
     }).toBe("request_failed");
     provider!.respond(pageOf([posting("AfterRegisteredFailure", Date.now())], "held-at-capacity"));
-    const held = await indeedRequest(app);
-    expect(String(held.body["query"])).toContain('cursor: "held-at-capacity"');
     await expect.poll(async () => (await json<{ runs: { runId: string; newJobs: number }[] }>(api, "get", "/v1/discovery/runs")).runs.find((run) => run.runId === started.runId)?.newJobs).toBe(1);
     const before = app.external.calls.length;
     const restarted = await app.restartWorker();

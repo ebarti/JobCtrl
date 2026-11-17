@@ -313,6 +313,7 @@ export async function applicationStack(
     discoveryTransport = "http",
     nativeAccountingPreflight = false,
     sourceRevision,
+    fitRecoveryDebugger = false,
     preflight = false,
     pythonExecutable = process.env.JOBCTRL_E2E_PYTHON ?? python,
     staticDir = process.env.JOBCTRL_E2E_STATIC_DIR ??
@@ -384,13 +385,16 @@ export async function applicationStack(
   let serverGeneration = 0;
   let upgraded = false;
   let workerGeneration = 0;
+  let recoveryDebuggerEnabled = fitRecoveryDebugger;
+  const recoveryArm = path.join(directory, "fit-recovery-arm");
+  const recoveryPaused = path.join(directory, "fit-recovery-paused.json");
   async function startWorker() {
     worker = await launch(
       `worker-${++workerGeneration}`,
       pythonExecutable,
       [
-        "-m",
-        "jobctrl.app.worker",
+        ...(recoveryDebuggerEnabled ? [path.join(repo, "apps/web/e2e/harness/fit-recovery-debugger.py"), recoveryArm, recoveryPaused]
+          : ["-m", "jobctrl.app.worker"]),
         "--workspace",
         workspace,
         "--temporal-address",
@@ -417,7 +421,7 @@ export async function applicationStack(
   }
   try {
     if (sourceRevision) {
-      if (!["8ab86e9232d66fff9795906e061d208e7a057d8b", "5b9db7ddfa20fa2d618687da1b311e2287286679", "6e4131061fb41aab4743701084a7c74a19fa21f3", "943c8b4d0c6f4a15521e10c04a015de726bfcbb9"].includes(sourceRevision))
+      if (!["8ab86e9232d66fff9795906e061d208e7a057d8b", "5b9db7ddfa20fa2d618687da1b311e2287286679", "6e4131061fb41aab4743701084a7c74a19fa21f3", "943c8b4d0c6f4a15521e10c04a015de726bfcbb9", "6f46b0ba5913383b7c57ffcce986729fa0bdbf0e", "5d3fda5352fe4418332b989c05f710e0529f578c", "df06b08ae201f7a73dc2c359944c06daf517c69e", "b49dc52e3d727356870317069304ac6ceb9f1237"].includes(sourceRevision))
         throw new Error("The source upgrade journey requires its exact fixed predecessor.");
       const resolved = await execFile("git", ["rev-parse", "--verify", `${sourceRevision}^{commit}`], { cwd: repo, timeout: 5_000 });
       if (resolved.stdout.trim() !== sourceRevision)
@@ -430,6 +434,8 @@ export async function applicationStack(
       await rm(archive);
       env.PYTHONPATH = path.join(extracted, "workers/automation/src");
     }
+    if (fitRecoveryDebugger && !["df06b08ae201f7a73dc2c359944c06daf517c69e", "b49dc52e3d727356870317069304ac6ceb9f1237"].includes(sourceRevision))
+      throw new Error("The durable-gap debugger requires an exact declared Fit predecessor.");
     if (process.env.JOBCTRL_E2E_INSTALLED === "1") {
       const payloadRoot = await realpath(process.env.JOBCTRL_E2E_PAYLOAD_DIR);
       const [executable, assets] = await Promise.all([
@@ -515,10 +521,39 @@ export async function applicationStack(
       get workerPid() {
         return worker?.pid;
       },
+      async armFitRecoveryPause(operation) {
+        if (!recoveryDebuggerEnabled || !["fit.catalog-impact", "fit.qualification-batch"].includes(operation))
+          throw new Error("Only the declared predecessor external-call gap can be armed.");
+        await writeFile(recoveryArm, operation, { mode: 0o600, flag: "wx" });
+      },
+      async waitForFitRecoveryPause() {
+        await waitFor(async () => {
+          try { return JSON.parse(await readFile(recoveryPaused, "utf8")).pid === worker.pid; }
+          catch (error) { if (error.code === "ENOENT") return false; throw error; }
+        }, "owned predecessor debugger pause");
+      },
+      async fitRefreshCheckpoint(operationId) {
+        const result = await execFile(pythonExecutable, ["-c", `
+import json, pathlib, sqlite3, sys
+root = pathlib.Path(sys.argv[1])
+owned = json.loads((root / '.jobctrl-e2e-owned.json').read_text())
+if owned['workspace'] != str(root): raise RuntimeError('Workspace ownership mismatch')
+connection = sqlite3.connect((root / 'jobctrl.db').as_uri() + '?mode=ro', uri=True)
+connection.execute('PRAGMA query_only=ON')
+row = connection.execute('SELECT state_json FROM fit_refresh_operations WHERE operation_id=?', (sys.argv[2],)).fetchone()
+if row is None: raise RuntimeError('The admitted refresh has no checkpoint')
+state = json.loads(row[0])
+print(json.dumps({key: state[key] for key in ('calls', 'checkpoints', 'impact_selection_scope_version', 'qualification_transport_version') if key in state}))
+`, workspace, operationId], { env, timeout: 5_000, maxBuffer: 4 * 1024 * 1024 });
+        return JSON.parse(result.stdout);
+      },
       async upgradeSource() {
         if (!sourceRevision || upgraded || preflight)
           throw new Error("Only the fixed owned predecessor runtime can upgrade once.");
         const previous = worker.pid;
+        try {
+          if (JSON.parse(await readFile(recoveryPaused, "utf8")).pid === previous) worker.crash();
+        } catch (error) { if (error.code !== "ENOENT") throw error; }
         for (const service of [worker, server]) {
           await service.stop();
           services.splice(services.indexOf(service), 1);
@@ -530,6 +565,7 @@ export async function applicationStack(
         const installed = process.env.JOBCTRL_E2E_INSTALLED === "1";
         if (installed) delete env.PYTHONPATH;
         else env.PYTHONPATH = process.env.JOBCTRL_E2E_SOURCE_PATH ?? path.join(repo, "workers/automation/src");
+        recoveryDebuggerEnabled = false;
         const origin = (await execFile(pythonExecutable, ["-c", "import pathlib,jobctrl\nprint(pathlib.Path(jobctrl.__file__).resolve())"], { env, cwd: directory, timeout: 5_000 })).stdout.trim();
         if (installed ? !origin.startsWith(`${env.JOBCTRL_PAYLOAD_DIR}${path.sep}`)
           : origin !== path.join(env.PYTHONPATH, "jobctrl/__init__.py"))
@@ -683,14 +719,38 @@ for path in directory.glob("*.sqlite3"):
     assert not path.is_symlink() and path.resolve().is_relative_to(root.resolve())
     with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
         conn.execute("PRAGMA query_only=ON")
+        request_fingerprint = conn.execute("SELECT request_fingerprint FROM jobstreaming_search_checkpoint").fetchone()[0]
         for site, state, emitted, completed in conn.execute("SELECT site,state_json,emitted_count,completed FROM jobstreaming_adapter_checkpoint"):
-            adapters.append({"site": site, "state": json.loads(state), "emittedCount": emitted, "completed": bool(completed)})
+            keys = [row[0] for row in conn.execute("SELECT job_key FROM jobstreaming_seen_job_key WHERE site=? ORDER BY position", (site,))]
+            adapters.append({"unitId": path.stem, "site": site, "state": json.loads(state), "emittedCount": emitted, "completed": bool(completed), "requestFingerprint": request_fingerprint, "acknowledgedKeys": keys})
 path = root / "jobctrl.db"
 assert not path.is_symlink()
 with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
     conn.execute("PRAGMA query_only=ON")
     receipts = dict(conn.execute("SELECT outcome,COUNT(*) FROM discovery_intake_receipts WHERE run_id=? GROUP BY outcome", (run_id,)))
-print(json.dumps({"adapters": adapters, "receipts": receipts}))
+    receipt_keys = []
+    for unit_id, data in conn.execute("SELECT unit_id,data_json FROM discovery_intake_receipts WHERE run_id=? ORDER BY created_at,receipt_key", (run_id,)):
+        data = json.loads(data)
+        receipt_keys.append({"unitId": unit_id, "site": data["sourceId"].removeprefix("jobstreaming:"), "jobKey": data["sourceNativeId"], "isNew": data["isNew"]})
+    saved = conn.execute("SELECT request_json FROM discovery_runs WHERE run_id=?", (run_id,)).fetchone()
+    frozen_request = json.loads(saved[0]) if saved else {}
+    request = {
+        "fingerprint": hashlib.sha256(json.dumps(frozen_request, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest(),
+        "settings": {key: frozen_request.get("settings", {}).get(key) for key in ("resultsPerSite", "newJobLimit")},
+        **({"sourceFetchPolicy": frozen_request["sourceFetchPolicy"]} if "sourceFetchPolicy" in frozen_request else {}),
+    }
+    units = []
+    from jobstreaming import build_search_request
+    for unit_id, status, data, result in conn.execute("SELECT unit_id,status,data_json,result_json FROM discovery_units WHERE run_id=? ORDER BY unit_id", (run_id,)):
+        data = json.loads(data)
+        if "sites" not in data:
+            continue
+        sdk = build_search_request(site_name=data["sites"], search_term=data["query"], location=data["location"] or None,
+            results_wanted=data["results_per_site"], hours_old=data["hours_old"], is_remote=data["remote_only"],
+            country_indeed=data["country_indeed"], description_format="markdown", linkedin_fetch_description=data["linkedin_fetch_description"])
+        units.append({"unitId": unit_id, "status": status, "resultsPerSite": data["results_per_site"], "sdkFingerprint": sdk.fingerprint(),
+            "sdkResultsWanted": sdk.results_wanted, "sdkMaxPages": sdk.max_pages, "result": json.loads(result) if result else None})
+print(json.dumps({"adapters": adapters, "receipts": receipts, "receiptKeys": receipt_keys, "request": request, "units": units}))
 `, workspace, runId], { env, timeout: 5000, maxBuffer: 100_000 });
         return JSON.parse(inspected.stdout);
       },

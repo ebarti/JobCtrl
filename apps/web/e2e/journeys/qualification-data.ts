@@ -1,4 +1,5 @@
 import { expect, type ExternalCall } from "../harness/fixtures.js";
+import { createHash } from "node:crypto";
 import { citeSources, modelSources } from "./requirements-data.js";
 
 export type QualificationBinding = {
@@ -18,6 +19,39 @@ export type QualificationChoice = {
   evidenceRoute?: "education" | "equivalent_experience" | null;
   wordingSupport?: "section" | "achievement" | "none";
 };
+
+const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
+  : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
+    .map(([key, entry]) => [key, canonical(entry)])) : value;
+const fingerprint = (value: unknown) => createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
+
+/** Decode the actual wire; exact hashes prove mechanical scope expansion. */
+export function qualificationBindings(call: ExternalCall): QualificationBinding[] {
+  const context = structuredClone(call.body["context"]) as Record<string, unknown>;
+  if (context["context_transport_version"] === undefined) return context["requirements"] as QualificationBinding[];
+  expect(context["context_transport_version"]).toBe("fit-permission-scopes-v1");
+  const binding = context["context_transport_binding"] as Record<string, unknown>;
+  delete context["context_transport_binding"];
+  expect(fingerprint(context)).toBe(binding["encoded_context_fingerprint"]);
+  const scopes = context["permission_scopes"] as { scope_id: string; permitted_evidence_ids: string[] }[];
+  expect(fingerprint(scopes)).toBe(binding["permission_scopes_fingerprint"]);
+  expect(new Set(scopes.map((scope) => JSON.stringify(scope.permitted_evidence_ids))).size).toBe(scopes.length);
+  const byId = new Map(scopes.map((scope) => [scope.scope_id, scope.permitted_evidence_ids]));
+  const used = new Set<string>();
+  const rows = context["requirements"] as (Omit<QualificationBinding, "permitted_evidence_ids"> & { permission_scope_id: string; permitted_evidence_ids?: never })[];
+  context["requirements"] = rows.map((row) => {
+    expect(row.permitted_evidence_ids).toBeUndefined();
+    const { permission_scope_id, ...rest } = row;
+    expect(byId.has(permission_scope_id)).toBe(true);
+    used.add(permission_scope_id);
+    return { ...rest, permitted_evidence_ids: byId.get(permission_scope_id)! };
+  });
+  expect(used.size).toBe(scopes.length);
+  delete context["permission_scopes"];
+  delete context["context_transport_version"];
+  expect(fingerprint(context)).toBe(binding["expanded_context_fingerprint"]);
+  return context["requirements"] as QualificationBinding[];
+}
 
 /** Current authored choices bind to the request's exact IDs and sources. */
 export function qualificationBatchDecision(
@@ -44,7 +78,7 @@ export const qualificationKey = (binding: { requirement_id: string; requirement_
 
 function qualificationResponse(call: ExternalCall, choose: (binding: QualificationBinding, index: number) => QualificationChoice, withDemand: boolean) {
   expect(call.body["lane"]).toBe("scoring");
-  const context = call.body["context"] as { requirements: QualificationBinding[] };
+  const context = { requirements: qualificationBindings(call) };
   expect(context.requirements.length).toBeGreaterThan(0);
   expect(new Set(context.requirements.map((row) => withDemand ? qualificationKey(row) : row.requirement_id)).size).toBe(context.requirements.length);
   const sources = modelSources(call);

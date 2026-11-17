@@ -10,6 +10,7 @@ from .domain import RequirementError, canonical_json, current_contract, fingerpr
 from .normalization_domain import NORMALIZATION_VERSION
 from .normalization_citations import CITATION_BINDER_VERSION, citation_binding_summary
 from .normalization_partitions import NORMALIZATION_BINDING_VERSION, partition_binding_summary
+from .normalization_partitions_v4 import NORMALIZATION_BINDING_VERSION as NORMALIZATION_V4_BINDING_VERSION
 
 
 class NormalizationStore:
@@ -122,7 +123,7 @@ class NormalizationStore:
                 raise ConflictError("The consolidation operation ID belongs to another input.")
             stored = json.loads(row["report_json"])
             if "storage_version" in stored:
-                if stored["storage_version"] not in (CITATION_BINDER_VERSION, NORMALIZATION_BINDING_VERSION):
+                if stored["storage_version"] not in (CITATION_BINDER_VERSION, NORMALIZATION_V4_BINDING_VERSION, NORMALIZATION_BINDING_VERSION):
                     raise RequirementError("requirements_citation_wire_changed")
                 return stored["report"]
             return stored

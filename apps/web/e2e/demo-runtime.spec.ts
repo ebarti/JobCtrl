@@ -292,7 +292,10 @@ test("demo tour retains local exact wording approval, durable edits and a real a
     const platformRow = savedRequirements.getByRole("row").filter({
       has: page.getByRole("button", { name: "Open Platform delivery leadership: View details", exact: true }),
     });
-    await expect(platformRow.getByRole("cell", { name: "Varies by job", exact: true })).toBeVisible();
+    // The Profile name changed after the authored illustration was recorded.
+    // Two different demands do not make those stale outcomes current.
+    await expect(platformRow.getByRole("cell", { name: /^Needs update/ })).toBeVisible();
+    await expect(platformRow.getByText("2 job-specific demands", { exact: true })).toBeVisible();
     await platformRow.click();
     const demands = page.getByRole("region", { name: "Job-specific demands", exact: true });
     const demandDetails = demands.locator("ol.requirement-demands__list > li > details");

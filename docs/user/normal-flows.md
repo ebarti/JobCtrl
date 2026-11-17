@@ -395,6 +395,11 @@ monetary evidence before further calls. Known monetary receipts remain valid
 when token counts are unavailable; token limits are checked independently.
 Other failed refreshes or reads fail instead of reporting zero counts.
 
+In Jobs, **Fit assessments to update** opens the active jobs with stale saved
+Fit assessments. The link filters Fit currentness independently of workflow
+state. Choose **Update affected matches** when you are ready to review and start
+the update.
+
 
 ## Semantic Determination Authority
 

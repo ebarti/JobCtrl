@@ -1792,6 +1792,13 @@ export class DemoFeatureHttpAdapter {
       },
       effectiveSettings: {
         ...saved.effectiveSettings,
+        resultsPerSite: {
+          ...saved.effectiveSettings.resultsPerSite,
+          value: saved.settings.resultsPerSite,
+          activation: "inactive" as const,
+          editable: false as const,
+          locked: true as const,
+        },
         minFitScore: {
           ...saved.effectiveSettings.minFitScore,
           value: policy.minFitScore,

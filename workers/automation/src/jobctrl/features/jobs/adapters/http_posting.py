@@ -9,6 +9,7 @@ from jobctrl.app.errors import AppError
 from jobctrl.app.synthetic import synthetic_boundary
 from jobctrl.features.jobs.domain.capture import DetailPage
 from jobctrl.features.jobs.domain.postings import posting_url, utc_now
+from jobctrl.features.jobs.adapters.page_fetcher import DetailPageFetchBlocked, DetailPageFetchUnavailable
 
 
 class PostingPage(BaseModel):
@@ -34,6 +35,12 @@ class HttpPostingFetcher:
             with client.stream(
                 "POST", self.endpoint, json={"url": posting_url(url)}, headers={"Authorization": "Bearer " + self.token}
             ) as response:
+                # These statuses describe the page provider's transport outcome,
+                # not the target posting's availability or captured HTTP status.
+                if response.status_code == 429:
+                    raise DetailPageFetchBlocked("rate_limited")
+                if response.status_code == 503:
+                    raise DetailPageFetchUnavailable()
                 if response.status_code != 200:
                     raise AppError("posting_provider_unavailable", "The posting page provider is unavailable.", 502)
                 content = bytearray()

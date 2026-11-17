@@ -11,34 +11,87 @@ from jobctrl.features.discovery.domain import fingerprint
 from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
 
 
+class _AcquisitionContext:
+    """Stop provider work at capacity without cancelling the user's action."""
+
+    def __init__(self, context, stop):
+        self._context, self._stop = context, stop
+
+    def __getattr__(self, name):
+        return getattr(self._context, name)
+
+    def cancelled(self):
+        return self._stop.is_set() or self._context.cancelled()
+
+
 class DiscoveryExecutionAdapter:
     def __init__(self, repository, *, jobs, model, workspace, browser_port=None, http_provider=None):
         self.repository, self.jobs, self.model = repository, jobs, model
         self.workspace, self.browser_port, self.http_provider = Path(workspace), browser_port, http_provider
         self._signals = {}
+        self._budgets = {}
         self._admit = None
 
     def bind_admission(self, admission):
         self._admit = admission
 
     def begin(self, lease):
-        self._signals[(lease["run_id"], lease["epoch"])] = threading.Event()
+        key = (lease["run_id"], lease["epoch"])
+        self._signals[key] = threading.Event()
+        self._budgets[key] = (asyncio.get_running_loop(), asyncio.Event())
 
     def stop(self, lease):
-        signal = self._signals.pop((lease["run_id"], lease["epoch"]), None)
+        key = (lease["run_id"], lease["epoch"])
+        signal = self._signals.pop(key, None)
+        self._budgets.pop(key, None)
         if signal is not None:
             signal.set()
+
+    def _exhaust_budget(self, lease):
+        key = (lease["run_id"], lease["epoch"])
+        signal, budget = self._signals.get(key), self._budgets.get(key)
+        if signal is not None:
+            signal.set()
+        if budget is not None:
+            loop, exhausted = budget
+            loop.call_soon_threadsafe(exhausted.set)
+
+    def _budget_unit(self, lease, unit, *, cursor=None):
+        recorded = self.repository.unit(lease["run_id"], unit["unit_id"])
+        self.repository.save_unit(
+            lease, unit, status="budget_exhausted", cursor=cursor,
+            result={**((recorded or {}).get("result") or {}), "termination": "budget_exhaustion"},
+        )
+
+    async def _until_budget(self, lease, work):
+        task = asyncio.create_task(work)
+        exhausted = asyncio.create_task(self._budgets[(lease["run_id"], lease["epoch"])][1].wait())
+        try:
+            done, _ = await asyncio.wait({task, exhausted}, return_when=asyncio.FIRST_COMPLETED)
+            if task in done:
+                return await task
+            return False
+        finally:
+            for pending in (task, exhausted):
+                if not pending.done():
+                    pending.cancel()
+            await asyncio.gather(task, exhausted, return_exceptions=True)
 
     async def run_board_unit(self, context, lease, unit, settings, previous):
         # Validate unsupported scope per board before touching its provider.
         for site in unit["sites"]:
             provider_scope(site, location=unit["location"], remote_only=unit["remote_only"], hours_old=unit["hours_old"])
         if self.http_provider is not None:
-            return await self._http_unit(context, lease, unit, settings, previous)
+            return await self._until_budget(lease, self._http_unit(context, lease, unit, settings, previous))
         return await self._stream_unit(context, lease, unit, settings, self._signals[(lease["run_id"], lease["epoch"])])
 
     async def run_registered_source(self, context, lease, source, settings):
-        return await self._registered_source(context, lease, source, settings)
+        try:
+            return await self._until_budget(lease, self._registered_source(context, lease, source, settings))
+        except AppError as error:
+            if error.code == "action_cancelled" and not context.cancelled() and not self.repository.budget_remaining(lease, settings["newJobLimit"]):
+                return False
+            raise
 
     async def _http_unit(self, context, lease, unit, settings, previous):
         provider = self.http_provider
@@ -63,8 +116,9 @@ class DiscoveryExecutionAdapter:
                     posting,
                     "http:" + fingerprint([lease["run_id"], unit["unit_id"], row.job_key]),
                 )
-                if outcome["outcome"] == "budget_exhausted":
-                    self.repository.save_unit(lease, unit, status="budget_exhausted", cursor=cursor)
+                if outcome["budget_reached"]:
+                    self._budget_unit(lease, unit, cursor=cursor)
+                    self._exhaust_budget(lease)
                     return
             # A page cursor advances only after every included receipt committed.
             self.repository.save_unit(
@@ -76,7 +130,7 @@ class DiscoveryExecutionAdapter:
         raise AppError("discovery_provider_page_limit", "The provider exceeded the bounded page limit.", 502)
 
     async def _stream_unit(self, context, lease, unit, settings, stop):
-        from jobstreaming import ErrorEvent, JobEvent, SearchCompleteEvent
+        from jobstreaming import ErrorEvent, JobEvent, SearchCompleteEvent, SiteCompleteEvent
         from jobstreaming.checkpoint import SqliteCheckpointStore
         from jobctrl.features.discovery.adapters.jobstreaming import JobStreamingGateway, JobStreamingSearchSpec
 
@@ -111,13 +165,20 @@ class DiscoveryExecutionAdapter:
                 "discovery_checkpoint_path_unsafe", "The provider checkpoint file is not owned by this workspace.", 409
             )
         store = SqliteCheckpointStore(checkpoint_path)
-        self.repository.save_unit(lease, unit, status="running")
+        previous = self.repository.unit(lease["run_id"], unit["unit_id"])
+        recorded = (previous or {}).get("result") or {}
+        if spec.results_per_site is None:
+            for reason in recorded.get("sourceTerminations", {}).values():
+                if reason != "source_exhausted":
+                    raise AppError("discovery_provider_" + reason, "The source stopped before confirmed exhaustion; start a new search to retry.", 502)
+        self.repository.save_unit(lease, unit, status="running", result=recorded)
 
         def consume():
             from jobctrl.features.discovery.adapters.synthetic_jobstreaming import controlled_registry
 
             gateway = JobStreamingGateway()
             registry = controlled_registry(self.workspace)
+            terminations = dict(recorded.get("sourceTerminations", {}))
             with gateway.open_stream(spec, checkpoint_store=store, cancel_event=stop, registry=registry) as stream:
                 completed = False
                 for event in stream:
@@ -183,8 +244,13 @@ class DiscoveryExecutionAdapter:
                             + fingerprint([lease["run_id"], unit["unit_id"], event.site.value, event.job_key]),
                             forced_exclusion=age is not None and not age["accepted"],
                         )
-                        if outcome["outcome"] == "budget_exhausted":
-                            self.repository.save_unit(lease, unit, status="budget_exhausted")
+                        if outcome["budget_reached"]:
+                            # A rejected extra emission has no receipt and must
+                            # not be acknowledged. The quota-filling event does.
+                            if outcome["outcome"] != "budget_exhausted":
+                                stream.ack(event)
+                            self._budget_unit(lease, unit)
+                            self._exhaust_budget(lease)
                             return
                     elif isinstance(event, ErrorEvent):
                         self.repository.source_result(
@@ -205,13 +271,32 @@ class DiscoveryExecutionAdapter:
                             credential = {"indeed": "JOBSTREAMING_INDEED_API_KEY", "zip_recruiter": "JOBSTREAMING_ZIPRECRUITER_AUTHORIZATION"}.get(event.site.value)
                             message = f"Configure {credential} in the worker environment, then restart the worker and retry; or deselect this board." if credential else "Configure this source's provider credentials or deselect the board."
                         raise AppError("discovery_provider_" + event.code.value, message, 502)
+                    elif isinstance(event, SiteCompleteEvent):
+                        reason = getattr(event, "reason", None)
+                        value = reason.value if reason is not None else None
+                        if spec.results_per_site is None:
+                            from jobstreaming import SiteTerminationReason
+
+                            if not isinstance(reason, SiteTerminationReason):
+                                raise AppError("discovery_source_policy_unsupported", "The provider did not report a typed source termination.", 502)
+                        terminations[event.site.value] = value or "legacy_completion"
+                        self.repository.save_unit(
+                            lease, unit, status="running", result={"sourceTerminations": terminations, "termination": value or "legacy_completion"},
+                        )
+                        # Completion metadata is durable before its checkpoint.
+                        stream.ack(event)
+                        if spec.results_per_site is None and value != "source_exhausted":
+                            raise AppError("discovery_provider_" + value, "The source stopped at its safety limit or without confirmed exhaustion; accepted jobs are retained.", 502)
+                        continue
                     elif isinstance(event, SearchCompleteEvent):
                         completed = event.completed
                     # Jobs/filtered receipts committed before provider ack.
                     stream.ack(event)
                 if not completed:
                     raise AppError("discovery_provider_incomplete", "The provider search has not completed.", 502)
-                self.repository.save_unit(lease, unit, status="completed")
+                if spec.results_per_site is None and any(terminations.get(site) != "source_exhausted" for site in spec.sites):
+                    raise AppError("discovery_provider_termination_missing", "The source completion has no recorded exhaustion reason.", 502)
+                self.repository.save_unit(lease, unit, status="completed", result={"sourceTerminations": terminations, "termination": "source_exhausted" if spec.results_per_site is None else "legacy_completion"})
                 for site in spec.sites:
                     self.repository.source_result(lease, "jobstreaming:" + site, "completed")
 
@@ -220,7 +305,12 @@ class DiscoveryExecutionAdapter:
         except Exception as error:
             from jobstreaming.exception import JobStreamingError, StreamCancelledError
 
-            if isinstance(error, StreamCancelledError) or context.cancelled():
+            if context.cancelled():
+                raise AppError("action_cancelled", "Discovery was cancelled.", 409) from None
+            if isinstance(error, StreamCancelledError):
+                if not self.repository.budget_remaining(lease, settings["newJobLimit"]):
+                    self._budget_unit(lease, unit)
+                    return
                 raise AppError("action_cancelled", "Discovery was cancelled.", 409) from None
             if isinstance(error, JobStreamingError):
                 raise AppError("discovery_provider_" + error.code.value, "A search provider could not complete its request.", 502) from None
@@ -294,7 +384,7 @@ class DiscoveryExecutionAdapter:
         postings = await acquire_registered_source(
             source,
             settings=settings,
-            context=context,
+            context=_AcquisitionContext(context, self._signals[(lease["run_id"], lease["epoch"])]),
             jobs=self.jobs,
             model=self.model,
             browser_port=self.browser_port,
@@ -328,11 +418,16 @@ class DiscoveryExecutionAdapter:
                             reason="ambiguous_career_system",
                             retry_context={"qualification": qualification.model_dump(), "provenance": receipt},
                         )
-                    self._admit(context, lease, unit, settings, posting, key, forced_exclusion=True)
+                    outcome = self._admit(context, lease, unit, settings, posting, key, forced_exclusion=True)
+                    if outcome["budget_reached"]:
+                        self._budget_unit(lease, unit)
+                        self._exhaust_budget(lease)
+                        return True
                     continue
             outcome = self._admit(context, lease, unit, settings, posting, key)
-            if outcome["outcome"] == "budget_exhausted":
-                self.repository.save_unit(lease, unit, status="budget_exhausted")
+            if outcome["budget_reached"]:
+                self._budget_unit(lease, unit)
+                self._exhaust_budget(lease)
                 return True
         self.repository.save_unit(lease, unit, status="completed")
         self.repository.source_result(lease, source["sourceId"], "completed")

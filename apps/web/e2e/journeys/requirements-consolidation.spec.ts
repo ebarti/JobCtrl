@@ -52,16 +52,6 @@ test("one capability preserves distinct job demands, reuses identical demand rec
   const sharedFingerprint = requirements.requirements[0]!.normalized_demand.demand_fingerprint;
   const achievement = library.roles[0]!.achievements[0]!;
   const assessBody = { expected_revision: 0, prepare_wording: false, prepare_coverage: false };
-  const assessing = api.post(`${fitPath(first.job_id)}/assess`, { data: assessBody });
-  const qualification = await modelCall(app, "fit.qualification-batch");
-  expect((qualification.body["context"] as { requirements: unknown[] }).requirements).toHaveLength(1);
-  qualification.reply(qualificationBatchDecision(qualification, () => ({ achievementIds: [achievement.achievement_id], evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] })));
-  expect((await assessing).status()).toBe(200);
-  const firstFit = await json<Fit>(api, "get", fitPath(first.job_id));
-  expect(firstFit).toMatchObject({ current: true, score: { score: 10, summary: { assessed_count: 1 }, assessments: [{ demand_fingerprint: sharedFingerprint }] } });
-  expect(firstFit.score!.assessments).toHaveLength(1);
-  expect(firstFit.score!.assessments[0]!.contribution.max_points).toBe(1);
-
   const second = await captureReusePosting(api, "demand-aircraft", constrainedDemand);
   const constrained = api.post(requirementsPath(second.job_id), { data: { expected_posting_revision: second.revision, expected_revision: 0 } });
   const secondExtraction = await modelCall(app, "requirements.extract");
@@ -77,6 +67,34 @@ test("one capability preserves distinct job demands, reuses identical demand rec
   const secondFingerprint = secondRequirements.requirements[0]!.normalized_demand.demand_fingerprint;
   expect(secondRequirements.requirements[0]!.requirement_id).toBe(canonicalId);
   expect(secondFingerprint).not.toBe(sharedFingerprint);
+  const beforeBrowsing = app.external.calls.length;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/requirements?requirement=${encodeURIComponent(canonicalId)}`);
+  const capabilityRow = page.getByRole("table", { name: "Saved requirements", exact: true }).locator("tbody tr[data-row-id]");
+  await expect(capabilityRow).toHaveCount(1);
+  await expect(capabilityRow.getByRole("cell", { name: /^Not assessed/ })).toBeVisible();
+  await expect(capabilityRow.getByText("2 job-specific demands", { exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Linked achievements 0", exact: true })).toBeVisible();
+  await captureDetailTop(page, testInfo, "requirements-unassessed-multiple-demands-1440");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByText("Profile match: Not assessed", { exact: true })).toBeVisible();
+  await captureDetailTop(page, testInfo, "requirements-unassessed-multiple-demands-390");
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  expect(app.external.calls).toHaveLength(beforeBrowsing);
+
+  const assessing = api.post(`${fitPath(first.job_id)}/assess`, { data: assessBody });
+  const qualification = await modelCall(app, "fit.qualification-batch");
+  expect((qualification.body["context"] as { requirements: unknown[] }).requirements).toHaveLength(1);
+  qualification.reply(qualificationBatchDecision(qualification, () => ({ achievementIds: [achievement.achievement_id], evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] })));
+  expect((await assessing).status()).toBe(200);
+  const firstFit = await json<Fit>(api, "get", fitPath(first.job_id));
+  expect(firstFit).toMatchObject({ current: true, score: { score: 10, summary: { assessed_count: 1 }, assessments: [{ demand_fingerprint: sharedFingerprint }] } });
+  expect(firstFit.score!.assessments).toHaveLength(1);
+  expect(firstFit.score!.assessments[0]!.contribution.max_points).toBe(1);
+  const beforePartialRead = app.external.calls.length;
+  await page.reload();
+  await expect(capabilityRow.getByRole("cell", { name: /^Partially assessed/ })).toBeVisible();
+  expect(app.external.calls).toHaveLength(beforePartialRead);
   const beforeSecondFit = app.external.calls.length;
   const assessingSecond = api.post(`${fitPath(second.job_id)}/assess`, { data: assessBody });
   const missing = await modelCall(app, "fit.qualification-batch");
@@ -105,7 +123,7 @@ test("one capability preserves distinct job demands, reuses identical demand rec
   expect(app.external.calls).toHaveLength(beforeReuse);
 
   await page.goto(`/requirements?requirement=${encodeURIComponent(canonicalId)}`);
-  await expect(page.getByRole("cell", { name: "Varies by job", exact: true })).toBeVisible();
+  await expect(page.getByRole("cell", { name: /^Varies by job/ })).toBeVisible();
   const demandPanel = page.getByRole("region", { name: "Job-specific demands", exact: true });
   await expect(demandPanel).toBeVisible();
   await captureDetailTop(page, testInfo, "same-capability-distinct-demands-initial");
@@ -358,8 +376,8 @@ test.describe("retained public predecessor capability authority", () => {
     expect(response.status(), await response.text()).toBe(200);
     const report = await response.json() as ReconciliationReport;
     const notesRoot = [obsoleteId, notesId].sort()[0]!;
-    const notesGroup = Object.entries(report.partition_binding.group_roots).find(([, root]) => root === obsoleteId)![0];
-    const accessGroup = Object.entries(report.partition_binding.group_roots).find(([, root]) => root === accessId)![0];
+    const notesGroup = report.partition_binding.member_groups[obsoleteId]!;
+    const accessGroup = report.partition_binding.member_groups[accessId]!;
     const witness = decision.corrections[0]!;
     expect(report).toMatchObject({ input_member_count: 3, root_count: 2, corrections: [{ member_id: witness.member_id,
       retained_group_id: notesGroup, represented_by_group_id: accessGroup, unsupported_claim: witness.unsupported_claim, reason: witness.reason }],
@@ -419,6 +437,16 @@ test.describe("retained public predecessor capability authority", () => {
       achievement_id: achievement.achievement_id, achievement_source_refs: achievement.source_refs, wording: null };
     const oldAssociation = await json<{ association_id: string; revision: number; current: boolean }>(api, "post", "/v1/fit/associations", oldAssociationRequest);
     expect(oldAssociation.current).toBe(true);
+    // This achievement has no assessment or coverage relationship. A removed
+    // manual link must stay in history without entering the displayed count.
+    const removedAchievement = library.roles[0]!.achievements[1]!;
+    const removedAssociation = await json<{ association_id: string; revision: number }>(api, "post", "/v1/fit/associations", {
+      ...oldAssociationRequest, association_id: "consolidation-removed-only-link",
+      achievement_id: removedAchievement.achievement_id, achievement_source_refs: removedAchievement.source_refs,
+    });
+    await json(api, "post", `/v1/fit/associations/${removedAssociation.association_id}/state`, {
+      profile_id: "default", expected_revision: removedAssociation.revision, state: "removed",
+    });
     const evidenceSourceId = `evidence:${achievement.source_refs[0]!.source_id}`;
     const assessing = api.post(`${fitPath(posting.job_id)}/assess`, { data: { expected_revision: 0, prepare_wording: false, prepare_coverage: false } });
     const oldQualification = await modelCall(app, "fit.qualification-batch");
@@ -454,8 +482,8 @@ test.describe("retained public predecessor capability authority", () => {
       const selection = citationSelections(request, [{ sourceId: reference.source_id, valuePath: ["original", "spans", 0, "quote"] }])[0]!;
       return { sourceId: reference.source_id, original: source.original, selection };
     };
-    const faults = ["omitted member", "foreign member", "omitted occurrence", "foreign occurrence", "member cycle", "occurrence cycle",
-      "wrong capability alias", "foreign member alias", "foreign occurrence alias", "schema", "uncertain", "uncertain occurrence", "blank normalized definition", "active correction",
+    const faults = ["omitted member", "foreign member", "omitted occurrence", "foreign occurrence", "member alias", "occurrence alias", "group alias", "missing capability definition", "missing demand definition", "unused capability definition", "unused demand definition",
+      "wrong capability assignment", "foreign capability handle", "foreign demand handle", "schema", "uncertain", "uncertain occurrence", "blank normalized definition", "active correction",
       "foreign occurrence segment", "wrong-source occurrence segment", "legacy quote field", "stale catalogue"] as const;
     for (const fault of faults) {
       const attempt = api.post("/v1/requirements/consolidate", { data: { expected_catalog_revision: catalogBefore.catalog_revision } });
@@ -468,13 +496,22 @@ test.describe("retained public predecessor capability authority", () => {
       if (fault === "foreign member") invalid.member_slots["foreign:unrecorded-member"] = invalid.member_slots[members[0]!]!;
       if (fault === "omitted occurrence") delete invalid.occurrence_slots[occurrences[0]!];
       if (fault === "foreign occurrence") invalid.occurrence_slots["foreign:unrecorded-occurrence"] = invalid.occurrence_slots[occurrences[0]!]!;
-      if (fault === "member cycle") for (let index = 0; index < 2; index++)
-        invalid.member_slots[members[index]!] = { kind: "same_as", member_id: members[1 - index]! };
-      if (fault === "occurrence cycle") for (let index = 0; index < 2; index++)
-        invalid.occurrence_slots[occurrences[index]!] = { kind: "same_as", occurrence_id: occurrences[1 - index]! };
-      if (fault === "wrong capability alias") invalid.occurrence_slots[occurrences[0]!] = { kind: "same_as", occurrence_id: occurrences[1]! };
-      if (fault === "foreign member alias") invalid.member_slots[members[0]!] = { kind: "same_as", member_id: "foreign:unrecorded-member" };
-      if (fault === "foreign occurrence alias") invalid.occurrence_slots[occurrences[0]!] = { kind: "same_as", occurrence_id: "foreign:unrecorded-occurrence" };
+      if (fault === "member alias") Object.assign(invalid.member_slots, {
+        [members[0]!]: { kind: "same_as", member_id: members[1]! }, [members[1]!]: { kind: "same_as", member_id: members[0]! } });
+      if (fault === "occurrence alias") Object.assign(invalid.occurrence_slots, {
+        [occurrences[0]!]: { kind: "same_as", occurrence_id: occurrences[1]! }, [occurrences[1]!]: { kind: "same_as", occurrence_id: occurrences[0]! } });
+      const capabilities = Object.keys(invalid.capability_groups), demands = Object.keys(invalid.demand_groups);
+      if (fault === "group alias") Object.assign(invalid.capability_groups, { [capabilities[0]!]: { kind: "same_as", capability_group_id: capabilities[1]! } });
+      if (fault === "missing capability definition") invalid.capability_groups[capabilities[0]!] = null;
+      if (fault === "missing demand definition") invalid.demand_groups[demands[0]!] = null;
+      if (fault === "unused capability definition") invalid.member_slots[members[0]!] = { kind: "assigned", capability_group_id: capabilities[1]! };
+      if (fault === "unused demand definition") invalid.occurrence_slots[occurrences[0]!] = { kind: "assigned", demand_group_id: demands[1]! };
+      if (fault === "wrong capability assignment") {
+        invalid.occurrence_slots[occurrences[0]!] = { kind: "assigned", demand_group_id: demands[1]! };
+        invalid.demand_groups[demands[0]!] = null;
+      }
+      if (fault === "foreign capability handle") invalid.member_slots[members[0]!] = { kind: "assigned", capability_group_id: "capability:foreign" };
+      if (fault === "foreign demand handle") invalid.occurrence_slots[occurrences[0]!] = { kind: "assigned", demand_group_id: "demand:foreign" };
       if (fault === "foreign occurrence segment" || fault === "wrong-source occurrence segment") {
         const source = multilineSource(call);
         const citation = occurrenceRoots(invalid).flatMap(({ slot }) => slot.citations).find((row) => row.source_id === source.sourceId)!;
@@ -516,21 +553,23 @@ test.describe("retained public predecessor capability authority", () => {
       if (fault === "schema") call.reply({ ...invalid, invented_authority: true });
       else if (fault === "legacy quote field") {
         const source = multilineSource(call);
-        call.reply({ ...invalid, occurrence_slots: Object.fromEntries(Object.entries(invalid.occurrence_slots).map(([id, slot]) => [id,
-          slot.kind === "root" ? { ...slot, citations: slot.citations.map((ref) => ref.source_id === source.sourceId
+        call.reply({ ...invalid, demand_groups: Object.fromEntries(Object.entries(invalid.demand_groups).map(([id, slot]) => [id,
+          slot !== null ? { ...slot, citations: slot.citations.map((ref) => ref.source_id === source.sourceId
             ? { ...ref, quote: source.original.name + "\n" + source.original.definition } : ref) } : slot,
         ])) });
       }
       else call.reply(invalid);
       const response = await attempt;
-      const schemaFault = ["omitted member", "foreign member", "omitted occurrence", "foreign occurrence", "foreign member alias", "foreign occurrence alias", "schema", "legacy quote field"].some((value) => value === fault);
+      const schemaFault = ["omitted member", "foreign member", "omitted occurrence", "foreign occurrence", "foreign capability handle", "foreign demand handle", "member alias", "occurrence alias", "group alias", "schema", "legacy quote field"].some((value) => value === fault);
       expect(response.status(), `${fault}: ${await response.text()}`).toBe(schemaFault ? 502 : fault === "stale catalogue" ? 409 : 422);
       expect(await response.json()).toMatchObject({ error: { code: {
         "omitted member": "model_schema_violation", "foreign member": "model_schema_violation",
         "omitted occurrence": "model_schema_violation", "foreign occurrence": "model_schema_violation",
-        "foreign member alias": "model_schema_violation", "foreign occurrence alias": "model_schema_violation",
-        "member cycle": "requirements_partition_cycle", "occurrence cycle": "requirements_partition_cycle",
-        "wrong capability alias": "requirements_demand_partition_invalid",
+        "foreign capability handle": "model_schema_violation", "foreign demand handle": "model_schema_violation",
+        "member alias": "model_schema_violation", "occurrence alias": "model_schema_violation", "group alias": "model_schema_violation",
+        "missing capability definition": "requirements_partition_reference_invalid", "missing demand definition": "requirements_partition_reference_invalid",
+        "unused capability definition": "requirements_partition_reference_invalid", "unused demand definition": "requirements_partition_reference_invalid",
+        "wrong capability assignment": "requirements_demand_partition_invalid",
         schema: "model_schema_violation", uncertain: "requirements_consolidation_uncertain", "uncertain occurrence": "requirements_consolidation_uncertain",
         "blank normalized definition": "blank_requirement_field", "active correction": "requirements_correction_witness_invalid",
         "foreign occurrence segment": "foreign_citation_segment_id", "wrong-source occurrence segment": "foreign_source_id",
@@ -557,9 +596,9 @@ test.describe("retained public predecessor capability authority", () => {
     const report = await published.json() as ReconciliationReport;
     expect(report.roots).toHaveLength(1);
     const input = merging.body["context"] as CatalogContext;
-    const projectedGroup = Object.entries(report.partition_binding.group_roots).find(([, rootMember]) => rootMember === ids[0]!)![0];
+    const projectedGroup = report.partition_binding.member_groups[ids[0]!]!;
     expect(projectedGroup.length).toBeLessThanOrEqual(120);
-    expect(report.partition_binding.group_roots).toEqual({ [projectedGroup]: ids[0]! });
+    expect(new Set(Object.values(report.partition_binding.member_groups))).toEqual(new Set([projectedGroup]));
     const inventoryCitation = { source_id: input.catalog_inventory_source_id, quote: `"catalog_revision":${input.catalog_revision}` };
     const { kind: _memberKind, ...capability } = memberRoots(normalized)[0]!.slot;
     const { kind: _occurrenceKind, ...demand } = occurrenceRoots(normalized)[0]!.slot;
@@ -582,8 +621,8 @@ test.describe("retained public predecessor capability authority", () => {
       accepted_result_fingerprint: normalizationFingerprint(normalized) });
     expect(report.partition_binding).toMatchObject({ binder_version: PARTITION_BINDER_VERSION,
       raw_selection_fingerprint: normalizationFingerprint(normalized), intermediate_fingerprint: normalizationFingerprint(expectedIntermediate),
-      member_roots: Object.fromEntries(ids.map((id) => [id, ids[0]!])),
-      occurrence_roots: Object.fromEntries(input.occurrences.map((row) => [row.occurrence_id, occurrenceRoots(normalized)[0]!.occurrenceId])) });
+      member_groups: Object.fromEntries(ids.map((id) => [id, projectedGroup])),
+      occurrence_groups: Object.fromEntries(input.occurrences.map((row) => [row.occurrence_id, occurrenceRoots(normalized)[0]!.groupId])) });
     const sourceDocuments = Object.fromEntries(modelSources(merging).map((item) => [item.source_id, item.text]));
     expect(report.citation_binding).toMatchObject({ binder_version: CITATION_BINDER_VERSION,
       selection_fingerprint: normalizationFingerprint(expectedIntermediate), derived_fingerprint: normalizationFingerprint(expectedDerived),
@@ -663,6 +702,8 @@ test.describe("retained public predecessor capability authority", () => {
     const aliasRevise = await api.post(`/v1/fit/associations/${oldAssociation.association_id}/revisions`, { data: { ...oldAssociationRequest, expected_revision: oldAssociation.revision } });
     expect(aliasRevise.status(), await aliasRevise.text()).toBe(409);
     expect(await json(api, "get", `/v1/fit/associations/${oldAssociation.association_id}/history`)).toEqual(aliasHistory);
+    const removedHistory = await json<{ rows: { state: string; achievement_id: string; current: boolean }[] }>(api, "get", `/v1/fit/associations/${removedAssociation.association_id}/history`);
+    expect(removedHistory.rows[0]).toMatchObject({ state: "removed", achievement_id: removedAchievement.achievement_id, current: false });
     expect(app.external.calls).toHaveLength(callsBeforeAliasWrites);
     expect(await json(api, "get", "/v1/profile/wording")).toEqual(oldWording);
     expect(await json(api, "get", `${fitPath(posting.job_id)}/history`)).toEqual(oldHistory);
@@ -671,7 +712,46 @@ test.describe("retained public predecessor capability authority", () => {
 
     await page.goto(`/requirements?requirement=${encodeURIComponent(ids[0]!)}`);
     const detail = page.getByRole("region", { name: "Requirement details", exact: true });
-    await expect(detail.getByText("No achievements linked.", { exact: true })).toBeVisible();
+    await expect(detail.getByRole("heading", { name: "Linked achievements 1", exact: true })).toBeVisible();
+    await expect(detail.getByText("Profile match: Needs update", { exact: true })).toBeVisible();
+    const earlierCard = detail.locator(`.requirement-achievement[data-achievement-id='${achievement.achievement_id}']`);
+    await expect(detail.locator(".requirement-achievement")).toHaveCount(1);
+    await expect(earlierCard.locator(".requirement-achievement__fact")).toHaveText(library.variants.find((variant) => variant.variant_id === achievement.baseline_variant_id)!.text);
+    await expect(earlierCard.getByText("Earlier relationship · needs review", { exact: true })).toBeVisible();
+    await expect(detail.locator(`.requirement-achievement[data-achievement-id='${removedAchievement.achievement_id}']`)).toHaveCount(0);
+    await expect(detail.getByRole("button", { name: "Use as current wording", exact: true })).toHaveCount(0);
+    await expect(earlierCard.getByText("No current wording has been selected for this requirement.", { exact: true })).toBeVisible();
+    await page.getByRole("combobox", { name: "Filter a column", exact: true }).selectOption("support");
+    const matchFilter = page.getByRole("dialog", { name: "Profile match filter", exact: true });
+    await matchFilter.getByRole("checkbox", { name: "Needs update", exact: true }).check();
+    await page.keyboard.press("Escape");
+    await page.reload();
+    const retainedRow = page.getByRole("table", { name: "Saved requirements", exact: true }).locator("tbody tr[data-row-id]");
+    await expect(retainedRow).toHaveCount(1);
+    await expect(retainedRow.getByText("1 earlier · needs review", { exact: true })).toBeVisible();
+    await expect(earlierCard.getByText("Earlier relationship · needs review", { exact: true })).toBeVisible();
+    await detail.getByRole("button", { name: "← Back to requirements", exact: true }).click();
+    await expect(detail).toHaveCount(0);
+    await expect(retainedRow.getByText("1 earlier · needs review", { exact: true })).toBeVisible();
+    await testInfo.attach("requirements-retained-links-table-1280", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileRequirements = page.getByRole("list", { name: "Saved requirements", exact: true });
+    await expect(mobileRequirements.getByText("1 earlier · needs review", { exact: true })).toBeVisible();
+    await testInfo.attach("requirements-retained-links-list-390", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await retainedRow.click();
+    await expect(earlierCard.getByText("Earlier relationship · needs review", { exact: true })).toBeVisible();
+    await earlierCard.locator("summary").filter({ hasText: /^Recorded achievement identity$/ }).click();
+    await expect(earlierCard.getByText(achievement.achievement_id, { exact: true })).toBeVisible();
+    await earlierCard.locator("summary").filter({ hasText: /^Earlier relationship sources$/ }).click();
+    await expect(earlierCard.getByRole("heading", { name: `Recorded requirement: ${aliasId}`, exact: true })).toBeVisible();
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+      await earlierCard.scrollIntoViewIfNeeded();
+      expect(await earlierCard.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+      await testInfo.attach(`requirements-earlier-achievement-${width}`, { contentType: "image/png", body: await earlierCard.screenshot() });
+    }
+    await page.setViewportSize({ width: 1440, height: 1000 });
     await captureDetailTop(page, testInfo, "consolidated-current-demand-without-inherited-support");
     const earlierSummary = detail.locator("summary").filter({ hasText: /^Earlier links and assessments$/ });
     await expect(earlierSummary.locator("..")).toHaveJSProperty("open", false);
@@ -689,7 +769,7 @@ test.describe("retained public predecessor capability authority", () => {
         await expect(region).toContainText(`Link ${oldAssociation.association_id} · revision ${oldAssociation.revision}`);
       }
     }
-    await detail.getByRole("heading", { name: `Recorded requirement: ${earlierRecords[0]!.requirement_id}`, exact: true }).scrollIntoViewIfNeeded();
+    await earlierSummary.locator("..").getByRole("heading", { name: `Recorded requirement: ${earlierRecords[0]!.requirement_id}`, exact: true }).scrollIntoViewIfNeeded();
     await testInfo.attach("historical-coverage-discoverable-without-current-authority", { contentType: "image/png", body: await page.screenshot() });
 
     const pending = await json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending");

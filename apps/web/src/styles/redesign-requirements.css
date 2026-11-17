@@ -65,6 +65,8 @@
 .requirement-section-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px 16px; margin: 0 0 15px; }
 .requirement-section-heading h2, .requirement-section-heading h3, .requirement-section-heading h5 { margin: 0; font-size: 16px; line-height: 1.4; font-weight: 650; }
 .requirement-count { color: var(--muted-foreground); font-weight: 500; }
+.requirement-relationship-help { margin: -5px 0 16px; }
+.requirement-achievement__identity p { margin: 8px 0 0; }
 .requirement-empty { padding: 20px; border: 1px dashed var(--border); border-radius: 7px; background: var(--background); }
 .requirement-empty p { margin: 6px 0 0; color: var(--muted-foreground); }
 .requirements-achievements { display: grid; gap: 16px; }

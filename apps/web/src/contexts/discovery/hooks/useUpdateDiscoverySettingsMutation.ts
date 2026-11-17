@@ -62,10 +62,6 @@ function patchDiscoverySettings(
     autoApply: persistedValue(current.effectiveSettings.autoApply, body.autoApply),
     applyApprovalRequired: current.effectiveSettings.applyApprovalRequired,
     boards: persistedValue(current.effectiveSettings.boards, body.boards),
-    resultsPerSite: persistedValue(
-      current.effectiveSettings.resultsPerSite,
-      body.resultsPerSite,
-    ),
     hoursOld: persistedValue(current.effectiveSettings.hoursOld, body.hoursOld),
     schedulingEnabled: persistedValue(
       current.effectiveSettings.schedulingEnabled,

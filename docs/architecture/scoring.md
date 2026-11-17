@@ -149,6 +149,15 @@ Direct demands also bind their job-local identities, exact posting source and
 revision. They cannot reuse another job's qualification or gain reusable catalog
 identity from similar fields.
 
+The `fit-permission-scopes-v1` context transport shares only identical ordered
+permission-ID lists. Each row references a defined scope; inverse expansion must
+reproduce its canonical context exactly, with every factual source, category and
+alternative retained. Opaque provenance records the transport version,
+context/source/scope hashes and counts. The encoded-context hash excludes its own
+binding. This version changes model request identity, while the v4 qualification
+prompt policy, source fingerprints, output schema and currentness checks remain
+unchanged. Accepted v4 authority stays reusable without a refresh.
+
 Each accepted row keeps its own assessment identity and canonical revision.
 Its demand fingerprint and qualification policy remain explicit. All lookup,
 head, replay and publication guards use that same demand binding; adding a hash
@@ -177,8 +186,14 @@ Professional Experience meanings, Profile's immutable achievement/wording snapsh
 and exact coverage. It groups by achievement identity and shows original posting
 occurrences separately. Missing or stale relationships remain explicit.
 One capability can have several source-established demands. The library exposes
-their assessments separately, showing **Varies by job** instead of choosing the
-strongest/latest assessment. A missing or stale demand remains visible. Exact
+their assessments separately. **Profile match** reports assessment currentness
+before outcomes: Not assessed, Needs update for earlier-only assessments, or
+Partially assessed for mixed currentness. When all demands have current
+assessments, it reports the shared outcome or **Varies by job** for different
+outcomes, without choosing the strongest/latest assessment. Demand count is
+separate context. Recorded achievement relationships include retained historical
+records, with earlier-only contributions marked for review; they grant no current
+support or approval. A missing or stale demand remains visible. Exact
 wording coverage binds its demand and assessment, not merely their shared model
 batch receipt. A common maintained variant may retain multiple demand bindings;
 uncovered demands stay explicit gaps without automatic editorial alternatives.
@@ -218,19 +233,33 @@ The frozen inputs and checkpoints also include the selected jobs' direct
 Education and Languages demands. They remain job-local throughout impact,
 qualification, score publication and recovery.
 
-When factual qualification needs review, one source-bound `fit.catalog-impact`
-determination partitions the complete catalog into affected and unchanged
-requirements. It sees each prior assessment's own before-sources and the current
-facts. Newly added evidence can support requirements previously missing or
-unlinked. Missing exact dependencies require reassessment; literal unchanged
-dependencies alone cannot prove that new evidence is irrelevant. There are no
-per-requirement impact calls. The affected set without completed qualification
-checkpoints receives one complete qualification batch; unaffected decisions
-retain original semantic authority with a shared impact receipt and
-current-source revalidation. The complete batch map is checkpointed before its
+When factual qualification needs review, the complete frozen inventory first
+retains exact current qualifications and records enforced mandatory reassessments.
+One source-bound `fit.catalog-impact` determination partitions only the unresolved
+changed-fact items. It sees all current facts and each included prior assessment's
+own before-sources; exact current rows are not retransmitted. Newly added evidence
+can support requirements previously missing or unlinked. Missing exact dependencies
+require reassessment; literal unchanged dependencies alone cannot prove that new
+evidence is irrelevant. The original model-subset result and receipt remain
+distinct from the composed complete partition and its structural authority/hash.
+There are no per-requirement impact calls. The affected set without completed qualification
+checkpoints receives one complete qualification batch. Exact-current rows retain
+their existing assessment unchanged and acquire no new impact receipt. Only a
+source-changed row judged unchanged by the model retains its original semantic
+judgment with the impact receipt and explicit current-source revalidation lineage.
+The complete batch map is checkpointed before its
 individual requirement checkpoints. One batch consumes one model-call
 reservation; affected-item and deadline limits remain unchanged. Batching
 cannot expand the admitted operation or grant a new allowance on retry.
+
+Fresh operations freeze independent impact-scope and qualification-transport wire
+pins. Pre-pin operations keep the original full impact request. Qualification
+call-only recovery reconstructs both exact historical inline and shared-scope
+argument keys from frozen inputs and requires one retained match. A completed call
+replays its raw result; an unsettled, foreign or conflicting call refuses without
+new work. No missing binding is guessed, no call counter resets, and recovered
+inline authority receives no fabricated scope provenance. Existing batch
+checkpoints and qualification/currentness versions remain compatible.
 
 Candidates publish atomically after checking Profile, guidance, the complete
 catalog, selected job/posting snapshots and prior assessment/score heads.

@@ -5,7 +5,11 @@ test("a lost preparation admission is reconciled after reload without starting i
   api,
   page,
   allowRequestFailure,
+  allowResponseError,
 }) => {
+  const workspace = await json<{ workspaceId: string; databaseInstanceId: string }>(
+    api, "get", "/v1/health",
+  );
   const settings = await json<{ revision: number }>(
     api,
     "get",
@@ -31,9 +35,12 @@ test("a lost preparation admission is reconciled after reload without starting i
   // Forward the actual browser request unchanged to Python. Only after its
   // real 202 is observed, sever delivery of that response to the browser.
   let admission: { status: number; body: { runId?: string } } | undefined;
+  let releaseAdmission!: () => void;
+  const admissionGate = new Promise<void>((resolve) => { releaseAdmission = resolve; });
   await page.route(
     "**/v1/actions/preparation.run",
     async (route) => {
+      await admissionGate;
       const response = await route.fetch();
       admission = {
         status: response.status(),
@@ -50,8 +57,29 @@ test("a lost preparation admission is reconciled after reload without starting i
   const dropped = page.waitForEvent("requestfailed", {
     predicate: isAdmission,
   });
+  const missingLookup = page.waitForResponse((response) => {
+    const url = new URL(response.url());
+    return response.request().method() === "GET" &&
+      url.origin === app.baseURL &&
+      url.pathname === "/v1/action-runs/by-idempotency-key" &&
+      url.search === "?action=preparation.run" &&
+      response.status() === 404;
+  });
   await controls.getByRole("button", { name: "Start work" }).click();
   const request = await sent;
+  const requestId = request.headers()["idempotency-key"];
+  try {
+    expect(requestId).toBeTruthy();
+    expect(request.headers()["expected-database-instance-id"]).toBe(workspace.databaseInstanceId);
+    const notFound = await missingLookup;
+    await allowResponseError(notFound, {
+      method: "GET", status: 404, code: "not_found", action: "preparation.run",
+      idempotencyKey: requestId!, databaseInstanceId: workspace.databaseInstanceId,
+    });
+    expect((await json<{ runs: unknown[] }>(api, "get", "/v1/action-runs?action=preparation.run")).runs).toEqual([]);
+  } finally {
+    releaseAdmission();
+  }
   const failed = await dropped;
   expect(failed).toBe(request);
   expect(failed.failure()?.errorText).toContain("ERR_FAILED");
@@ -59,8 +87,6 @@ test("a lost preparation admission is reconciled after reload without starting i
   expect(admission?.status).toBe(202);
   const runId = admission?.body.runId;
   expect(runId).toBeTruthy();
-  const requestId = request.headers()["idempotency-key"];
-  expect(requestId).toBeTruthy();
   expect(request.postDataJSON()).toMatchObject({
     recipe: "discover",
     scope: "pending",
@@ -86,6 +112,8 @@ test("a lost preparation admission is reconciled after reload without starting i
     operation: "preparation.run",
     requestId,
     version: 1,
+    workspaceId: workspace.workspaceId,
+    databaseInstanceId: workspace.databaseInstanceId,
   });
   expect(identity["fingerprint"]).toMatch(/^[a-f0-9]{64}$/);
   expect(Object.keys(identity).sort()).toEqual(
@@ -147,4 +175,8 @@ test("a lost preparation admission is reconciled after reload without starting i
     `/v1/preparation/runs/${runId}`,
   );
   expect(recorded).toMatchObject({ runId, recipe: "discover" });
+  const runs = await json<{ runs: { runId: string }[] }>(
+    api, "get", "/v1/action-runs?action=preparation.run",
+  );
+  expect(runs.runs.map((row) => row.runId)).toEqual([runId]);
 });

@@ -1,6 +1,6 @@
 import { test, expect, json, completed, terminal } from "../harness/fixtures.js";
 import { baseline, createBaseline, createPosting, type Library, type Profile } from "./core-data.js";
-import { servePostingAssessment } from "./search-assessment-data.js";
+import { servePostingAssessment, serveQualification } from "./search-assessment-data.js";
 
 type LocationBinding = {
   rowIndex: number;
@@ -31,6 +31,12 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
   page,
 }, testInfo) => {
   await createBaseline(api);
+  const initialSettings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+  const connectorFetchLimit = 137;
+  await json(api, "patch", "/v1/discovery/settings", {
+    expectedRevision: initialSettings.revision,
+    resultsPerSite: connectorFetchLimit,
+  });
   const photonRequests: { method: string; url: string; body: string | null }[] =
     [];
   let invalidCoordinates = false;
@@ -73,6 +79,7 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
       exact: true,
     }),
   ).toBeVisible();
+  await expect(page.getByRole("spinbutton", { name: "Results per board", exact: true, includeHidden: true })).toHaveCount(0);
   const roles = page.getByRole("textbox", {
     name: "Target roles 1",
     exact: true,
@@ -159,6 +166,8 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
     name: "Maximum new jobs",
     exact: true,
   });
+  const ordinarySettingsPatch = page.waitForRequest((request) => request.method() === "PATCH"
+    && new URL(request.url()).pathname === "/v1/discovery/settings");
   await searchLimit.fill("7");
   await main.getByRole("link", { name: "Jobs", exact: true }).click();
   await expect(page.getByRole("button", { name: "Start search", exact: true })).toBeDisabled();
@@ -181,6 +190,8 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
         ).settings.newJobLimit,
     )
     .toBe(7);
+  expect((await ordinarySettingsPatch).postDataJSON()).not.toHaveProperty("resultsPerSite");
+  expect((await json<{ settings: { resultsPerSite: number } }>(api, "get", "/v1/discovery/settings")).settings.resultsPerSite).toBe(connectorFetchLimit);
   await expect(searchLimit).toHaveValue("7");
   await expect(
     page.getByRole("button", { name: "Save search settings", exact: true }),
@@ -226,6 +237,7 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
     const runtimeToggle = runtime.getByRole("button", { name: /Source behavior and schedules/ });
     await expect(runtimeToggle).toHaveAttribute("aria-expanded", "false");
     await runtimeToggle.click();
+    await expect(page.getByRole("spinbutton", { name: "Results per board", exact: true, includeHidden: true })).toHaveCount(0);
     await expect(runtime.getByRole("spinbutton", { name: "Results per board", exact: true })).toHaveCount(0);
     await expect(runtime.getByRole("spinbutton", { name: "Posting lookback hours", exact: true })).toHaveCount(0);
     await expect(runtime.getByRole("group", { name: "Job boards", exact: true })).toHaveCount(0);
@@ -234,7 +246,10 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
     const age = settingsBefore.settings.hoursOld === 48 ? 72 : 48;
     await page.getByRole("spinbutton", { name: "Posting age", exact: true }).fill(String(age));
     await expect.poll(async () => (await json<{ settings: { hoursOld: number } }>(api, "get", "/v1/discovery/settings")).settings.hoursOld).toBe(age);
+    const runtimeSettingsPatch = page.waitForRequest((request) => request.method() === "PATCH"
+      && new URL(request.url()).pathname === "/v1/discovery/settings");
     await runtime.getByRole("button", { name: "Save changes", exact: true }).click();
+    expect((await runtimeSettingsPatch).postDataJSON()).not.toHaveProperty("resultsPerSite");
     await expect.poll(async () => (await json<{ settings: { maxParallelFamilies: number } }>(api, "get", "/v1/discovery/settings")).settings.maxParallelFamilies).toBe(parallel);
     const current = await json<{ settings: { boards: string[]; hoursOld: number; resultsPerSite: number } }>(api, "get", "/v1/discovery/settings");
     expect(current.settings).toMatchObject({ boards: settingsBefore.settings.boards, hoursOld: age, resultsPerSite: settingsBefore.settings.resultsPerSite });
@@ -301,6 +316,8 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
   expect(Number.isFinite(Date.parse(binding.selectedAt))).toBe(true);
   await page.reload();
   await expect(text).toHaveValue(chosenName);
+  await expect(page.getByRole("spinbutton", { name: "Results per board", exact: true, includeHidden: true })).toHaveCount(0);
+  expect((await json<{ settings: { resultsPerSite: number } }>(api, "get", "/v1/discovery/settings")).settings.resultsPerSite).toBe(connectorFetchLimit);
   await expect(location).toContainText(`Verified place · ${chosenName}`);
   await expect(
     location.getByRole("checkbox", { name: "Remote", exact: true }),
@@ -523,7 +540,7 @@ test("Jobs starts saved searches directly, preserves live progress across naviga
   } finally { await peer.close(); }
   expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/action-runs?action=discovery.search")).runs.map((row) => row.runId)).toEqual([runId]);
   next.respond({ jobs: [searchPosting("Systems")], cursor: null, complete: true });
-  await servePostingAssessment(app, library, searchPosting("Platform"), { beforeFirstModel: async () => {
+  await servePostingAssessment(app, library, searchPosting("Platform"), { qualificationExpected: false, beforeFirstModel: async () => {
     const acquired = await json<{ runs: { runId: string; status: string }[] }>(api, "get", "/v1/discovery/runs");
     expect(acquired.runs.find((run) => run.runId === runId)?.status).toBe("completed");
     expect((await json<{ status: string }>(api, "get", `/v1/action-runs/${runId}`)).status).toBe("running");
@@ -534,8 +551,11 @@ test("Jobs starts saved searches directly, preserves live progress across naviga
     await expect(start).toBeDisabled();
     await testInfo.attach("jobs-search-assessing-desktop", { contentType: "image/png", body: await page.screenshot() });
   } });
-  await servePostingAssessment(app, library, searchPosting("Infrastructure"), { kind: "missing" });
-  await servePostingAssessment(app, library, searchPosting("Systems"));
+  await servePostingAssessment(app, library, searchPosting("Infrastructure"), { qualificationExpected: false });
+  await servePostingAssessment(app, library, searchPosting("Systems"), { qualificationExpected: false });
+  await serveQualification(app, library);
+  await serveQualification(app, library, { kind: "missing" });
+  await serveQualification(app, library);
   const settled = await completed(api, runId);
   expect(settled["result"]).toMatchObject({ status: "completed", preparationAvailable: true, preparation: { status: "succeeded", assessedJobs: 3, failedJobs: 0, failures: [] } });
   await expect(progress).toContainText("Search completed");

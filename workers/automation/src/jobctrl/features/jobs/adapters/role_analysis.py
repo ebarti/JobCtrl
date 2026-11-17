@@ -16,6 +16,10 @@ INSTRUCTIONS = (
     "from applicant data. requirement_ref must be null unless an exact supplied qualified requirement ID supports it. "
     "Do not create or redefine canonical requirements. Keep model comparison process out of role narrative."
 )
+PROMPT_VERSION = "role-analysis-v3-offered-sources"
+SYNTHESIS_PROMPT_VERSION = "role-analysis-synthesis-v3-offered-sources"
+LEGACY_PROMPT_VERSION = "role-analysis-v2-content-bound"
+LEGACY_SYNTHESIS_PROMPT_VERSION = "role-analysis-synthesis-v2-content-bound"
 
 
 class SourceBoundRoleAnalysis:
@@ -26,24 +30,31 @@ class SourceBoundRoleAnalysis:
     def _source(posting):
         return Source(source_id="posting-content:v1:" + digest(posting["description"]), text=posting["description"])
 
+    @staticmethod
+    def _response_schema(source):
+        schema = RoleAnalysis.model_json_schema()
+        schema["$defs"]["Citation"]["properties"]["source_id"]["enum"] = [source.source_id]
+        return schema
+
     def _requests(self, posting, models, requirement_context):
         selected = models or [None]
         if (not isinstance(selected, list) or not 1 <= len(selected) <= 3
                 or any(model is not None and not isinstance(model, str) for model in selected)):
             raise AppError("invalid_analysis_models", "Choose one to three configured analysis models.")
         source = self._source(posting)
+        schema = self._response_schema(source)
         requests = [dict(
             operation="jobs.role_analysis", instructions=INSTRUCTIONS, sources=[source.model_dump()],
-            response_schema=RoleAnalysis.model_json_schema(),
+            response_schema=schema,
             context={"qualified_requirements": requirement_context or []}, model=model,
-            execution=self.model.freeze_execution(model), prompt_version="role-analysis-v2-content-bound", lane="analysis",
+            execution=self.model.freeze_execution(model), prompt_version=PROMPT_VERSION, lane="analysis",
         ) for model in selected]
         synthesis = dict(
             operation="jobs.role_analysis_synthesis",
             instructions=INSTRUCTIONS + " Reconcile the supplied model observations against the original posting only. Retain disagreements as uncertainty; model agreement does not establish a fact.",
-            sources=[source.model_dump()], response_schema=RoleAnalysis.model_json_schema(),
+            sources=[source.model_dump()], response_schema=schema,
             context={"qualified_requirements": requirement_context or []}, execution=self.model.freeze_execution(),
-            prompt_version="role-analysis-synthesis-v2-content-bound", lane="analysis",
+            prompt_version=SYNTHESIS_PROMPT_VERSION, lane="analysis",
         ) if len(selected) > 1 else None
         return selected, source, requests, synthesis
 
@@ -54,6 +65,51 @@ class SourceBoundRoleAnalysis:
     def _request_key(self, observations, synthesis):
         return digest({"observations": observations,
                        "synthesis": self.model.fingerprint(**synthesis) if synthesis is not None else None})
+
+    @staticmethod
+    def _legacy_request(request):
+        return {**request, "response_schema": RoleAnalysis.model_json_schema(),
+                "prompt_version": LEGACY_PROMPT_VERSION if request["operation"] == "jobs.role_analysis"
+                else LEGACY_SYNTHESIS_PROMPT_VERSION}
+
+    def _accepted_observation_current(self, observation, request, source):
+        provenance = observation["provenance"]
+        receipt = self.model.receipt(provenance["receipt_id"])
+        self._check_receipt(receipt, request, provenance["input_fingerprint"])
+        return (all(provenance.get(key) == receipt[key] for key in (
+                    "receipt_id", "provider", "model", "lane", "prompt_version", "input_fingerprint", "created_at"))
+                and self._validate(receipt["value"], source, set()).model_dump() == observation["analysis"])
+
+    def can_reuse(self, posting, accepted, *, models=None):
+        """A structural enum upgrade does not revoke valid accepted v2 authority."""
+        _, source, requests, synthesis = self._requests(posting, models, None)
+        current = self._request_key([self.model.fingerprint(**request) for request in requests], synthesis)
+        if accepted.get("request_fingerprint") == current:
+            return True
+        if accepted.get("prompt_version") != LEGACY_PROMPT_VERSION:
+            return False
+        legacy = [self._legacy_request(request) for request in requests]
+        legacy_synthesis = self._legacy_request(synthesis) if synthesis is not None else None
+        expected = self._request_key([self.model.fingerprint(**request) for request in legacy], legacy_synthesis)
+        if accepted.get("request_fingerprint") != expected:
+            return False
+        binding = {"version": 1,
+                   "semantic_source": {"source_id": source.source_id, "text_fingerprint": digest(source.text)},
+                   "destination_posting": {key: posting[key] for key in ("job_id", "revision", "source_hash")}}
+        if accepted.get("source_binding") != binding:
+            return False
+        try:
+            observations = accepted["observations"]
+            if not isinstance(observations, list) or len(observations) != len(legacy):
+                return False
+            if not all(self._accepted_observation_current(observation, request, source)
+                       for observation, request in zip(observations, legacy, strict=True)):
+                return False
+            if legacy_synthesis is not None:
+                return self._accepted_observation_current(accepted, legacy_synthesis, source)
+            return all(accepted[key] == observations[0][key] for key in ("analysis", "provenance"))
+        except (AppError, DeterminationFailure, ValidationError, KeyError, TypeError, ValueError):
+            return False
 
     @staticmethod
     def _validate(value, source, refs):
@@ -115,7 +171,9 @@ class SourceBoundRoleAnalysis:
                 # from an explicit force action's unique provider receipt.
                 accepted_requests.append(self.model.fingerprint(**base_request))
             except Exception as error:
-                failures.append({"model": model, "code": getattr(error, "code", "analysis_failed")})
+                execution = request["execution"]
+                failures.append({"provider": execution.provider, "model": execution.model,
+                                 "code": getattr(error, "code", "analysis_failed")})
         if not observations:
             raise AppError("role_analysis_failed", "No source-bound role analysis completed; the last accepted analysis is retained.",
                            503, {"failures": failures})
@@ -128,7 +186,7 @@ class SourceBoundRoleAnalysis:
             accepted = await self._observation(request, source, refs)
         return {
             **accepted, "observations": observations, "failures": failures, "models": selected,
-            "prompt_version": "role-analysis-v2-content-bound",
+            "prompt_version": PROMPT_VERSION,
             "request_fingerprint": self._request_key(accepted_requests, synthesis if len(observations) > 1 else None),
             "source_binding": {"version": 1,
                 "semantic_source": {"source_id": source.source_id, "text_fingerprint": digest(source.text)},

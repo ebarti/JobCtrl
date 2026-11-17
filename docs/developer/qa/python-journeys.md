@@ -27,15 +27,27 @@ grade semantic accuracy or replay a corpus. Unexpected external calls fail.
 There are no dispatch stubs, mocked internal API routes, domain/repository replacements,
 direct database seeds, arbitrary sleeps or test retries. Startup waits and
 assertion polling have explicit deadlines and inspect actual service state.
-The Preparation admission-recovery journey forwards the genuine unchanged POST,
-observes its real 202 receipt, then aborts browser delivery to reproduce a lost
-acknowledgement. It invents no first-party response. A console allowance can
-match at most one native transport error for that exact observed failed Request;
-application exceptions and HTTP status classes remain failures. Intentional
-conflict controls separately register each genuine browser response with its
-exact method, 409 status, domain error code and full URL. That permits one native
-resource message per observed response; extra requests, other refusals and
-application messages still fail.
+The Preparation admission-recovery journey holds the genuine unchanged POST
+until the UI observes the real pre-admission `not_found` response for its exact
+action, idempotency key and database identity. It confirms no run exists, then
+forwards the POST, observes its real 202 receipt and aborts browser delivery to
+reproduce a lost acknowledgement. Reload and reconciliation retain the same
+identity and exactly one admitted run. The journey invents no first-party
+response. A console allowance can match at most one native transport error for
+that exact observed failed Request. The pre-admission 404 and intentional 409
+conflicts register each genuine browser response with its exact method, status,
+domain error code and full URL; the 404 also binds the action, key and database.
+That permits one native resource message per observed response; extra requests,
+other refusals, page exceptions and application messages still fail.
+
+Hosted run `43982217748` on `a0025c781` exposed the valid pre-admission 404
+as an unexpected teardown console error. Owned run `e2e-VOTW9C` passed three
+independent repetitions each of preparation recovery and an existing 409 Profile
+conflict under Python 3.12.13 with two workers and zero retries. The Python source
+digest `5f6548760dfc40fe06073b504e4f56b2da9f58de5a9b88fd4c3b97a2a933e006`
+matched the hosted job; build / journeys / total were 7.593 / 29.710 / 38.886
+seconds, with unchanged lock and web bytes. Hosted Linux verification remains
+separate.
 One Temporal server serves bounded, independent per-journey Python workspaces.
 Processes and state are owned by the run; caller-selected application paths and
 real credentials are never adopted. The IPC-connected process-group leader
@@ -46,12 +58,105 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **137 journeys in 45 project-file groups**:
-**136 Chromium cases in 44 spec files**, plus **one demo case in one file**.
+The current configured inventory is **160 journeys in 48 project-file groups**:
+**159 Chromium cases in 47 spec files**, plus **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
-screen layouts and keyboard-driven Profile saves. Listing
-these scenarios is not evidence that the complete current candidate passed.
+screen layouts, keyboard-driven Profile saves, posting-fetch refusals and the
+actual terminal-root v4 and terminal-group v5 predecessor upgrades, demand-citation
+role refusals, and Fit schema refusals. The four hosted shard listings
+contain 40 / 42 / 39 / 39 cases and match the unsharded inventory exactly once.
+Listing these scenarios is not evidence that the complete current candidate passed.
+
+### Bounded Fit impact scope and durable call recovery — 17 November 2026
+
+[Fit refresh scope](../../../apps/web/e2e/journeys/fit-refresh-scope.spec.ts) adds eight
+cases. A real b49 predecessor creates a structurally oversized accepted catalog,
+then refuses the original impact request before a provider call. After upgrading
+the same public-created workspace, the successor retains 52 exact qualifications,
+qualifies seven mandatory items in one call, preserves the other selected scores,
+and retains all four selected scores current. This synthetic structure is not a
+replay of private sources or model results. Another case covers exact, mandatory and unresolved
+semantic rows together, original raw-subset receipt joins, a foreign fixed-row
+refusal, zero-call reuse and checkpoint recovery.
+
+The remaining cases stop actual fixed df06/b49 predecessor workers at completed
+or unsettled qualification calls before the batch checkpoint, and b49 impact
+calls before the selection checkpoint. A harness-only pdb observer pauses the
+unmodified owned predecessor process; it changes no locals, source code, model
+result or database row. The same workspace then upgrades. Completed raw calls
+must replay exactly; unsettled calls retain interruption without a new request,
+scope guess, counter reset or fabricated transport binding. Hosted setup fetches
+the exact b49 predecessor in addition to df06 and the prior fixed objects.
+
+The final focused run `e2e-o8ARvv` passed **37/37** cases with zero retries: all eight
+new cases and 29 existing batching, manual-refresh cancellation, source/catalog
+race, refusal, persisted-limit, exact-reuse and selected-score cases. Its Python
+snapshot is `9427bba1430e7cd3ba56d1996d9ef3d7daa2eada7293036089fbe24fe7d549ae`
+and source candidate is
+`b9ba3f020300ade3b354a0f2ef1656792fd12b6dada50247faec2ca17170a769`.
+Build, journey and total times were **7.887 s / 442.071 s / 451.764 s**. The runner
+confirmed unchanged web artifacts and lockfiles throughout execution. Type,
+boundary and scoped Python checks passed. This focused result does not qualify
+the full 160-case hosted inventory or prove real-provider semantic quality.
+Case deadlines, zero retries and the 720-second global limit remain unchanged.
+
+Hosted run `43978958221` on `79517f1ea` exposed two test-owned failures.
+Six recovery cases could not start their observer: Python 3.12's `Pdb` does
+not accept the newer `backend` argument. The typed-qualification journey
+expected an impact call even though its changed cited Language source required
+structural reassessment and the other four qualifications retained exact
+authority. The observer now uses the compatible default tracing backend; the
+typed journey verifies the full five-row partition, selected Language demand,
+four retained assessment/receipt IDs, one model call and unchanged sibling
+score. No application behavior or existing limits changed.
+
+Owned run `e2e-9OVjEb` passed all **7/7** affected journeys with two workers,
+zero retries and locked CPython 3.12.13 on macOS arm64. Its Python source digest
+`5f6548760dfc40fe06073b504e4f56b2da9f58de5a9b88fd4c3b97a2a933e006`
+matches both failed hosted jobs. Build / journeys / total were
+8.399 / 227.821 / 239.030 seconds; web artifacts and the Python lock remained
+unchanged. Web type and boundary checks passed. Hosted Linux CPython 3.12.16
+and the complete inventory still require their own final-candidate run.
+
+### Source-role and permission-scope follow-up — 16 November 2026
+
+The inventory grows from 149 to 152: Requirements adds one two-job demand-citation
+role journey and one actual v5 predecessor upgrade; Fit adds one explicit schema
+refusal variant. The existing cold Fit batch case now exercises real v4 accepted
+authority before and after a source upgrade. Hosted setup explicitly fetches
+`df06b08ae201f7a73dc2c359944c06daf517c69e` for both upgrades, alongside every prior
+fixed predecessor. The exact commit is also allowlisted by the harness. This
+repairs historical-object availability in a shallow checkout; no retry, deadline,
+case or acceptance gate changes.
+
+The Requirements run `e2e-UckHqH` passed **16/16** cases with zero retries. It proves
+that an offered prior-definition citation cannot enter demand evidence, failed
+publication preserves the first job's accepted authority, and a fresh explicit
+operation succeeds with original evidence and the same exact reuse fingerprint.
+Valid cross-job demand bindings remain supported. The run also covers real v5/v4
+history and durable replay fences, exhaustive opposing partitions, structural
+refusals, historical correction, reuse, catalog races and cancellation. Build,
+journey and total times were **8.530 s / 62.069 s / 72.625 s**.
+
+Fit's focused run `e2e-xwsgah` passed **6/6** cases, and its final explicit schema
+refusal run `e2e-NpmIwE` passed **1/1**, with zero retries. These exercise source-scope
+transport, accepted v4 authority reuse across the real upgrade, typed category
+routes and source permissions, and refusal without partial authority. Requirements
+uses prompt/schema v6 with exact v5 historical dispatch; partition/citation binders,
+semantic policy, demand fingerprints and SQL remain unchanged. The provider-strict
+schema proof confirms role enums survive adaptation and historical v5 schemas
+remain structurally identical to the predecessor.
+
+The final combined Python source digest is
+`ef701bf55c514393be4784169ceff80f7205b660f8e3b24e9268cf70b2f71f02`;
+the Requirements run's source-candidate digest is
+`0e208e8c5cb77be5beb3ba62f1be31106351f73f7becf189f799c43ac3d3d58e`.
+The unchanged web digest is
+`038f6813b05ce0de699c0efc2b5e6216cf41e8936eb3e997923c359b327234cf`;
+dependency locks also stayed unchanged. Ruff, TypeScript and web boundary checks
+passed. These are affected-path local proofs, not a completed 152-case hosted
+run or a claim that a real provider has accepted the pending v6 recovery.
 
 ### Capability consolidation — 15 November 2026
 
@@ -64,6 +169,10 @@ creates historical source records through its own public application. The new
 source must include hidden members, preserve independent technology, correct an
 old technical-practice category, retain original category/evidence/history, and
 publish recorded aliases without transferring assessment or approval authority.
+The library projection also distinguishes unassessed and stale demand sets
+from differing current Profile matches. Retained achievement relationships stay
+visible with a review status, deduplicate by achievement identity and do not
+become current qualification or wording authority.
 The historical-attribution witness has positive publication and exact replay
 coverage, plus active-member and unchanged-definition refusal controls. These
 controlled choices test validation and ownership; they do not grade a model's
@@ -123,7 +232,28 @@ their exact recorded joins.
 ### Expanded screens and Profile editing — 15 November 2026
 
 The primary [surface inventory](../../../apps/web/e2e/journeys/redesign-surfaces.spec.ts)
-now includes Languages: 27 views at four viewport sizes, or 108 settled captures.
+includes Languages: 27 views at four viewport sizes, or 108 settled captures.
+Four independent viewport cases repeat the same synthetic setup and retain each
+route assertion, applicable expanded state, mobile filter interaction, no-extra-
+model-call check and accepted PDF check. Each owns a fresh workspace and the
+unchanged 90-second case deadline; two hosted workers can run cases concurrently.
+
+Hosted run `43945321817` on `5d3fda535` completed the first three widths and 16
+mobile routes before this formerly single case reached its deadline. The failure
+context showed Settings still loading connection data; the interrupted assertion
+had received 637 ms of its 10-second allowance. On the partitioned source, owned
+run `e2e-3uZrYJ` passed all four viewport cases with `--workers=2`, producing 27
+primary captures per width and all ten applicable expanded/search captures. The
+mobile Settings and searched Materials captures were inspected. Build / journeys /
+total were 8.434 / 30.033 / 40.370 seconds on macOS arm64, 12 logical CPUs,
+24 GiB RAM, Node 22.21.1; no retries occurred and the Python lock and web build
+remained unchanged. This run included the concurrent role-analysis source repair;
+its Python source digest was `09eb51234a7ac4d68389a80aebd8b8620880368691665d42834142500c3b3273`
+and the surface spec digest was `44fe0a90d4c0b4e4657a1b6ca54a89f576307a425ec34350276b8641e7b7bc25`.
+At that earlier snapshot, the four shard listings had 39 / 35 / 48 / 25 cases;
+their 147-case union matched the unsharded listing exactly once. This local run and
+listing do not establish a completed hosted CI pass.
+
 The [expanded workspace cases](../../../apps/web/e2e/journeys/expanded-layout.spec.ts),
 [auxiliary screens](../../../apps/web/e2e/journeys/auxiliary-layout.spec.ts),
 [operational screens](../../../apps/web/e2e/journeys/operational-layout.spec.ts)
@@ -182,9 +312,18 @@ unrun**, with no individual assertion failure; it is not a complete suite pass.
 The hosted matrix now uses four standard Playwright shards. Native JSON
 listings measured **34 / 33 / 37 / 24 cases** in **11 / 9 / 12 / 10 project-file
 groups**. Their disjoint union equals the complete 128-case, 42-group inventory,
-with no missing, duplicate or extra case. One worker, zero retries, 90-second
-case and 720-second suite limits remain unchanged. The stable Browser aggregate
-requires all four jobs; the actual hosted rerun is required to qualify capacity.
+with no missing, duplicate or extra case. That configuration used one worker,
+zero retries, a 90-second ordinary case limit and a 720-second suite limit. The
+stable Browser aggregate requires all four jobs.
+
+On `6f46b0ba5`, the four shards assigned 37 / 33 / 44 / 24 cases. Shards 1 and
+3 reached the unchanged suite deadline with 36 and 39 passes respectively;
+shards 2 and 4 passed. The hosted invocation now uses two Playwright workers per
+shard while retaining the four shards, zero retries, existing case deadlines and
+720-second suite limit. Each worker owns its Temporal service and each journey
+its application workspace. The ordinary local invocation still defaults to one
+worker. A complete hosted run on the changed candidate is required to qualify
+the new scheduling capacity and exact-once inventory.
 
 ### QA workspaces and requirement lifecycle — 15 November 2026
 
@@ -809,7 +948,7 @@ cannot qualify all 57, and earlier failures remain part of the evidence.
 | Added journey | Authored assertions and boundary |
 | --- | --- |
 | [Appearance](../../../apps/web/e2e/journeys/appearance.spec.ts) | Exercise all ten color and ten font choices through the UI, verify actual font loading and persistence, restore Graphite + Geist, and compare the real Plate document geometry and accepted PDF bytes before/after. App presentation cannot change the document template or accepted export. |
-| [Jobs attention](../../../apps/web/e2e/journeys/jobs-attention.spec.ts) | Preserve deliberate inactive-source intent while showing quarantined or repeatedly failing sources as actionable. Inspect actual saved registry state and model/action counts; viewing attention cannot enable or rewrite sources. |
+| [Jobs attention](../../../apps/web/e2e/journeys/jobs-attention.spec.ts) | Preserve deliberate inactive-source intent while showing quarantined or repeatedly failing sources as actionable. Click the stale-Fit notice and verify its counted active-job cohort, canonical Fit filter, reload and unassessed control. Inspect actual saved registry state and model/action counts; attention reads and navigation cannot enable sources or admit work. |
 | [Profile workspace](../../../apps/web/e2e/journeys/profile-workspace.spec.ts) | Exercise peer sections, individual role/summary/date/skill/education fields, canonical saves/reload, exact wording proposals and decisions, and role/achievement remove/restore with original IDs and retained history. UI recovery, not direct database reconstruction, must preserve drafts and accepted work. |
 | [Whole-product surfaces](../../../apps/web/e2e/journeys/redesign-surfaces.spec.ts) | Load 26 retained surfaces at 1440 × 1000, 1860 × 1227, 2943 × 1227 and 390 × 844: 104 settled captures within one journey. Check mounted navigation, headings, meaningful loaded/explicit-empty content and page overflow, plus real saved-material search/clear/state, control geometry and Plate/PDF access. This does not judge visual craft: earlier passing inventory checks still exposed inner Profile and Materials control defects during image inspection. |
 | [Requirement associations](../../../apps/web/e2e/journeys/requirement-associations.spec.ts) | Create/revise/remove/restore many-to-many user intent through the real library/Profile flow. Keep exact requirement/source/optional-wording pins, stale history, achievement-based grouping and selected/filter/return context. Manual links never create assessment, coverage, score or model work. |

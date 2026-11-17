@@ -111,6 +111,17 @@ class PreparationStore:
                 "errorCode": row["error_code"], "updatedAt": row["updated_at"]}
 
 
+    def prepare_step(self, run_id, job_id, stage, inputs):
+        """Freeze pending inputs without reporting execution or replacing replay pins."""
+        with self.database.transaction() as conn:
+            changed = conn.execute(
+                "INSERT OR IGNORE INTO preparation_steps VALUES(?,?,?,?,?,?,?,?)",
+                (run_id, job_id, stage, "pending", _json(inputs), None, None, now()),
+            ).rowcount
+            if changed:
+                self._event(conn, run_id, "pending", job_id=job_id or None, stage=stage)
+
+
     def start_step(self, run_id, job_id, stage, inputs):
         with self.database.transaction() as conn:
             row = conn.execute("SELECT input_json FROM preparation_steps WHERE run_id=? AND job_id=? AND stage=?",

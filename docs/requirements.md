@@ -170,8 +170,14 @@ predate saved changes. Publication must recheck the absence of a score, compare
 captured current-source and historical assessment heads, retain history and
 rewrite no other job's score. Post-edit qualification for a
 previously scored job still requires manual refresh. Manual affected-match
-refresh retains its explicit frozen scope, complete-catalog impact decision,
-checkpoints and finite work limits. Exact
+refresh retains its explicit frozen scope, complete-catalog accounting,
+checkpoints and finite work limits. Resolve exact current authority unchanged
+and enforced mandatory reassessments before one semantic impact decision over
+only unresolved changed-fact items, with all current facts and each included
+item's own prior baseline. Keep structural work authority separate from the raw
+model-subset receipt and verify the complete composed partition on recovery.
+Per-operation wire pins must preserve exact retained completed calls and refuse
+unsettled/conflicting calls without another allowance. Exact
 role-analysis and Requirements call reuse must bind complete semantic inputs,
 prompt/schema and frozen provider/model/effective effort/configuration identity.
 Semantic content identity must remain separate from each actual posting's
