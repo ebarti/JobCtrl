@@ -27,15 +27,27 @@ grade semantic accuracy or replay a corpus. Unexpected external calls fail.
 There are no dispatch stubs, mocked internal API routes, domain/repository replacements,
 direct database seeds, arbitrary sleeps or test retries. Startup waits and
 assertion polling have explicit deadlines and inspect actual service state.
-The Preparation admission-recovery journey forwards the genuine unchanged POST,
-observes its real 202 receipt, then aborts browser delivery to reproduce a lost
-acknowledgement. It invents no first-party response. A console allowance can
-match at most one native transport error for that exact observed failed Request;
-application exceptions and HTTP status classes remain failures. Intentional
-conflict controls separately register each genuine browser response with its
-exact method, 409 status, domain error code and full URL. That permits one native
-resource message per observed response; extra requests, other refusals and
-application messages still fail.
+The Preparation admission-recovery journey holds the genuine unchanged POST
+until the UI observes the real pre-admission `not_found` response for its exact
+action, idempotency key and database identity. It confirms no run exists, then
+forwards the POST, observes its real 202 receipt and aborts browser delivery to
+reproduce a lost acknowledgement. Reload and reconciliation retain the same
+identity and exactly one admitted run. The journey invents no first-party
+response. A console allowance can match at most one native transport error for
+that exact observed failed Request. The pre-admission 404 and intentional 409
+conflicts register each genuine browser response with its exact method, status,
+domain error code and full URL; the 404 also binds the action, key and database.
+That permits one native resource message per observed response; extra requests,
+other refusals, page exceptions and application messages still fail.
+
+Hosted run `43982217748` on `a0025c781` exposed the valid pre-admission 404
+as an unexpected teardown console error. Owned run `e2e-VOTW9C` passed three
+independent repetitions each of preparation recovery and an existing 409 Profile
+conflict under Python 3.12.13 with two workers and zero retries. The Python source
+digest `5f6548760dfc40fe06073b504e4f56b2da9f58de5a9b88fd4c3b97a2a933e006`
+matched the hosted job; build / journeys / total were 7.593 / 29.710 / 38.886
+seconds, with unchanged lock and web bytes. Hosted Linux verification remains
+separate.
 One Temporal server serves bounded, independent per-journey Python workspaces.
 Processes and state are owned by the run; caller-selected application paths and
 real credentials are never adopted. The IPC-connected process-group leader

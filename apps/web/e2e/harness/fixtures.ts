@@ -98,7 +98,9 @@ type Fixtures = {
   expectedResponseErrors: Response[];
   allowResponseError: (
     response: Response,
-    expected: { method: "GET" | "POST" | "PATCH"; status: 409; code: string },
+    expected:
+      | { method: "GET" | "POST" | "PATCH"; status: 409; code: string }
+      | { method: "GET"; status: 404; code: "not_found"; action: "preparation.run"; idempotencyKey: string; databaseInstanceId: string },
   ) => Promise<void>;
 };
 
@@ -116,13 +118,27 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
   },
   allowResponseError: async ({ app, expectedResponseErrors }, use) => {
     await use(async (response, expected) => {
-      expect(expected.status).toBe(409);
       expect(response.status()).toBe(expected.status);
       expect(response.request().method()).toBe(expected.method);
-      expect(new URL(response.url()).origin).toBe(app.baseURL);
-      if (expected.method === "PATCH") {
-        expect(new URL(response.url()).pathname).toBe("/v1/profile");
-        expect(expected.code).toBe("revision_conflict");
+      const url = new URL(response.url());
+      expect(url.origin).toBe(app.baseURL);
+      if (expected.status === 404) {
+        expect(expected.method).toBe("GET");
+        expect(expected.action).toBe("preparation.run");
+        expect(expected.code).toBe("not_found");
+        expect(url.pathname).toBe("/v1/action-runs/by-idempotency-key");
+        expect([...url.searchParams.entries()]).toEqual([["action", expected.action]]);
+        expect(expected.idempotencyKey).toBeTruthy();
+        expect(expected.databaseInstanceId).toBeTruthy();
+        const headers = response.request().headers();
+        expect(headers["idempotency-key"]).toBe(expected.idempotencyKey);
+        expect(headers["expected-database-instance-id"]).toBe(expected.databaseInstanceId);
+      } else {
+        expect(expected.status).toBe(409);
+        if (expected.method === "PATCH") {
+          expect(url.pathname).toBe("/v1/profile");
+          expect(expected.code).toBe("revision_conflict");
+        }
       }
       const body = (await response.json()) as { error?: { code?: unknown } };
       expect(
