@@ -79,13 +79,15 @@ class CatalogNormalizationService:
                            "original": extracted.model_dump(exclude={"spans"})},
             "_normalization_member_id": member_id}
 
-    def _incoming_members(self, occurrences):
+    def _incoming_members(self, occurrences, *, cohort=False):
+        # A correction's v6 matching ID is the selected occurrence ID.
         return [{"member_id": row["_normalization_member_id"], "job_id": row["job_id"],
                  "extraction_determination_id": row["extraction_determination_id"],
                  "correction_determination_id": row.get("correction_determination_id"),
                  "previous_occurrence_id": row.get("previous_occurrence_id"),
                  "occurrence_id": row["occurrence_id"], "original": {key: row[key] for key in (
-                     "local_id", "category", "name", "definition", "basis", "rationale", "source_note", "evidence_refs", "spans")}}
+                     "category", "name", "definition", "basis", "rationale", "source_note", "evidence_refs", "spans")}
+                     | {"local_id": row["local_id"] if cohort else row["_normalization_member_id"].removeprefix("incoming:")}}
                 for row in occurrences if "_normalization_member_id" in row]
 
     async def _normalize_extraction(self, extraction, *, posting, expected_revision, extraction_receipt,

@@ -174,7 +174,7 @@ class RequirementsCohortService:
                     "job_id": posting["job_id"], "posting_revision": posting["revision"], "posting_hash": posting["source_hash"],
                     "source_id": posting["source_id"], "source_revision": posting["source_revision"], "requirements": rows,
                     "extraction_determination_id": receipt["receipt_id"], "_attempt_id": item["operation_id"]}
-                incoming.extend(self._incoming_members(rows))
+                incoming.extend(self._incoming_members(rows, cohort=True))
             state = self.store.start_cohort_operation(operation_id, action,
                 {"kind": "normalization", "cohort_version": COHORT_VERSION, "prepared": deepcopy(prepared),
                  "captured": captured, "proposals": proposals, "incoming": incoming, "status": "prepared"},

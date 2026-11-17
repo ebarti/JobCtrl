@@ -118,6 +118,14 @@ and published no new score. The existing final source-change guard also passed
 with the expanded observer. This run used the same Python and web digests above;
 build / journeys / total were **8.794 s / 45.530 s / 56.146 s**.
 
+The v6 correction request retains the selected occurrence ID as its matching
+ID. The v7 cohort retains each extraction-local ID alongside its job identity.
+All seven occurrence-correction cases and the cold search with repeated local
+IDs passed together in `e2e-Aw2fmm` (8/8). The saved-search browser journey and
+real predecessor upgrade passed in `e2e-HpNSfw` (2/2). They assert live progress
+through the shared catalog and Fit calls, preservation of the original schema
+and history, and the exact additions needed to stage cohorts.
+
 ### Bounded Fit impact scope and durable call recovery — 17 November 2026
 
 [Fit refresh scope](../../../apps/web/e2e/journeys/fit-refresh-scope.spec.ts) adds eight
