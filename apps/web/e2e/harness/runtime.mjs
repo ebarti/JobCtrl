@@ -314,6 +314,7 @@ export async function applicationStack(
     nativeAccountingPreflight = false,
     sourceRevision,
     fitRecoveryDebugger = false,
+    cohortBoundaryDebugger = false,
     preflight = false,
     pythonExecutable = process.env.JOBCTRL_E2E_PYTHON ?? python,
     staticDir = process.env.JOBCTRL_E2E_STATIC_DIR ??
@@ -388,12 +389,15 @@ export async function applicationStack(
   let recoveryDebuggerEnabled = fitRecoveryDebugger;
   const recoveryArm = path.join(directory, "fit-recovery-arm");
   const recoveryPaused = path.join(directory, "fit-recovery-paused.json");
+  const cohortArm = path.join(directory, "cohort-boundary-arm");
+  const cohortPaused = path.join(directory, "cohort-boundary-paused.json");
   async function startWorker() {
     worker = await launch(
       `worker-${++workerGeneration}`,
       pythonExecutable,
       [
         ...(recoveryDebuggerEnabled ? [path.join(repo, "apps/web/e2e/harness/fit-recovery-debugger.py"), recoveryArm, recoveryPaused]
+          : cohortBoundaryDebugger ? [path.join(repo, "apps/web/e2e/harness/cohort-boundary-debugger.py"), cohortArm, cohortPaused]
           : ["-m", "jobctrl.app.worker"]),
         "--workspace",
         workspace,
@@ -421,7 +425,7 @@ export async function applicationStack(
   }
   try {
     if (sourceRevision) {
-      if (!["8ab86e9232d66fff9795906e061d208e7a057d8b", "5b9db7ddfa20fa2d618687da1b311e2287286679", "6e4131061fb41aab4743701084a7c74a19fa21f3", "943c8b4d0c6f4a15521e10c04a015de726bfcbb9", "6f46b0ba5913383b7c57ffcce986729fa0bdbf0e", "5d3fda5352fe4418332b989c05f710e0529f578c", "df06b08ae201f7a73dc2c359944c06daf517c69e", "b49dc52e3d727356870317069304ac6ceb9f1237"].includes(sourceRevision))
+      if (!["8ab86e9232d66fff9795906e061d208e7a057d8b", "5b9db7ddfa20fa2d618687da1b311e2287286679", "6e4131061fb41aab4743701084a7c74a19fa21f3", "943c8b4d0c6f4a15521e10c04a015de726bfcbb9", "6f46b0ba5913383b7c57ffcce986729fa0bdbf0e", "5d3fda5352fe4418332b989c05f710e0529f578c", "df06b08ae201f7a73dc2c359944c06daf517c69e", "b49dc52e3d727356870317069304ac6ceb9f1237", "38ef94613ebb7c0413d8d5ee89987ef860f53b13"].includes(sourceRevision))
         throw new Error("The source upgrade journey requires its exact fixed predecessor.");
       const resolved = await execFile("git", ["rev-parse", "--verify", `${sourceRevision}^{commit}`], { cwd: repo, timeout: 5_000 });
       if (resolved.stdout.trim() !== sourceRevision)
@@ -436,6 +440,8 @@ export async function applicationStack(
     }
     if (fitRecoveryDebugger && !["df06b08ae201f7a73dc2c359944c06daf517c69e", "b49dc52e3d727356870317069304ac6ceb9f1237"].includes(sourceRevision))
       throw new Error("The durable-gap debugger requires an exact declared Fit predecessor.");
+    if (cohortBoundaryDebugger && (sourceRevision || fitRecoveryDebugger))
+      throw new Error("The cohort guard debugger requires the exact current candidate worker.");
     if (process.env.JOBCTRL_E2E_INSTALLED === "1") {
       const payloadRoot = await realpath(process.env.JOBCTRL_E2E_PAYLOAD_DIR);
       const [executable, assets] = await Promise.all([
@@ -520,6 +526,22 @@ export async function applicationStack(
       setupMs: Math.round(performance.now() - started),
       get workerPid() {
         return worker?.pid;
+      },
+      async armCohortBoundaryPause() {
+        if (!cohortBoundaryDebugger) throw new Error("The cohort guard debugger is not enabled.");
+        await writeFile(cohortArm, "final-currentness-guard", { mode: 0o600, flag: "wx" });
+      },
+      async waitForCohortBoundaryPause() {
+        await waitFor(async () => {
+          try { return JSON.parse(await readFile(cohortPaused, "utf8")).pid === worker.pid; }
+          catch (error) { if (error.code === "ENOENT") return false; throw error; }
+        }, "owned cohort guard pause");
+      },
+      async resumeCohortBoundary() {
+        if (!cohortBoundaryDebugger || JSON.parse(await readFile(cohortPaused, "utf8")).pid !== worker.pid)
+          throw new Error("The paused cohort worker identity did not match.");
+        process.kill(worker.pid, "SIGCONT");
+        await rm(cohortPaused);
       },
       async armFitRecoveryPause(operation) {
         if (!recoveryDebuggerEnabled || !["fit.catalog-impact", "fit.qualification-batch"].includes(operation))

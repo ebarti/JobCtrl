@@ -58,15 +58,54 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **160 journeys in 48 project-file groups**:
-**159 Chromium cases in 47 spec files**, plus **one demo case in one file**.
+The current configured inventory is **171 journeys in 49 project-file groups**:
+**170 Chromium cases in 48 spec files**, plus **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts, keyboard-driven Profile saves, posting-fetch refusals and the
 actual terminal-root v4 and terminal-group v5 predecessor upgrades, demand-citation
 role refusals, and Fit schema refusals. The four hosted shard listings
-contain 40 / 42 / 39 / 39 cases and match the unsharded inventory exactly once.
+contain 48 / 46 / 36 / 41 cases and match the unsharded inventory exactly once.
 Listing these scenarios is not evidence that the complete current candidate passed.
+
+### Initial search cohorts — 17 November 2026
+
+[Preparation cohort journeys](../../../apps/web/e2e/journeys/preparation-cohort.spec.ts)
+add eleven cases using real application actions and controlled external responses.
+Two independently sourced postings can each use the local extraction ID `r1`;
+their job-scoped members join one complete normalization, followed by one shared
+qualification and current per-job scores. A later acquired job explicitly reuses
+the retained capability and demand with no additional qualification. The journey
+checks compact source and line references, persisted raw and expanded citation
+fingerprints, retained-definition references, and the stored reconciliation.
+It also observes distinct live model lanes overlapping while preserving the
+configured single-lane capacities.
+
+Additional cases refuse missing or foreign normalization members, qualification
+rows and citations without partial authority; skip an unsupported-language job;
+and cancel an unsettled qualification without issuing another call through a
+narrowed or complete retry. Two workspaces begin on actual predecessor
+`38ef94613`, stop at recoverable page transport boundaries, and upgrade to the
+candidate while retaining their original serial policy, completed Requirements,
+failure outcomes and call identities. Hosted setup fetches that exact object.
+The existing search source-race case now uses the complete cohort barrier. A
+harness-only debugger pauses the owned worker before its real atomic final
+currentness guard, without changing application locals, decisions or database
+rows; a public posting edit must leave the accepted score stored but stale and
+the unaffected sibling current.
+
+Owned two-worker run `e2e-fcx2FD` passed 17 of 18 affected cases with zero
+retries. The remaining predecessor assertion initially read before its model
+reply had been published; the same revision, identity and demand assertions
+then passed at the next real qualification boundary in `e2e-FcthDE` (1/1).
+The strengthened cold-success case passed separately in `e2e-w7B2VO` (1/1).
+All three used Python source digest
+`3e2421b0d97ef8116076a11d6c554abc559c5013469df7979df225173bf23162`,
+source candidate `bbfce4988507071b80433532e5a9d6503cc1ba769544494c22320fd9c349410b`
+and the same unchanged web build and lockfile. The 18-case run took
+**7.937 s build / 145.521 s journeys / 155.044 s total**; the corrected
+predecessor case took **8.336 s / 38.792 s / 48.831 s**. These focused results
+do not establish a full hosted pass or real-provider quality or latency.
 
 ### Bounded Fit impact scope and durable call recovery — 17 November 2026
 

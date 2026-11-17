@@ -28,6 +28,11 @@ const fingerprint = (value: unknown) => createHash("sha256").update(JSON.stringi
 /** Decode the actual wire; exact hashes prove mechanical scope expansion. */
 export function qualificationBindings(call: ExternalCall): QualificationBinding[] {
   const context = structuredClone(call.body["context"]) as Record<string, unknown>;
+  if (context["cohort_citation_version"] !== undefined) {
+    expect(context["cohort_citation_version"]).toBe("fit-qualification-citation-refs-v1");
+    const inventory = context["cohort_citation_sources"] as Record<string, string>;
+    expect(inventory).toEqual(Object.fromEntries(modelSources(call).map((source, index) => [`s${index + 1}`, source.source_id])));
+  }
   if (context["context_transport_version"] === undefined) return context["requirements"] as QualificationBinding[];
   expect(context["context_transport_version"]).toBe("fit-permission-scopes-v1");
   const binding = context["context_transport_binding"] as Record<string, unknown>;
@@ -51,6 +56,18 @@ export function qualificationBindings(call: ExternalCall): QualificationBinding[
   delete context["context_transport_version"];
   expect(fingerprint(context)).toBe(binding["expanded_context_fingerprint"]);
   return context["requirements"] as QualificationBinding[];
+}
+
+/** Select an exact supplied cohort source, without matching or rewriting it. */
+export function cohortCitationSelection(call: ExternalCall, sourceId: string, line: number | null) {
+  const context = call.body["context"] as { cohort_citation_version?: string; cohort_citation_sources?: Record<string, string> };
+  expect(context.cohort_citation_version).toBe("fit-qualification-citation-refs-v1");
+  const matches = Object.entries(context.cohort_citation_sources ?? {}).filter(([, id]) => id === sourceId);
+  expect(matches).toHaveLength(1);
+  const source = modelSources(call).find((row) => row.source_id === sourceId);
+  expect(source).toBeTruthy();
+  if (line !== null) expect(source!.text.split(/\r?\n/)[line - 1]).toBeTruthy();
+  return { source_ref: matches[0]![0], line };
 }
 
 /** Current authored choices bind to the request's exact IDs and sources. */

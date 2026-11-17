@@ -42,6 +42,8 @@ jobs:
         run: git fetch --no-tags --depth=1 origin df06b08ae201f7a73dc2c359944c06daf517c69e
       - name: Fetch the fixed predecessor for Fit impact and scoped qualification call recovery
         run: git fetch --no-tags --depth=1 origin b49dc52e3d727356870317069304ac6ceb9f1237
+      - name: Fetch the fixed predecessor for serial preparation recovery
+        run: git fetch --no-tags --depth=1 origin 38ef94613ebb7c0413d8d5ee89987ef860f53b13
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - name: Set up Node
