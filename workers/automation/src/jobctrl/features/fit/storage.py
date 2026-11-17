@@ -411,25 +411,22 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage, Initia
             " SELECT job_id,score_json FROM ranked WHERE position=1", (encoded(job_ids),),
         )}
 
-    def assessment_id_batch(self, bindings, connection=None):
+    def superseded_assessments(self, assessment_ids, connection=None):
         if connection is None:
             with self.read_snapshot() as read:
-                return read.assessment_id_batch(bindings)
-        rows = connection.execute(
-            "WITH wanted AS (SELECT json_extract(value,'$.profile_id') profile_id,"
-            " json_extract(value,'$.requirement_id') requirement_id,"
-            " json_extract(value,'$.requirement_revision') requirement_revision,"
-            " json_extract(value,'$.source_fingerprint') source_fingerprint FROM json_each(?)), ranked AS ("
-            " SELECT a.profile_id,a.requirement_id,a.requirement_revision,a.source_fingerprint,a.assessment_id,"
-            " row_number() OVER (PARTITION BY a.profile_id,a.requirement_id,a.requirement_revision,a.source_fingerprint"
-            " ORDER BY a.rowid DESC) position FROM fit_assessments a JOIN wanted w"
-            " ON a.profile_id=w.profile_id AND a.requirement_id=w.requirement_id"
-            " AND a.requirement_revision=w.requirement_revision AND a.source_fingerprint=w.source_fingerprint"
-            " WHERE json_extract(a.assessment_json,'$.contract_version')='requirements-v2')"
-            " SELECT * FROM ranked WHERE position=1", (encoded(bindings),),
-        )
-        return {(row["profile_id"], row["requirement_id"], row["requirement_revision"], row["source_fingerprint"]):
-                row["assessment_id"] for row in rows}
+                return read.superseded_assessments(assessment_ids)
+        # An explicit source-bound user correction can invalidate its earlier
+        # evidence decision. A repeat model call on identical inputs cannot.
+        return {row[0] for row in connection.execute(
+            "SELECT original.assessment_id FROM fit_assessments original "
+            "WHERE original.assessment_id IN (SELECT value FROM json_each(?)) AND EXISTS ("
+            " SELECT 1 FROM fit_assessments correction WHERE correction.profile_id=original.profile_id"
+            " AND correction.requirement_id=original.requirement_id"
+            " AND correction.requirement_revision=original.requirement_revision"
+            " AND correction.source_fingerprint=original.source_fingerprint AND correction.rowid>original.rowid"
+            " AND correction.origin='manual')",
+            (encoded(assessment_ids),),
+        )}
 
     def coverage_rows(self, assessment_ids, connection=None):
         if (not isinstance(assessment_ids, (list, tuple)) or len(assessment_ids) > 1000
@@ -587,8 +584,8 @@ class SqliteFitReadSession:
     def score_batch(self, job_ids):
         return self._store.score_batch(job_ids, self._connection)
 
-    def assessment_id_batch(self, bindings):
-        return self._store.assessment_id_batch(bindings, self._connection)
+    def superseded_assessments(self, assessment_ids):
+        return self._store.superseded_assessments(assessment_ids, self._connection)
 
     def coverage_rows(self, assessment_ids):
         return self._store.coverage_rows(assessment_ids, self._connection)

@@ -13,12 +13,13 @@ from jobctrl.app.errors import AppError
 from jobctrl.features.jobs.adapters.acquisition import SourceBoundPostingAcquirer
 from jobctrl.features.jobs.adapters.role_analysis import SourceBoundRoleAnalysis
 from jobctrl.features.jobs.repository import SqliteJobsRepository
-from jobctrl.features.jobs.schema import SCHEMA
+from jobctrl.features.jobs.schema import RECOVER_DISCOVERY_DETAILS, SCHEMA
 from jobctrl.features.jobs.service import JobsService
 
 
 def build_feature(runtime, **ports):
     runtime.database.initialize_feature("jobs", SCHEMA)
+    runtime.database.initialize_feature("jobs_recover_discovery_details_v1", RECOVER_DISCOVERY_DETAILS)
     repository = SqliteJobsRepository(runtime.database, runtime.events)
     fetcher = ports.get("posting_fetcher")
     if os.environ.get("JOBCTRL_POSTING_PROVIDER_ENDPOINT"):

@@ -18,6 +18,16 @@ replay or resume; feature receipts return `contract_changed`, and the applicatio
 also fences durable action generations before returning a cached action result.
 No SQL schema string changes or automatic model calls accompany this change.
 
+Saved score currentness compares its original permitted factual inputs and the
+current accepted job demand items. It compares one normalized reusable demand
+per scored capability, plus the literal Education and Language criteria. Catalog
+head revisions, display names, posting revision counters and occurrence order
+do not independently invalidate the score. Explicit corrections to a bound
+qualification are recorded as changed support. When a new posting awaits
+analysis, `requirements_current` reports source readiness independently of the
+saved score. New qualification, coverage, preparation and application writes
+still require their exact source and approval guards.
+
 The reusable catalog contains only `skill` and `professional_experience`.
 `education` and `language` are direct, job-local demands. Their namespaced IDs
 remain tied to the job/posting and their assessments never enter the reusable

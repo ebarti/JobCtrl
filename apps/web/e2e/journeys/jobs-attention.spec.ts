@@ -1,6 +1,10 @@
-import { test, expect, json, action, terminal } from "../harness/fixtures.js";
+import type { APIRequestContext } from "@playwright/test";
+import { test, expect, json, action, terminal, modelCall } from "../harness/fixtures.js";
 import { observeSharedWorkerEventSource, sharedEventStreamTargets } from "../harness/shared-event-stream.js";
 import { createScoredFit, type FitState } from "./fit-data.js";
+import type { Profile } from "./core-data.js";
+import { authoredPartition, readCatalog, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
+import { typedExtraction, type CatalogContext } from "./requirements-data.js";
 
 type Source = {
   sourceId: string;
@@ -18,22 +22,89 @@ type Digest = {
   };
 };
 
+async function reviseRecoveryEvidence(api: APIRequestContext, saved: Profile) {
+  const profile = structuredClone(saved.profile);
+  profile.resume.experience_entries[0]!.bullets[0] = "Documented operational handoffs for an existing recovery process.";
+  return json<Profile>(api, "patch", "/v1/profile", { expectedProfileVersion: saved.profileVersion, profile });
+}
+
+test("Fit flags accepted demand and evidence changes without treating catalog revisions as Profile edits", async ({ api, app, page }) => {
+  const { posting, fit, profile } = await createScoredFit(api, app, "attention-demand-currentness");
+  const path = `/v1/jobs/${posting.job_id}`;
+  const before = await json<NormalizedSnapshot>(api, "get", `${path}/requirements`);
+  const original = before.requirements[0]!;
+  const catalog = await readCatalog(api);
+
+  async function verify(reasons: string[], requirementsCurrent: boolean) {
+    const detail = await json<FitState>(api, "get", `${path}/fit`);
+    expect(detail).toMatchObject({
+      current: reasons.length === 0, requirements_current: requirementsCurrent, stale_reasons: reasons, score: fit.score,
+      selection: { ready_for_materials: reasons.length === 0 && requirementsCurrent },
+    });
+    const grid = await json<{ rows: { job: { job_id: string }; fit: FitState }[] }>(api, "get", "/v1/jobs/query");
+    expect(grid.rows.find((row) => row.job.job_id === posting.job_id)!.fit)
+      .toMatchObject({ current: detail.current, stale_reasons: reasons });
+    expect((await json<Digest>(api, "get", "/v1/digest")).staleScores.count).toBe(reasons.length ? 1 : 0);
+  }
+
+  const consolidating = api.post("/v1/requirements/consolidate", { data: { expected_catalog_revision: catalog.catalog_revision } });
+  const catalogCall = await modelCall(app, "requirements.match_catalog");
+  const { reuseRequirementId: _reuse, ...group } = retainedCapability(catalogCall, original.requirement_id, "recovery");
+  catalogCall.reply(authoredPartition(catalogCall, [{ ...group, name: "Operational workflow recovery", definition: "Maintain durable recovery for operational workflows." }],
+    [{ groupId: group.groupId, definition: original.normalized_demand.definition, jobIds: [posting.job_id] }]));
+  const reconciled = await consolidating;
+  expect(reconciled.status(), await reconciled.text()).toBe(200);
+  const revised = await json<NormalizedSnapshot>(api, "get", `${path}/requirements`);
+  expect(revised.revision).toBeGreaterThan(before.revision);
+  expect(revised.requirements[0]!.canonical.name).toBe("Operational workflow recovery");
+  expect(revised.requirements[0]!.normalized_demand.demand_fingerprint).toBe(original.normalized_demand.demand_fingerprint);
+  await verify([], true);
+
+  const irrelevant = structuredClone(profile.profile);
+  irrelevant.personal.city = "Another City";
+  const saved = await json<Profile>(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion, profile: irrelevant });
+  await verify([], true);
+  const added = "Working proficiency in English is required.";
+  const changed = await json<{ revision: number }>(api, "patch", path, {
+    expectedRevision: posting.revision, description: posting.description + "\n" + added,
+  });
+  await verify([], false);
+  await page.goto("/jobs");
+  await expect(page.getByRole("link", { name: /fit assessment to update/ })).toHaveCount(0);
+
+  const extracting = api.post(`${path}/requirements`, { data: { expected_posting_revision: changed.revision, expected_revision: revised.revision } });
+  const extraction = await modelCall(app, "requirements.extract");
+  extraction.reply(typedExtraction(extraction, {
+    requirements: [{ localId: "recovery", text: posting.description }], languages: [{ text: added, language: "English", proficiency: "Working proficiency" }],
+  }));
+  const matching = await modelCall(app, "requirements.match_catalog");
+  const retained = retainedCapability(matching, original.requirement_id, "recovery");
+  retained.memberIds.push(...(matching.body["context"] as CatalogContext).incoming.map((row) => row.member_id));
+  matching.reply(authoredPartition(matching, [retained],
+    [{ groupId: retained.groupId, definition: original.normalized_demand.definition, jobIds: [posting.job_id] }]));
+  const accepted = await extracting;
+  expect(accepted.status(), await accepted.text()).toBe(200);
+  await verify(["requirements_changed"], true);
+  await expect(page.getByRole("link", { name: "1 fit assessment to update", exact: true })).toBeVisible();
+
+  await reviseRecoveryEvidence(api, saved);
+  await verify(["profile_facts_changed", "requirements_changed"], true);
+  expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
+});
+
 test("Jobs attention opens and reloads the counted stale Fit cohort without starting work", async ({ api, app, page }, testInfo) => {
-  const { posting, fit } = await createScoredFit(api, app, "attention-fit-navigation");
+  const { posting: revised, fit, profile } = await createScoredFit(api, app, "attention-fit-navigation");
   const control = await json<{ job_id: string; title: string }>(api, "post", "/v1/jobs/capture", {
     url: "https://example.com/jobs/attention-unassessed-control",
     title: "Synthetic Unassessed Attention Control",
     company: "Synthetic Attention Company",
     description: "Implement and maintain durable workflow recovery.",
   });
-  const revised = await json<{ job_id: string; title: string }>(api, "patch", `/v1/jobs/${posting.job_id}`, {
-    expectedRevision: posting.revision,
-    description: "Implement and maintain durable workflow recovery. Document the current revision.",
-  });
+  await reviseRecoveryEvidence(api, profile);
   const digest = await json<Digest>(api, "get", "/v1/digest");
   expect(digest.staleScores.count).toBe(1);
-  const staleFit = await json<FitState>(api, "get", `/v1/jobs/${posting.job_id}/fit`);
-  expect(staleFit.current).toBe(false);
+  const staleFit = await json<FitState>(api, "get", `/v1/jobs/${revised.job_id}/fit`);
+  expect(staleFit).toMatchObject({ current: false, stale_reasons: ["profile_facts_changed"] });
   expect(staleFit.score).toEqual(fit.score);
   const callsBeforeNavigation = app.external.calls.length;
   const browserWrites: { method: string; path: string }[] = [];
@@ -53,24 +124,23 @@ test("Jobs attention opens and reloads the counted stale Fit cohort without star
   async function verifyDestination(navigate: () => Promise<unknown>) {
     // Observe the real request on both click and reload, including the broken
     // legacy request so a field mismatch fails directly instead of timing out.
-    const queried = page.waitForResponse((response) => response.request().method() === "GET"
-      && new URL(response.url()).pathname === "/v1/jobs/query"
-      && new URL(response.url()).searchParams.get("sort") === "fit_score");
+    const queried = page.waitForRequest((request) => request.method() === "GET"
+      && new URL(request.url()).pathname === "/v1/jobs/query"
+      && new URL(request.url()).searchParams.get("sort") === "fit_score");
     await navigate();
-    const response = await queried;
-    expect(response.status()).toBe(200);
-    const query = new URL(response.url()).searchParams;
+    const request = new URL((await queried).url());
+    const query = request.searchParams;
     expect(query.get("job_state")).toBe("active");
     expect(query.get("fit_state")).toBe("stale");
     expect(query.has("state")).toBe(false);
     const columnFilters = JSON.parse(query.get("column_filters") ?? "{}") as Record<string, unknown>;
     expect(columnFilters).not.toHaveProperty("current_state");
-    const destination = await response.json() as {
+    const destination = await json<{
       total: number;
       rows: { job: { job_id: string }; fit: { current: boolean }; scalars: { current_state: string | null } }[];
-    };
+    }>(api, "get", request.pathname + request.search);
     expect(destination.total).toBe(digest.staleScores.count);
-    expect(destination.rows.map((row) => row.job.job_id)).toEqual([posting.job_id]);
+    expect(destination.rows.map((row) => row.job.job_id)).toEqual([revised.job_id]);
     expect(destination.rows[0]!.fit.current).toBe(false);
     // Factual Fit staleness must work independently of workflow state.
     expect(destination.rows[0]!.scalars.current_state).not.toBe("stale");
@@ -85,18 +155,16 @@ test("Jobs attention opens and reloads the counted stale Fit cohort without star
   await verifyDestination(() => notice.click());
   await verifyDestination(() => page.reload());
   expect((await json<Digest>(api, "get", "/v1/digest")).staleScores.count).toBe(digest.staleScores.count);
-  expect((await json<FitState>(api, "get", `/v1/jobs/${posting.job_id}/fit`)).score).toEqual(staleFit.score);
+  expect((await json<FitState>(api, "get", `/v1/jobs/${revised.job_id}/fit`)).score).toEqual(staleFit.score);
   expect(browserWrites).toEqual([]);
   expect(app.external.calls).toHaveLength(callsBeforeNavigation);
   await testInfo.attach("jobs-attention-stale-fit-destination", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
 });
 
 test("Jobs attention follows committed visibility and reviewed deletion events without reloading", async ({ api, app, page, browser }, testInfo) => {
-  const { posting } = await createScoredFit(api, app, "attention-lifecycle");
-  const revised = await json<{ job_id: string; title: string; revision: number; state_revision: number }>(api, "patch", `/v1/jobs/${posting.job_id}`, {
-    expectedRevision: posting.revision,
-    description: "Implement and maintain durable workflow recovery. Document the current revision.",
-  });
+  const { posting, profile } = await createScoredFit(api, app, "attention-lifecycle");
+  await reviseRecoveryEvidence(api, profile);
+  const revised = await json<{ job_id: string; title: string; revision: number; state_revision: number }>(api, "get", `/v1/jobs/${posting.job_id}`);
   expect((await json<Digest>(api, "get", "/v1/digest")).staleScores.count).toBe(1);
   const observedEvents: { type: string; aggregateId: string; payload: { action?: string } }[] = [];
   const browserDigests: Digest[] = [];

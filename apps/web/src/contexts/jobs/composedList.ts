@@ -66,7 +66,7 @@ export function useComposedJobs(input: JobGridQuery) {
 }
 /** Cross-feature changes can affect ordering, membership, and every result page. */
 export const composedJobsEvents = {
-  eventTypes: ["FitAssessed", "FitCorrected", "FitRequirementCorrected", "FitCoverageUpdated", "ProfileUpdated", "ProfileWordingUpdated", "ProfileSourceUpdated", "RequirementsUpdated", "RequirementBindingCorrected", "RequirementMeaningRevised", "PreparationUpdated", "CompensationEvidenceChanged", "CompensationRefreshChanged", "CompensationSourcePolicyChanged", "ApplicationSubmitted", "ApplicationsUpdated", "ApplicationOutcomeRecorded", "ResumeComposed", "ResumeEdited", "ResumeReviewed", "ResumeRendered", "ResumeAccepted", "ResumeTemplateUpdated"] as const,
+  eventTypes: ["FitAssessed", "FitCorrected", "FitRequirementCorrected", "FitCoverageUpdated", "ProfileUpdated", "ProfileWordingUpdated", "ProfileSourceUpdated", "RequirementsUpdated", "RequirementsConsolidated", "RequirementBindingCorrected", "RequirementMeaningRevised", "PreparationUpdated", "CompensationEvidenceChanged", "CompensationRefreshChanged", "CompensationSourcePolicyChanged", "ApplicationSubmitted", "ApplicationsUpdated", "ApplicationOutcomeRecorded", "ResumeComposed", "ResumeEdited", "ResumeReviewed", "ResumeRendered", "ResumeAccepted", "ResumeTemplateUpdated"] as const,
   handle(event: DomainEventEnvelope, client: QueryClient) {
     void invalidateQueriesWithOptimisticOwnership(client, composedJobsKeys.all(event.tenantId));
   },

@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 from contextlib import contextmanager
 
-from jobctrl.app.errors import ConflictError, NotFoundError
+from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 
-from .domain import CONTRACT_VERSION, MEANING_KEYS, RequirementError, canonical_json, current_contract, fingerprint, now
+from .domain import (CONTRACT_VERSION, MEANING_KEYS, RequirementError, canonical_json, current_contract,
+                     fingerprint, now, snapshot_demand_fingerprints)
 from .normalization_storage import NormalizationStore
 from .cohort_storage import CohortStorage
 from .normalization_domain import NORMALIZATION_VERSION
@@ -64,12 +65,17 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
                 reasons.append("requirement_revised")
             direct = [{"requirement_id": item["requirement_id"], "requirement_revision": item["revision"]}
                       for field in ("education", "languages") for item in snapshot.get(field, [])] if current_contract(snapshot) else []
+            try:
+                job_demands = snapshot_demand_fingerprints(snapshot)
+            except (RequirementError, AppError):
+                job_demands = None
             bindings[row["job_id"]] = {
                 "contract_version": snapshot.get("contract_version"), "normalization_version": snapshot.get("normalization_version"),
                 "status": snapshot.get("status"),
                 "stale_reasons": reasons,
                 "revision": row["revision"], "posting_revision": row["posting_revision"], "posting_hash": row["posting_hash"],
                 "stale": bool(reasons),
+                "job_demands": job_demands,
                 "requirement_revisions": [{"requirement_id": ident, "requirement_revision": revision,
                     "demand_fingerprint": demands.get(ident)} for ident, revision in sorted(accepted)] + direct,
                 "current_requirement_revisions": [{"requirement_id": ident, "requirement_revision": revision,

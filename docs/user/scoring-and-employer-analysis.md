@@ -289,8 +289,12 @@ Source completion and source counts do not stand in for fit completion. An
 assessment failure is a per-job outcome; earlier accepted records remain.
 The explicit `assess` preparation recipe applies those same prerequisites and
 person-fit work to selected saved Job IDs without another search. Existing scores
-made stale by Profile or catalog edits still require the manual affected-matches
-decision; search never expands into that refresh.
+that need updating require the manual affected-matches decision. Fit checks the
+Profile evidence allowed for the scored criteria and the job's accepted demands.
+Renaming or revising a shared capability leaves the score current when those
+demands and the relevant evidence are still the same. A newer posting can await
+analysis while the score continues to describe the last analyzed requirements.
+Preparing materials from the new posting requires current source analysis.
 
 Review the recorded results on the current product surfaces:
 

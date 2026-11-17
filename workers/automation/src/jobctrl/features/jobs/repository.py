@@ -153,6 +153,7 @@ class SqliteJobsRepository:
         guard=None,
         on_accepted=None,
         connection=None,
+        discovery_observation=False,
     ):
         incoming = canonical_posting(data)
         receipt_fingerprint = receipt_fingerprint or digest(data)
@@ -190,8 +191,12 @@ class SqliteJobsRepository:
                 conn.execute(
                     "INSERT INTO jobs_jobs(job_id,created_at,updated_at) VALUES(?,?,?)", (job_id, timestamp, timestamp)
                 )
-            if previous and previous["description"] and not incoming["description"]:
-                # A listing-only provider observation cannot erase accepted detail.
+            if previous and (
+                discovery_observation and previous["content_state"] == "accepted_detail"
+                and incoming["content_state"] != "accepted_detail"
+                or previous["description"] and not incoming["description"]
+            ):
+                # Search cards are observations even when they contain a description.
                 accepted = previous
                 changed = False
             elif (

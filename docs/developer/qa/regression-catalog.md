@@ -96,6 +96,12 @@ learning milestone cannot prove capability. Unknowns and correction history
 remain visible. Rejected/deferred proposals are deduplicated rather than
 regenerated for every posting.
 
+Search rediscovery records source observations while preserving an accepted
+full posting. The Fit grid, detail and attention count must agree on changes
+to the scored evidence or accepted job demands. A same-demand catalog revision
+keeps the score current. A newer posting can await analysis independently of
+the score, and new material preparation still requires current Requirements.
+
 Post-edit refresh of previously scored jobs requires explicit manual admission.
 A job with no prior score may resolve only its fixed requirement set during
 explicit first assessment even when older shared authority predates saved

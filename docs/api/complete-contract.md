@@ -65,10 +65,13 @@ provenance. All four categories use one missing-qualification batch with
 section-specific evidence. Education's explicit equivalent-experience route is
 recorded without asserting a degree; Languages use structured Language /
 Proficiency records only. A current section-backed match creates no
-achievement-wording gap and wording does not lower person fit. Source or
-revision changes invalidate stale authority. The Fit
-adapter declares `/v1/jobs/{job_id}/fit`, assessment, correction, history and
-coverage routes. Post-edit reassessment uses the durable `fit.refresh` action,
+achievement-wording gap and wording does not lower person fit. The
+`/v1/jobs/{job_id}/fit` read compares the score's original evidence inputs
+with the current evidence and compares the accepted demands independently.
+For saved scores, `requirements_current` reports whether the accepted
+requirements still bind the posting source for new work. The adapter also
+declares assessment, correction, history and coverage routes. Post-edit
+reassessment uses the durable `fit.refresh` action,
 an expected saved-input stamp, explicit job scope and finite work limits.
 Read-only pending and operation routes never start model work. Exact methods,
 DTOs and failure boundaries live in the [Fit reference](../../workers/automation/src/jobctrl/features/fit/README.md).

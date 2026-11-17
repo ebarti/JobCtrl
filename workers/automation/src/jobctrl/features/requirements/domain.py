@@ -215,6 +215,10 @@ def snapshot_items(snapshot: dict) -> list[dict]:
     Canonical interpretation is used only by the assessment adapter. The saved
     occurrence retains every original extraction field and posting source.
     """
+    return json.loads(canonical_json(list(_snapshot_items(snapshot))))
+
+
+def _snapshot_items(snapshot: dict):
     if not current_contract(snapshot):
         raise RequirementError("requirements_contract_changed")
     if snapshot.get("status") != "complete":
@@ -223,7 +227,6 @@ def snapshot_items(snapshot: dict) -> list[dict]:
     from .normalization_domain import NORMALIZATION_VERSION, demand_fingerprint
     if snapshot.get("normalization_version") != NORMALIZATION_VERSION:
         raise AppError("requirements_consolidation_required", "Consolidate the retained requirement catalog before using these demands.", 409)
-    rows = []
     normalized_bindings = {}
     for occurrence in snapshot["requirements"]:
         if not current_contract(occurrence) or not current_contract(occurrence.get("canonical")):
@@ -240,10 +243,10 @@ def snapshot_items(snapshot: dict) -> list[dict]:
         previous = normalized_bindings.setdefault(occurrence["requirement_id"], binding)
         if previous != binding:
             raise AppError("requirements_demand_partition_invalid", "Occurrences of one capability must share one complete combined job demand.", 409)
-        rows.append({**occurrence, **occurrence["canonical"], "original": original,
+        yield {**occurrence, **occurrence["canonical"], "original": original,
                      "capability_definition": occurrence["canonical"]["definition"], "definition": demand["definition"],
                      "normalization_version": NORMALIZATION_VERSION, "demand_fingerprint": demand["demand_fingerprint"],
-                     "demand_provenance": demand["provenance"]})
+                     "demand_provenance": demand["provenance"]}
     for field, category, keys, name in (
         ("education", "education", ("qualification", "subjects", "alternative", "source_note"), "qualification"),
         ("languages", "language", ("language", "proficiency", "source_note"), "language"),
@@ -251,10 +254,31 @@ def snapshot_items(snapshot: dict) -> list[dict]:
         for item in snapshot[field]:
             if not current_contract(item) or item.get("category") != category:
                 raise RequirementError("requirements_contract_changed")
-            rows.append({**item, "occurrence_id": item["requirement_id"], "requirement_revision": item["revision"],
-                         "name": item[name], "definition": canonical_json({key: item[key] for key in keys})})
-    # JSON copy prevents callers from mutating nested occurrence authority.
-    return json.loads(canonical_json(rows))
+            yield {**item, "occurrence_id": item["requirement_id"], "requirement_revision": item["revision"],
+                   "name": item[name], "definition": canonical_json({key: item[key] for key in keys})}
+
+
+def job_demand_fingerprints(items):
+    """Compare the actual score items independently of catalog names and revisions."""
+    demands = {}
+    for item in items:
+        category = item["category"]
+        if category in {"skill", "professional_experience"}:
+            meaning = item["demand_fingerprint"]
+        elif category == "education":
+            meaning = [item["qualification"], sorted(set(item["subjects"])), item["alternative"]]
+        elif category == "language":
+            meaning = [item["language"], item["proficiency"]]
+        else:
+            raise RequirementError("requirements_contract_changed")
+        demands[item["requirement_id"]] = fingerprint([category, meaning])
+    # Deduplicate occurrences of one capability, while preserving the number
+    # of distinct score items in a merge or split.
+    return sorted(demands.values())
+
+
+def snapshot_demand_fingerprints(snapshot: dict):
+    return job_demand_fingerprints(_snapshot_items(snapshot))
 
 
 def validate_citations(citations: list[Citation], sources: dict[str, str], required: set[str] | None = None,
