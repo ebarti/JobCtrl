@@ -21,10 +21,8 @@ class RequirementModelAdapter:
     async def determine(
         self, *, kind, schema, prompt_version, instruction, sources, context,
         entity_id, validate, budget=None, publication_posting=None, source_binding=None, catalog_guard=None,
+        retained_request=None, pin_request=None, refused_receipt_id=None, pin_refusal=None,
     ):
-        selection = self.gateway.selection()
-        model_spec = f"{selection['provider']}:{selection['model']}"
-        execution = self.gateway.freeze_execution(model_spec)
         arguments = dict(
             operation=kind,
             instructions=instruction,
@@ -34,37 +32,61 @@ class RequirementModelAdapter:
                      **({"entity_id": entity_id} if entity_id is not None else {})},
             prompt_version=prompt_version,
             lane="requirements",
-            model=model_spec,
-            execution=execution,
         )
-        try:
-            # The gateway validates the complete payload, including schema and
-            # context, before cache lookup or external-call admission. No
-            # source/catalog text may be truncated to get through this check.
-            input_fingerprint = self.gateway.fingerprint(**arguments)
-        except AppError as failure:
-            self._raise_catalog_refusal(failure, kind, context)
-            raise
+        if retained_request is not None:
+            # Recovery never selects today's model/effort, nor reserves another
+            # call. Reconstruct the exact original gateway payload from its
+            # non-secret execution identity and the revalidated frozen sources.
+            selection = retained_request["selection"]
+            request = {**arguments, **selection, "execution": retained_request["execution"]}
+            input_fingerprint = fingerprint(request)
+            if (retained_request["arguments_fingerprint"] != fingerprint(arguments)
+                    or retained_request["input_fingerprint"] != input_fingerprint):
+                raise RequirementError("requirements_cohort_request_invalid")
+        else:
+            selection = self.gateway.selection()
+            execution = self.gateway.freeze_execution(f"{selection['provider']}:{selection['model']}")
+            try:
+                # The gateway validates the complete payload before lookup or
+                # admission. No source text may be truncated to pass its guard.
+                input_fingerprint = self.gateway.fingerprint(**arguments, execution=execution)
+            except AppError as failure:
+                self._raise_catalog_refusal(failure, kind, context)
+                raise
+            if pin_request is not None:
+                pin_request({"selection": selection, "execution": execution.identity(),
+                             "arguments_fingerprint": fingerprint(arguments), "input_fingerprint": input_fingerprint})
         cached = (self.store.normalization_model_call(input_fingerprint) if catalog_guard is not None
                   else self.store.model_call(input_fingerprint))
-        if cached is not None:
+        if cached is not None and refused_receipt_id is None:
             parsed, provenance = self._checked(cached, input_fingerprint, kind, schema, validate)
             if budget is not None:
                 budget.reused += 1
             return parsed, self._bind(provenance, publication_posting, source_binding)
+
+        def checked_value(value):
+            try:
+                parsed = schema.model_validate(value)
+            except ValidationError:
+                raise RequirementError("schema_violation") from None
+            validate(parsed)
+            return parsed
+
         # A worker may stop after the canonical receipt settles but before the
         # feature projection commits. Recover only an exact, revalidated result.
-        recovered = self.gateway.find_succeeded(input_fingerprint)
+        recovered = self.gateway.receipt(refused_receipt_id) if refused_receipt_id else self.gateway.find_succeeded(input_fingerprint)
         if recovered is not None:
-            if (recovered.get("status") != "succeeded" or recovered.get("input_fingerprint") != input_fingerprint
+            if ((refused_receipt_id and recovered.get("receipt_id") != refused_receipt_id)
+                    or recovered.get("status") != "succeeded" or recovered.get("input_fingerprint") != input_fingerprint
                     or recovered.get("operation") != kind or recovered.get("prompt_version") != prompt_version
-                    or recovered.get("provider") != execution.provider or recovered.get("model") != execution.model
+                    or recovered.get("provider") != selection["provider"] or recovered.get("model") != selection["model"]
                     or recovered.get("lane") != "requirements"):
                 raise RequirementError("model_cache_receipt_invalid")
             try:
-                parsed = schema.model_validate(recovered["value"])
-                validate(parsed)
+                parsed = checked_value(recovered["value"])
             except (ValueError, RequirementError):
+                if refused_receipt_id:
+                    raise  # This operation's own receipt proves the original refusal.
                 # Gateway structural success is not owner acceptance. A new
                 # explicitly admitted refresh may make its one planned call;
                 # this never retries a newly refused result within an attempt.
@@ -81,18 +103,22 @@ class RequirementModelAdapter:
                                       publication_posting, catalog_guard)
                 parsed, provenance = self._checked(accepted, input_fingerprint, kind, schema, validate)
                 return parsed, self._bind(provenance, publication_posting, source_binding)
+        if retained_request is not None:
+            raise RequirementError("requirements_cohort_interrupted")
         if budget is not None:
             budget.consume(input_fingerprint)
         try:
-            result = await self.gateway.determine(**arguments)
+            result = await self.gateway.determine(**arguments, execution=execution)
         except AppError as failure:
             self._raise_catalog_refusal(failure, kind, context)
             raise
         try:
-            parsed = schema.model_validate(result.value)
-        except ValidationError:
-            raise RequirementError("schema_violation") from None
-        validate(parsed)
+            parsed = checked_value(result.value)
+        except (ValueError, RequirementError):
+            receipt_id = result.provenance.get("receipt_id")
+            if pin_refusal and receipt_id and result.provenance.get("input_fingerprint") == input_fingerprint:
+                pin_refusal(receipt_id)
+            raise
         provenance = dict(result.provenance)
         # Keep the gateway's full immutable receipt. Its ID is required: a
         # generated local UUID cannot stand in for provider/model authority.

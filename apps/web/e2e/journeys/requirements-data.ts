@@ -3,6 +3,7 @@ import { expect, type ExternalCall } from "../harness/fixtures.js";
 
 export type ModelSource = { source_id: string; text: string };
 export const NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v6";
+export const COHORT_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v7-cohort";
 export const PARTITION_V5_PROMPT_VERSION = "requirements-capability-demand-partition-v5";
 export const PARTITION_V4_PROMPT_VERSION = "requirements-capability-demand-partition-v4";
 export const CITATION_SELECTION_PROMPT_VERSION = "requirements-capability-demand-citation-v3";
@@ -105,6 +106,9 @@ export function citeSources(call: ExternalCall, sourceIds: string[]) {
   });
 }
 
+type CitationSegment = (string | number)[] | {
+  source_format?: "json_string" | "serialized"; value_path: (string | number)[];
+  start: number; end: number; preview?: string };
 export type CatalogContext = {
   partition_group_handles: { capabilities: string[]; demands: string[] };
   catalog_revision: number;
@@ -121,9 +125,10 @@ export type CatalogContext = {
   accepted_demands: { group_member_ids: string[]; source_id: string; demand_fingerprint: string; normalization_version: string }[];
   accepted_occurrence_counts: Record<string, number>;
   posting_sources: { job_id: string; revision: number; source_hash: string; source_id: string }[];
-  citation_segments: Record<string, Record<string, (string | number)[] | {
-    source_format?: "json_string" | "serialized"; value_path: (string | number)[];
-    start: number; end: number; preview?: string }>>;
+  citation_segments: Record<string, Record<string, CitationSegment | string>>;
+  cohort_texts?: Record<string, string>;
+  cohort_segment_paths?: Record<string, CitationSegment>;
+  expanded_context_fingerprint?: string;
   citation_catalog_fingerprint: string;
   citation_source_fingerprints: Record<string, string>;
   citation_source_context_fingerprint: string;
@@ -138,10 +143,24 @@ type CitationReference = { sourceId: string; valuePath?: (string | number)[] };
  * The helper neither invents quote text/ranges nor searches prose for meaning. */
 export function citationSelections(call: ExternalCall, references: CitationReference[]): CitationSelection[] {
   const context = call.body["context"] as CatalogContext;
+  const segments = Object.fromEntries(Object.entries(context.citation_segments).map(([sourceId, catalog]) => [sourceId,
+    Object.fromEntries(Object.entries(catalog).map(([segmentId, descriptor]) => {
+      if (typeof descriptor !== "string") return [segmentId, descriptor];
+      const expanded = context.cohort_segment_paths?.[descriptor];
+      expect(expanded, `The supplied segment handle ${descriptor} has an exact descriptor`).toBeTruthy();
+      return [segmentId, expanded!];
+    }))]));
   expect(context.citation_catalog_fingerprint).toMatch(/^[a-f0-9]{64}$/);
-  expect(normalizationFingerprint(context.citation_segments)).toBe(context.citation_catalog_fingerprint);
+  expect(normalizationFingerprint(segments)).toBe(context.citation_catalog_fingerprint);
+  if (context.cohort_texts) {
+    const expanded = { ...context, citation_segments: segments };
+    delete expanded.cohort_texts;
+    delete expanded.cohort_segment_paths;
+    delete expanded.expanded_context_fingerprint;
+    expect(normalizationFingerprint(expanded)).toBe(context.expanded_context_fingerprint);
+  }
   return references.map(({ sourceId, valuePath }) => {
-    const offered = Object.entries(context.citation_segments[sourceId] ?? {}).filter(([, segment]) =>
+    const offered = Object.entries(segments[sourceId] ?? {}).filter(([, segment]) =>
       valuePath === undefined || JSON.stringify(Array.isArray(segment) ? segment : segment.value_path) === JSON.stringify(valuePath));
     expect(offered, "Select one explicitly provided source field reference").toHaveLength(1);
     expect(modelSources(call).some((source) => source.source_id === sourceId)).toBe(true);
@@ -166,7 +185,26 @@ type OccurrenceEvidence = Omit<CatalogContext["occurrences"][number],
 function catalogSource<T>(call: ExternalCall, sourceId: string): T {
   const source = modelSources(call).find((row) => row.source_id === sourceId);
   expect(source, `The actual request owns source ${sourceId}`).toBeTruthy();
-  return JSON.parse(source!.text) as T;
+  const context = call.body["context"] as CatalogContext;
+  const expand = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(expand);
+    if (value !== null && typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      if (Object.keys(record).length === 1 && typeof record["$text"] === "string") {
+        const text = context.cohort_texts?.[record["$text"]];
+        expect(typeof text, "A cohort text reference must resolve in the actual request").toBe("string");
+        return text;
+      }
+      return Object.fromEntries(Object.entries(record).map(([key, entry]) => [key, expand(entry)]));
+    }
+    return value;
+  };
+  const value = expand(JSON.parse(source!.text));
+  if (context.cohort_texts) {
+    const expandedText = JSON.stringify(canonicalValue(value));
+    expect(normalizationFingerprint(expandedText)).toBe(context.citation_source_fingerprints[sourceId]);
+  }
+  return value as T;
 }
 
 export function catalogMemberMeaning(call: ExternalCall, memberId: string): CatalogMeaning {
@@ -245,7 +283,9 @@ export const occurrenceRoots = (value: CatalogSlots) => Object.entries(value.dem
 /** Authors supply the complete semantic partition. Only live IDs, supplied
  * independent handles and verbatim citation selections are joined here. */
 export function catalogNormalization(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]): CatalogSlots {
-  return normalizationSlots(call, capabilities, demands, NORMALIZATION_PROMPT_VERSION);
+  const prompt = call.body["prompt_version"] === COHORT_NORMALIZATION_PROMPT_VERSION
+    ? COHORT_NORMALIZATION_PROMPT_VERSION : NORMALIZATION_PROMPT_VERSION;
+  return normalizationSlots(call, capabilities, demands, prompt);
 }
 
 /** Exact v5 transport while an actual pinned predecessor is running. */

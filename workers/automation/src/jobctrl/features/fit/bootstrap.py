@@ -11,6 +11,7 @@ from .service import FitService
 from .storage import FitStore
 from .association_storage import SCHEMA as ASSOCIATION_SCHEMA
 from .current_wording_storage import SCHEMA as CURRENT_WORDING_SCHEMA
+from .cohort_storage import SCHEMA as COHORT_SCHEMA
 
 
 def build_feature(runtime: Runtime, **ports) -> Feature:
@@ -20,6 +21,7 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
     runtime.database.initialize_feature("fit_refresh", REFRESH_SCHEMA)
     runtime.database.initialize_feature("fit_associations", ASSOCIATION_SCHEMA)
     runtime.database.initialize_feature("fit_current_wordings", CURRENT_WORDING_SCHEMA)
+    runtime.database.initialize_feature("fit_initial_cohort_v1", COHORT_SCHEMA)
     store = FitStore(runtime.database, runtime.events, profile, requirements, runtime.settings)
     service = FitService(store=store, model=runtime.model,
                          profile=profile, requirements=requirements, settings=runtime.settings)

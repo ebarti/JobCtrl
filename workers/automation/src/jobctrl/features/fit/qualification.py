@@ -16,6 +16,8 @@ from .models import (
     QualificationBatchDecision,
 )
 from .context_transport import TRANSPORT_INSTRUCTIONS, encode_context
+from .cohort_citations import (RESPONSE_INSTRUCTIONS, RESPONSE_VERSION, CohortQualificationBatch,
+                               bind_cohort_citations, citation_inventory)
 from .sources import (
     achievement_inventory, achievements, dto, evidence_category, evidence_refs,
     fact_sources, fingerprint, permitted_facts, qualification_fingerprint,
@@ -88,7 +90,8 @@ class Qualification:
             current.update({qualification_key(row): row for row in published})
         return [current[qualification_key(row)] for row in requirements], reused
 
-    async def candidates(self, profile_snapshot, requirements: list[dict], *, model=None, request_policy=None):
+    async def candidates(self, profile_snapshot, requirements: list[dict], *, model=None, request_policy=None,
+                         cohort_operation_id=None):
         """Prepare one complete source-bound batch; the caller owns atomic publication."""
         if not requirements:
             return []
@@ -121,17 +124,29 @@ class Qualification:
             "achievements": [{"achievement_id": ident, "role_id": row["role_id"], "source_refs": row.get("source_refs", [])}
                              for ident, row in inventory.items()],
         }
+        schema = QualificationBatchDecision
+        instructions = QUALIFICATION_INSTRUCTIONS + TRANSPORT_INSTRUCTIONS
+        if cohort_operation_id is not None:
+            schema = CohortQualificationBatch
+            instructions += RESPONSE_INSTRUCTIONS
+            context = {**context, "cohort_citation_version": RESPONSE_VERSION, "cohort_citation_sources": citation_inventory(sources)}
         context, transport_binding = encode_context(context, sources)
-        request = {"operation": "fit.qualification-batch", "instructions": QUALIFICATION_INSTRUCTIONS + TRANSPORT_INSTRUCTIONS,
-                   "sources": sources, "context": context, "response_schema": QualificationBatchDecision.model_json_schema(),
+        request = {"operation": "fit.qualification-batch", "instructions": instructions,
+                   "sources": sources, "context": context, "response_schema": schema.model_json_schema(),
                    "prompt_version": QUALIFICATION_PROMPT_VERSION, "lane": "scoring"}
         if request_policy is not None:
             request, transport_binding = request_policy(request, transport_binding)
         result, provenance = await decide(
-            authority_model, schema=QualificationBatchDecision,
+            authority_model, schema=schema,
             **{key: request[key] for key in ("operation", "instructions", "sources", "context", "prompt_version")},
         )
-        self._verify_batch_receipt(authority_model, result, provenance)
+        self._verify_batch_receipt(authority_model, result, provenance, schema=schema)
+        citation_bindings = {}
+        if cohort_operation_id is not None:
+            result, bindings = bind_cohort_citations(result, sources, context["cohort_citation_sources"])
+            citation_bindings = {qualification_key(row.model_dump()):
+                {"cohort_operation_id": cohort_operation_id, "cohort_citation_binding": binding}
+                for row, binding in zip(result.requirements, bindings, strict=True)}
         if transport_binding is not None:
             provenance = {**provenance, "context_transport_binding": transport_binding}
         returned = [qualification_key(row.model_dump()) for row in result.requirements]
@@ -143,13 +158,14 @@ class Qualification:
                           requirement_source_id="requirement:" + key)
         decisions = {qualification_key(row.model_dump()): row for row in result.requirements}
         return [self._record(profile, qualification_fingerprint(profile, requirement, facts), facts, requirement,
-                             decisions[qualification_key(requirement)], provenance) for requirement in requirements]
+                             decisions[qualification_key(requirement)], {**provenance, **citation_bindings.get(qualification_key(requirement), {})})
+                for requirement in requirements]
 
     @staticmethod
-    def _verify_batch_receipt(model, result, provenance):
+    def _verify_batch_receipt(model, result, provenance, *, schema=QualificationBatchDecision):
         try:
             receipt = model.receipt(provenance["receipt_id"])
-            canonical = QualificationBatchDecision.model_validate(receipt["value"])
+            canonical = schema.model_validate(receipt["value"])
             valid = (receipt.get("status") == "succeeded" and receipt.get("operation") == "fit.qualification-batch"
                      and receipt.get("prompt_version") == QUALIFICATION_PROMPT_VERSION
                      and all(receipt.get(key) == provenance.get(key) for key in (

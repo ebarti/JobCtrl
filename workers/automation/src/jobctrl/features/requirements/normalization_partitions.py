@@ -60,12 +60,16 @@ def partition_selection_schema(context):
     return _partition_selection_schema(context, offered_citations=True)
 
 
+def cohort_partition_schema(context):
+    return _partition_selection_schema(context, offered_citations=True, cohort=True)
+
+
 def partition_selection_schema_v5(context):
     """Exact historical v5 schema; never a fallback for a current response."""
     return _partition_selection_schema(context, offered_citations=False)
 
 
-def _partition_selection_schema(context, *, offered_citations):
+def _partition_selection_schema(context, *, offered_citations, cohort=False):
     member_ids = tuple(row["member_id"] for row in context["members"])
     occurrence_ids = tuple(row["occurrence_id"] for row in context["occurrences"])
     if len(set(member_ids)) != len(member_ids) or len(set(occurrence_ids)) != len(occurrence_ids):
@@ -85,6 +89,17 @@ def _partition_selection_schema(context, *, offered_citations):
         unresolved = create_model("UnresolvedSlot", __base__=(UnresolvedSlot, SlotValue),
                                   citations=(list[citation], Field(min_length=1)))
     capability = create_model("CapabilityGroup", __base__=(CapabilityGroup, SlotValue), **capability_fields)
+    if cohort:
+        retained = tuple(row["requirement_id"] for row in context["members"] if row["requirement_id"] is not None)
+        if retained:
+            capability = capability | create_model("RetainedCapability", __base__=SlotValue,
+                kind=(Literal["reuse"], ...), reuse_requirement_id=(_id_type("RetainedCapabilityId", retained), ...),
+                reason=(StrictStr, Field(min_length=1, max_length=6000)), citations=(list[citation], Field(min_length=1)))
+        signatures = tuple(row["demand_fingerprint"] for row in context["accepted_demands"])
+        if signatures:
+            demand = demand | create_model("RetainedDemand", __base__=SlotValue,
+                kind=(Literal["reuse"], ...), reuse_demand_fingerprint=(_id_type("RetainedDemandId", signatures), ...),
+                citations=(list[demand_citation], Field(min_length=1)))
     member_assignment = create_model("MemberAssignment", __base__=SlotValue,
         kind=(Literal["assigned"], ...), capability_group_id=(capability_id, ...))
     occurrence_assignment = create_model("OccurrenceAssignment", __base__=SlotValue,
@@ -108,9 +123,9 @@ def _partition_selection_schema(context, *, offered_citations):
         capability_groups=(capabilities, ...), demand_groups=(demands, ...), corrections=(list[correction], ...))
 
 
-def bind_partition_selection(selection, *, context):
+def bind_partition_selection(selection, *, context, expanded=None):
     """Join only declared assignments; never choose a representative or meaning."""
-    raw = selection.model_dump()
+    raw = selection.model_dump() if expanded is None else expanded
     _nonblank(raw)
     members = {row["member_id"]: row for row in context["members"]}
     occurrences = {row["occurrence_id"]: row for row in context["occurrences"]}
@@ -158,11 +173,14 @@ def bind_partition_selection(selection, *, context):
             **{key: correction[key] for key in ("unsupported_claim", "reason", "citations")}})
     intermediate = {"status": raw["status"], "catalog_revision": raw["catalog_revision"],
                     "capabilities": capabilities, "demands": demands, "corrections": corrections, "unresolved": []}
-    binding = {"binder_version": PARTITION_BINDER_VERSION, "raw_selection_fingerprint": fingerprint(raw),
+    binding = {"binder_version": PARTITION_BINDER_VERSION, "raw_selection_fingerprint": fingerprint(selection.model_dump()),
                "intermediate_fingerprint": fingerprint(intermediate), "member_groups": member_groups,
                "occurrence_groups": occurrence_groups, "demand_capabilities": demand_capabilities}
+    if expanded is not None:
+        binding["expanded_group_selection_fingerprint"] = fingerprint(expanded)
     return intermediate, binding
 
 
 def partition_binding_summary(binding):
-    return {key: binding[key] for key in ("binder_version", "raw_selection_fingerprint", "intermediate_fingerprint")}
+    return {key: binding[key] for key in ("binder_version", "raw_selection_fingerprint", "intermediate_fingerprint",
+                                          "expanded_group_selection_fingerprint") if key in binding}

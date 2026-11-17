@@ -11,6 +11,7 @@ from .model import RequirementModelAdapter
 from .repository import SqliteRequirementStore
 from .schema import SCHEMA
 from .normalization_schema import SCHEMA as NORMALIZATION_SCHEMA
+from .cohort_storage import SCHEMA as COHORT_SCHEMA
 from .normalization_domain import NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION
 from .service import RequirementsService
 
@@ -21,6 +22,7 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         raise AppError("requirements_jobs_required", "Requirements requires the public Jobs service.", 500)
     runtime.database.initialize_feature("requirements", SCHEMA)
     runtime.database.initialize_feature("requirements_normalization_v1", NORMALIZATION_SCHEMA)
+    runtime.database.initialize_feature("requirements_initial_cohort_v1", COHORT_SCHEMA)
     store = SqliteRequirementStore(runtime.database, runtime.events)
     service = RequirementsService(
         store, jobs, RequirementModelAdapter(runtime.model, store, jobs),

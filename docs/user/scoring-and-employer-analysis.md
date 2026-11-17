@@ -149,6 +149,16 @@ own citations and assessment identity. A missing, duplicate, foreign or invalid
 result refuses the batch without replacing accepted assessments or scores. An
 all-current set needs no qualification call.
 
+For a newly admitted search with up to ten new jobs, the fixed set shares this
+missing-set request after all of its Requirements producers have finished.
+Sharing requires the exact capability revision, normalized demand and factual
+source binding; different demands remain separate decisions. Accepted
+qualifications publish together under every included job's source guards.
+Individual scores then publish from those frozen qualifications without another
+model call. If sources change, the affected score fails stale instead of
+silently widening the batch or starting another assessment. Partial publication
+remains visible, and accepted scores stay available.
+
 Evidence stays within the category's permitted sources:
 
 | Posting demand | Permitted Profile evidence |

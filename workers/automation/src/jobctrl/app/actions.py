@@ -38,6 +38,7 @@ class Application:
         self.action_scopes = {}
         self.action_finalizers = {}
         self.action_versions = {}
+        self.action_admissions = {}
         for feature in features:
             for name, handler in feature.actions.items():
                 if name in self.actions or not name.startswith(feature.name + "."):
@@ -55,6 +56,10 @@ class Application:
                 if name not in feature.actions or not isinstance(version, str) or not version.strip():
                     raise ValueError(f"Invalid action contract version: {name}")
                 self.action_versions[name] = version
+            for name, admission in feature.action_admissions.items():
+                if name not in feature.actions or not callable(admission):
+                    raise ValueError(f"Invalid action admission: {name}")
+                self.action_admissions[name] = admission
         self._temporal = None
         self._temporal_lock = asyncio.Lock()
 
@@ -126,6 +131,9 @@ class Application:
                 "VALUES(?,?,?,?,?,?,?,?,?,?)",
                 (run_id, action, request_id or uuid.uuid4().hex, idempotency_key, digest, encoded, "pending", workflow_id, created, created),
             )
+            admission = self.action_admissions.get(action)
+            if admission is not None:
+                admission(run_id, payload, connection)
         return self.action_run(run_id)
 
     @staticmethod

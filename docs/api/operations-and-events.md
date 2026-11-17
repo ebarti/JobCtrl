@@ -26,6 +26,13 @@ failure with no new jobs keeps the action failed. Composite `ok` is true only
 when acquisition and assessment both completed successfully.
 Reduced Discovery-only compositions report `preparationAvailable: false`.
 
+In the complete app, newly admitted searches freeze a preparation policy in the
+action transaction. The preparation read exposes `executionPolicy` and the
+recorded `stagePlan`. For up to ten new jobs the plan records per-job extraction,
+shared normalization and qualification, then per-job score outcomes. Larger
+cohorts retain the prior per-job plan. The selected plan and cohort stay fixed
+on replay. Retries of shared work retain its original scope and call identities.
+
 New `discovery.search` requests freeze automatic source pagination. Legacy
 `resultsPerSite` settings/action fields and CLI `--results-per-site` are accepted
 for compatibility but cannot impose a provider-emission limit on a new search.

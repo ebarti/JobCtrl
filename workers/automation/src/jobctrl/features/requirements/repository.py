@@ -9,10 +9,11 @@ from jobctrl.app.errors import ConflictError, NotFoundError
 
 from .domain import CONTRACT_VERSION, MEANING_KEYS, RequirementError, canonical_json, current_contract, fingerprint, now
 from .normalization_storage import NormalizationStore
+from .cohort_storage import CohortStorage
 from .normalization_domain import NORMALIZATION_VERSION
 
 
-class SqliteRequirementStore(NormalizationStore):
+class SqliteRequirementStore(NormalizationStore, CohortStorage):
     def __init__(self, database, events):
         self.database = database
         self.events = events
@@ -270,6 +271,13 @@ class SqliteRequirementStore(NormalizationStore):
             with self.database.transaction() as connection:
                 return self.delete_job_data(job_id, connection)
         # Jobs owns deletion authorization and the enclosing transaction.
+        connection.execute("""
+            UPDATE requirements_cohort_operations SET state_json='{"status":"source_deleted"}'
+            WHERE json_extract(state_json,'$.request.job_id')=?
+               OR EXISTS(SELECT 1 FROM json_each(state_json,'$.prepared') WHERE json_extract(value,'$.job_id')=?)
+               OR EXISTS(SELECT 1 FROM json_each(state_json,'$.captured.accepted_heads') WHERE json_extract(value,'$.job_id')=?)
+               OR EXISTS(SELECT 1 FROM json_each(state_json,'$.captured.members') WHERE json_extract(value,'$.provenance.posting.job_id')=?)
+            """, (job_id, job_id, job_id, job_id))
         connection.execute("DELETE FROM requirements_occurrences WHERE job_id=?", (job_id,))
         connection.execute("DELETE FROM requirements_accepted WHERE job_id=?", (job_id,))
         connection.execute("DELETE FROM requirements_snapshots WHERE job_id=?", (job_id,))
@@ -343,8 +351,9 @@ class SqliteRequirementStore(NormalizationStore):
                  attempt["input_fingerprint"], now()),
             )
 
-    def accepted_action(self, attempt_id, input_fingerprint):
-        with self.read_session() as connection:
+    def accepted_action(self, attempt_id, input_fingerprint, connection=None):
+        from contextlib import nullcontext
+        with (self.read_session() if connection is None else nullcontext(connection)) as connection:
             attempt = connection.execute("SELECT * FROM requirements_attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
             if attempt is None:
                 return None

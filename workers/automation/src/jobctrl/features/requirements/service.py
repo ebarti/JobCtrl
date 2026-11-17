@@ -17,6 +17,7 @@ from .domain import (
 )
 from .ports import PostingReader, RequirementModel, RequirementStore
 from .normalization import CatalogNormalizationService
+from .cohort import RequirementsCohortService
 from .normalization_domain import NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION
 
 
@@ -28,7 +29,7 @@ def _never_cancelled() -> bool:
     return False
 
 
-class RequirementsService(CatalogNormalizationService):
+class RequirementsService(RequirementsCohortService, CatalogNormalizationService):
     def __init__(self, store: RequirementStore, jobs: PostingReader, model: RequirementModel):
         self.store = store
         self.jobs = jobs
