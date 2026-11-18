@@ -166,7 +166,12 @@ test("saved Job tabs and Requirements expose their read-only disclosures at desk
   }
   await page.goto(`/jobs/${seed.posting.job_id}?jobTab=application`);
   await expect(page.getByRole("heading", { name: "Synthetic Reliability Engineer", level: 1, exact: true })).toBeVisible();
-  await visitExpanded(page, testInfo, "requirement-detail", `/requirements?requirement=${encodeURIComponent(seed.requirements.requirements[0]!.requirement_id)}`, "Requirements library");
+  await visitExpanded(page, testInfo, "requirement-detail", `/requirements?requirement=${encodeURIComponent(seed.requirements.requirements[0]!.requirement_id)}`, "Requirements library", async () => {
+    const detail = page.getByRole("region", { name: "Requirement details", exact: true });
+    await detail.getByText("Source history and posting references", { exact: true }).click();
+    // The nested provenance disclosure only mounts when posting history arrives.
+    await expect(detail.getByText("Current posting reference", { exact: true })).toBeVisible();
+  });
   const overflowingDetailText = await page.locator(".requirements-library__detail").evaluate((detail) =>
     Array.from(detail.querySelectorAll<HTMLElement>("p, blockquote, footer, pre")).filter((element) =>
       element.getClientRects().length > 0 && element.scrollWidth > element.clientWidth + 1,
