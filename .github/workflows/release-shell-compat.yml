@@ -7,6 +7,11 @@ on:
       - ".github/workflows/release-shell-compat.yml"
       - "scripts/release-resume-pypi.sh"
   workflow_dispatch:
+    inputs:
+      installed_bundle:
+        description: Build and qualify an unsigned bundle from the selected ref
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,3 +34,44 @@ jobs:
           node-version: 22.21.1
       - name: Parse release recovery with the actual system Bash
         run: /bin/bash --noprofile --norc -n scripts/release-resume-pypi.sh
+
+  installed-bundle:
+    name: Build and qualify an unsigned macOS bundle
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.installed_bundle }}
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.21.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: 0.11.7
+      - name: Install locked workspace dependencies and Poppler
+        run: |
+          corepack pnpm install --frozen-lockfile
+          if ! command -v pdftoppm >/dev/null; then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install poppler
+          fi
+          pdftoppm -v
+      - name: Build the unsigned bundle and run installed qualification
+        run: |
+          node scripts/distribution-build.mjs real --output "$RUNNER_TEMP/unsigned" \
+            --build-id "local-qualification-${GITHUB_SHA}" \
+            --source-date-epoch "$(git show -s --format=%ct HEAD)"
+      - name: Retain the installed browser report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jobctrl-unsigned-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/unsigned/build-failure.json
+            /private/tmp/jobctrl-transform-1428/e2e-*/timings.json
+            /private/tmp/jobctrl-transform-1428/e2e-*/junit.xml
+            /private/tmp/jobctrl-transform-1428/e2e-*/playwright/**/error-context.md
+          if-no-files-found: ignore
+          retention-days: 7

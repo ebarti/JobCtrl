@@ -116,12 +116,12 @@ export async function captureExpanded(page: Page, testInfo: TestInfo, name: stri
         contentType: "image/png", body: await page.screenshot({ fullPage: true, animations: "disabled" }),
       });
     }
-    expect(geometry.scrollWidth, `${name} expanded content at ${width}px`).toBeLessThanOrEqual(width);
-    expect(geometry.disclosures.every((item) => item.open)).toBe(true);
-    expect(geometry.configuration.every((item) => item.expanded === "true")).toBe(true);
     await testInfo.attach(`${name}-${width}-expanded-geometry`, {
       contentType: "application/json", body: JSON.stringify({ opened, ...geometry }),
     });
+    expect(geometry.scrollWidth, `${name} expanded content at ${width}px`).toBeLessThanOrEqual(width);
+    expect(geometry.disclosures.filter((item) => !item.open), `${name} closed disclosures at ${width}px`).toEqual([]);
+    expect(geometry.configuration.filter((item) => item.expanded !== "true"), `${name} closed configuration at ${width}px`).toEqual([]);
     await testInfo.attach(`${name}-${width}-expanded-full`, {
       contentType: "image/png", body: await page.screenshot({ fullPage: true, animations: "disabled" }),
     });
@@ -134,12 +134,13 @@ export async function captureExpanded(page: Page, testInfo: TestInfo, name: stri
   }
 }
 
-export async function visitExpanded(page: Page, testInfo: TestInfo, name: string, path: string, heading: string) {
+export async function visitExpanded(page: Page, testInfo: TestInfo, name: string, path: string, heading: string, prepare?: () => Promise<void>) {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto(path);
   await ready(page, heading);
   await testInfo.attach(`${name}-1440-initial`, {
     contentType: "image/png", body: await page.screenshot({ animations: "disabled" }),
   });
+  await prepare?.();
   await captureExpanded(page, testInfo, name, heading);
 }

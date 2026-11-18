@@ -83,6 +83,10 @@ failed `[[ ... ]]` assertion in the system Bash; make the failure explicit.
 Unsigned preparation runs the full Chromium suite against the extracted
 runtime with bounded workers, a one-hour suite ceiling and the regular
 per-case deadlines. Poppler supplies the PDF image assertions on the QA runner.
+Download the installed qualification report when preparation fails. To reproduce
+the build and installed tests on a hosted Mac from a branch, dispatch
+`release-shell-compat.yml` with `installed_bundle=true`. The diagnostic job
+uses synthetic workspaces and runs before signing and publication.
 
 For the Python cutover, require explicit fresh-target Profile/source transfer
 integrity and legacy-admission refusal, plus target-to-target lifecycle proof
