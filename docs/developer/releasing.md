@@ -48,6 +48,11 @@ manifests. `scripts/release_check.py` owns the complete parity inventory. Update
 version-bound distribution fixture expectations; do not change unrelated SDK
 versions, historical notes, or registry locks.
 
+Publish any newly required Python dependencies through their owning repositories
+before locking their registry versions. The distribution audit reads the frozen
+requirements export and requires published version pins and SHA-256 hashes for
+the bundled runtime.
+
 Write `.github/releases/vVERSION.md` in the same PR. These exact bytes are audited,
 retained, published, and checked again by the workflow. Include user-visible
 highlights, meaningful fixes, provider/budget requirements, platform limits,
