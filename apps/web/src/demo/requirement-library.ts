@@ -78,20 +78,27 @@ export const DEMO_PLATFORM_DEMANDS = [
 export const DEMO_NORMALIZATION_VERSION = "requirements-capability-demand-v2";
 const DEMO_PLATFORM_REQUIREMENT = "requirement:v2:demo:platform";
 
+export function demoFitProfile(snapshot: DemoWorkspaceSnapshot) {
+  const saved = snapshot.state.features?.fitProfileSourceSignature;
+  const assessed = saved ? ProfileSchema.parse(JSON.parse(saved)) : null;
+  const profile = ProfileSchema.parse(snapshot.state.readModel.profile.config.profile);
+  const sections = ["experience_entries", "skill_categories", "education_entries", "language_entries"] as const;
+  const current = assessed !== null && !snapshot.state.features?.profileSourcesChanged
+    && sections.every((section) => stableDemoStringify(assessed.resume[section]) === stableDemoStringify(profile.resume[section]));
+  return { assessed, current, evidenceProfile: assessed ?? profile };
+}
+
 /** An authored per-job example; it never infers support from visitor edits. */
 export function demoPlatformDemandAssessment(snapshot: DemoWorkspaceSnapshot, jobId: string) {
   const demand = DEMO_PLATFORM_DEMANDS.find((item) => item.jobId === jobId);
   if (!demand) return null;
-  const signature = snapshot.state.features?.fitProfileSourceSignature;
-  const assessed = signature ? ProfileSchema.parse(JSON.parse(signature)) : null;
+  const { assessed, current } = demoFitProfile(snapshot);
   const evidence = assessed?.resume.experience_entries.flatMap((role) => {
     const index = role.achievement_ids?.indexOf(DEMO_PLATFORM_ACHIEVEMENT) ?? -1;
     return index < 0 || !role.bullets[index] ? [] : [{ source_id: `achievement:${DEMO_PLATFORM_ACHIEVEMENT}`, revision: 1, quote: role.bullets[index]! }];
   }) ?? [];
   const matched = demand.kind === "matched" && evidence.length > 0;
-  const kind = !signature ? "not_assessed" : demand.kind === "missing" ? "missing" : matched ? "matched" : "not_assessed";
-  const current = Boolean(signature && !snapshot.state.features?.profileSourcesChanged
-    && signature === stableDemoStringify(snapshot.state.readModel.profile.config.profile));
+  const kind = !assessed ? "not_assessed" : demand.kind === "missing" ? "missing" : matched ? "matched" : "not_assessed";
   return {
     contract_version: "requirements-v2" as const,
     assessment_id: `demo:assessment:v2:${demand.jobId}:reusable:${demand.index}`,
@@ -105,7 +112,7 @@ export function demoPlatformDemandAssessment(snapshot: DemoWorkspaceSnapshot, jo
       : "Authored synthetic illustration: the saved example sources are unavailable; no model assessment ran.",
     origin: "bundled_synthetic_example" as const, determination_id: `demo:bundled-synthetic:v2:${demand.jobId}`,
     provenance: { kind: "bundled_synthetic_example", synthetic: true, model_called: false },
-    current, stale_reasons: current ? [] : [signature ? "profile_facts_changed" : "profile_sources_unavailable"],
+    current, stale_reasons: current ? [] : [assessed ? "profile_facts_changed" : "profile_sources_unavailable"],
   };
 }
 
@@ -236,10 +243,8 @@ export function demoAssociationView(
 export function demoRequirementLibrary(snapshot: DemoWorkspaceSnapshot) {
   const library = demoWordingLibrary(snapshot);
   const associations = demoRequirementAssociations(snapshot).rows;
-  const signature = snapshot.state.features?.fitProfileSourceSignature;
-  const assessedProfile = ProfileSchema.parse(signature ? JSON.parse(signature) : snapshot.state.readModel.profile.config.profile);
-  const skills = assessedProfile.resume.skill_categories.find((item) => item.id === "demo:skills:delivery");
-  const current = !snapshot.state.features?.profileSourcesChanged && signature === stableDemoStringify(snapshot.state.readModel.profile.config.profile);
+  const { current, evidenceProfile } = demoFitProfile(snapshot);
+  const skills = evidenceProfile.resume.skill_categories.find((item) => item.id === "demo:skills:delivery");
   return {
     contract_version: "requirements-v2",
     profile_id: "default",

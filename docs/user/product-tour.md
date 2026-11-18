@@ -290,6 +290,6 @@ proof of live-provider behavior. Reading the walkthrough never grants a network
 or mutation permission. See the [demo data boundary](data-and-safety.md#public-demo).
 Its typed examples distinguish reusable Skills/Professional Experience from
 job-local Education/Languages and keep authored Language / Proficiency entries
-in the synthetic Profile. Those examples and formula displays illustrate source
-behavior; they do not establish a new hosted deployment or real-provider
-assessment quality.
+in the synthetic Profile. The matching walkthrough shows first assessment during
+search, preservation of the full saved posting on rediscovery, and the saved
+Fit score staying current when the same source demands are regrouped.

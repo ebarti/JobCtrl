@@ -150,6 +150,13 @@ test("demo tour retains local exact wording approval, durable edits and a real a
   await expect(page.getByText("Profile saved", { exact: true })).toBeVisible();
   await page.reload();
   await expect(fullName).toHaveValue(editedProfileName);
+  await page.goto("/requirements");
+  const unchangedMatch = page.getByRole("row").filter({
+    has: page.getByRole("button", { name: "Open Platform delivery leadership: View details", exact: true }),
+  });
+  await expect(unchangedMatch.getByRole("cell", { name: /^Varies by job/ })).toBeVisible();
+  await page.goto("/profile?section=personal");
+  await expect(fullName).toHaveValue(editedProfileName);
   await fullName.fill(originalName);
   await page.getByRole("button", { name: "Save changes", exact: true }).click();
   await expect(page.getByText("Profile saved", { exact: true })).toBeVisible();
@@ -292,9 +299,8 @@ test("demo tour retains local exact wording approval, durable edits and a real a
     const platformRow = savedRequirements.getByRole("row").filter({
       has: page.getByRole("button", { name: "Open Platform delivery leadership: View details", exact: true }),
     });
-    // The Profile name changed after the authored illustration was recorded.
-    // Two different demands do not make those stale outcomes current.
-    await expect(platformRow.getByRole("cell", { name: /^Needs update/ })).toBeVisible();
+    // The wording approval preserves the factual example and its two distinct outcomes.
+    await expect(platformRow.getByRole("cell", { name: /^Varies by job/ })).toBeVisible();
     await expect(platformRow.getByText("2 job-specific demands", { exact: true })).toBeVisible();
     await platformRow.click();
     const demands = page.getByRole("region", { name: "Job-specific demands", exact: true });
@@ -485,6 +491,8 @@ test("demo tour retains local exact wording approval, durable edits and a real a
     await expect(previous).toBeDisabled();
     await expect(walkthrough).toContainText("the complete incoming batch and the entire retained catalog");
     await expect(walkthrough).toContainText("The reusable catalog contains Skills and Professional Experience.");
+    await expect(walkthrough).toContainText("A search result with only a summary keeps the full posting you already saved.");
+    await expect(walkthrough).toContainText("Searches that save up to ten new jobs compare requirements together");
     await expect(walkthrough).toContainText("Direct education/language demands never enter the catalog or request achievement wording.");
     await expect(walkthrough).toContainText("Skills and experience cannot establish language proficiency.");
     await expect(walkthrough).toContainText("Posting 1:");
@@ -562,6 +570,14 @@ test("demo tour retains local exact wording approval, durable edits and a real a
     });
     await next.click();
     await expect(walkthrough).toContainText("Saved changes wait for review");
+    const regrouping = walkthrough.getByRole("button", { name: "Regroup existing requirements", exact: true });
+    await regrouping.click();
+    await expect(regrouping).toHaveAttribute("aria-pressed", "true");
+    await expect(walkthrough.getByRole("status")).toContainText("the 7/10 score stays current");
+    await testInfo.attach("demo-fit-regrouping-mobile", {
+      contentType: "image/png",
+      body: await walkthrough.screenshot(),
+    });
     await walkthrough
       .getByRole("button", { name: "Approved wording change", exact: true })
       .click();

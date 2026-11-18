@@ -285,15 +285,15 @@ use the updated formula, while bundled-installer installations use their signed
 release channel. Pulling source changes does not publish an update to installed
 users.
 
-For Homebrew installations, `brew upgrade ebarti/tap/jobctrl` updates the
-formula while retaining the existing workspace.
+For compatible Homebrew updates, `brew upgrade ebarti/tap/jobctrl` updates the
+formula and retains the workspace. Moving from v0.4.x to v0.5.0 follows the
+Profile transfer below.
 
-::: warning Python transformation is not yet released
-The accepted Python transformation uses a new workspace and deliberately
-preserves the full Profile and supporting sources only. Existing jobs, generated
-materials, workflow history and other non-Profile data are not migrated. The
-old workspace remains untouched; development and QA must not reset live user
-data. The target database has application ID `1245926228` and user version `1`.
+::: warning Moving from v0.4.x to the Python workspace
+JobCtrl v0.5.0 uses a fresh workspace and transfers the full Profile and
+supporting sources. Keep the previous workspace for jobs, applications,
+generated materials and workflow history. The target database has application
+ID `1245926228` and user version `1`.
 
 The source transition uses the explicit `profile-transfer` command with a
 read-only source, a nonexistent new target, a complete browser Profile sources
@@ -304,10 +304,27 @@ An installed cutover also needs a **separate fresh native runtime home** with no
 active release selection. Preserve both the old workspace and its native runtime
 home. The authenticated candidate installer must first stage into the new runtime
 home; its bundled Python performs the transfer, and the same installer then makes
-the first selection with `JOBCTRL_DIR` pointing to the new workspace. This is a
-release-qualified operation, not a command to run with today's published version.
+the first selection with `JOBCTRL_DIR` pointing to the new workspace. Use the
+signed v0.5.0 or later assets for that operation.
 The native installer supports `--stage-only --home`; the public install shell does
 not forward `--stage-only`.
+
+Run the transfer with the staged payload's bundled Python. Replace the paths
+with the staged payload, previous workspace, unused workspace path and exported
+browser source bundle.
+
+```bash
+JOBCTRL_RUNTIME_MODE=bundled JOBCTRL_PAYLOAD_DIR=/path/to/staged-payload \
+  /path/to/staged-payload/python/bin/python3 -I -B -m jobctrl profile-transfer \
+  --source /path/to/previous-workspace \
+  --target /path/to/fresh-workspace \
+  --browser-sources /path/to/browser-profile-sources.json \
+  --confirm-profile-only-reset
+```
+
+Confirm that the receipt reports `status: complete` and `sourcePreserved: true`
+before first selection. The [release guide](../developer/releasing.md#python-application-cutover-and-installed-qualification)
+describes staging and recovery in more detail.
 
 Only a verified, unused transfer may start without workflow history. First native
 selection consumes that permission once. If interrupted after consumption, keep

@@ -26,7 +26,7 @@ import {
   type DemoProfileVersion, type DemoProfileSourceVersion,
   type DemoWordingLibrary as WordingLibrary, type DemoWordingVariant as WordingVariant,
 } from "./profile-library.js";
-import { DEMO_NORMALIZATION_VERSION, DEMO_PLATFORM_DEMANDS, demoPlatformDemandAssessment,
+import { DEMO_NORMALIZATION_VERSION, DEMO_PLATFORM_DEMANDS, demoFitProfile, demoPlatformDemandAssessment,
   demoCanonicalRequirements, demoRequirementLibrary, demoRequirementAssociations, demoAssociationView,
   createDemoAssociation, reviseDemoAssociation, changeDemoAssociation, type DemoRequirementAssociations } from "./requirement-library.js";
 import type {
@@ -2060,14 +2060,13 @@ export class DemoFeatureHttpAdapter {
     const requirements = await this.requirements(snapshot, id);
     const example = postingExamples[id];
     if (!job || !example || !requirements) return {
-      contract_version: "requirements-v2", job_id: id, current: false, stale_reasons: [], score: null, coverage: null, synthetic: true,
+      contract_version: "requirements-v2", job_id: id, current: false, requirements_current: false,
+      qualifications_current: false, stale_reasons: [], score: null, coverage: null, synthetic: true,
     };
-    const signature = snapshot.state.features?.fitProfileSourceSignature;
-    const factsCurrent = !snapshot.state.features?.profileSourcesChanged && signature === stableDemoStringify(snapshot.state.readModel.profile.config.profile);
+    const { evidenceProfile: assessedProfile, current: factsCurrent } = demoFitProfile(snapshot);
     const current = factsCurrent && !job.scoreStaleness.isStale;
     // A fixed authored illustration keeps its original sources when visitors edit
     // their synthetic Profile. It never decides a match from edited prose.
-    const assessedProfile = ProfileSchema.parse(signature ? JSON.parse(signature) : snapshot.state.readModel.profile.config.profile);
     const sectionRef = (section: string, record: { id: string } | undefined) => record ? [{
       source_id: `demo:profile-section:${section}:${record.id}`, revision: 1, quote: JSON.stringify(record),
     }] : [];
@@ -2132,7 +2131,8 @@ export class DemoFeatureHttpAdapter {
     const computed = coverage === null ? null : Math.max(1, Math.min(10, 1 + Math.floor(9 * coverage + 0.5)));
     const score = job.scoreCorrection ? job.fitScore : computed;
     return {
-      contract_version: "requirements-v2", job_id: id, current, stale_reasons: current ? [] : [!factsCurrent ? "profile_facts_changed" : "saved_synthetic_assessment_stale"],
+      contract_version: "requirements-v2", job_id: id, current, requirements_current: true, qualifications_current: current,
+      stale_reasons: current ? [] : [!factsCurrent ? "profile_facts_changed" : "saved_synthetic_assessment_stale"],
       score: {
         contract_version: "requirements-v2", formula_version: "requirement-fit-v3-equal", policy_version: "requirement-fit-v3-equal",
         revision: job.scoreVersion ?? 1, score, computed_score: computed,

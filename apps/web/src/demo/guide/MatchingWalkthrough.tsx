@@ -13,7 +13,7 @@ import {
   DialogTrigger,
 } from "../../shared/ui/dialog.js";
 
-type EditExample = "fact" | "wording";
+type EditExample = "fact" | "wording" | "regroup";
 type UpdateExample = "completed" | "stopped" | "partial";
 type WordingExample = "approval" | "deferral";
 type DemoDestination = "job" | "profile" | "evidence";
@@ -77,6 +77,7 @@ export function MatchingWalkthrough({ jobId, onNavigate }: {
 
         {step === 0 ? <>
           <p data-typography="body">The reusable catalog contains Skills and Professional Experience. One source-bound comparison considers the complete incoming batch and the entire retained catalog, using each category, name and definition.</p>
+          <p data-typography="body">In the local app, Start search reports saved jobs and completed Fit assessments. Searches that save up to ten new jobs compare requirements together and reuse assessments where the inputs match. A search result with only a summary keeps the full posting you already saved.</p>
           <div className="grid gap-2 border border-border bg-muted/40 p-3">
             <p data-typography="label">Authored synthetic capability</p>
             <p data-typography="strong-body">Guide reliable platform delivery</p>
@@ -100,18 +101,22 @@ export function MatchingWalkthrough({ jobId, onNavigate }: {
         </> : null}
 
         {step === 1 ? <>
-          <p data-typography="body">Choose an example edit to see how saved changes affect matching.</p>
+          <p data-typography="body">Choose an example to see when Fit needs an update.</p>
           <div role="group" aria-label="Choose an example edit" className="flex flex-wrap gap-2">
             <Button type="button" size="sm" variant={edit === "fact" ? "default" : "outline"} aria-pressed={edit === "fact"} onClick={() => setEdit("fact")}>Fact or source edit</Button>
             <Button type="button" size="sm" variant={edit === "wording" ? "default" : "outline"} aria-pressed={edit === "wording"} onClick={() => setEdit("wording")}>Approved wording change</Button>
+            <Button type="button" size="sm" variant={edit === "regroup" ? "default" : "outline"} aria-pressed={edit === "regroup"} onClick={() => setEdit("regroup")}>Regroup existing requirements</Button>
           </div>
           <div className="grid gap-2 border border-border bg-muted/40 p-3" role="status">
             {edit === "fact" ? <>
               <p data-typography="label">Example: pending review</p>
               <p data-typography="body">A new saved fact, Education record or Language / Proficiency entry can affect an earlier unknown or missing match. The accepted assessment remains available until an explicit update. Each category uses its permitted source sections.</p>
-            </> : <>
+            </> : edit === "wording" ? <>
               <p data-typography="label">Example: wording coverage needs review</p>
               <p data-typography="body">Changing approved wording does not change person qualification or its score. Current exact coverage links are reused; new coverage waits for an explicit update.</p>
+            </> : <>
+              <p data-typography="label">Example: saved Fit stays current</p>
+              <p data-typography="body">The catalog combines designing recovery workflows and checking their readiness into one group. The posting and saved evidence are the same, so the 7/10 score stays current. New tailoring can assess the combined group when it needs that qualification.</p>
             </>}
           </div>
           <p data-typography="body">Saving a fact, source or wording decision does not itself run a model or regenerate a resume.</p>
