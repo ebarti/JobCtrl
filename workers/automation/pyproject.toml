@@ -131,7 +131,4 @@ default-groups = ["provider-runtime"]
 # as a relative timestamp would make an unchanged lockfile fail `uv --locked`
 # as time passes. Provider runtimes and the audited JobStreaming integration
 # retain their explicit reviewed cutoffs.
-exclude-newer-package = { "google-antigravity" = "2026-06-04T21:19:27Z", "claude-agent-sdk" = "2026-07-18T00:00:00Z", "jobstreaming" = "2026-08-29T23:59:59Z" }
-
-[tool.uv.sources]
-jobstreaming = { git = "https://github.com/ebarti/jobstreaming", rev = "b3c19b26b40a4283f4e4fc7e4246d2dee203a173" }
+exclude-newer-package = { "google-antigravity" = "2026-06-04T21:19:27Z", "claude-agent-sdk" = "2026-07-18T00:00:00Z", "jobstreaming" = "2026-11-18T08:43:00Z" }
