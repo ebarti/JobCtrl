@@ -279,6 +279,19 @@ jobs:
       - name: Build unsigned candidate
         run: node scripts/distribution-release.mjs prepare --output "$RUNNER_TEMP/pre-sign" --channel "$RELEASE_CHANNEL" --build-id "$RELEASE_BUILD_ID" --source-date-epoch "$SOURCE_DATE_EPOCH"
 
+      - name: Retain failed installed qualification evidence
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jobctrl-installed-qualification-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/pre-sign/build-failure.json
+            /private/tmp/jobctrl-transform-1428/e2e-*/timings.json
+            /private/tmp/jobctrl-transform-1428/e2e-*/junit.xml
+            /private/tmp/jobctrl-transform-1428/e2e-*/playwright/**/error-context.md
+          if-no-files-found: ignore
+          retention-days: 7
+
       - name: Package the prepared handoff
         run: |
           set -euo pipefail
