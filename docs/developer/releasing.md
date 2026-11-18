@@ -80,6 +80,10 @@ commands are retired; use the current [operational QA gates](../local-reliabilit
 and retain their real results. Do not rely on `set -e` alone to stop after a
 failed `[[ ... ]]` assertion in the system Bash; make the failure explicit.
 
+Unsigned preparation runs the full Chromium suite against the extracted
+runtime with bounded workers, a one-hour suite ceiling and the regular
+per-case deadlines. Poppler supplies the PDF image assertions on the QA runner.
+
 For the Python cutover, require explicit fresh-target Profile/source transfer
 integrity and legacy-admission refusal, plus target-to-target lifecycle proof
 with the pinned installed runtimes as documented in
