@@ -264,6 +264,8 @@ class JobQueries:
         state = "hidden" if job["hidden"] else "deleted" if job["deleted"] else (
             "closed" if job.get("active_state") in {"closed", "expired", "removed", "location_incompatible"} else "active")
         score = (fit or {}).get("score") or {}
+        score_available = not {"contract_changed", "unsupported_posting_language"}.intersection(
+            (fit or {}).get("stale_reasons", []))
         summary = (compensation or {}).get("summary") or {}
         audit = (compensation or {}).get("audit") or {}
         posted, market = summary.get("posted") or {}, summary.get("market") or {}
@@ -290,7 +292,7 @@ class JobQueries:
             status = application
         scalars = {"title": job.get("title") or None, "company": job.get("company") or None,
                    "location": job.get("location") or None, "source": job.get("source_id") or None,
-                   "job_state": state, "fit_score": score.get("score"),
+                   "job_state": state, "fit_score": score.get("score") if score_available else None,
                    "current_stage": status.get("stage"), "current_state": status.get("state"),
                    "discovered_at": job.get("created_at"), "scored_at": score.get("created_at"),
                    "compensation_min_eur": p_min, "compensation_max_eur": p_max, "compensation_posted": p_min,
@@ -300,6 +302,7 @@ class JobQueries:
                    or template.get("template_name") or effective.get("templateName")}
         extras = {"market_min": m_min, "market_max": m_max,
                   "confidence_score": number(market.get("confidenceScore")) if m_current else None,
+                  "fit_recorded": bool(score),
                   "fit_current": (fit or {}).get("current", False),
                   "keywords": (fit or {}).get("normalized_keywords", []),
                   "url": job.get("url", "")}
@@ -329,11 +332,11 @@ class JobQueries:
             return False
         if query.max_fit_score is not None and (score is None or score > query.max_fit_score):
             return False
-        if query.fit_state == "unassessed" and score is not None:
+        if query.fit_state == "unassessed" and extra["fit_recorded"]:
             return False
         if query.fit_state == "current" and not extra["fit_current"]:
             return False
-        if query.fit_state == "stale" and (score is None or extra["fit_current"]):
+        if query.fit_state == "stale" and (not extra["fit_recorded"] or extra["fit_current"]):
             return False
         if query.normalized_score_keyword and query.normalized_score_keyword not in extra["keywords"]:
             return False

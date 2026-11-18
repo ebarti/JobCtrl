@@ -107,8 +107,13 @@ def validate_settings(value):
     return result
 
 
-def search_units(settings, targets=None):
+SOURCE_FETCH_POLICY = "source-native-v1"
+
+
+def search_units(settings, targets=None, *, isolate_boards=False, source_fetch_policy=None):
     """Execute literal authored/provider queries; never generate meaning from words."""
+    if source_fetch_policy not in {None, SOURCE_FETCH_POLICY}:
+        raise ValueError("Unsupported frozen source fetch policy")
     queries = settings.get("queries") or (targets or {}).get("queries") or []
     locations = settings.get("locations") or (targets or {}).get("locations") or []
     result = []
@@ -132,17 +137,18 @@ def search_units(settings, targets=None):
                     or "jobstreaming:" + board in scope
                     or set(scope).intersection({"jobspy", "jobstreaming", "broad_boards"})
                 ],
-                "results_per_site": int(settings["resultsPerSite"]),
+                "results_per_site": None if source_fetch_policy == SOURCE_FETCH_POLICY else int(settings["resultsPerSite"]),
                 "hours_old": int(settings["hoursOld"]) or None,
                 "country_indeed": settings.get("countryIndeed", "usa"),
                 "linkedin_fetch_description": False,
                 "source_family": "broad_boards",
             }
-            if spec["sites"]:
-                result.append(
-                    {
-                        "unit_id": fingerprint({key: value for key, value in spec.items() if key != "source_family"}),
-                        **spec,
-                    }
-                )
+            selections = [[site] for site in spec["sites"]] if isolate_boards else [spec["sites"]]
+            for sites in selections:
+                if sites:
+                    board_spec = {**spec, "sites": sites}
+                    result.append({
+                        "unit_id": fingerprint({key: value for key, value in board_spec.items() if key != "source_family"}),
+                        **board_spec,
+                    })
     return list({unit["unit_id"]: unit for unit in result}.values())

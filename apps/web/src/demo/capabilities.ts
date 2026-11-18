@@ -6,6 +6,15 @@ const unavailable = (reason: string) => ({ class: "unavailable", reason }) as co
 
 export const DEMO_RESCORE_UNAVAILABLE_MESSAGE = "Rescoring is unavailable in the demo.";
 
+/** Feature-owned HTTP actions have no legacy ApiClientPort member. */
+export const DEMO_FEATURE_CAPABILITIES = {
+  prepareBaselineResume: local("Copies and renders the complete synthetic baseline in this browser; no worker or model provider is used."),
+  updateAffectedMatches: unavailable("The public demo has no model provider or local worker. Saved synthetic edits do not assess qualifications or wording coverage."),
+  selectCurrentWording: unavailable("A current requirement wording needs exact approved, assessed coverage in the local app. Manual links remain unassessed."),
+  discoverySearch: unavailable("Live job search needs the local worker and configured sources. The public demo makes no job-board request."),
+  placeLookup: unavailable("Place lookup is unavailable in the public demo; typed locations remain unverified."),
+} as const;
+
 /**
  * Every port member is deliberately classified before a demo adapter exists.
  * `satisfies` makes a newly added DemoApiClientPort member a compile-time failure.

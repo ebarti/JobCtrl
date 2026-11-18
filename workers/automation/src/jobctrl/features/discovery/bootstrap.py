@@ -171,7 +171,7 @@ def build_feature(runtime, *, jobs, profile=None, browser_port=None, **ports):
         return JSONResponse(await service.search(ActionContext(run_id=str(uuid4()), request_id=str(uuid4())), body))
 
     async def search_action(context, payload):
-        return await service.search(context, payload)
+        return {**await service.search(context, payload), "preparationAvailable": False}
 
     async def history_action(context, payload):
         return await service.propose_sources_from_history(payload.get("job_id") or payload.get("jobId"))
@@ -224,4 +224,7 @@ def build_feature(runtime, *, jobs, profile=None, browser_port=None, **ports):
             "discovery.refresh_targets": targets_action,
             "discovery.refresh_feedback": feedback_action,
         },
+        # Admission is atomic before planning or acquisition starts. Separate
+        # tabs, schedules and clients share one active search per workspace.
+        action_scopes={"discovery.search": lambda _payload: "workspace"},
     )

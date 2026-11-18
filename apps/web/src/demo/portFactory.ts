@@ -3,6 +3,15 @@ import { BrowserHttpAdapter } from "../shared/adapters/local/BrowserHttpAdapter.
 import { BrowserProfileTransferAdapter } from "../shared/adapters/local/BrowserProfileTransferAdapter.js";
 import { BrowserBlobDownloadAdapter } from "../shared/adapters/local/BrowserBlobDownloadAdapter.js";
 import { BrowserSessionStorageAdapter } from "../shared/adapters/local/BrowserSessionStorageAdapter.js";
+import { clearLearningDraftsForSession } from "../contexts/learning/index.js";
+import { clearSettingsDraftsForSession } from "../contexts/settings/index.js";
+import {
+  clearSearchPreferencesDraftsForSession,
+  clearProfileEditorDraftsForSession,
+  clearWordingDraftsForSession,
+} from "../contexts/profile/index.js";
+import { clearDiscoverySearchSettingsDraftsForSession } from "../contexts/discovery/index.js";
+import { clearResumeEditorDraftsForSession } from "../contexts/resumes/index.js";
 
 import { ConsoleTelemetryAdapter } from "../shared/adapters/local/ConsoleTelemetryAdapter.js";
 import { LocalSessionAdapter } from "../shared/adapters/local/LocalSessionAdapter.js";
@@ -26,6 +35,7 @@ import {
 import {
   DemoFeatureFlagAdapter,
   DemoSessionAdapter,
+  DemoSessionStorageAdapter,
   DemoStorageAdapter,
 } from "./ports.js";
 
@@ -34,6 +44,8 @@ export interface PortFactoryOptions {
   readonly apiBaseUrl?: string;
   readonly demoPreviewOpener?: DemoArtifactPreviewOpener;
   readonly demoTelemetry?: Ports["telemetry"];
+  /** Clear only the current demo composition's cache before reset subscribers remount. */
+  readonly onDemoWorkspaceReset?: () => void;
   readonly demoWorkspace?: Omit<DemoWorkspaceRepositoryOptions, "store"> & {
     readonly store?: DemoWorkspaceRepositoryOptions["store"];
   };
@@ -100,16 +112,67 @@ export async function createAppComposition(
   if (initialization.kind === "ready") {
     await api.initialize();
   }
+  const storage = new DemoStorageAdapter(workspace);
+  const session = new DemoSessionAdapter();
+  const sessionStorage = new DemoSessionStorageAdapter();
+  let recoveryScope =
+    initialization.kind === "ready"
+      ? {
+          workspaceId: initialization.snapshot.workspaceId,
+          resetEpoch: initialization.snapshot.resetEpoch,
+        }
+      : undefined;
+  const syncRecoveryScope = () => {
+    if (recoveryScope) {
+      sessionStorage.setWorkspaceScope(
+        recoveryScope.workspaceId,
+        recoveryScope.resetEpoch,
+      );
+      storage.setWorkspaceScope(
+        recoveryScope.workspaceId,
+        recoveryScope.resetEpoch,
+        workspace.getRuntimeSnapshot().storageMode === "indexeddb",
+      );
+    }
+  };
+  syncRecoveryScope();
+  const unsubscribeStorage = workspace.subscribe((notification) => {
+    if (notification.kind === "reset") {
+      options.onDemoWorkspaceReset?.();
+      recoveryScope = {
+        workspaceId: notification.workspaceId,
+        resetEpoch: notification.resetEpoch,
+      };
+      syncRecoveryScope();
+      const tenant = session.getSession().tenantId;
+      clearLearningDraftsForSession(session, tenant);
+      clearSettingsDraftsForSession(session, tenant);
+      clearProfileEditorDraftsForSession(session, tenant);
+      clearWordingDraftsForSession(session, tenant);
+      clearSearchPreferencesDraftsForSession(session, tenant);
+      clearDiscoverySearchSettingsDraftsForSession(session, tenant);
+      clearResumeEditorDraftsForSession(session, tenant);
+    }
+  });
+  const unsubscribeRecoveryRuntime =
+    workspace.subscribeRuntime(syncRecoveryScope);
   return {
     kind: "demo",
     ports: {
       http: new DemoHttpAdapter(api, workspace),
+      places: {
+        async search() {
+          throw new Error(
+            "Place lookup is unavailable in the demo. Your location remains unverified.",
+          );
+        },
+      },
       blobDownload: new BrowserBlobDownloadAdapter(),
       requestIdentity: new BrowserRequestIdentityAdapter(),
       eventStream: new DemoWorkspaceEventStreamAdapter(workspace),
-      storage: new DemoStorageAdapter(),
-      session: new DemoSessionAdapter(),
-      sessionStorage: new BrowserSessionStorageAdapter("demo"),
+      storage,
+      session,
+      sessionStorage,
       clipboard: new NavigatorClipboardAdapter(),
       pdfExport: new BrowserPdfExportAdapter(),
       telemetry: options.demoTelemetry ?? new ConsoleTelemetryAdapter(),
@@ -118,6 +181,8 @@ export async function createAppComposition(
     workspace,
     initialization,
     dispose: () => {
+      unsubscribeStorage();
+      unsubscribeRecoveryRuntime();
       api.dispose();
       workspace.dispose();
     },

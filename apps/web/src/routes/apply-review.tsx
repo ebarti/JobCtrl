@@ -1,7 +1,10 @@
 import { prefetchApplicationQueue } from "../contexts/apply/index.js";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 
-import { ApplyReviewView } from "../views/apply-review/ApplyReviewView.js";
+import {
+  ApplyReviewView,
+  type ApplicationReviewTab,
+} from "../views/apply-review/ApplyReviewView.js";
 import {
   applyReviewSearchSchema,
   type ApplyReviewSearch,
@@ -27,10 +30,19 @@ function ApplyReviewRoute() {
     });
   };
 
+  const setTab = (tab: ApplicationReviewTab) => {
+    void navigate({
+      replace: true,
+      search: (prev: ApplyReviewSearch) => ({ ...prev, tab }),
+    });
+  };
+
   return (
     <ApplyReviewView
       targetJobKey={search.jobKey ?? null}
       onTargetJobKeyChange={setSelectedJobKey}
+      targetTab={search.tab ?? "resume"}
+      onTargetTabChange={setTab}
     />
   );
 }

@@ -32,7 +32,7 @@ test("uncertain submission keeps one durable intent and never sends twice after 
   api,
   app,
   page,
-}) => {
+}, testInfo) => {
   const { library } = await createBaseline(api);
   const posting = await createPosting(api, "uncertain-email");
   await qualifyPosting(api, app, posting, library);
@@ -73,6 +73,28 @@ test("uncertain submission keeps one durable intent and never sends twice after 
       .coverage,
   ).toBe("full");
   expect(app.external.sends).toHaveLength(0);
+
+  // Inspect the already-recorded synthetic rehearsal before any email action.
+  // This is a read-only route and opens its retained result for both layouts.
+  await page.goto(`/jobs/${encodeURIComponent(posting.job_id)}/run/${encodeURIComponent(rehearsed.runId)}`);
+  const timeline = page.getByRole("region", { name: "Application action history", exact: true });
+  await expect(timeline.getByRole("list", { name: "Application run timeline", exact: true })).toBeVisible();
+  await expect(timeline).toContainText(rehearsed.runId);
+  await timeline.getByText("Recorded application result", { exact: true }).click();
+  await expect(timeline.locator("details > pre")).toBeVisible();
+  const originalViewport = page.viewportSize();
+  expect(originalViewport).not.toBeNull();
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await expect(timeline.locator("details > pre")).toBeVisible();
+    await testInfo.attach(`application-rehearsal-timeline-expanded-${width}`, {
+      contentType: "image/png",
+      body: await page.screenshot({ fullPage: true, animations: "disabled" }),
+    });
+  }
+  await page.setViewportSize(originalViewport!);
+  expect(app.external.sends).toHaveLength(0);
+
   const afterRehearsal = (
     await json<{ application: Application }>(
       api,
@@ -230,7 +252,7 @@ test("uncertain submission keeps one durable intent and never sends twice after 
       )
       .digest("hex"),
   ).toBe(createHash("sha256").update(pdf).digest("hex"));
-  await page.goto(`/jobs/${posting.job_id}`);
+  await page.goto(`/jobs/${posting.job_id}?jobTab=application`);
   await expect(
     page.getByText(/needs.verification|Needs verification/i).first(),
   ).toBeVisible();

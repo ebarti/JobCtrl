@@ -113,6 +113,7 @@ interface ProviderFormProps {
   environmentManagedKeys?: readonly CredentialKey[];
   inspectionBlocked?: boolean;
   secretStorageAvailable?: boolean;
+  onSecretDraftChange?: (hasSecret: boolean) => void;
 }
 
 export function ClaudeProviderForm({
@@ -121,6 +122,7 @@ export function ClaudeProviderForm({
   environmentManagedKeys = [],
   inspectionBlocked = false,
   secretStorageAvailable = true,
+  onSecretDraftChange,
 }: ProviderFormProps) {
   const update = useUpdateCredentialsBatchMutation();
   const fence = useCredentialEditFence();
@@ -129,6 +131,7 @@ export function ClaudeProviderForm({
   const [removalOpen, setRemovalOpen] = useState(false);
   const [removalError, setRemovalError] = useState("");
   const effectiveMode = claudeModeFromStatus(currentMode);
+  useEffect(() => () => onSecretDraftChange?.(false), [onSecretDraftChange]);
   const environmentManaged = activeModeManagedByEnvironment(
     effectiveMode,
     environmentManagedKeys,
@@ -183,7 +186,10 @@ export function ClaudeProviderForm({
           .some((field) => formApi.state.values[field] !== submittedValues[field]);
         fence.accept(saved.revision, changed);
         if (request.operations.some((operation) => operation.operation === "set" && operation.key === "ANTHROPIC_API_KEY")
-          && formApi.getFieldValue("apiKey") === submittedValues.apiKey) formApi.setFieldValue("apiKey", "");
+          && formApi.getFieldValue("apiKey") === submittedValues.apiKey) {
+          formApi.setFieldValue("apiKey", "");
+          onSecretDraftChange?.(false);
+        }
         if (request.operations.some((operation) => operation.operation === "set" && operation.key === "GOOGLE_APPLICATION_CREDENTIALS")
           && formApi.getFieldValue("googleApplicationCredentials") === submittedValues.googleApplicationCredentials) formApi.setFieldValue("googleApplicationCredentials", "");
         const statusChanged = modeBaseline.current.version !== baselineVersion;
@@ -233,7 +239,10 @@ export function ClaudeProviderForm({
       }
       const saved = await update.mutateAsync(fence.request(request));
       fence.accept(saved.revision, form.getFieldValue("apiKey") !== inputAtRemoval);
-      if (form.getFieldValue("apiKey") === inputAtRemoval) form.setFieldValue("apiKey", "");
+      if (form.getFieldValue("apiKey") === inputAtRemoval) {
+        form.setFieldValue("apiKey", "");
+        onSecretDraftChange?.(false);
+      }
       setRemovalOpen(false);
       setMessage("Claude provider settings removed. Newly started actions use the updated configuration; launch-environment overrides remain authoritative.");
     } catch (error) {
@@ -277,7 +286,7 @@ export function ClaudeProviderForm({
                     disabled={!secretStorageAvailable || environmentManagedKeys.includes("ANTHROPIC_API_KEY")}
                     value={field.state.value}
                     onBlur={field.handleBlur}
-                    onChange={field.handleChange}
+                    onChange={(value) => { field.handleChange(value); onSecretDraftChange?.(value.length > 0); }}
                   />
                 )}
               </form.Field>
@@ -412,6 +421,7 @@ export function GoogleProviderForm({
   environmentManagedKeys = [],
   inspectionBlocked = false,
   secretStorageAvailable = true,
+  onSecretDraftChange,
 }: ProviderFormProps) {
   const update = useUpdateCredentialsBatchMutation();
   const fence = useCredentialEditFence();
@@ -420,6 +430,7 @@ export function GoogleProviderForm({
   const [removalOpen, setRemovalOpen] = useState(false);
   const [removalError, setRemovalError] = useState("");
   const effectiveMode = googleModeFromStatus(currentMode);
+  useEffect(() => () => onSecretDraftChange?.(false), [onSecretDraftChange]);
   const environmentManaged = activeModeManagedByEnvironment(
     effectiveMode,
     environmentManagedKeys,
@@ -470,7 +481,10 @@ export function GoogleProviderForm({
           .some((field) => formApi.state.values[field] !== submittedValues[field]);
         fence.accept(saved.revision, changed);
         if (request.operations.some((operation) => operation.operation === "set" && operation.key === "GEMINI_API_KEY")
-          && formApi.getFieldValue("apiKey") === submittedValues.apiKey) formApi.setFieldValue("apiKey", "");
+          && formApi.getFieldValue("apiKey") === submittedValues.apiKey) {
+          formApi.setFieldValue("apiKey", "");
+          onSecretDraftChange?.(false);
+        }
         if (request.operations.some((operation) => operation.operation === "set" && operation.key === "GOOGLE_APPLICATION_CREDENTIALS")
           && formApi.getFieldValue("googleApplicationCredentials") === submittedValues.googleApplicationCredentials) formApi.setFieldValue("googleApplicationCredentials", "");
         const statusChanged = modeBaseline.current.version !== baselineVersion;
@@ -520,7 +534,10 @@ export function GoogleProviderForm({
       }
       const saved = await update.mutateAsync(fence.request(request));
       fence.accept(saved.revision, form.getFieldValue("apiKey") !== inputAtRemoval);
-      if (form.getFieldValue("apiKey") === inputAtRemoval) form.setFieldValue("apiKey", "");
+      if (form.getFieldValue("apiKey") === inputAtRemoval) {
+        form.setFieldValue("apiKey", "");
+        onSecretDraftChange?.(false);
+      }
       setRemovalOpen(false);
       setMessage("Google provider settings removed. Newly started actions use the updated configuration; launch-environment overrides remain authoritative.");
     } catch (error) {
@@ -564,7 +581,7 @@ export function GoogleProviderForm({
                     disabled={!secretStorageAvailable || environmentManagedKeys.includes("GEMINI_API_KEY")}
                     value={field.state.value}
                     onBlur={field.handleBlur}
-                    onChange={field.handleChange}
+                    onChange={(value) => { field.handleChange(value); onSecretDraftChange?.(value.length > 0); }}
                   />
                 )}
               </form.Field>

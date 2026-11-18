@@ -1,0 +1,909 @@
+import type { APIRequestContext } from "@playwright/test";
+import {
+  test,
+  expect,
+  json,
+  modelCall,
+  action,
+  completed,
+  terminal,
+  type ApplicationStack,
+} from "../harness/fixtures.js";
+import { createPosting, type Library, type Profile, type Posting } from "./core-data.js";
+import {
+  createScoredFit,
+  groupedCoverageDecision,
+  impactPartition,
+  qualificationBatchDecision,
+  refreshPayload,
+  startRefresh,
+  type FitState,
+  type GroupedCoverageContext,
+  type ImpactContext,
+  type PendingRefresh,
+  type RefreshOperation,
+} from "./fit-data.js";
+import {
+  catalogMatching,
+  citeSources,
+  modelSources,
+  typedExtraction,
+} from "./requirements-data.js";
+
+const modelOperations = (app: ApplicationStack, since = 0) =>
+  app.external.calls
+    .slice(since)
+    .filter((call) => call.path === "/model")
+    .map((call) => call.body["operation"]);
+const pendingRefresh = (api: APIRequestContext) =>
+  json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending");
+const operation = (api: APIRequestContext, runId: string) =>
+  json<RefreshOperation>(api, "get", `/v1/fit/refresh/operations/${runId}`);
+
+async function saveRoleSummary(api: APIRequestContext, label: string) {
+  const current = await json<Profile>(api, "get", "/v1/profile");
+  return json<Profile>(api, "patch", "/v1/profile", {
+    expectedProfileVersion: current.profileVersion,
+    profile: {
+      ...current.profile,
+      resume: { ...current.profile.resume, experience_entries: current.profile.resume.experience_entries.map((row, index) => index === 0 ? { ...row, summary: `Maintained services with reviewed recovery evidence: ${label}.` } : row) },
+    },
+  });
+}
+
+async function saveOwnership(api: APIRequestContext) {
+  const current = await json<Profile>(api, "get", "/v1/profile");
+  const profile = structuredClone(current.profile);
+  profile.resume.experience_entries[0]!.bullets[1] =
+    "Established explicit review ownership for operational changes and retained the review receipts.";
+  return json<Profile>(api, "patch", "/v1/profile", {
+    expectedProfileVersion: current.profileVersion,
+    profile,
+  });
+}
+
+test("Profile manually updates the previously missing match, reuses unaffected authority and leaves wording approval explicit", async ({
+  page,
+  api,
+  app,
+}, testInfo) => {
+  const seed = await createScoredFit(api, app, "manual-profile", {
+    twoRequirements: true,
+    missingOwnership: true,
+  });
+  const recoveryId = seed.requirements.requirements[0]!.requirement_id;
+  const ownershipId = seed.requirements.requirements[1]!.requirement_id;
+  const recoveryAchievement = seed.library.roles[0]!.achievements[0]!;
+  const ownershipAchievement = seed.library.roles[0]!.achievements[1]!;
+  const savedFit = await json<{ score: { assessments: { text: string; rationale: string }[] }; coverage: { wording_gaps: { requirement_id: string; status: string }[] } }>(
+    api, "get", `/v1/jobs/${seed.posting.job_id}/fit`,
+  );
+  const savedRequirements = savedFit.score.assessments;
+  expect(savedFit.coverage.wording_gaps.map(({ requirement_id, status }) => ({ requirement_id, status }))).toEqual([
+    { requirement_id: recoveryId, status: "current_wording_not_selected" },
+  ]);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto(`/jobs/${seed.posting.job_id}`);
+  const fitPanel = page.getByRole("region", { name: "Person fit", exact: true });
+  const requirementRows = fitPanel.getByRole("article");
+  await expect(requirementRows).toHaveCount(2);
+  await expect(requirementRows.nth(0)).toContainText("Matched");
+  await expect(requirementRows.nth(1)).toContainText("Missing");
+  for (const [index, assessment] of savedRequirements.entries())
+    await expect(requirementRows.nth(index).getByRole("heading")).toHaveText(assessment.text);
+  const unassessedWording = fitPanel.getByText(
+    "No approved achievement-wording coverage has been recorded for this result. This does not establish a wording gap.",
+    { exact: true },
+  );
+  await expect(unassessedWording).toHaveCount(0);
+  await expect(fitPanel.getByText("Current wording not selected", { exact: true })).toBeHidden();
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await testInfo.attach(`person-fit-result-${viewport.width}`, {
+      contentType: "image/png",
+      body: await fitPanel.screenshot({ animations: "disabled" }),
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  const coveragePanel = fitPanel.getByRole("region", { name: "Approved wording coverage", exact: true });
+  const gapDetails = coveragePanel.locator("summary").filter({ hasText: /^Wording gap details/ });
+  await gapDetails.click();
+  await expect(coveragePanel.getByText("Current wording not selected", { exact: true })).toBeVisible();
+  await expect(coveragePanel.getByText(savedRequirements[0]!.text, { exact: true })).toBeVisible();
+  await gapDetails.click();
+  const requirement = requirementRows.first();
+  await requirement.locator("summary").filter({ hasText: /^Evidence and assessment details$/ }).click();
+  await expect(requirement.locator(".fit-requirement__rationale")).toHaveText(
+    savedRequirements[0]!.rationale,
+  );
+  await expect(requirement).toContainText(recoveryAchievement.source_refs[0]!.source_id);
+  await expect(requirement).toContainText(seed.fit.score.assessments[0]!.determination_id);
+  await testInfo.attach("person-fit-result-expanded", {
+    contentType: "image/png",
+    body: await requirement.screenshot({ animations: "disabled" }),
+  });
+  await requirement.locator("summary").filter({ hasText: /^Correct this requirement assessment$/ }).click();
+  await expect(requirement.getByRole("combobox", { name: "Qualification", exact: true })).toHaveValue("matched");
+  const saveCorrection = requirement.getByRole("button", { name: "Save requirement correction", exact: true });
+  await expect(saveCorrection).toBeEnabled();
+  for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await saveCorrection.scrollIntoViewIfNeeded();
+    await testInfo.attach(`person-fit-correction-${viewport.width}`, {
+      contentType: "image/png",
+      body: await page.screenshot({ animations: "disabled" }),
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  expect((await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).score).toEqual(seed.fit.score);
+  const preparing = api.post(
+    `/v1/jobs/${seed.posting.job_id}/fit/coverage/refresh`,
+    {
+      data: { prepare_wording: false },
+    },
+  );
+  const oldCoverage = await modelCall(app, "fit.wording-coverage-grouped");
+  oldCoverage.reply(
+    groupedCoverageDecision(oldCoverage, {
+      evidenceSourceId: `evidence:${recoveryAchievement.source_refs[0]!.source_id}`,
+      status: "covered",
+      action: "reuse_approved",
+      reusableVariantId: recoveryAchievement.baseline_variant_id,
+    }),
+  );
+  expect((await preparing).status()).toBe(200);
+  const beforeEdits = app.external.calls.length;
+  await saveOwnership(api);
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto("/profile?section=personal");
+  await expect(page).toHaveURL(/\/profile\/?\?section=personal$/);
+  await expect(page).toHaveTitle(/JobCtrl/);
+  await page
+    .getByLabel("Full name", { exact: true })
+    .fill("Synthetic Manual Refresh Candidate");
+  const saved = page.waitForResponse(
+    (response) =>
+      response.url() === `${app.baseURL}/v1/profile` &&
+      response.request().method() === "PATCH",
+  );
+  await page.getByRole("button", { name: "Save changes", exact: true }).click();
+  expect((await saved).status()).toBe(200);
+  await page
+    .getByRole("navigation", { name: "My profile sections", exact: true })
+    .getByRole("link", { name: "Experience", exact: true })
+    .click();
+  const panel = page.getByRole("region", {
+    name: "Affected matches",
+    exact: true,
+  });
+  const start = panel.getByRole("button", {
+    name: "Update affected matches",
+    exact: true,
+  });
+  await expect(start).toBeEnabled();
+  await expect(panel).toContainText("Saved changes may affect matches.");
+  await panel.scrollIntoViewIfNeeded();
+  await testInfo.attach("manual-refresh-profile-desktop-ready", {
+    contentType: "image/png",
+    body: await page.screenshot(),
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await panel.scrollIntoViewIfNeeded();
+  await expect(start).toBeVisible();
+  await testInfo.attach("manual-refresh-profile-mobile-ready", {
+    contentType: "image/png",
+    body: await page.screenshot(),
+  });
+  expect(modelOperations(app, beforeEdits)).toEqual([]);
+
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await start.focus();
+  await expect(start).toBeFocused();
+  const admitted = page.waitForResponse(
+    (response) =>
+      response.url() === `${app.baseURL}/v1/actions/fit.refresh` &&
+      response.request().method() === "POST",
+  );
+  await start.press("Enter");
+  const admission = await admitted;
+  expect(admission.status(), await admission.text()).toBe(202);
+  const receipt = (await admission.json()) as { runId: string };
+  const request = admission.request();
+  const payload = request.postDataJSON() as ReturnType<typeof refreshPayload>;
+  const key = request.headers()["idempotency-key"]!;
+  expect(key).toBeTruthy();
+  expect(payload.job_ids).toEqual([seed.posting.job_id]);
+  const selection = await modelCall(app, "fit.catalog-impact");
+  const selectorContext = selection.body["context"] as ImpactContext;
+  expect(selectorContext.requirements).toHaveLength(2);
+  expect(
+    selectorContext.requirements.find(
+      (row) => row.requirement_id === ownershipId,
+    )!.prior_assessment_id,
+  ).toBe(
+    seed.fit.score.assessments.find(
+      (row) => row.requirement_id === ownershipId,
+    )!.assessment_id,
+  );
+  expect((await operation(api, receipt.runId)).counters.model_calls).toBe(1);
+  await expect(panel).toContainText("Update in progress.");
+  await expect(
+    panel.getByRole("button", { name: "Request cancellation", exact: true }),
+  ).toBeVisible();
+  await panel.scrollIntoViewIfNeeded();
+  await testInfo.attach("manual-refresh-profile-running", {
+    contentType: "image/png",
+    body: await page.screenshot(),
+  });
+  selection.reply(
+    impactPartition(selection, {
+      [recoveryId]: "unchanged",
+      [ownershipId]: "affected",
+    }),
+  );
+  const qualification = await modelCall(app, "fit.qualification-batch");
+  expect(
+    (qualification.body["context"] as { requirements: { requirement_id: string }[] })
+      .requirements.map((row) => row.requirement_id),
+  ).toEqual([ownershipId]);
+  qualification.reply(
+    qualificationBatchDecision(qualification, () => ({
+      achievementIds: [ownershipAchievement.achievement_id],
+      evidenceSourceIds: [
+        `evidence:${ownershipAchievement.source_refs[0]!.source_id}`,
+      ],
+    })),
+  );
+  const coverage = await modelCall(app, "fit.wording-coverage-grouped");
+  expect(
+    (coverage.body["context"] as GroupedCoverageContext).binding.achievement_id,
+  ).toBe(ownershipAchievement.achievement_id);
+  coverage.reply(
+    groupedCoverageDecision(coverage, {
+      evidenceSourceId: `evidence:${ownershipAchievement.source_refs[0]!.source_id}`,
+      status: "not_covered",
+      action: "propose_wording",
+      gapRequirementIds: [ownershipId],
+    }),
+  );
+  const authoring = await modelCall(app, "profile.wording_authoring");
+  const alternative =
+    "Established explicit review ownership with retained operational change receipts.";
+  authoring.reply({
+    support: "supported",
+    text: alternative,
+    rationale:
+      "The expression preserves the explicitly cited current achievement facts.",
+    citations: citeSources(
+      authoring,
+      modelSources(authoring).map((row) => row.source_id),
+    ),
+  });
+  await completed(api, receipt.runId);
+  const result = await operation(api, receipt.runId);
+  expect(result).toMatchObject({
+    status: "completed",
+    selected_requirement_ids: [ownershipId],
+    factual_published: true,
+    counters: {
+      model_calls: 4,
+      requirements_assessed: 1,
+      qualifications_reused: 1,
+      wording_proposals: 1,
+    },
+  });
+  const refreshed = await json<FitState>(
+    api,
+    "get",
+    `/v1/jobs/${seed.posting.job_id}/fit`,
+  );
+  expect(refreshed.current).toBe(true);
+  expect(refreshed.score.score).toBe(10);
+  expect(
+    refreshed.score.assessments.find(
+      (row) => row.requirement_id === ownershipId,
+    )!.kind,
+  ).toBe("matched");
+  const ownershipAfter = refreshed.score.assessments.find(
+    (row) => row.requirement_id === ownershipId,
+  )!;
+  expect(ownershipAfter.determination_id).toBeTruthy();
+  expect(ownershipAfter.provenance).toMatchObject({
+    receipt_id: ownershipAfter.determination_id,
+    provider: qualification.body["provider"],
+    model: qualification.body["model"],
+    lane: qualification.body["lane"],
+  });
+  const recoveryBefore = seed.fit.score.assessments.find(
+    (row) => row.requirement_id === recoveryId,
+  )!;
+  const recoveryAfter = refreshed.score.assessments.find(
+    (row) => row.requirement_id === recoveryId,
+  )!;
+  expect(recoveryAfter.determination_id).toBe(recoveryBefore.determination_id);
+  expect(recoveryAfter.provenance).toEqual(recoveryBefore.provenance);
+  expect(modelOperations(app, beforeEdits)).toEqual([
+    "fit.catalog-impact",
+    "fit.qualification-batch",
+    "fit.wording-coverage-grouped",
+    "profile.wording_authoring",
+  ]);
+  await expect(panel).toContainText("Update completed.");
+  await panel.scrollIntoViewIfNeeded();
+  await testInfo.attach("manual-refresh-profile-completed-desktop", {
+    contentType: "image/png",
+    body: await page.screenshot(),
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await panel.scrollIntoViewIfNeeded();
+  await testInfo.attach("manual-refresh-profile-completed-mobile", {
+    contentType: "image/png",
+    body: await page.screenshot(),
+  });
+
+  const beforeRetry = app.external.calls.length;
+  expect((await startRefresh(api, payload, key)).runId).toBe(receipt.runId);
+  expect(await operation(api, receipt.runId)).toEqual(result);
+  expect(modelOperations(app, beforeRetry)).toEqual([]);
+  const proposed = await json<Library>(api, "get", "/v1/profile/wording");
+  const variant = proposed.variants.find((row) => row.text === alternative)!;
+  expect(variant.status).toBe("pending");
+  expect(variant.approval_id).toBeNull();
+  expect((await pendingRefresh(api)).latest_operation!.status).toBe(
+    "completed",
+  );
+  await json(
+    api,
+    "post",
+    `/v1/profile/wording/${encodeURIComponent(variant.variant_id)}/decision`,
+    {
+      expectedProfileVersion: proposed.profileVersion,
+      expectedVariantRevision: variant.revision,
+      exactText: variant.text,
+      decision: "approve",
+    },
+  );
+  expect(
+    (await json<Library>(api, "get", "/v1/profile/wording")).variants.find(
+      (row) => row.variant_id === variant.variant_id,
+    )!.status,
+  ).toBe("approved");
+  await pendingRefresh(api);
+  expect(modelOperations(app, beforeRetry)).toEqual([]);
+});
+
+test("manual cancellation retains accepted scores and distinct keys cannot admit a competing Profile refresh", async ({
+  api,
+  app,
+}) => {
+  const seed = await createScoredFit(api, app, "manual-cancel");
+  await saveRoleSummary(api, "Synthetic Changed Candidate");
+  const pending = await pendingRefresh(api);
+  const payload = refreshPayload(pending);
+  const before = app.external.calls.length;
+  const run = await startRefresh(api, payload, "manual-cancel-original");
+  const held = await modelCall(app, "fit.catalog-impact");
+  const retry = await startRefresh(api, payload, "manual-cancel-original");
+  expect(retry.runId).toBe(run.runId);
+  const competing = await api.post("/v1/actions/fit.refresh", {
+    headers: { "idempotency-key": "manual-cancel-competing" },
+    data: payload,
+  });
+  expect(competing.status()).toBe(409);
+  expect(await competing.json()).toMatchObject({
+    error: { code: "action_scope_busy", details: { runId: run.runId } },
+  });
+  await json(api, "post", `/v1/action-runs/${run.runId}/cancel`, {});
+  held.reply(
+    impactPartition(held, {
+      [seed.requirements.requirements[0]!.requirement_id]: "unchanged",
+    }),
+  );
+  const cancelled = await terminal(api, run.runId);
+  expect(cancelled["status"]).toBe("cancelled");
+  const result = await operation(api, run.runId);
+  expect(result.status).toBe("cancelled");
+  expect(result.counters.model_calls).toBe(1);
+  expect(result.factual_published).toBe(false);
+  expect(
+    (await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`))
+      .score,
+  ).toEqual(seed.fit.score);
+  expect(modelOperations(app, before)).toEqual(["fit.catalog-impact"]);
+});
+
+test("manual work limits persist across worker restart and an exact retry cannot reset the allowance", async ({
+  api,
+  app,
+}) => {
+  const seed = await createScoredFit(api, app, "manual-limits", {
+    twoRequirements: true,
+    missingOwnership: true,
+  });
+  await saveOwnership(api);
+  const payload = refreshPayload(await pendingRefresh(api), undefined, {
+    max_model_calls: 1,
+  });
+  const before = app.external.calls.length;
+  const run = await startRefresh(api, payload, "manual-fixed-limit");
+  const selection = await modelCall(app, "fit.catalog-impact");
+  selection.reply(
+    impactPartition(selection, {
+      [seed.requirements.requirements[0]!.requirement_id]: "unchanged",
+      [seed.requirements.requirements[1]!.requirement_id]: "affected",
+    }),
+  );
+  const failed = await terminal(api, run.runId);
+  expect(failed).toMatchObject({
+    status: "failed",
+    errorCode: "fit_refresh_model_limit",
+  });
+  const limited = await operation(api, run.runId);
+  expect(limited).toMatchObject({
+    status: "limited",
+    factual_published: false,
+    counters: { model_calls: 1, requirements_assessed: 0 },
+  });
+  const replacement = await app.restartWorker();
+  expect(replacement.current).not.toBe(replacement.previous);
+  expect((await startRefresh(api, payload, "manual-fixed-limit")).runId).toBe(
+    run.runId,
+  );
+  expect(await operation(api, run.runId)).toEqual(limited);
+  expect(
+    (await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`))
+      .score,
+  ).toEqual(seed.fit.score);
+  expect(modelOperations(app, before)).toEqual(["fit.catalog-impact"]);
+});
+
+for (const changedSource of ["Profile", "posting", "catalog"] as const) {
+  test(`a ${changedSource} change during the manual selector preserves accepted scores`, async ({
+    api,
+    app,
+  }) => {
+    const seed = await createScoredFit(
+      api,
+      app,
+      `manual-stale-${changedSource.toLowerCase()}`,
+    );
+    const settings = await json<{ revision: number }>(
+      api,
+      "get",
+      "/v1/settings",
+    );
+    await json(api, "patch", "/v1/settings", {
+      expectedRevision: settings.revision,
+      dailyBudgetUsd: 0,
+    });
+    await saveRoleSummary(api, "Synthetic First Saved Change");
+    const payload = refreshPayload(await pendingRefresh(api));
+    const before = app.external.calls.length;
+    const run = await startRefresh(
+      api,
+      payload,
+      `manual-stale-${changedSource}`,
+    );
+    const held = await modelCall(app, "fit.catalog-impact");
+    if (changedSource === "Profile")
+      await saveRoleSummary(api, "Synthetic Later Saved Change");
+    if (changedSource === "posting")
+      await json(api, "patch", `/v1/jobs/${seed.posting.job_id}`, {
+        expectedRevision: seed.posting.revision,
+        description: "Own a materially revised workflow recovery requirement.",
+      });
+    if (changedSource === "catalog") {
+      const posting = await json<Posting>(api, "post", "/v1/jobs/capture", {
+        url: "https://example.com/jobs/concurrent-catalog-addition", title: "Synthetic Separate Service Owner",
+        company: "Synthetic Catalog Company", description: "Own a separate qualified operational responsibility for a synthetic service.",
+      });
+      const extracting = api.post(`/v1/jobs/${posting.job_id}/requirements`, {
+        data: {
+          expected_posting_revision: posting.revision,
+          expected_revision: 0,
+        },
+      });
+      const call = await modelCall(app, "requirements.extract");
+      const source = modelSources(call)[0]!;
+      call.reply(typedExtraction(call, { requirements: [{
+        localId: "separate", text: source.text, definition: "Own a separate qualified operational responsibility",
+      }] }));
+      const matching = await modelCall(app, "requirements.match_catalog");
+      matching.reply(
+        catalogMatching(matching, { separate: { verdict: "new" } }),
+      );
+      const response = await extracting;
+      expect(response.status(), await response.text()).toBe(200);
+    }
+    held.reply(
+      impactPartition(held, {
+        [seed.requirements.requirements[0]!.requirement_id]: "unchanged",
+      }),
+    );
+    expect((await terminal(api, run.runId))["status"]).toBe("failed");
+    const stale = await operation(api, run.runId);
+    expect(stale.status).toBe("stale");
+    expect(stale.factual_published).toBe(false);
+    expect(
+      (await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`))
+        .score,
+    ).toEqual(seed.fit.score);
+    expect(
+      modelOperations(app, before).filter((value) =>
+        String(value).startsWith("fit."),
+      ),
+    ).toEqual(["fit.catalog-impact"]);
+  });
+}
+
+test("a saved change while a manual refresh is queued refuses before any selector call", async ({
+  api,
+  app,
+}) => {
+  const seed = await createScoredFit(api, app, "manual-queued");
+  const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", {
+    expectedRevision: settings.revision,
+    workerActivitySlots: 1,
+  });
+  const replacement = await app.restartWorker();
+  expect(replacement.current).not.toBe(replacement.previous);
+  await saveRoleSummary(api, "Synthetic Reviewed Queued Change");
+  const payload = refreshPayload(await pendingRefresh(api));
+  const blockerPosting = await createPosting(api, "manual-queue-blocker");
+  const before = app.external.calls.length;
+  const blocker = await action(api, "requirements.refresh", {
+    job_id: blockerPosting.job_id,
+    expected_posting_revision: blockerPosting.revision,
+    expected_revision: 0,
+    force: true,
+  });
+  const held = await modelCall(app, "requirements.extract");
+  const queued = await startRefresh(api, payload, "manual-queued-stamp");
+  await expect
+    .poll(
+      async () =>
+        (
+          await json<{ status: string }>(
+            api,
+            "get",
+            `/v1/action-runs/${queued.runId}`,
+          )
+        ).status,
+    )
+    .toBe("queued");
+  await saveRoleSummary(api, "Synthetic Newer Queued Change");
+  held.reply(typedExtraction(held, {}));
+  await completed(api, blocker.runId);
+  expect(await terminal(api, queued.runId)).toMatchObject({
+    status: "failed",
+    errorCode: "fit_refresh_stale",
+  });
+  expect(
+    (await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`))
+      .score,
+  ).toEqual(seed.fit.score);
+  expect(modelOperations(app, before)).toEqual(["requirements.extract"]);
+});
+
+test("one grouped achievement decision proposes one wording for its full requirement set and its own write never starts another run", async ({
+  api,
+  app,
+  page,
+}) => {
+  const seed = await createScoredFit(api, app, "manual-grouped", {
+    twoRequirements: true,
+    sameAchievement: true,
+  });
+  const achievement = seed.library.roles[0]!.achievements[0]!;
+  const ids = seed.requirements.requirements.map((row) => row.requirement_id);
+  const before = app.external.calls.length;
+  const run = await startRefresh(
+    api,
+    refreshPayload(await pendingRefresh(api)),
+    "manual-grouped-original",
+  );
+  const grouped = await modelCall(app, "fit.wording-coverage-grouped");
+  expect(
+    (grouped.body["context"] as GroupedCoverageContext).binding.requirements
+      .map((row) => row.requirement_id)
+      .sort(),
+  ).toEqual(ids.toSorted());
+  grouped.reply(
+    groupedCoverageDecision(grouped, {
+      evidenceSourceId: `evidence:${achievement.source_refs[0]!.source_id}`,
+      status: "not_covered",
+      action: "propose_wording",
+      gapRequirementIds: ids,
+    }),
+  );
+  const authoring = await modelCall(app, "profile.wording_authoring");
+  const wording =
+    "Implemented durable workflow recovery with explicit operational change review ownership.";
+  const context = authoring.body["context"] as {
+    brief?: {
+      origin_metadata?: { requirements?: { requirement_id: string }[] };
+    };
+    origin_metadata?: { requirements?: { requirement_id: string }[] };
+  };
+  const metadata = context.brief?.origin_metadata ?? context.origin_metadata;
+  expect(
+    metadata?.requirements?.map((row) => row.requirement_id).sort(),
+  ).toEqual(ids.toSorted());
+  authoring.reply({
+    support: "supported",
+    text: wording,
+    rationale:
+      "One proposal preserves the complete authored achievement and both supported requirements.",
+    citations: citeSources(
+      authoring,
+      modelSources(authoring).map((row) => row.source_id),
+    ),
+  });
+  await completed(api, run.runId);
+  expect(await operation(api, run.runId)).toMatchObject({
+    status: "completed",
+    counters: {
+      model_calls: 2,
+      requirements_assessed: 0,
+      qualifications_reused: 2,
+      wording_proposals: 1,
+    },
+  });
+  const library = await json<Library>(api, "get", "/v1/profile/wording");
+  const proposed = library.variants.filter((row) => row.status === "pending");
+  expect(proposed).toHaveLength(1);
+  expect(proposed[0]!.text).toBe(wording);
+  expect(proposed[0]!.achievement_id).toBe(achievement.achievement_id);
+  expect(
+    (await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`))
+      .score,
+  ).toEqual(seed.fit.score);
+  const beforeUnchanged = app.external.calls.length;
+  const unchanged = await startRefresh(
+    api,
+    refreshPayload(await pendingRefresh(api)),
+    "manual-grouped-unchanged",
+  );
+  await completed(api, unchanged.runId);
+  expect((await operation(api, unchanged.runId)).counters.model_calls).toBe(0);
+  expect(modelOperations(app, beforeUnchanged)).toEqual([]);
+  expect(modelOperations(app, before)).toEqual([
+    "fit.wording-coverage-grouped",
+    "profile.wording_authoring",
+  ]);
+
+  // Approval retains the authored source and proposal history. Only the next
+  // explicit grouped determination may maintain this wording for both meanings.
+  const approved = await json<Library>(
+    api,
+    "post",
+    `/v1/profile/wording/${proposed[0]!.variant_id}/decision`,
+    {
+      expectedProfileVersion: library.profileVersion,
+      expectedVariantRevision: proposed[0]!.revision,
+      exactText: proposed[0]!.text,
+      decision: "approve",
+    },
+  );
+  await pendingRefresh(api);
+  expect(modelOperations(app, beforeUnchanged)).toEqual([]);
+  const selecting = await startRefresh(
+    api,
+    refreshPayload(await pendingRefresh(api)),
+    "manual-grouped-select-approved",
+  );
+  const selection = await modelCall(app, "fit.wording-coverage-grouped");
+  expect(
+    (selection.body["context"] as GroupedCoverageContext).binding.requirements
+      .map((row) => row.requirement_id)
+      .sort(),
+  ).toEqual(ids.toSorted());
+  selection.reply(
+    groupedCoverageDecision(selection, {
+      evidenceSourceId: `evidence:${achievement.source_refs[0]!.source_id}`,
+      status: "covered",
+      action: "reuse_approved",
+      reusableVariantId: proposed[0]!.variant_id,
+    }),
+  );
+  await completed(api, selecting.runId);
+  type CurrentWording = {
+    assignment_id: string;
+    revision: number;
+    state: string;
+    current: boolean;
+    variant_id: string;
+    variant_revision: number;
+    approval_id: string;
+    relation_id: string;
+    requirement_id: string;
+    achievement_id: string;
+  };
+  const maintained = await json<{
+    requirements: {
+      requirement_id: string;
+      current_wordings: CurrentWording[];
+    }[];
+  }>(api, "get", "/v1/fit/requirement-library");
+  const selected = maintained.requirements
+    .filter((row) => ids.includes(row.requirement_id))
+    .flatMap((row) =>
+      row.current_wordings.filter((binding) => binding.state === "active"),
+    );
+  expect(selected).toHaveLength(2);
+  expect(
+    new Set(
+      selected.map(
+        (binding) => `${binding.requirement_id}:${binding.achievement_id}`,
+      ),
+    ).size,
+  ).toBe(2);
+  for (const binding of selected)
+    expect(binding).toMatchObject({
+      variant_id: proposed[0]!.variant_id,
+      achievement_id: achievement.achievement_id,
+      current: true,
+    });
+  expect(
+    new Set(selected.map((binding) => binding.variant_id)).size,
+    "Many requirements reuse one maintained exact wording",
+  ).toBe(1);
+  expect(
+    (await json<Library>(api, "get", "/v1/profile/wording")).variants,
+  ).toEqual(approved.variants);
+  const afterSelection = app.external.calls.length;
+  const exactReuse = await startRefresh(
+    api,
+    refreshPayload(await pendingRefresh(api)),
+    "manual-grouped-reuse-selected",
+  );
+  await completed(api, exactReuse.runId);
+  expect((await operation(api, exactReuse.runId)).counters.model_calls).toBe(0);
+  expect(modelOperations(app, afterSelection)).toEqual([]);
+
+  await page.goto("/profile");
+  await expect(
+    page.getByRole("article", { name: "Current wording", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    page
+      .getByRole("article", { name: "Current wording", exact: true })
+      .locator(".profile-wording-text"),
+  ).toHaveText(wording);
+
+  // A proposed exact revision is approval history until complete coverage has
+  // selected it. Partial expression of the intended union cannot activate it.
+  const partialText =
+    "Implemented and documented the durable workflow recovery service.";
+  const newDraft = await json<Library>(api, "post", "/v1/profile/wording", {
+    expectedProfileVersion: approved.profileVersion,
+    achievementId: achievement.achievement_id,
+    text: partialText,
+    sourceRefs: achievement.source_refs,
+    replacesVariantId: proposed[0]!.variant_id,
+    replacesVariantRevision: approved.variants.find(
+      (row) => row.variant_id === proposed[0]!.variant_id,
+    )!.revision,
+    intendedRequirementIds: ids,
+  });
+  const partialVariant = newDraft.variants.find(
+    (row) => row.text === partialText,
+  )!;
+  await json<Library>(
+    api,
+    "post",
+    `/v1/profile/wording/${partialVariant.variant_id}/decision`,
+    {
+      expectedProfileVersion: newDraft.profileVersion,
+      expectedVariantRevision: partialVariant.revision,
+      exactText: partialVariant.text,
+      decision: "approve",
+    },
+  );
+  const oldPins = selected
+    .map((row) => ({
+      assignment_id: row.assignment_id,
+      revision: row.revision,
+      variant_id: row.variant_id,
+      variant_revision: row.variant_revision,
+      approval_id: row.approval_id,
+      relation_id: row.relation_id,
+      requirement_id: row.requirement_id,
+    }))
+    .sort((a, b) => a.requirement_id.localeCompare(b.requirement_id));
+  const readPins = async () =>
+    (
+      await json<{ requirements: { current_wordings: CurrentWording[] }[] }>(
+        api,
+        "get",
+        "/v1/fit/requirement-library",
+      )
+    ).requirements
+      .flatMap((row) => row.current_wordings)
+      .filter(
+        (row) => ids.includes(row.requirement_id) && row.state === "active",
+      )
+      .map((row) => ({
+        assignment_id: row.assignment_id,
+        revision: row.revision,
+        variant_id: row.variant_id,
+        variant_revision: row.variant_revision,
+        approval_id: row.approval_id,
+        relation_id: row.relation_id,
+        requirement_id: row.requirement_id,
+      }))
+      .sort((a, b) => a.requirement_id.localeCompare(b.requirement_id));
+  expect(
+    await readPins(),
+    "Approval does not replace any maintained choice",
+  ).toEqual(oldPins);
+  expect(modelOperations(app, afterSelection)).toEqual([]);
+  const partialRefresh = await startRefresh(
+    api,
+    refreshPayload(await pendingRefresh(api)),
+    "manual-grouped-partial-revision",
+  );
+  const partialChoice = await modelCall(app, "fit.wording-coverage-grouped");
+  const partialDecision = groupedCoverageDecision(partialChoice, {
+    evidenceSourceId: `evidence:${achievement.source_refs[0]!.source_id}`,
+    status: "covered",
+    action: "reuse_approved",
+    reusableVariantId: proposed[0]!.variant_id,
+  });
+  expect(
+    partialDecision.relations
+      .filter((row) => row.variant_id === partialVariant.variant_id)
+      .map((row) => row.requirement_id)
+      .sort(),
+  ).toEqual(ids.toSorted());
+  partialChoice.reply({
+    ...partialDecision,
+    relations: partialDecision.relations.map((row) =>
+      row.variant_id === partialVariant.variant_id &&
+      row.requirement_id === ids[1]
+        ? {
+            ...row,
+            status: "not_covered",
+            rationale:
+              "This exact new text expresses recovery, but does not express reviewed ownership.",
+          }
+        : row,
+    ),
+  });
+  await completed(api, partialRefresh.runId);
+  const afterPartial = await readPins();
+  const choices = (rows: typeof oldPins) =>
+    rows.map(({ revision: _revision, ...pins }) => pins);
+  expect(
+    choices(afterPartial),
+    "Partial replacement preserves every exact prior requirement, wording, approval and relation pin",
+  ).toEqual(choices(oldPins));
+  for (const head of afterPartial) {
+    const prior = oldPins.find(
+      (row) => row.assignment_id === head.assignment_id,
+    )!;
+    expect(head.revision).toBeGreaterThanOrEqual(prior.revision);
+    const history = await json<{
+      current_revision: number;
+      rows: CurrentWording[];
+    }>(
+      api,
+      "get",
+      `/v1/fit/current-wordings/${head.assignment_id}/history?limit=10&offset=0`,
+    );
+    expect(history.current_revision).toBe(head.revision);
+    expect(history.rows).toHaveLength(head.revision);
+    for (const row of history.rows)
+      expect(row).toMatchObject(choices([prior])[0]!);
+  }
+  expect(
+    (await json<Library>(api, "get", "/v1/profile/wording")).variants.find(
+      (row) => row.variant_id === partialVariant.variant_id,
+    ),
+  ).toMatchObject({ status: "approved", text: partialText });
+  expect(modelOperations(app, afterSelection)).toEqual([
+    "fit.wording-coverage-grouped",
+  ]);
+});

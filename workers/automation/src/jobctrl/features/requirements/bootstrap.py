@@ -5,11 +5,14 @@ from __future__ import annotations
 from jobctrl.app.contracts import Feature, Runtime
 from jobctrl.app.errors import AppError
 
-from .domain import RequirementError
-from .http import CorrectionRequest, RefreshRequest, RevisionRequest, raise_application_error, routes
+from .domain import CONTRACT_VERSION, RequirementError
+from .http import ConsolidateRequest, CorrectionRequest, OccurrenceCorrectionsRequest, RefreshRequest, RevisionRequest, raise_application_error, routes
 from .model import RequirementModelAdapter
 from .repository import SqliteRequirementStore
 from .schema import SCHEMA
+from .normalization_schema import SCHEMA as NORMALIZATION_SCHEMA
+from .cohort_storage import SCHEMA as COHORT_SCHEMA
+from .normalization_domain import NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION
 from .service import RequirementsService
 
 
@@ -18,10 +21,26 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
     if jobs is None:
         raise AppError("requirements_jobs_required", "Requirements requires the public Jobs service.", 500)
     runtime.database.initialize_feature("requirements", SCHEMA)
+    runtime.database.initialize_feature("requirements_normalization_v1", NORMALIZATION_SCHEMA)
+    runtime.database.initialize_feature("requirements_initial_cohort_v1", COHORT_SCHEMA)
     store = SqliteRequirementStore(runtime.database, runtime.events)
     service = RequirementsService(
         store, jobs, RequirementModelAdapter(runtime.model, store, jobs),
     )
+
+    async def consolidate(context, payload):
+        from pydantic import ValidationError
+        try:
+            body = ConsolidateRequest.model_validate(payload)
+            if body.operation_id is not None:
+                raise AppError("invalid_request", "Durable consolidation uses the action run identity.")
+        except (ValidationError, AttributeError):
+            raise AppError("invalid_request", "The catalog consolidation fields are invalid.") from None
+        try:
+            return await service.consolidate_catalog(expected_catalog_revision=body.expected_catalog_revision,
+                operation_id=context.run_id, cancelled=context.cancelled, heartbeat=context.heartbeat)
+        except RequirementError as failure:
+            raise_application_error(failure)
 
     async def refresh(context, payload):
         from pydantic import ValidationError
@@ -69,7 +88,28 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         except RequirementError as failure:
             raise_application_error(failure)
 
+    async def correct_occurrences(context, payload):
+        from pydantic import ValidationError
+        try:
+            job_id = payload.get("job_id")
+            if not isinstance(job_id, str) or not job_id:
+                raise AppError("invalid_job_id", "Supply the job ID.")
+            body = OccurrenceCorrectionsRequest.model_validate({key: value for key, value in payload.items() if key != "job_id"})
+        except (ValidationError, AttributeError):
+            raise AppError("invalid_request", "The occurrence correction fields are invalid.") from None
+        try:
+            return await service.correct_occurrences(job_id, **body.model_dump(), cancelled=context.cancelled,
+                operation_id=context.run_id, heartbeat=context.heartbeat)
+        except RequirementError as failure:
+            raise_application_error(failure)
+
     return Feature(
         name="requirements", service=service, routes=routes(service),
-        actions={"requirements.refresh": refresh, "requirements.revise": revise, "requirements.correct_binding": correct_binding},
+        actions={"requirements.consolidate": consolidate, "requirements.refresh": refresh, "requirements.revise": revise, "requirements.correct_binding": correct_binding,
+                 "requirements.correct_occurrences": correct_occurrences},
+        action_versions={name: CONTRACT_VERSION + ":" + NORMALIZATION_VERSION + ":" + NORMALIZATION_PROMPT_VERSION for name in (
+            "requirements.consolidate",
+            "requirements.refresh", "requirements.revise", "requirements.correct_binding",
+            "requirements.correct_occurrences",
+        )},
     )

@@ -2,6 +2,45 @@
  * object uses the shared shadcn Card primitive; internal evidence stays flat
  * and rule-separated so the page never becomes a stack of nested boxes. */
 
+/* The route's single-column grids must be allowed to shrink around long
+ * job identities and the intrinsically wide resume page. The document itself
+ * keeps its template geometry inside the editor's own scroll container. */
+.apply-review-page,
+.apply-review-page > .grid,
+.application-resume-workspace,
+.apply-review-page [aria-label="Application review queue"] > ul {
+  min-inline-size: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.apply-review-page > *,
+.application-resume-workspace > *,
+.apply-review-page [aria-label="Application review queue"] li {
+  min-inline-size: 0;
+}
+
+.apply-review-page h2 {
+  overflow-wrap: anywhere;
+}
+
+.apply-review-page [aria-label="Application review queue"] li > button {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  min-height: var(--jh-control-height);
+  justify-content: flex-start;
+  padding-block: 8px;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.apply-review-page .resume-plate-editor,
+.apply-review-page .resume-plate-toolbar {
+  min-inline-size: 0;
+  max-inline-size: 100%;
+}
+
 .apply-review-layout {
   gap: 24px;
 }

@@ -126,7 +126,7 @@ export function RequiredBulletSuggestions({
   };
 
   return (
-    <Card size="sm" className="mb-5">
+    <Card size="sm" className="profile-coaching-panel">
       <CardHeader>
         <CardTitle>Required bullet coaching</CardTitle>
         <CardDescription>

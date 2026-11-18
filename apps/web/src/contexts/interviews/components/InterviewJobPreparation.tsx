@@ -8,6 +8,7 @@ import { useAcceptedInterviewPrepQuery, useInterviewPrepHistoryQuery } from "../
 import { InterviewContextForm } from "../forms/interview-context-form.js";
 import { InterviewNoteForm } from "../forms/interview-note-form.js";
 import { InterviewPrepPanel } from "./InterviewPrepPanel.js";
+import "../../../styles/interview-job-preparation.css";
 
 type AcceptedPrepRead = { jobId: string; prep: InterviewPrep; readAt: number };
 
@@ -50,9 +51,11 @@ export function InterviewJobPreparation({ job, catalog, question, unavailableQue
     cardRevision: question.cardRevision, cardDigest: question.cardDigest, contextDigest: null,
   } : null;
   return (
-    <section className="card full" aria-label="Job interview preparation">
-      <h2 data-typography="section-title">Preparation for {job.title}</h2>
-      <Link to="/jobs/$jobId" params={{ jobId }}>Open canonical job</Link>
+    <section className="card full interview-job-preparation" aria-label="Job interview preparation">
+      <header className="interview-job-preparation__header">
+        <h2 data-typography="section-title">Preparation for {job.title}</h2>
+        <Link to="/jobs/$jobId" params={{ jobId }}>Open canonical job</Link>
+      </header>
       {companyBriefing}
       <InterviewContextForm jobId={jobId} catalog={catalog} questionId={question?.id ?? ""} context={prep?.generationContext} />
       {noteQuestionId ? <InterviewNoteForm key={`${jobId}:${noteQuestionId}`} jobId={jobId} questionId={noteQuestionId} sourceGeneration={selectedSnapshot ? prep?.generation ?? null : null} bindings={noteBindings} allowNewNote={Boolean(question || selectedSnapshot)} /> : null}

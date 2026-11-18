@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import json
 
 from jobctrl.app.errors import AppError, ConflictError
-from jobctrl.features.discovery.domain import fingerprint, now, search_units, validate_settings
+from jobctrl.features.discovery.domain import SOURCE_FETCH_POLICY, fingerprint, now, search_units, validate_settings
 from jobctrl.features.discovery.remote_search import validate_remote_search_scope
 from jobctrl.features.discovery.targets import TargetPlanner
 from jobctrl.features.discovery.ports import DestinationPolicy, DiscoveryStore, ExecutionPort, JobsPort, ModelPort
@@ -361,6 +361,10 @@ class DiscoveryService:
             proposals, operation_id=operation_id, input_fingerprint=request_hash
         )
 
+    def search_outcome(self, run_id):
+        """Read this exact acquisition's committed outcome, including failure."""
+        return self.repository.run_outcome(run_id)
+
     async def search(self, context, payload):
         run_id = context.run_id
         saved = self.repository.run_request(run_id)
@@ -387,7 +391,10 @@ class DiscoveryService:
                     "invalid_discovery_overrides", "The action-scoped Discovery controls are invalid."
                 ) from None
             if not settings["queries"] and self.profile is not None:
-                target_plan = await self.targets.refresh(operation_id=context.run_id + ":query-plan")
+                expected_profile = payload.get("expectedProfileVersion")
+                if expected_profile is not None and (type(expected_profile) is not int or expected_profile < 1):
+                    raise AppError("invalid_profile_version", "The saved Search preferences revision is invalid.")
+                target_plan = await self.targets.refresh(operation_id=context.run_id + ":query-plan", expected_profile_revision=expected_profile)
                 if target_plan["accepted"] is not None and target_plan["current"]:
                     settings = {
                         **settings,
@@ -399,8 +406,15 @@ class DiscoveryService:
                 "settings": settings,
                 "sources": self.list_sources()["sources"],
                 "command_hash": fingerprint(payload),
+                "boardUnitsVersion": 1,
+                "sourceFetchPolicy": SOURCE_FETCH_POLICY,
+                "criteriaAsOf": now(),
             }
-        units = search_units(request["settings"])
+        units = search_units(
+            request["settings"], isolate_boards=request.get("boardUnitsVersion") == 1,
+            source_fetch_policy=request.get("sourceFetchPolicy"),
+        )
+        execution_settings = {**request["settings"], "_criteriaAsOf": request.get("criteriaAsOf")}
         if not units and not any(
             s["state"] in {"active", "experimental"}
             and s.get("kind") in {"ats_api", "employer_careers_page", "smart_extract"}
@@ -412,6 +426,8 @@ class DiscoveryService:
         lease = self.repository.claim_run(run_id, request)
         if lease["completed"]:
             return lease["result"]
+        prior_outcome = self.repository.finalize_bounded_units(lease, request["settings"]["newJobLimit"])
+        prior_source_failures = {failure["sourceId"]: failure for failure in prior_outcome["failures"]}
         self.execution.begin(lease)
 
         async def keep_alive():
@@ -438,8 +454,6 @@ class DiscoveryService:
                 for unit in units:
                     if context.cancelled():
                         raise AppError("action_cancelled", "Discovery was cancelled.", 409)
-                    if not self.repository.budget_remaining(lease, request["settings"]["newJobLimit"]):
-                        return
                     unit["sites"] = [
                         site
                         for site in unit["sites"]
@@ -449,14 +463,28 @@ class DiscoveryService:
                     if not unit["sites"]:
                         continue
                     previous = self.repository.unit(run_id, unit["unit_id"])
-                    if previous and previous["status"] == "completed":
+                    if previous and previous["status"] in {"completed", "budget_exhausted"}:
+                        continue
+                    if previous and previous["status"] == "failed" and (previous.get("result") or {}).get("failure"):
+                        failure = previous["result"]["failure"]
+                        failures.append(failure)
+                        for board in unit["sites"]:
+                            self.repository.source_result(lease, "jobstreaming:" + board, "failed", error_code=failure["code"])
+                        continue
+                    # Recover recorded outcomes before the capacity gate. A
+                    # worker restart after the final accepted job must retain
+                    # failures even though no acquisition budget remains.
+                    if not self.repository.budget_remaining(lease, request["settings"]["newJobLimit"]):
                         continue
                     try:
-                        await self.execution.run_board_unit(context, lease, unit, request["settings"], previous)
+                        await self.execution.run_board_unit(context, lease, unit, execution_settings, previous)
                     except AppError as error:
                         if error.code == "action_cancelled":
                             raise
-                        failures.append({"sourceFamily": "broad_boards", "unitId": unit["unit_id"], "code": error.code})
+                        failure = {"sourceFamily": "broad_boards", "unitId": unit["unit_id"], "boards": unit["sites"], "code": error.code, "message": error.message}
+                        recorded = self.repository.unit(run_id, unit["unit_id"])
+                        self.repository.save_unit(lease, unit, status="failed", result={**((recorded or {}).get("result") or {}), "failure": failure})
+                        failures.append(failure)
                         for board in unit["sites"]:
                             self.repository.source_result(
                                 lease, "jobstreaming:" + board, "failed", error_code=error.code
@@ -468,6 +496,9 @@ class DiscoveryService:
                         continue
                     if context.cancelled():
                         raise AppError("action_cancelled", "Discovery was cancelled.", 409)
+                    if source["sourceId"] in prior_source_failures:
+                        failures.append(prior_source_failures[source["sourceId"]])
+                        continue
                     if not self.repository.budget_remaining(lease, request["settings"]["newJobLimit"]):
                         return
                     if not payload.get("forceSources") and not self._source_due(source):
@@ -490,7 +521,14 @@ class DiscoveryService:
                 family(lambda: run_sources({"employer_careers_page", "smart_extract"})),
             )
             run = next(r for r in self.repository.runs()["runs"] if r["runId"] == run_id)
-            status = "failed" if failures and run["observedJobs"] == 0 else "partial" if failures else "completed"
+            outcome = self.repository.finalize_bounded_units(lease, request["settings"]["newJobLimit"])
+            represented = {
+                source_id
+                for failure in failures
+                for source_id in ([failure["sourceId"]] if failure.get("sourceId") else ["jobstreaming:" + board for board in failure.get("boards", [])])
+            }
+            failures.extend(failure for failure in outcome["failures"] if failure["sourceId"] not in represented)
+            status = "failed" if failures and outcome["fulfilledUnitCount"] == 0 else "partial" if failures else "completed"
             result = {
                 "ok": not failures,
                 **run,

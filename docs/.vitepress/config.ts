@@ -164,6 +164,7 @@ const SIDEBAR: DefaultTheme.SidebarItem[] = [
       { text: "Discovery & Sources", link: "/user/discovery" },
       { text: "Enrichment & Extraction", link: "/user/enrichment-and-extraction" },
       { text: "Scoring", link: "/user/scoring-and-employer-analysis" },
+      { text: "Requirements Library", link: "/user/requirements-library" },
       { text: "Company briefings", link: "/user/company-briefings" },
       { text: "Materials & Tailoring", link: "/user/materials-and-tailoring" },
       { text: "Reviewed Locale Variants", link: "/user/locale-variants" },

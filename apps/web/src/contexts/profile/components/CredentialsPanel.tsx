@@ -7,7 +7,7 @@ import type {
 } from "../../settings/credentials.js";
 import { useMutationState } from "@tanstack/react-query";
 import { IconInfoCircle } from "@tabler/icons-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
@@ -40,11 +40,21 @@ export function credentialLabel(key: CredentialKey): string {
     .join(" ");
 }
 
-export function CredentialsPanel() {
+export function CredentialsPanel({ onSecretDraftChange }: { readonly onSecretDraftChange?: (hasSecret: boolean) => void } = {}) {
   const { featureFlags } = usePorts();
   const isDemo = featureFlags.get("demoMode", false);
   const credentialsQuery = useCredentialsQuery();
   const providerStatusQuery = useProviderStatusQuery();
+  const [checkedRevision, setCheckedRevision] = useState<number | null>(null);
+  const [checkMessage, setCheckMessage] = useState("");
+  const secretDrafts = useRef(new Set<string>());
+  const reportSecret = useCallback((source: string, dirty: boolean) => {
+    if (dirty) secretDrafts.current.add(source); else secretDrafts.current.delete(source);
+    onSecretDraftChange?.(secretDrafts.current.size > 0);
+  }, [onSecretDraftChange]);
+  const claudeSecretChanged = useCallback((dirty: boolean) => reportSecret("claude", dirty), [reportSecret]);
+  const googleSecretChanged = useCallback((dirty: boolean) => reportSecret("google", dirty), [reportSecret]);
+  const solverSecretChanged = useCallback((dirty: boolean) => reportSecret("solver", dirty), [reportSecret]);
   const credentials = credentialsQuery.data?.credentials ?? [];
   const store = credentialsQuery.data?.store;
   const guidedSetupAvailable = Boolean(store?.available || store?.unavailableReason === "unsupported_platform");
@@ -53,7 +63,12 @@ export function CredentialsPanel() {
     if (guidedSetupAvailable) setHasGuidedSetup(true);
   }, [guidedSetupAvailable]);
   const providerEditingBlocked = credentialsQuery.isError || !guidedSetupAvailable;
-  const statuses = providerStatusQuery.data?.providers ?? [];
+  // A previously observed readiness result is useful only for the credential
+  // revision it was checked against. Writes and failed reads do not establish
+  // present readiness or trigger another provider check.
+  const statusCurrent = checkedRevision !== null && checkedRevision === credentialsQuery.data?.revision &&
+    !credentialsQuery.isError && !providerStatusQuery.isError;
+  const statuses = statusCurrent ? providerStatusQuery.data?.providers ?? [] : [];
   const configured = (keys: readonly CredentialKey[]) =>
     keys.some((key) => {
       const source = credentials.find((entry) => entry.key === key)?.effectiveSource;
@@ -93,8 +108,8 @@ export function CredentialsPanel() {
           ? "Credential-store status unavailable"
           : providerSetupSummary(store, statuses)}
         defaultOpen
-        description="Provider authentication, ownership, and runtime readiness"
-        title="LLM providers"
+        description="Choose and check the services used for AI actions."
+        title="AI providers"
       >
         <ProviderSetupNotice
           credentialsError={credentialsQuery.error?.message}
@@ -102,17 +117,36 @@ export function CredentialsPanel() {
           providerStatusError={providerStatusQuery.error?.message}
           store={store}
         />
-        <Button size="sm" type="button" variant="outline" disabled={credentialsQuery.isFetching} onClick={() => void Promise.allSettled([credentialsQuery.refetch(), providerStatusQuery.refetch()])}>
-          {credentialsQuery.isFetching ? "Checking credential status…" : "Check credential status"}
+        <Button size="sm" type="button" variant="outline" disabled={credentialsQuery.isFetching || providerStatusQuery.isFetching} onClick={() => {
+          void (async () => {
+            setCheckedRevision(null);
+            setCheckMessage("");
+            const before = await credentialsQuery.refetch();
+            if (!before.isSuccess) { setCheckMessage("Saved connection settings could not be checked. Try again."); return; }
+            const statusResult = await providerStatusQuery.refetch();
+            const after = await credentialsQuery.refetch();
+            if (statusResult.isSuccess && after.isSuccess && before.data.revision === after.data.revision) {
+              setCheckedRevision(after.data.revision);
+            } else if (!statusResult.isSuccess || !after.isSuccess) {
+              setCheckMessage("Connection readiness could not be confirmed. Try again.");
+            } else {
+              setCheckMessage("Connection settings changed during the check. Check connections again.");
+            }
+          })();
+        }}>
+          {credentialsQuery.isFetching || providerStatusQuery.isFetching ? "Checking connections…" : "Check connections"}
         </Button>
+        {checkMessage ? <p role="alert">{checkMessage}</p> : null}
+        {!statusCurrent ? <p>Connection readiness has not been checked for the current settings. Checking may contact your providers.</p> : null}
         {!store && !hasGuidedSetup ? (
           <div className="empty" role="status">Checking provider setup.</div>
         ) : (
           <div className="provider-card-list">
             <ProviderCard
-              description="Reuse and verify an authenticated Codex CLI in JobCtrl's isolated home."
+              description="Use an authenticated Codex account."
               provider="codex"
               status={codexStatus}
+              statusUnknown={providerEditingBlocked || providerStatusQuery.isError}
               title="Codex"
             >
               <CodexProviderSetup
@@ -125,15 +159,16 @@ export function CredentialsPanel() {
             {guidedSetupAvailable || hasGuidedSetup ? (
               <>
                 <ProviderCard
-                  description="Choose one direct or third-party Claude Agent SDK authentication route."
+                  description="Connect Claude with an API key or cloud account."
                   provider="claude"
                   status={mergeConfiguredStatus("claude", claudeStatus, claudeConfigured)}
-                  statusUnknown={providerEditingBlocked}
+                  statusUnknown={providerEditingBlocked || providerStatusQuery.isError}
                   title="Claude"
                   ownership={providerOwnership(credentials, CLAUDE_KEYS, claudeStatus)}
                   onConfigurationChange={() => markProviderConfigurationChanged("claude")}
                 >
                   <ClaudeProviderForm
+                    onSecretDraftChange={claudeSecretChanged}
                     configured={claudeConfigured}
                     currentMode={providerEditingBlocked ? null : claudeCurrentMode}
                     environmentManagedKeys={environmentManagedKeys}
@@ -142,15 +177,16 @@ export function CredentialsPanel() {
                   />
                 </ProviderCard>
                 <ProviderCard
-                  description="Use a Gemini API key or Google Vertex AI with Application Default Credentials."
+                  description="Connect Gemini or Google Cloud."
                   provider="google"
                   status={mergeConfiguredStatus("google", googleStatus, googleConfigured)}
-                  statusUnknown={providerEditingBlocked}
+                  statusUnknown={providerEditingBlocked || providerStatusQuery.isError}
                   title="Google"
                   ownership={providerOwnership(credentials, GOOGLE_KEYS, googleStatus)}
                   onConfigurationChange={() => markProviderConfigurationChanged("google")}
                 >
                   <GoogleProviderForm
+                    onSecretDraftChange={googleSecretChanged}
                     configured={googleConfigured}
                     currentMode={providerEditingBlocked ? null : googleCurrentMode}
                     environmentManagedKeys={environmentManagedKeys}
@@ -177,6 +213,7 @@ export function CredentialsPanel() {
           title="Apply CAPTCHA solver"
         >
           <CredentialForm
+            onSecretDraftChange={solverSecretChanged}
             credentialKey="CAPSOLVER_API_KEY"
             label="CapSolver API key"
             configured={credentialsQuery.isError ? null : capSolver.configured}
@@ -328,7 +365,7 @@ function ProviderCard({
   onConfigurationChange?: (() => void) | undefined;
   statusUnknown?: boolean;
 }) {
-  const statusLabel = statusUnknown ? "Status unknown" : status?.ready
+  const statusLabel = statusUnknown ? "Status unknown" : !status ? "Not checked" : status.ready
     ? "Ready"
     : provider === "codex" && status?.mode === "cli_auth"
       ? "Authenticated · runtime unavailable"
@@ -355,7 +392,7 @@ function ProviderCard({
       <DisclosureSection
         actions={<div className="provider-card-actions"><StatusBadge icon={false} tone={statusUnknown ? "warn" : status?.ready ? "ok" : status?.configured ? "warn" : "muted"}>{statusLabel}</StatusBadge><Button aria-expanded={open} aria-label={`${open ? "Close" : "Configure"} ${title}`} size="sm" type="button" variant="outline" onClick={() => setOpen((current) => !current)}>{open ? "Close" : "Configure"}</Button></div>}
         className="provider-disclosure"
-        collapsedSummary={summary || "Provider configuration"}
+        collapsedSummary={summary || null}
         description={description}
         headingLevel={3}
         open={open}
@@ -569,6 +606,7 @@ function providerSetupSummary(
   statuses: readonly ProviderStatusItem[],
 ): string {
   if (!store) return "Checking provider setup";
+  if (!statuses.length) return "Connection readiness not checked";
   const readyCount = statuses.filter((status) => status.ready).length;
   const storage = store.available
     ? nativeStoreLabel(store.nativeStore)
@@ -597,9 +635,9 @@ function mergeConfiguredStatus(
   provider: ProviderId,
   status: ProviderStatusItem | undefined,
   keychainConfigured: boolean,
-): ProviderStatusItem {
+): ProviderStatusItem | undefined {
   if (!status) {
-    return { provider, configured: keychainConfigured, ready: false, mode: null };
+    return keychainConfigured ? { provider, configured: true, ready: false, mode: null } : undefined;
   }
   return {
     ...status,

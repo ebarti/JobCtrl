@@ -19,6 +19,18 @@ def routes(service):
     async def decision(request):
         return JSONResponse(service.decide_variant(request.path_params["variant_id"], await json_object(request)))
 
+    async def update_wording(request):
+        return JSONResponse(service.update_variant(request.path_params["variant_id"], await json_object(request)))
+
+    async def wording_history(request):
+        return JSONResponse(service.wording_history(request.path_params["variant_id"]))
+
+    async def recovery(request):
+        return JSONResponse(service.recovery())
+
+    async def restore(request):
+        return JSONResponse(service.restore(await json_object(request)))
+
     async def sources(request):
         return JSONResponse(service.add_source(await json_object(request)) if request.method == "POST" else service.list_sources())
 
@@ -72,6 +84,10 @@ def routes(service):
         Route("/v1/profile", profile, methods=["GET", "PATCH"]),
         Route("/v1/profile/wording", wording, methods=["GET", "POST"]),
         Route("/v1/profile/wording/{variant_id:path}/decision", decision, methods=["POST"]),
+        Route("/v1/profile/wording/{variant_id:path}/history", wording_history, methods=["GET"]),
+        Route("/v1/profile/wording/{variant_id:path}", update_wording, methods=["PATCH"]),
+        Route("/v1/profile/recovery", recovery, methods=["GET"]),
+        Route("/v1/profile/recovery/restore", restore, methods=["POST"]),
         Route("/v1/profile/sources", sources, methods=["GET", "POST"]),
         Route("/v1/profile/sources/{source_id:path}/confirmation", confirmation, methods=["POST"]),
         Route("/v1/profile/import-resume", imported, methods=["POST"]),

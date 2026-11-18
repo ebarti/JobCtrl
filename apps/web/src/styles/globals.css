@@ -1,9 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
-@import "@fontsource-variable/jetbrains-mono";
+@import "./typefaces.css";
+@import "./appearance-fonts.css";
 @import "./tokens.css";
+@import "./appearance.css";
 
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
@@ -26,12 +27,7 @@
     font-variant-numeric: tabular-nums;
   }
 
-  h1,
-  h2,
-  h3,
-  h4,
-  h5,
-  h6 {
+  :is(h1, h2, h3, h4, h5, h6):not(:where(.resume-plate-document *)) {
     font-family: var(--font-heading);
     font-weight: var(--jh-type-component-title-weight);
     letter-spacing: normal;

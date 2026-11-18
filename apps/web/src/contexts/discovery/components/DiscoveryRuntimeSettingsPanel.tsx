@@ -42,13 +42,22 @@ const BOARD_OPTIONS: Array<{ value: DiscoverySettings["boards"][number]; label: 
 
 const RUNTIME_FIELDS = [
   "boards",
-  "resultsPerSite",
   "hoursOld",
   "maxParallelFamilies",
   "useBrowserHeaders",
   "schedulingEnabled",
   "scheduleCron",
 ] as const;
+
+type RuntimeSettingsValues = Pick<DiscoverySettingsUpdateRequest, typeof RUNTIME_FIELDS[number]>;
+const runtimeSettingsSchema = DiscoverySettingsUpdateRequestSchema.pick({
+  boards: true,
+  hoursOld: true,
+  maxParallelFamilies: true,
+  useBrowserHeaders: true,
+  schedulingEnabled: true,
+  scheduleCron: true,
+});
 
 const DISCOVERY_GUIDE_URL = "https://jobctrl.dev/user/discovery";
 
@@ -59,16 +68,10 @@ const RUNTIME_SETTING_HELP = {
       "Select which broad-board providers run for each generated target query. The next Discover run snapshots this selection.",
     href: `${DISCOVERY_GUIDE_URL}#runtime-setting-job-boards`,
   },
-  resultsPerSite: {
-    title: "Results per board",
-    description:
-      "Set the maximum results requested from each selected board for a search unit. The next Discover run snapshots the new limit.",
-    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-results-per-board`,
-  },
   hoursOld: {
     title: "Posting lookback hours",
     description:
-      "Limit broad-board discovery to postings no older than this many hours when the provider supports age filtering. Use 0 for no cutoff. The next Discover run uses the new window.",
+      "Set the posting-age cutoff in hours. When a board needs a broader request, JobCtrl keeps only dates confirmed inside this window; uncertain dates are excluded. Use 0 for no cutoff. Source failures do not stop compatible boards.",
     href: `${DISCOVERY_GUIDE_URL}#runtime-setting-posting-lookback-hours`,
   },
   maxParallelFamilies: {
@@ -97,11 +100,10 @@ const RUNTIME_SETTING_HELP = {
   },
 } satisfies Record<string, DiscoverySettingHelpContent>;
 
-function toFormValues(response: DiscoverySettingsResponse): DiscoverySettingsUpdateRequest {
+function toFormValues(response: DiscoverySettingsResponse): RuntimeSettingsValues {
   const { settings, effectiveSettings } = response;
-  const values: DiscoverySettingsUpdateRequest = {
+  const values: RuntimeSettingsValues = {
     boards: settings.boards,
-    resultsPerSite: settings.resultsPerSite,
     hoursOld: settings.hoursOld,
     schedulingEnabled: settings.schedulingEnabled,
     scheduleCron: settings.scheduleCron,
@@ -117,15 +119,16 @@ function toFormValues(response: DiscoverySettingsResponse): DiscoverySettingsUpd
   return values;
 }
 
-export function DiscoveryRuntimeSettingsPanel() {
+export function DiscoveryRuntimeSettingsPanel({ defaultOpen = true, includeSearchSettings = true }: { readonly defaultOpen?: boolean; readonly includeSearchSettings?: boolean } = {}) {
   const settingsQuery = useDiscoverySettingsQuery();
 
   return (
     <DisclosureSection
       className="discovery-runtime-settings"
+      defaultOpen={defaultOpen}
       collapsedSummary="Discovery runtime configuration"
-      description="Source execution, lookback, filtering, and schedule"
-      title="Runtime settings"
+      description={includeSearchSettings ? "Source execution, lookback, filtering, and schedule" : "Source concurrency, request identity and optional recurring searches"}
+      title={includeSearchSettings ? "Runtime settings" : "Source behavior and schedules"}
     >
       {settingsQuery.error ? (
         <Alert className="inline" variant="destructive">
@@ -133,7 +136,7 @@ export function DiscoveryRuntimeSettingsPanel() {
         </Alert>
       ) : null}
       {settingsQuery.data ? (
-        <DiscoveryRuntimeSettingsForm initial={settingsQuery.data} />
+        <DiscoveryRuntimeSettingsForm initial={settingsQuery.data} includeSearchSettings={includeSearchSettings} />
       ) : settingsQuery.isPending ? (
         <Empty title="Loading runtime settings." />
       ) : null}
@@ -141,7 +144,7 @@ export function DiscoveryRuntimeSettingsPanel() {
   );
 }
 
-export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySettingsResponse }) {
+export function DiscoveryRuntimeSettingsForm({ initial, includeSearchSettings = true }: { initial: DiscoverySettingsResponse; readonly includeSearchSettings?: boolean }) {
   const updateSettings = useUpdateDiscoverySettingsMutation();
   const tenantId = useTenantId();
   const [statusMessage, setStatusMessage] = useState("");
@@ -157,7 +160,7 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
     defaultValues: acceptedValues.current,
     validators: {
       onSubmit: ({ value }) => {
-        const result = DiscoverySettingsUpdateRequestSchema.safeParse(value);
+        const result = runtimeSettingsSchema.safeParse(value);
         return result.success ? undefined : (result.error.issues[0]?.message ?? "Invalid runtime settings");
       },
     },
@@ -165,12 +168,12 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
       setStatusMessage("");
       const submitted = { ...value, boards: value.boards?.slice() };
       const editedFields = RUNTIME_FIELDS.filter((field) => formApi.getFieldMeta(field)?.isDirty);
-      let savedValues: DiscoverySettingsUpdateRequest;
+      let savedValues: RuntimeSettingsValues;
       let scheduleChanged: boolean;
       try {
         const outcome = await baseline.runSave(async () => {
           const latest = baseline.currentValues();
-          const request: DiscoverySettingsUpdateRequest = {};
+          const request: RuntimeSettingsValues = {};
           for (const field of editedFields) Object.assign(request, { [field]: submitted[field] });
           const response = await updateSettings.mutateAsync(request);
           const saved = baseline.acknowledge(toValues(response));
@@ -227,6 +230,7 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
         </div>
       ) : null}
       <div className="field-grid">
+        {includeSearchSettings ? <>
         <form.Field name="boards">
           {(field) => {
             const selected = new Set(field.state.value ?? []);
@@ -265,12 +269,10 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
             );
           }}
         </form.Field>
-        <form.Field name="resultsPerSite">
-          {(field) => <NumberControl help={RUNTIME_SETTING_HELP.resultsPerSite} id="discovery-results" name="resultsPerSite" label="Results per board" min={1} max={1000} value={field.state.value ?? 50} metadata={effective.resultsPerSite} onChange={field.handleChange} />}
-        </form.Field>
         <form.Field name="hoursOld">
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.hoursOld} id="discovery-lookback" name="hoursOld" label="Posting lookback hours" min={0} max={8760} value={field.state.value ?? 72} metadata={effective.hoursOld} onChange={field.handleChange} />}
         </form.Field>
+        </> : null}
         <form.Field name="maxParallelFamilies">
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.maxParallelFamilies} id="discovery-max-parallel" name="maxParallelFamilies" label="Parallel source families" min={1} max={4} value={field.state.value ?? initial.settings.maxParallelFamilies} metadata={effective.maxParallelFamilies} onChange={field.handleChange} />}
         </form.Field>
@@ -296,7 +298,7 @@ export function DiscoveryRuntimeSettingsForm({ initial }: { initial: DiscoverySe
         </form.Field>
         <form.Field name="schedulingEnabled">
           {(field) => (
-            <Field className="field" orientation="horizontal">
+            <Field className="field check" orientation="horizontal">
               <Checkbox
                 id="discovery-scheduling-enabled"
                 checked={Boolean(field.state.value)}
@@ -410,7 +412,7 @@ function DiscoverySettingLegend({
 
 function NumberControl({ help, name, id, label, min, max, metadata, value, onChange }: {
   help: DiscoverySettingHelpContent;
-  name: "resultsPerSite" | "hoursOld" | "maxParallelFamilies";
+  name: "hoursOld" | "maxParallelFamilies";
   id: string;
   label: string;
   min: number;

@@ -22,7 +22,7 @@ export function DiscoveryFeedbackRefresh() {
     return parsed.data;
   }, onSuccess: (receipt) => setRunId(receipt.runId), onSettled: () => { recovery.refresh(); void client.invalidateQueries({ queryKey: discoveryKeys.roleMatchFeedback(tenantId) }); } });
   const value = recovery.status?.status;
-  return <div>
+  return <div className="discovery-feedback-refresh">
     <p>Refresh proposals from saved feedback. Each proposal stays under review until you decide.</p>
     <Button type="button" variant="outline" disabled={refresh.isPending || !recovery.ready || Boolean(recovery.record && !recovery.canRetry)} onClick={() => refresh.mutate()}>{refresh.isPending ? "Queueing refresh…" : recovery.record ? "Retry the same refresh request" : "Refresh feedback proposals"}</Button>
     {!recovery.ready ? <p role="alert">{recovery.error ? "Session recovery storage is unavailable or invalid." : "Checking session recovery storage…"}</p> : recovery.record ? <Button type="button" variant="outline" disabled={recovery.checking} onClick={() => { void recovery.check().then((finished) => { if (finished) setRunId(null); }); }}>Check previous feedback refresh</Button> : null}

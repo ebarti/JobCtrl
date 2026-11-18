@@ -164,7 +164,9 @@ def read_process_identity(pid: int) -> dict:
             seconds, micros = struct.unpack_from("=QQ", bsd, 120)
             if (short.pid != pid or struct.unpack_from("=I", bsd, 12)[0] != pid
                     or not before.unique_id or not seconds
-                    or (before.unique_id, before.pid_version) != (after.unique_id, after.pid_version)):
+                    # exec changes pid_version while preserving this process's
+                    # unique_id and birth time. Custody follows that lifetime.
+                    or before.unique_id != after.unique_id):
                 return {"state": "unverified"}
             return ({"state": "exited"} if short.state == 5 else
                     {"state": "alive", "identity": f"darwin:{seconds}:{micros}"})

@@ -39,6 +39,8 @@ import { JobCtrlApiError } from "@jobctrl/api-client";
 import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema, ManualCaptureDismissSchema, OutcomeSuggestionDecisionRequestSchema, ResumeTemplateDefaultSelectionRequestSchema, ResumeTemplateVersionSaveRequestSchema, compareOutcomeSuggestionDecision } from "@jobctrl/contracts";
 import type { ApplicationOutcome, ApplyReviewApprovalGateReason, ContactDetail, OutcomeSuggestion } from "@jobctrl/contracts";
 import { demoContactFingerprint } from "./contact-fingerprint.js";
+import { demoProfileDocument, retainDemoProfile, reconcileDemoProfile, validateDemoProfileSave } from "./profile-library.js";
+import { demoRequirementAssociations } from "./requirement-library.js";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
 import type {
@@ -212,15 +214,22 @@ export class DemoCommandPersistenceError extends Error {
 export class DemoLocalCommandExecutor {
   private readonly clock: DemoCommandClock;
   private readonly createId: (prefix: string) => string;
-  private readonly permanentDeleteSelections = new Map<string, DemoPermanentDeleteSelection>();
-  private readonly permanentDeleteObservations = new Map<string, DemoPermanentDeleteObservation>();
+  private readonly permanentDeleteSelections: Map<string, DemoPermanentDeleteSelection>;
+  private readonly permanentDeleteObservations: Map<string, DemoPermanentDeleteObservation>;
 
   constructor(
     private readonly workspace: DemoWorkspaceRepository,
     options: DemoLocalCommandExecutorOptions = {},
+    private readonly requestParent?: DemoLocalCommandExecutor,
   ) {
-    this.clock = options.clock ?? systemClock;
-    this.createId = options.createId ?? defaultId;
+    this.clock = requestParent?.clock ?? options.clock ?? systemClock;
+    this.createId = requestParent?.createId ?? options.createId ?? defaultId;
+    this.permanentDeleteSelections = requestParent?.permanentDeleteSelections ?? new Map();
+    this.permanentDeleteObservations = requestParent?.permanentDeleteObservations ?? new Map();
+  }
+
+  forWorkspace(workspace: DemoWorkspaceRepository): DemoLocalCommandExecutor {
+    return new DemoLocalCommandExecutor(workspace, {}, this);
   }
 
   observePermanentDeleteSelection(
@@ -321,6 +330,7 @@ export class DemoLocalCommandExecutor {
   }
 
   dispose(): void {
+    if (this.requestParent) return;
     this.permanentDeleteSelections.clear();
     this.permanentDeleteObservations.clear();
   }
@@ -1481,19 +1491,20 @@ export class DemoLocalCommandExecutor {
         const body = record(args[0]);
         const profile = draft.state.readModel.profile.config;
         const expectedVersion = numberValue(body.expectedProfileVersion);
-        if (expectedVersion !== null && expectedVersion !== profile.profileVersion) {
-          throw new Error(
-            `stale_profile_version: expected ${expectedVersion}, current ${profile.profileVersion ?? "none"}`,
-          );
-        }
+        if (expectedVersion === null || expectedVersion !== profile.profileVersion)
+          throw new JobCtrlApiError(409, "Conflict", "The Profile changed. Review its current version before saving.");
         const before = JSON.stringify(profile);
-        if (body.profile !== undefined) profile.profile = structuredClone(body.profile);
-        if (typeof body.profileText === "string") profile.profile = JSON.parse(body.profileText);
+        (draft.state.features ??= {}).requirementAssociations ??= demoRequirementAssociations(draft);
+        retainDemoProfile(draft);
+        if (body.profile !== undefined) profile.profile = validateDemoProfileSave(draft, body.profile);
+        if (typeof body.profileText === "string") profile.profile = validateDemoProfileSave(draft, JSON.parse(body.profileText));
         if (body.style !== undefined) profile.style = structuredClone(body.style);
         if (typeof body.styleText === "string") profile.style = JSON.parse(body.styleText);
         if (typeof body.templateText === "string") profile.templateText = body.templateText;
         if (JSON.stringify(profile) === before) return profile;
         profile.profileVersion = (profile.profileVersion ?? 0) + 1;
+        profile.profile = demoProfileDocument(profile.profile);
+        reconcileDemoProfile(draft);
         context.appendDomainEvent(atTime(createProfileUpdated(LOCAL_TENANT, {
           changedSections: Object.keys(body).filter((key) => key !== "expectedProfileVersion"),
           updatedAt: now,

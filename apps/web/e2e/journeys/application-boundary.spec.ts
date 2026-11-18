@@ -1,12 +1,14 @@
 import type { Request } from "@playwright/test";
 import { test, expect, json } from "../harness/fixtures.js";
 import { baseline, createBaseline } from "./core-data.js";
+import { sharedEventStreamTargets, sharedWorkerEventSources } from "../harness/shared-event-stream.js";
 
 test("Python boundary, real manual capture and one committed event connection", async ({
   page,
   api,
   app,
   playwright,
+  browser,
 }, testInfo) => {
   const { library } = await createBaseline(api);
   const health = await json<{
@@ -52,14 +54,25 @@ test("Python boundary, real manual capture and one committed event connection", 
     page.getByRole("heading", { name: "Jobs", exact: true }),
   ).toBeVisible();
   await expect(page.locator("vite-error-overlay")).toHaveCount(0);
-  await expect
-    .poll(() => activeStreams.size, {
-      message: "one live shell event connection",
-    })
-    .toBe(1);
+  const shared = await page.evaluate(() => typeof SharedWorker !== "undefined");
+  let sharedTargetId: string | null = null;
+  if (shared) {
+    await expect.poll(async () => (await sharedEventStreamTargets(browser, app.baseURL)).length,
+      { message: "one shared shell transport" }).toBe(1);
+    sharedTargetId = (await sharedEventStreamTargets(browser, app.baseURL))[0]!.targetId;
+    await expect.poll(async () => (await sharedWorkerEventSources(browser, sharedTargetId!)).filter((source) => source.readyState === 1).length,
+      { message: "one live native upstream event connection" }).toBe(1);
+    expect(activeStreams.size).toBe(0);
+  } else {
+    await expect.poll(() => activeStreams.size, { message: "one live fallback event connection" }).toBe(1);
+  }
 
+  await page
+    .locator("summary")
+    .filter({ hasText: /^Add a job by URL or text$/ })
+    .click();
   await page.getByText("Manual capture", { exact: true }).click();
-  const manual = page.getByRole("group").filter({
+  const manual = page.locator("form").filter({
     has: page.getByRole("button", { name: "Save job", exact: true }),
   });
   await manual
@@ -183,10 +196,20 @@ test("Python boundary, real manual capture and one committed event connection", 
     await untrusted.dispose();
   }
   expect(await json(api, "get", "/v1/events")).toEqual(beforeHeadEvents);
-  await page.getByRole("link", { name: "Profile", exact: true }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "My profile", exact: true })
+    .click();
   await expect(page).toHaveURL(/\/profile/);
-  await expect.poll(() => activeStreams.size).toBe(1);
-  expect(maxStreams).toBe(1);
+  if (sharedTargetId) {
+    expect((await sharedEventStreamTargets(browser, app.baseURL)).map((target) => target.targetId)).toEqual([sharedTargetId]);
+    expect((await sharedWorkerEventSources(browser, sharedTargetId)).filter((source) => source.readyState === 1)).toHaveLength(1);
+    expect(activeStreams.size).toBe(0);
+    expect(maxStreams).toBe(0);
+  } else {
+    await expect.poll(() => activeStreams.size).toBe(1);
+    expect(maxStreams).toBe(1);
+  }
   expect(
     app.external.calls.filter((call) => call.path === "/model"),
   ).toHaveLength(0);

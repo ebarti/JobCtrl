@@ -52,4 +52,5 @@ def build_feature(runtime, *, profile, jobs, requirements=None, fit=None, resume
               Route("/v1/jobs/{jobId}/interview-notes", notes, methods=["GET"]),
               Route("/v1/jobs/{jobId}/interview-notes", save_note, methods=["POST"]),
               Route("/v1/jobs/{jobId}/actions/generate-interview-prep", submit, methods=["POST"]))
-    return Feature(name="interviews", service=service, routes=routes, actions={"interviews.generate": service.generate})
+    return Feature(name="interviews", service=service, routes=routes, actions={"interviews.generate": service.generate},
+                   action_versions={"interviews.generate": "requirements-v2"})

@@ -51,6 +51,15 @@ publication cannot race a source change. Jobs permanent deletion invokes
 explicit registered owner deletion ports in the same transaction. An owner can
 refuse deletion when durable external intent still requires preservation.
 
+The redesign's Profile recovery restores a requested removed role or achievement
+from retained Profile versions into the latest document under a version fence;
+it does not replace the whole current document. Pending wording revisions retain
+their exact earlier text/decision snapshots. Fit owns separate immutable
+user-association revisions with soft remove/restore and original meaning/source/
+optional-wording pins. Those intent records remain unassessed and stale when
+their inputs change. Neither recovery nor association storage rewrites accepted
+resume artifacts.
+
 ## Transactions, events and accepted artifacts
 
 Connections enable foreign keys, WAL and a bounded busy timeout. The shared

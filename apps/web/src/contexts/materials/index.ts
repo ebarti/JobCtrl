@@ -26,3 +26,5 @@ export {
   formatBytes,
 } from "./lib/artifact-type-format.js";
 export { artifactStatusTone } from "./lib/artifact-status-tone.js";
+
+export { isPlateValue } from "./lib/resume-document.js";

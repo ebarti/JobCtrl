@@ -2,6 +2,7 @@ export type { HttpMethod, HttpPort, HttpQueryValue, HttpRequestOptions } from ".
 export type { FeatureEventHandler } from "./FeatureEvents.js";
 export type { BlobDownloadPort } from "./BlobDownloadPort.js";
 export type { ProfileTransferPort, ProfileTransferRecords } from "./ProfileTransferPort.js";
+export type { PlaceResult, PlacesPort } from "./PlacesPort.js";
 export type {
   DomainEventEnvelope,
   EventStreamPort,

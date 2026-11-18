@@ -149,7 +149,7 @@ export const ACTIVITY_SORT_FIELDS = [
 export type ActivitySortField = (typeof ACTIVITY_SORT_FIELDS)[number];
 
 export const SortDirectionSchema = z.enum(["asc", "desc"]).default("desc").catch("desc");
-export const TableIdSchema = z.enum(["jobs", "discovery-sources"]);
+export const TableIdSchema = z.enum(["jobs", "discovery-sources", "requirements"]);
 export type TableId = z.infer<typeof TableIdSchema>;
 
 export const SavedTableViewDensitySchema = z.enum(["compact", "regular", "comfy"]);
@@ -634,6 +634,7 @@ export const RESUME_TEMPLATE_SECTIONS = [
   "experience",
   "education",
   "skills",
+  "languages",
 ] as const;
 export type ResumeTemplateSection = (typeof RESUME_TEMPLATE_SECTIONS)[number];
 
@@ -1791,6 +1792,19 @@ const ProfileAvailabilitySchema = z
   .passthrough()
   .partial();
 
+export const TargetLocationBindingSchema = z.object({
+  rowIndex: z.number().int().nonnegative().max(99),
+  text: z.string().trim().min(1).max(300),
+  provider: z.literal("photon"),
+  placeId: z.string().min(1).max(200),
+  displayName: z.string().trim().min(1).max(1000),
+  latitude: z.number().finite().min(-90).max(90),
+  longitude: z.number().finite().min(-180).max(180),
+  selectedAt: z.string().datetime({ offset: true }),
+  provenance: z.literal("user_selected"),
+}).strict();
+export type TargetLocationBinding = z.infer<typeof TargetLocationBindingSchema>;
+
 const ProfileExperienceMetadataSchema = z
   .object({
     years_of_experience_total: z.string().default(""),
@@ -1803,6 +1817,7 @@ const ProfileExperienceMetadataSchema = z
     target_functions: z.string().default(""),
     target_specializations: z.string().default(""),
     target_locations: z.string().default(""),
+    target_location_bindings: z.array(TargetLocationBindingSchema).max(100).optional(),
     target_work_models: z.string().default(""),
   })
   .passthrough()
@@ -1857,6 +1872,12 @@ const ProfileSkillCategorySchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   items: z.array(z.string()).default([]),
+}).passthrough();
+
+const ProfileLanguageEntrySchema = z.object({
+  id: z.string().min(1),
+  language: z.string().default(""),
+  proficiency: z.string().default(""),
 }).passthrough();
 
 const ProfileTailoringPolicySchema = z
@@ -1934,6 +1955,7 @@ const ProfileResumeMasterSchema = z.object({
   }),
   education_entries: z.array(ProfileEducationEntrySchema).default([]),
   skill_categories: z.array(ProfileSkillCategorySchema).default([]),
+  language_entries: z.array(ProfileLanguageEntrySchema).default([]),
   tailoring_rules: ProfileTailoringRulesSchema.default({}),
 }).passthrough();
 
@@ -4982,7 +5004,9 @@ export const DiscoverySettingsUpdateRequestSchema = z
     autoApply: z.boolean().optional(),
     applyApprovalRequired: z.literal(true).optional(),
     boards: z.array(z.string().refine((value) => value.trim().length > 0)).optional(),
+    // Legacy serialized setting; newly admitted searches ignore this value.
     resultsPerSite: z.coerce.number().int().min(1).max(1000).optional(),
+    newJobLimit: z.coerce.number().int().min(1).max(10000).optional(),
     hoursOld: z.coerce.number().int().min(0).max(8760).optional(),
     schedulingEnabled: z.boolean().optional(),
     scheduleCron: z.string().min(1).optional(),
@@ -5012,6 +5036,13 @@ export interface DiscoverySettings {
 }
 
 export type EffectiveDiscoverySetting<T> = EffectiveSetting<T> & { locked: false };
+export type InactiveDiscoveryResultLimitSetting = {
+  value: number;
+  source: "persisted" | "default";
+  activation: "inactive";
+  editable: false;
+  locked: true;
+};
 export type LockedDiscoveryApprovalSetting = {
   value: true;
   source: "persisted" | "default";
@@ -5025,7 +5056,7 @@ export interface EffectiveDiscoverySettings {
   autoApply: EffectiveDiscoverySetting<boolean>;
   applyApprovalRequired: LockedDiscoveryApprovalSetting;
   boards: EffectiveDiscoverySetting<DiscoverySettings["boards"]>;
-  resultsPerSite: EffectiveDiscoverySetting<number>;
+  resultsPerSite: InactiveDiscoveryResultLimitSetting;
   hoursOld: EffectiveDiscoverySetting<number>;
   schedulingEnabled: EffectiveDiscoverySetting<boolean>;
   scheduleCron: EffectiveDiscoverySetting<string>;
@@ -5075,7 +5106,13 @@ export const DiscoverySettingsResponseSchema = z
         autoApply: discoveryEffectiveSettingSchema(z.boolean()),
         applyApprovalRequired: lockedDiscoveryApprovalSettingSchema,
         boards: discoveryEffectiveSettingSchema(z.array(z.string())),
-        resultsPerSite: discoveryEffectiveSettingSchema(z.number()),
+        resultsPerSite: z.object({
+          value: z.number(),
+          source: z.enum(["persisted", "default"]),
+          activation: z.literal("inactive"),
+          editable: z.literal(false),
+          locked: z.literal(true),
+        }).strict(),
         hoursOld: discoveryEffectiveSettingSchema(z.number()),
         schedulingEnabled: discoveryEffectiveSettingSchema(z.boolean()),
         scheduleCron: discoveryEffectiveSettingSchema(z.string()),

@@ -39,8 +39,9 @@ evidence about you.
 
 ## What You Can See And Control
 
-Open **Contacts** at `/outreach`. The route name reflects the bounded context;
-the page title is Contacts. From there you can:
+Open **Jobs → Contacts** at `/outreach`, without selecting a job, or use the
+selected job's people/contact controls. The route name reflects the bounded
+context; the page title is Contacts. From there you can:
 
 - filter contacts by employer or linked job;
 - create, edit, or remove a contact;

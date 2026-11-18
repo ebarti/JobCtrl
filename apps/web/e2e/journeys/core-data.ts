@@ -5,6 +5,8 @@ import {
   modelCall,
   type ApplicationStack,
 } from "../harness/fixtures.js";
+import { catalogMatching, typedExtraction } from "./requirements-data.js";
+import { qualificationBatchDecision } from "./qualification-data.js";
 
 /** Authored synthetic data submitted through the public Profile action. These
  * are not persisted model outputs, labels, or an internal repository seed. */
@@ -60,6 +62,7 @@ export const baseline = {
         items: ["Python", "SQLite", "Temporal"],
       },
     ],
+    language_entries: [] as { id: string; language: string; proficiency: string }[],
     tailoring_rules: {},
   },
 };
@@ -93,6 +96,7 @@ export type ResumeRevision = {
   document: {
     personal: { full_name: string };
     summary: string;
+    languages?: { id: string; language: string; proficiency: string }[];
     experience: {
       id: string;
       title: string;
@@ -206,33 +210,11 @@ export async function qualifyPosting(
   const source = (
     extraction.body["sources"] as { source_id: string; text: string }[]
   )[0]!;
-  extraction.reply({
-    status: "complete",
-    requirements: [
-      {
-        local_id: "recovery",
-        text: source.text,
-        definition: "Implement durable workflow recovery",
-        qualifiers: [],
-        scope: "resume",
-        tier: "must_have",
-        weight: 1,
-        support: "supported",
-        spans: [{ start: 0, end: source.text.length, quote: source.text }],
-      },
-    ],
-    reason:
-      "Explicit source-bound admission for the application preparation journey.",
-    citations: [{ source_id: source.source_id, quote: source.text }],
-  });
-  const novelty = await modelCall(app, "requirements.novelty");
-  novelty.reply({
-    verdict: "new",
-    reason: "The complete catalog sweep supports this explicit new meaning.",
-    citations: (
-      novelty.body["sources"] as { source_id: string; text: string }[]
-    ).map((row) => ({ source_id: row.source_id, quote: row.text })),
-  });
+  extraction.reply(typedExtraction(extraction, { requirements: [{
+    localId: "recovery", text: source.text, definition: "Implement durable workflow recovery",
+  }] }));
+  const matching = await modelCall(app, "requirements.match_catalog");
+  matching.reply(catalogMatching(matching, { recovery: { verdict: "new" } }));
   const extracted = await extracting;
   expect(extracted.status(), await extracted.text()).toBe(200);
   const assessing = api.post(`/v1/jobs/${posting.job_id}/fit/assess`, {
@@ -242,33 +224,12 @@ export async function qualifyPosting(
       prepare_coverage: false,
     },
   });
-  const qualification = await modelCall(app, "fit.qualification");
+  const qualification = await modelCall(app, "fit.qualification-batch");
   const achievement = library.roles[0]!.achievements[0]!;
   const sourceId = `evidence:${achievement.source_refs[0]!.source_id}`;
-  const input = qualification.body["sources"] as {
-    source_id: string;
-    text: string;
-  }[];
-  const fact = input.find((row) => row.source_id === sourceId)!;
-  const requirement = input.find((row) => row.source_id === "requirement")!;
-  qualification.reply({
-    ...(qualification.body["context"] as { binding: Record<string, string> })
-      .binding,
-    kind: "matched",
-    strength: "direct",
-    confidence: "high",
-    rationale:
-      "The authored recovery achievement directly supports this requirement.",
-    evidence: [{ source_id: fact.source_id, quote: fact.text }],
-    requirement_citations: [
-      { source_id: requirement.source_id, quote: requirement.text },
-    ],
-    achievement_ids: [achievement.achievement_id],
-    keywords: ["durable workflows"],
-    eligibility: "eligible",
-    blocker_category: null,
-    warning_category: null,
-  });
+  qualification.reply(qualificationBatchDecision(qualification, () => ({
+    achievementIds: [achievement.achievement_id], evidenceSourceIds: [sourceId], keywords: ["durable workflows"],
+  })));
   const assessed = await assessing;
   expect(assessed.status(), await assessed.text()).toBe(200);
   expect((await assessed.json()).score.score).toBe(10);

@@ -71,7 +71,7 @@ def question_generation_prompt(
     # Fit-report hints can rank evidence before drafting, but cannot supply
     # personal evidence IDs or rationale to an explicitly empty question.
     target_requirements = [
-        {key: row[key] for key in ("requirementId", "requirementText", "sourceExcerpt", "tier", "weight") if key in row}
+        {key: row[key] for key in ("requirementId", "requirementText", "sourceExcerpt", "category") if key in row}
         for row in requirements
     ]
     target_employer = (

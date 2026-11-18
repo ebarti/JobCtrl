@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, ValidationError, model_validator
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from jobctrl.app.errors import AppError
+from .associations import AssociationState, CreateAssociation, ReviseAssociation
+from .current_wording import CurrentWordingInput, CurrentWordingState
+from .contract import CONTRACT_VERSION
+from .domain import FORMULA_VERSION
 
 
 class Input(BaseModel):
@@ -19,6 +23,29 @@ class AssessInput(Input):
     force: StrictBool = False
     prepare_wording: StrictBool = True
     prepare_coverage: StrictBool = True
+
+
+class RefreshLimits(Input):
+    max_model_calls: StrictInt = Field(default=40, ge=1, le=200)
+    max_requirements: StrictInt = Field(default=100, ge=0, le=500)
+    max_wording_proposals: StrictInt = Field(default=20, ge=0, le=100)
+    max_duration_seconds: StrictInt = Field(default=600, ge=1, le=3600)
+
+
+class RefreshInput(Input):
+    profile_id: StrictStr = Field(default="default", min_length=1, max_length=120)
+    job_ids: list[StrictStr] = Field(default_factory=list, max_length=100)
+    expected_input_fingerprint: StrictStr = Field(min_length=64, max_length=64)
+    retry_wording_proposal_ids: list[StrictStr] = Field(default_factory=list, max_length=100)
+    prepare_wording: StrictBool = True
+    prepare_coverage: StrictBool = True
+    limits: RefreshLimits = Field(default_factory=RefreshLimits)
+
+    @model_validator(mode="after")
+    def preparation_scope(self):
+        if not self.prepare_coverage and (self.prepare_wording or self.retry_wording_proposal_ids):
+            raise ValueError("Disabling coverage requires prepare_wording=false and no wording retries.")
+        return self
 
 
 class CorrectInput(Input):
@@ -56,6 +83,8 @@ class RequirementCorrectionInput(Input):
     blocker_category: StrictStr | None = None
     warning_category: StrictStr | None = None
     profile_id: StrictStr = "default"
+    wording_support: StrictStr | None = None
+    evidence_route: StrictStr | None = None
 
 
 async def body(request, schema):
@@ -66,6 +95,48 @@ async def body(request, schema):
 
 
 def routes(service) -> tuple:
+    async def set_current_wording(request):
+        payload = await body(request, CurrentWordingInput)
+        return JSONResponse(service.set_current_wording(payload.model_dump()))
+
+    async def current_wording_state(request):
+        payload = await body(request, CurrentWordingState)
+        return JSONResponse(service.set_current_wording_state(request.path_params["assignment_id"], payload.model_dump()))
+
+    async def current_wording_history(request):
+        limit, offset = history_pagination(request)
+        return JSONResponse(service.current_wording_history(request.path_params["assignment_id"],
+            request.query_params.get("profile_id", "default"), limit=limit, offset=offset))
+
+    async def requirement_library(request):
+        return JSONResponse(service.requirement_library(request.query_params.get("profile_id", "default")))
+
+    async def create_association(request):
+        payload = await body(request, CreateAssociation)
+        return JSONResponse(service.create_association(payload.model_dump()))
+
+    async def association_state(request):
+        payload = await body(request, AssociationState)
+        return JSONResponse(service.set_association_state(request.path_params["association_id"], payload.model_dump()))
+
+    async def revise_association(request):
+        payload = await body(request, ReviseAssociation)
+        return JSONResponse(service.revise_association(request.path_params["association_id"], payload.model_dump()))
+
+    async def association_history(request):
+        limit, offset = history_pagination(request)
+        return JSONResponse(service.association_history(request.path_params["association_id"],
+            request.query_params.get("profile_id", "default"), limit=limit, offset=offset))
+
+    def history_pagination(request):
+        try:
+            limit, offset = int(request.query_params.get("limit", "50")), int(request.query_params.get("offset", "0"))
+        except ValueError:
+            raise AppError("fit_invalid_pagination", "Supply a valid history limit and offset.") from None
+        if not 1 <= limit <= 200 or offset < 0:
+            raise AppError("fit_invalid_pagination", "Supply a valid history limit and offset.")
+        return limit, offset
+
     async def get_fit(request):
         return JSONResponse(service.get_job_fit(request.path_params["job_id"],
                                                  profile_id=request.query_params.get("profile_id", "default")))
@@ -105,10 +176,31 @@ def routes(service) -> tuple:
         return JSONResponse({"summaries": service.summary_for_jobs(payload.job_ids)})
 
     async def policy(request):
-        return JSONResponse({"formula_version": "requirement-fit-v2-scoped",
+        return JSONResponse({"contract_version": CONTRACT_VERSION, "formula_version": FORMULA_VERSION,
+                             "support_credits": {"direct": 1, "strong": .85, "transferable": .6, "missing": 0, "blocked": 0},
+                             "weighting": "equal_distinct_demands", "empty_score": None,
                              "correction_anchors": service.store.anchors()})
 
+    async def refresh_pending(request):
+        return JSONResponse(service.refresh_pending(request.query_params.get("profile_id", "default")))
+
+    async def refresh_operation(request):
+        allow_pending = request.query_params.get("allow_pending", "false")
+        if allow_pending not in {"true", "false"}:
+            raise AppError("fit_invalid_request", "allow_pending must be true or false.", 422)
+        return JSONResponse(service.refresh_operation(request.path_params["operation_id"], allow_pending=allow_pending == "true"))
+
     return (
+        Route("/v1/fit/current-wordings", set_current_wording, methods=["POST"]),
+        Route("/v1/fit/current-wordings/{assignment_id}/state", current_wording_state, methods=["POST"]),
+        Route("/v1/fit/current-wordings/{assignment_id}/history", current_wording_history, methods=["GET"]),
+        Route("/v1/fit/requirement-library", requirement_library, methods=["GET"]),
+        Route("/v1/fit/associations", create_association, methods=["POST"]),
+        Route("/v1/fit/associations/{association_id}/state", association_state, methods=["POST"]),
+        Route("/v1/fit/associations/{association_id}/revisions", revise_association, methods=["POST"]),
+        Route("/v1/fit/associations/{association_id}/history", association_history, methods=["GET"]),
+        Route("/v1/fit/refresh/pending", refresh_pending, methods=["GET"]),
+        Route("/v1/fit/refresh/operations/{operation_id}", refresh_operation, methods=["GET"]),
         Route("/v1/jobs/{job_id}/fit", get_fit, methods=["GET"]),
         Route("/v1/jobs/{job_id}/fit/assess", assess, methods=["POST"]),
         Route("/v1/jobs/{job_id}/fit/correct", correct, methods=["POST"]),

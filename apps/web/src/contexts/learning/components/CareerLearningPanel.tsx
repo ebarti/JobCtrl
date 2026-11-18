@@ -1,12 +1,13 @@
 import { useForm } from "@tanstack/react-form";
 import { Link } from "@tanstack/react-router";
-import { useId, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   CareerLearningCommandSchema,
   type CareerLearningCommand,
   type DeterminationCitation,
 } from "@jobctrl/contracts";
 import type { CareerCohort, CareerMilestone, LearningResponse } from "../contracts.js";
+import { milestoneDraft, useLearningDrafts, useLearningDraftScope, type CohortDraftValues } from "../stores/learningDrafts.js";
 
 import {
   Alert,
@@ -37,6 +38,7 @@ import {
   useCareerLearningMutation,
   useCareerLearningQuery,
 } from "../hooks/useCareerLearning.js";
+import "../../../styles/career-learning.css";
 
 /** Public immutable job choices supplied by the page that composes Jobs and Learning. */
 export interface CareerJobChoices {
@@ -361,29 +363,42 @@ function MilestoneEditor({
   readonly pending: boolean;
 }) {
   const id = useId();
+  const tenant = useLearningDraftScope();
+  const [draftEpoch] = useState(() => useLearningDrafts.getState().epochs.get(tenant) ?? 0);
+  const [initialDraft] = useState(() => {
+    const saved = milestoneDraft(tenant, milestone.milestoneId);
+    // A later accepted revision already contains this draft. Do not replay it.
+    return saved && saved.revision < milestone.revision && saved.status === milestone.status &&
+      saved.completionEvidence === milestone.completionEvidence ? undefined : saved;
+  });
+  const [baselineRevision, setBaselineRevision] = useState(initialDraft?.revision ?? milestone.revision);
+  const stale = baselineRevision !== milestone.revision;
   const form = useForm({
     defaultValues: {
-      status: milestone.status,
-      completionEvidence: milestone.completionEvidence,
+      status: initialDraft?.status ?? milestone.status,
+      completionEvidence: initialDraft?.completionEvidence ?? milestone.completionEvidence,
     },
     validators: {
       onSubmit: ({ value }) => {
+        if (stale) return "Review the changed saved milestone before saving this draft.";
         const parsed = CareerLearningCommandSchema.safeParse({
           action: "update",
           milestoneId: milestone.milestoneId,
-          expectedRevision: milestone.revision,
+          expectedRevision: baselineRevision,
           ...value,
         });
         return parsed.success ? undefined : parsed.error.issues[0]?.message;
       },
     },
-    onSubmit: ({ value }) =>
+    onSubmit: ({ value }) => {
+      if (stale) return;
       act({
         action: "update",
         milestoneId: milestone.milestoneId,
-        expectedRevision: milestone.revision,
+        expectedRevision: baselineRevision,
         ...value,
-      }),
+      });
+    },
   });
   return (
     <article
@@ -400,6 +415,16 @@ function MilestoneEditor({
         Profile {milestone.origin.snapshot.profileVersion ?? "not saved"}
       </p>
       <StaleNotice reasons={milestone.staleReasons} />
+      {stale ? <div role="alert">
+        <p>This milestone changed since the draft began. Your draft is preserved.</p>
+        <p>Saved now: {statusLabels[milestone.status]} · {milestone.completionEvidence || "No completion evidence recorded"}</p>
+        <Button type="button" variant="outline" onClick={() => setBaselineRevision(milestone.revision)}>Keep my draft against this saved version</Button>
+        <Button type="button" variant="ghost" onClick={() => {
+          form.reset({ status: milestone.status, completionEvidence: milestone.completionEvidence });
+          setBaselineRevision(milestone.revision);
+          useLearningDrafts.getState().setMilestone(tenant, milestone.milestoneId, null);
+        }}>Discard draft and load saved activity</Button>
+      </div> : null}
       <form
         className="grid gap-3"
         onSubmit={(event) => {
@@ -407,6 +432,8 @@ function MilestoneEditor({
           void form.handleSubmit();
         }}
       >
+        <form.Subscribe selector={(state) => state.values}>{(values) => <MilestoneDraftKeeper
+          tenant={tenant} epoch={draftEpoch} milestone={milestone} baselineRevision={baselineRevision} values={values} />}</form.Subscribe>
         <FieldGroup>
           <form.Field name="status">
             {(field) => (
@@ -470,7 +497,7 @@ function MilestoneEditor({
             errors.length ? <p role="alert">{errors.join(" ")}</p> : null
           }
         </form.Subscribe>
-        <Button type="submit" variant="outline" disabled={pending}>
+        <Button type="submit" variant="outline" disabled={pending || stale}>
           Save milestone activity
         </Button>
       </form>
@@ -516,15 +543,52 @@ function MilestoneEditor({
   );
 }
 
+function MilestoneDraftKeeper({ tenant, epoch, milestone, baselineRevision, values }: {
+  readonly tenant: string;
+  readonly epoch: number;
+  readonly milestone: CareerMilestone;
+  readonly baselineRevision: number;
+  readonly values: { status: CareerMilestone["status"]; completionEvidence: string };
+}) {
+  useEffect(() => {
+    if ((useLearningDrafts.getState().epochs.get(tenant) ?? 0) !== epoch) return;
+    const previous = milestoneDraft(tenant, milestone.milestoneId);
+    const matchesSaved = values.status === milestone.status && values.completionEvidence === milestone.completionEvidence;
+    if (previous && previous.revision < milestone.revision && matchesSaved) {
+      useLearningDrafts.getState().setMilestone(tenant, milestone.milestoneId, null);
+    } else if (previous || !matchesSaved || baselineRevision !== milestone.revision) {
+      useLearningDrafts.getState().setMilestone(tenant, milestone.milestoneId, { revision: baselineRevision, ...values });
+    }
+  }, [tenant, epoch, milestone.milestoneId, milestone.revision, milestone.status, milestone.completionEvidence, baselineRevision, values]);
+  return null;
+}
+
+function CohortDraftKeeper({ tenant, epoch, values, editing, preview }: {
+  readonly tenant: string;
+  readonly epoch: number;
+  readonly values: CohortDraftValues;
+  readonly editing: CareerCohort | null;
+  readonly preview: LearningResponse["preview"];
+}) {
+  useEffect(() => {
+    if ((useLearningDrafts.getState().epochs.get(tenant) ?? 0) !== epoch) return;
+    useLearningDrafts.getState().setCohort(tenant, { values, editing, preview });
+  }, [tenant, epoch, values, editing, preview]);
+  return null;
+}
+
 function CareerLearningWorkspace({ jobs }: { readonly jobs: CareerJobChoices }) {
+  const tenant = useLearningDraftScope();
+  const [draftEpoch] = useState(() => useLearningDrafts.getState().epochs.get(tenant) ?? 0);
+  const [initialDraft] = useState(() => useLearningDrafts.getState().cohorts.get(tenant));
   const query = useCareerLearningQuery();
   const mutation = useCareerLearningMutation();
-  const [editing, setEditing] = useState<CareerCohort | null>(null);
+  const [editing, setEditing] = useState<CareerCohort | null>(initialDraft?.editing ?? null);
   const [preview, setPreview] =
-    useState<LearningResponse["preview"]>(null);
+    useState<LearningResponse["preview"]>(initialDraft?.preview ?? null);
   const id = useId();
   const form = useForm({
-    defaultValues: {
+    defaultValues: initialDraft?.values ?? {
       title: "Selected jobs",
       asOf: today(),
       aspirations: "",
@@ -553,7 +617,12 @@ function CareerLearningWorkspace({ jobs }: { readonly jobs: CareerJobChoices }) 
       if (parsed.success) {
         try {
           await mutation.mutateAsync(parsed.data);
-          setEditing(null);
+          if ((useLearningDrafts.getState().epochs.get(tenant) ?? 0) !== draftEpoch) return;
+          const draft = useLearningDrafts.getState().cohorts.get(tenant);
+          const sameDraft = draft && JSON.stringify(draft.values) === JSON.stringify(value) &&
+            draft.editing?.cohortId === editing?.cohortId && draft.editing?.revision === editing?.revision;
+          if (sameDraft) useLearningDrafts.getState().setCohort(tenant, { ...draft, editing: null });
+          if (JSON.stringify(form.state.values) === JSON.stringify(value)) setEditing(null);
         } catch {
           /* Keep the selected cohort and accepted comparison. */
         }
@@ -577,7 +646,7 @@ function CareerLearningWorkspace({ jobs }: { readonly jobs: CareerJobChoices }) 
     );
   const act = (command: CareerLearningCommand) => mutation.mutate(command);
   return (
-    <div className="grid min-w-0 gap-5 pt-4 break-words">
+    <div className="career-learning-content grid min-w-0 gap-5 pt-4 break-words">
       <h2>Review a selected-job cohort</h2>
       <p>
         Choose up to 30 jobs and a selection date. The model compares only their
@@ -623,7 +692,7 @@ function CareerLearningWorkspace({ jobs }: { readonly jobs: CareerJobChoices }) 
         </p>
       ) : null}
       <form
-        className="grid gap-4"
+        className="career-learning-cohort grid gap-4"
         onSubmit={(event) => {
           event.preventDefault();
           void form.handleSubmit();
@@ -634,54 +703,58 @@ function CareerLearningWorkspace({ jobs }: { readonly jobs: CareerJobChoices }) 
             ? `Refresh ${editing.title} from revision ${editing.revision}`
             : "Create a dated cohort"}
         </h3>
+        <form.Subscribe selector={(state) => state.values}>{(values) => <CohortDraftKeeper
+          tenant={tenant} epoch={draftEpoch} values={values} editing={editing} preview={preview} />}</form.Subscribe>
         <FieldGroup>
-          {(
-            [
-              ["title", "Cohort name"],
-              ["asOf", "Selection date"],
+          <FieldGroup className="career-learning-cohort__fields">
+            {(
               [
-                "aspirations",
-                "Your aspirations (separate from demonstrated capability)",
-              ],
-            ] as const
-          ).map(([name, label]) => (
-            <form.Field name={name} key={name}>
-              {(field) => (
-                <Field>
-                  <FieldLabel htmlFor={`${id}-${name}`}>{label}</FieldLabel>
-                  <Input
-                    id={`${id}-${name}`}
-                    type={name === "asOf" ? "date" : "text"}
-                    value={field.state.value}
-                    maxLength={
-                      name === "title"
-                        ? 160
-                        : name === "aspirations"
-                          ? 2000
-                          : undefined
-                    }
-                    onChange={(event) => field.handleChange(event.target.value)}
-                    onBlur={field.handleBlur}
-                  />
-                </Field>
-              )}
-            </form.Field>
-          ))}
-          <Field>
-            <FieldLabel htmlFor={`${id}-search`}>
-              Find jobs to select
-            </FieldLabel>
-            <Input
-              id={`${id}-search`}
-              value={jobs.search}
-              onChange={(event) => {
-                jobs.onSearchChange(event.target.value);
-              }}
-            />
-          </Field>
+                ["title", "Cohort name"],
+                ["asOf", "Selection date"],
+                [
+                  "aspirations",
+                  "Your aspirations (separate from demonstrated capability)",
+                ],
+              ] as const
+            ).map(([name, label]) => (
+              <form.Field name={name} key={name}>
+                {(field) => (
+                  <Field>
+                    <FieldLabel htmlFor={`${id}-${name}`}>{label}</FieldLabel>
+                    <Input
+                      id={`${id}-${name}`}
+                      type={name === "asOf" ? "date" : "text"}
+                      value={field.state.value}
+                      maxLength={
+                        name === "title"
+                          ? 160
+                          : name === "aspirations"
+                            ? 2000
+                            : undefined
+                      }
+                      onChange={(event) => field.handleChange(event.target.value)}
+                      onBlur={field.handleBlur}
+                    />
+                  </Field>
+                )}
+              </form.Field>
+            ))}
+            <Field>
+              <FieldLabel htmlFor={`${id}-search`}>
+                Find jobs to select
+              </FieldLabel>
+              <Input
+                id={`${id}-search`}
+                value={jobs.search}
+                onChange={(event) => {
+                  jobs.onSearchChange(event.target.value);
+                }}
+              />
+            </Field>
+          </FieldGroup>
           <form.Field name="jobIds">
             {(field) => (
-              <FieldSet>
+              <FieldSet className="career-learning-cohort__jobs">
                 <FieldLegend>
                   Explicit job selection ({field.state.value.length}/30)
                 </FieldLegend>
@@ -752,7 +825,7 @@ function CareerLearningWorkspace({ jobs }: { readonly jobs: CareerJobChoices }) 
               </FieldSet>
             )}
           </form.Field>
-          <div className="flex items-center gap-3">
+          <div className="career-learning-cohort__pagination">
             <Button
               type="button"
               variant="outline"
@@ -801,14 +874,21 @@ function CareerLearningWorkspace({ jobs }: { readonly jobs: CareerJobChoices }) 
             variant="outline"
             disabled={mutation.isPending || (mutation.hasUnconfirmed && !(mutation.canResumeWithInputs && mutation.pendingKind === "preview"))}
             onClick={() => {
+              const reviewedJobIds = [...form.getFieldValue("jobIds")];
               const parsed = CareerLearningCommandSchema.safeParse({
                 action: "preview",
-                jobIds: form.getFieldValue("jobIds"),
+                jobIds: reviewedJobIds,
               });
               if (parsed.success)
                 void mutation
                   .mutateAsync(parsed.data)
-                  .then((response) => setPreview(response.preview))
+                  .then((response) => {
+                    if ((useLearningDrafts.getState().epochs.get(tenant) ?? 0) !== draftEpoch) return;
+                    const draft = useLearningDrafts.getState().cohorts.get(tenant);
+                    if (!draft || JSON.stringify(draft.values.jobIds) !== JSON.stringify(reviewedJobIds)) return;
+                    useLearningDrafts.getState().setCohort(tenant, { ...draft, preview: response.preview });
+                    if (JSON.stringify(form.getFieldValue("jobIds")) === JSON.stringify(reviewedJobIds)) setPreview(response.preview);
+                  })
                   .catch(() => {});
             }}
           >
@@ -828,7 +908,7 @@ function CareerLearningWorkspace({ jobs }: { readonly jobs: CareerJobChoices }) 
               onClick={() => {
                 setEditing(null);
                 setPreview(null);
-                form.reset();
+                form.reset({ title: "Selected jobs", asOf: today(), aspirations: "", jobIds: [] });
               }}
             >
               Start a new cohort instead
@@ -872,15 +952,23 @@ function CareerLearningWorkspace({ jobs }: { readonly jobs: CareerJobChoices }) 
   );
 }
 
-export function CareerLearningPanel({ jobs }: { readonly jobs: CareerJobChoices }) {
+export function CareerLearningPanel({ jobs, variant = "disclosure" }: {
+  readonly jobs: CareerJobChoices;
+  readonly variant?: "disclosure" | "workspace";
+}) {
+  const tenant = useLearningDraftScope();
+  const epoch = useLearningDrafts((state) => state.epochs.get(tenant) ?? 0);
   const [open, setOpen] = useState(false);
+  if (variant === "workspace") return <section className="career-learning-workspace" aria-label="Learning and selected-job demand">
+    <CareerLearningWorkspace key={`${tenant}:${epoch}`} jobs={jobs} />
+  </section>;
   return (
     <details
       className="card full p-4"
       onToggle={(event) => setOpen(event.currentTarget.open)}
     >
       <summary>Selected-job demand and learning milestones</summary>
-      {open ? <CareerLearningWorkspace jobs={jobs} /> : null}
+      {open ? <CareerLearningWorkspace key={`${tenant}:${epoch}`} jobs={jobs} /> : null}
     </details>
   );
 }

@@ -34,6 +34,11 @@ docs to describe the delivered behavior. Delivery history lives in the git log
 
 ## Active Plans
 
+The [Original app redesign](2026-11-11-original-app-redesign.md) records the
+authorized whole-product implementation, retained capabilities and pending
+verification. It covers the application, offline demo and owning documentation;
+it does not establish a release or deployment.
+
 The [shared workspace upgrade plan](2026-10-29-shared-workspace-upgrades.md)
 records shared-workspace upgrade behavior and remaining qualification work.
 

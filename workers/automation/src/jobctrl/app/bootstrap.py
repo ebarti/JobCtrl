@@ -101,6 +101,18 @@ def create_application(workspace: Path | str, *, enabled_features: Collection[st
         add(build_feature(runtime, profile=need("profile"), jobs=need("jobs"), requirements=need("requirements"),
                           fit=need("fit"), resumes=need("resumes"), discovery=services.get("discovery"),
                           companies=services.get("companies"), compensation=services.get("compensation")))
+        # The ordinary search is an application journey across public owners.
+        # Discovery remains independently removable and acquisition-only on its
+        # own; the complete product retains its existing public search identity.
+        preparation_finalizer = features[-1].action_finalizers["preparation.run"]
+        preparation_version = features[-1].action_versions["preparation.run"]
+        for feature in features:
+            if feature.name == "discovery":
+                feature.actions["discovery.search"] = services["preparation"].search
+                feature.action_finalizers["discovery.search"] = preparation_finalizer
+                feature.action_versions["discovery.search"] = preparation_version
+                feature.action_admissions["discovery.search"] = lambda run_id, payload, connection: services["preparation"].admit_search(
+                    run_id, payload, runtime.settings.snapshot(connection), connection)
     if "jobs" in services:
         jobs = services["jobs"]
         if "fit" in services:
@@ -114,6 +126,11 @@ def create_application(workspace: Path | str, *, enabled_features: Collection[st
             after_delete = getattr(feature.service, "after_job_deletion", None)
             if feature.name != "jobs" and after_delete is not None:
                 jobs.register_post_commit_deletion_port(after_delete, feature=feature.name)
+    if "requirements" in services:
+        for feature in features:
+            delete = getattr(feature.service, "delete_requirement_data", None)
+            if feature.name != "requirements" and delete is not None:
+                services["requirements"].register_meaning_deletion_port(delete)
     application = Application(runtime, features)
     if "preparation" in services:
         services["preparation"].bind_run_reader(application.action_run)

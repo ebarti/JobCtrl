@@ -35,20 +35,29 @@ export class BrowserProfileTransferAdapter implements ProfileTransferPort {
     return { selectedRaw, legacyRaw, reviewsRaw, errors };
   }
 
+  async readPdf(base64: string): Promise<Blob> {
+    const { bytes } = decodePdf(base64);
+    return new Blob([bytes], { type: "application/pdf" });
+  }
+
   async digestPdf(base64: string): Promise<{ sha256: string; byteLength: number; isPdf: boolean }> {
-    // The existing uploader writes ordinary padded base64, not a data URL.
-    if (!base64 || base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
-      throw new Error("The saved PDF encoding is invalid.");
-    }
-    let binary: string;
-    try { binary = atob(base64); } catch { throw new Error("The saved PDF encoding is invalid."); }
-    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    const { binary, bytes } = decodePdf(base64);
     // A PDF header can occur within the first 1024 bytes of a valid document.
     const header = binary.slice(0, 1024);
     if (!globalThis.crypto?.subtle) throw new Error("A secure browser is required to verify the PDF.");
     const hash = new Uint8Array(await globalThis.crypto.subtle.digest("SHA-256", bytes));
     return { sha256: Array.from(hash, (byte) => byte.toString(16).padStart(2, "0")).join(""), byteLength: bytes.byteLength, isPdf: header.includes("%PDF-") };
   }
+}
+
+function decodePdf(base64: string) {
+  // The existing uploader writes ordinary padded base64, not a data URL.
+  if (!base64 || base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) {
+    throw new Error("The saved PDF encoding is invalid.");
+  }
+  let binary: string;
+  try { binary = atob(base64); } catch { throw new Error("The saved PDF encoding is invalid."); }
+  return { binary, bytes: Uint8Array.from(binary, (character) => character.charCodeAt(0)) };
 }
 
 async function bounded<T>(operation: Promise<T>): Promise<T> {

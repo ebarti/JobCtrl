@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState } from "react";
 
-import { PersonFitPanel } from "../contexts/fit/index.js";
+import { AffectedMatchesPanel, PersonFitPanel } from "../contexts/fit/index.js";
 import { useJobs } from "../contexts/jobs/index.js";
 import { CareerLearningPanel } from "../contexts/learning/index.js";
 import { ProfileEvidencePanel } from "../contexts/profile/index.js";
@@ -10,6 +10,8 @@ import { Input } from "../shared/ui/input.js";
 import { PageHead } from "../shared/ui/page-head.js";
 import { EvidenceMapConnections } from "../views/evidence-map/EvidenceMapConnections.js";
 import { evidenceMapSearchSchema } from "./-evidence-map.search.js";
+import "../styles/evidence-map-panels.css";
+import "../styles/panel-inset.css";
 
 export const Route = createFileRoute("/evidence-map")({
   validateSearch: (search) => evidenceMapSearchSchema.parse(search),
@@ -47,9 +49,10 @@ function EvidenceMapComposition() {
       }} />
     </label>
     <ProfileEvidencePanel search={routeSearch.q} focusSourceId={routeSearch.entry} />
+    {features.has("fit") ? <AffectedMatchesPanel /> : null}
     <EvidenceMapConnections search={routeSearch.q} focusSourceId={routeSearch.entry} jobId={routeSearch.job} />
     {features.has("learning") ? <CareerLearningPanel jobs={choices} /> : null}
-    <section className="card" aria-labelledby="evidence-job-title">
+    <section className="card evidence-map-panel panel-inset" aria-labelledby="evidence-job-title">
       <h2 id="evidence-job-title">Role-specific evidence</h2>
       <p>Select a saved job to inspect person fit and approved wording coverage.</p>
       {jobs.error ? <p role="alert">Jobs could not be loaded: {jobs.error.message}</p> : null}

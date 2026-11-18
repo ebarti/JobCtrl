@@ -12,9 +12,25 @@ Hooks use the shared HTTP port and TanStack Query; components render public hook
 
 Routes validate and map URL search state, and delegate prefetch or required reads to feature-owned helpers. Loader dependencies expose only the transport methods and Query operations required for that read, never a raw capability to a view. Prefetch stays best effort; a required detail read propagates its error. Start independent reads concurrently and avoid per-row fetches where a bulk public read exists.
 
+The Original shell uses validated job return state rather than reconstructing
+query/filter/sort/page after a detail visit. Search preferences and Connections
+carry the same return context without launching the task. Requirements retains
+its selected canonical ID/filter when opening an exact Profile role/achievement.
+Private text and personal multi-step drafts never belong in the URL.
+
 ## 4.5 View Composition
 
 Dashboard, Activity, Settings, Evidence Map and job workspaces combine public panels and queries. Each panel owns its loading, empty, failure and retry states. Optional contributions are explicitly selected by the shell and injected into a core workspace through public slots; removing a contribution must not change the core feature's imports or behavior.
+
+A public panel also owns the spacing between its own heading, fields, actions
+and disclosures. A route composition owns the gap or divider between panels
+and the outer workspace frame. When panels share that frame, flatten their
+direct outer borders at the composition boundary; keep their internal content
+insets. A standalone panel must remain readable in each consuming route.
+Generic table cards intentionally support edge-to-edge content, so changing
+global card padding is not a repair for a panel that lacks its own inset.
+Raw content panels can opt into `styles/panel-inset.css` to consume the existing
+panel-padding and internal-gap density tokens; that class adds no frame.
 
 ## 4.6 Forms Convention (TanStack Form)
 
@@ -30,8 +46,24 @@ The shadcn Rhea/Base preset provides the acquisition pattern; the copied wrapper
 
 Tailwind utilities and the CSS-first theme bridge in `styles/globals.css` consume the semantic variables in `styles/tokens.css`. Dark mode uses the root `data-theme` selector. The app shell owns density: compact, regular and comfy row heights are 44, 52 and 60 pixels. A table-scoped saved view may override density without changing the global preference. Keep visual status paired with text, and preserve readable focus and narrow-screen navigation.
 
+Components used in split panes adapt to their containing width, including when
+the window is wide. Grid tracks and form controls must be allowed to shrink;
+source identifiers wrap inside their owner. Document previews may scroll within
+their bounded viewer. Avoid hiding page overflow to mask clipped content.
+Verify expanded panels and populated histories as well as their collapsed
+state; page-width checks alone do not establish readable internal layout.
+
 ## 4.9 Cross-Cutting Client State (Zustand vs Context)
 
 Use local state for transient interaction, URL state for shareable navigation and Query for server state. Persist only navigation-surviving multi-step state in Zustand. Do not use client state to imply that an external action completed.
 
 UI preferences, saved table views and intentionally recoverable multi-step drafts have their own persisted records. A saved table view is a presentation template: applying it writes its filters and sort to the route, while reopening a link respects that URL instead of silently replaying a saved filter. Bulk selection remains transient. Profile import records retain their version and transaction boundaries; personal drafts are not placed in a URL.
+
+App appearance is browser-local UI state: light/dark, density, ten color and ten
+font choices, initially Graphite + Geist. Shared semantic tokens and actual font
+resources apply to the app; document style remains isolated under the resume
+template. Recoverable drafts retain source-version fences and visible storage/
+refusal failures. Profile/preference durable recovery uses non-secret patches;
+secret edits stay session-local and require saving before reload/close. A
+recovery copy cannot overwrite a newer accepted revision or another tab's owned
+copy. Demo recovery is scoped to its synthetic workspace and reset epoch.

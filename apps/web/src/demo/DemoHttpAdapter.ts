@@ -172,8 +172,19 @@ const routes: readonly Route[] = [
   ),
   route("GET", "/v1/evidence-map", "evidenceMap"),
   route("GET", "/v1/apply/review-queue", "applyReviewQueue"),
-  route("GET", "/v1/jobs/:jobId/screening-answers", "screeningAnswers", "jobId"),
-  route("POST", "/v1/jobs/:jobId/screening-answers", "writeScreeningAnswer", "jobId", "$body"),
+  route(
+    "GET",
+    "/v1/jobs/:jobId/screening-answers",
+    "screeningAnswers",
+    "jobId",
+  ),
+  route(
+    "POST",
+    "/v1/jobs/:jobId/screening-answers",
+    "writeScreeningAnswer",
+    "jobId",
+    "$body",
+  ),
   route(
     "POST",
     "/v1/jobs/:jobId/apply-review/decision",
@@ -322,12 +333,36 @@ const routes: readonly Route[] = [
   route("GET", "/v1/credentials", "credentials"),
   route("PATCH", "/v1/credentials", "updateCredential", "$body"),
   route("GET", "/v1/browser-capabilities", "browserCapabilities"),
-  route("POST", "/v1/browser-capabilities/:capabilityId/enable", "enableBrowserCapability", "capabilityId", "$body"),
-  route("POST", "/v1/browser-capabilities/:capabilityId/disable", "disableBrowserCapability", "capabilityId"),
-  route("POST", "/v1/browser-capabilities/authenticated-linkedin-browser/profile-copy", "copyLinkedInBrowserProfile", "$body"),
+  route(
+    "POST",
+    "/v1/browser-capabilities/:capabilityId/enable",
+    "enableBrowserCapability",
+    "capabilityId",
+    "$body",
+  ),
+  route(
+    "POST",
+    "/v1/browser-capabilities/:capabilityId/disable",
+    "disableBrowserCapability",
+    "capabilityId",
+  ),
+  route(
+    "POST",
+    "/v1/browser-capabilities/authenticated-linkedin-browser/profile-copy",
+    "copyLinkedInBrowserProfile",
+    "$body",
+  ),
   route("GET", "/v1/extension/pairing-token", "extensionCapabilityToken"),
-  route("POST", "/v1/extension/pairing-token/rotate", "rotateExtensionCapabilityToken"),
-  route("GET", "/v1/discovery/browser-extension/status", "discoveryBrowserBridgeStatus"),
+  route(
+    "POST",
+    "/v1/extension/pairing-token/rotate",
+    "rotateExtensionCapabilityToken",
+  ),
+  route(
+    "GET",
+    "/v1/discovery/browser-extension/status",
+    "discoveryBrowserBridgeStatus",
+  ),
   route("GET", "/v1/providers/models", "providerModels"),
   route("GET", "/v1/providers/status", "providerStatus"),
   route("GET", "/v1/contacts", "listContacts", "$query"),
@@ -466,33 +501,77 @@ export class DemoHttpAdapter implements HttpPort {
     options: HttpRequestOptions = {},
   ): Promise<T> {
     const segments = parsePath(path);
-    if (options.expectedDatabaseInstanceId !== undefined) {
-      const snapshot = await this.workspace.snapshot();
-      const identity = await demoWorkspaceIdentity(snapshot);
-      const changed = () => new JobCtrlApiError(409, "Workspace Changed", "The browser demo workspace changed. Review the current workspace before retrying.", { error: { code: "workspace_changed" } });
-      if (identity.databaseInstanceId !== options.expectedDatabaseInstanceId) throw changed();
-      const workspace = new Proxy(this.workspace, {
-        get: (target, property) => {
-          if (property === "mutate") return ((mutation, settings = {}) => target.mutate((draft, context) => {
-            if (draft.workspaceId !== snapshot.workspaceId || draft.resetEpoch !== snapshot.resetEpoch) throw changed();
-            mutation(draft, context);
-          }, { ...settings, expectedResetEpoch: snapshot.resetEpoch })) satisfies DemoWorkspaceRepository["mutate"];
-          const value = Reflect.get(target, property, target);
-          return typeof value === "function" ? value.bind(target) : value;
-        },
-      });
-      const api = this.api.forRequest(workspace);
-      try {
-        const result = await this.dispatch<T>(api, new DemoFeatureHttpAdapter(api, workspace), method, segments, options);
-        const current = await this.workspace.snapshot();
-        if (current.workspaceId !== snapshot.workspaceId || current.resetEpoch !== snapshot.resetEpoch) throw changed();
-        return result;
-      } finally { api.dispose(); }
+    const snapshot = this.workspace.snapshotNow();
+    const changed = () =>
+      new JobCtrlApiError(
+        409,
+        "Workspace Changed",
+        "The browser demo workspace changed. Review the current workspace before retrying.",
+        { error: { code: "workspace_changed" } },
+      );
+    const assertScope = (
+      current: ReturnType<DemoWorkspaceRepository["snapshotNow"]>,
+    ) => {
+      if (
+        current.workspaceId !== snapshot.workspaceId ||
+        current.resetEpoch !== snapshot.resetEpoch
+      )
+        throw changed();
+      return current;
+    };
+    if (
+      options.expectedDatabaseInstanceId !== undefined &&
+      (await demoWorkspaceIdentity(snapshot)).databaseInstanceId !==
+        options.expectedDatabaseInstanceId
+    )
+      throw changed();
+    const workspace = new Proxy(this.workspace, {
+      get: (target, property) => {
+        if (property === "snapshot")
+          return async () => assertScope(await target.snapshot());
+        if (property === "snapshotNow")
+          return () => assertScope(target.snapshotNow());
+        if (property === "mutate")
+          return ((mutation, settings = {}) =>
+            target.mutate(
+              (draft, context) => {
+                if (
+                  draft.workspaceId !== snapshot.workspaceId ||
+                  draft.resetEpoch !== snapshot.resetEpoch
+                )
+                  throw changed();
+                mutation(draft, context);
+              },
+              { ...settings, expectedResetEpoch: snapshot.resetEpoch },
+            )) satisfies DemoWorkspaceRepository["mutate"];
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const api = this.api.forRequest(workspace);
+    try {
+      const result = await this.dispatch<T>(
+        api,
+        new DemoFeatureHttpAdapter(api, workspace),
+        method,
+        segments,
+        options,
+      );
+      const current = await this.workspace.snapshot();
+      assertScope(current);
+      return result;
+    } finally {
+      api.dispose();
     }
-    return this.dispatch<T>(this.api, this.features, method, segments, options);
   }
 
-  private async dispatch<T>(api: DemoApiClientAdapter, features: DemoFeatureHttpAdapter, method: HttpMethod, segments: readonly string[], options: HttpRequestOptions): Promise<T> {
+  private async dispatch<T>(
+    api: DemoApiClientAdapter,
+    features: DemoFeatureHttpAdapter,
+    method: HttpMethod,
+    segments: readonly string[],
+    options: HttpRequestOptions,
+  ): Promise<T> {
     const feature = await features.json(method, segments, options);
     if (feature.handled) return feature.value as T;
     for (const candidate of routes) {

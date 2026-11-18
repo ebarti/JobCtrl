@@ -108,5 +108,11 @@ export function bindProfilePreviewFields(html: string, source: unknown): string 
     replaceComposite(owner(`${prefix}#0`) ?? owner(prefix), `${category.label}: ${category.items.join(", ")}`,
       [label, ...join(category.items.map((item, index) => field(`${prefix}:item:${index + 1}`, item)), ", ")], prefix);
   }
+  for (const entry of profile.resume.language_entries) {
+    for (const key of ["language", "proficiency"] as const) {
+      const id = `language:${entry.id}:${key}`;
+      bind(owner(id), id, entry[key]);
+    }
+  }
   return `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`;
 }

@@ -9,8 +9,8 @@ hero:
   text: Run your job search. Keep your data.
   tagline: Discover jobs, prove the fit, tailor truthful materials, and keep live submission behind your approval by default — from one local, auditable workspace.
   image:
-    src: /assets/screenshots/dashboard.png
-    alt: JobCtrl dashboard showing pipeline progress, job counts, and apply runs
+    src: /assets/screenshots/original-jobs.png
+    alt: Original source candidate Jobs comparison with synthetic data
   actions:
     - theme: brand
       text: Try the Live Demo
@@ -53,6 +53,14 @@ features:
 ---
 
 ## Help test JobCtrl on Apple silicon
+
+The source-built Original redesign brings Jobs comparison, My profile and
+Settings into one connected workflow. The
+[candidate ledger](plans/2026-11-11-original-app-redesign.md) records implementation
+and pending verification. The
+[latest release](https://github.com/ebarti/JobCtrl/releases/latest) establishes
+installed availability; a source build or offline demo does not establish a
+new release or hosted deployment.
 
 JobCtrl.dev is the home of this open-source JobCtrl project. If you use an
 Apple-silicon Mac, spend ten minutes with the synthetic-data demo or current

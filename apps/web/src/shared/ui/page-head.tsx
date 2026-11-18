@@ -1,13 +1,6 @@
-import type { JSX, ReactNode } from "react";
+import { createContext, useContext, type JSX, type ReactNode } from "react";
 
 import { cn } from "../lib/cn.js";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "./breadcrumb.js";
 
 export interface PageHeadProps {
   title: string;
@@ -17,6 +10,13 @@ export interface PageHeadProps {
   className?: string;
 }
 
+const PageHeadNavigationContext = createContext<ReactNode>(null);
+
+/** The application shell supplies one contextual navigation slot after the page heading. */
+export function PageHeadNavigationProvider({ children, navigation }: { readonly children: ReactNode; readonly navigation: ReactNode }) {
+  return <PageHeadNavigationContext.Provider value={navigation}>{children}</PageHeadNavigationContext.Provider>;
+}
+
 export function PageHead({
   title,
   eyebrow,
@@ -24,39 +24,16 @@ export function PageHead({
   actions,
   className,
 }: PageHeadProps): JSX.Element {
+  const navigation = useContext(PageHeadNavigationContext);
+  const showEyebrow = eyebrow && !(typeof eyebrow === "string" && eyebrow.trim().toLocaleLowerCase() === title.trim().toLocaleLowerCase());
   return (
+    <>
     <header className={cn("page-head", className)} data-slot="page-head">
       <div className="page-head-text" data-slot="page-head-text">
+        {showEyebrow ? <p className="page-head-section" data-slot="page-head-eyebrow" data-typography="metadata">{eyebrow}</p> : null}
         <h1 data-slot="page-head-title" data-typography="page-title">
           {title}
         </h1>
-        <Breadcrumb>
-          <BreadcrumbList data-typography="metadata">
-            {eyebrow ? (
-              <>
-                <BreadcrumbItem>
-                  <span
-                    className="page-head-section"
-                    data-slot="page-head-eyebrow"
-                    data-typography="metadata"
-                  >
-                    {eyebrow}
-                  </span>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-              </>
-            ) : null}
-            <BreadcrumbItem>
-              <BreadcrumbPage
-                aria-disabled={undefined}
-                data-typography="metadata"
-                role={undefined}
-              >
-                {title}
-              </BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
         {subtitle ? (
           <p
             className="page-head-subtitle"
@@ -73,5 +50,7 @@ export function PageHead({
         </div>
       ) : null}
     </header>
+    {navigation}
+    </>
   );
 }

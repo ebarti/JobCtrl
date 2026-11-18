@@ -11,7 +11,9 @@ import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { useToastStore } from "../../../shared/stores/toasts.js";
 import { Button } from "../../../shared/ui/button.js";
+import { Input } from "../../../shared/ui/input.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
+import "../../../styles/applications-workspace.css";
 import {
   useScreeningCopyValidation,
   useScreeningAnswerMutation,
@@ -32,21 +34,32 @@ const textSchema = z.string().min(1).max(16000);
 export function ScreeningAnswerLibrary({
   jobId,
   initialOpen = false,
+  embedded = false,
 }: {
   readonly jobId: string;
   readonly initialOpen?: boolean;
+  readonly embedded?: boolean;
 }) {
   const [open, setOpen] = useState(initialOpen);
+  if (embedded)
+    return (
+      <ScreeningAnswerLibraryContent key={jobId} jobId={jobId} showHeading />
+    );
   return (
-    <section className="section" aria-label="Screening answers">
-      <h3 data-typography="component-title">Screening answers</h3>
-      <Button
-        variant="outline"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-      >
-        {open ? "Hide screening answers" : "Open screening answers"}
-      </Button>
+    <section
+      className="section screening-library"
+      aria-label="Screening answers"
+    >
+      <div className="screening-library-heading">
+        <h3 data-typography="component-title">Screening answers</h3>
+        <Button
+          variant="outline"
+          aria-expanded={open}
+          onClick={() => setOpen((current) => !current)}
+        >
+          {open ? "Hide screening answers" : "Open screening answers"}
+        </Button>
+      </div>
       {open ? (
         <ScreeningAnswerLibraryContent key={jobId} jobId={jobId} />
       ) : null}
@@ -54,7 +67,13 @@ export function ScreeningAnswerLibrary({
   );
 }
 
-function ScreeningAnswerLibraryContent({ jobId }: { readonly jobId: string }) {
+function ScreeningAnswerLibraryContent({
+  jobId,
+  showHeading = false,
+}: {
+  readonly jobId: string;
+  readonly showHeading?: boolean;
+}) {
   const query = useScreeningAnswers(jobId);
   const { requestIdentity } = usePorts();
   const mutation = useScreeningAnswerMutation(jobId);
@@ -95,14 +114,28 @@ function ScreeningAnswerLibraryContent({ jobId }: { readonly jobId: string }) {
   });
   return (
     <section
-      className="section grid gap-3"
+      className="screening-library-content"
       aria-label="Private screening answer library"
     >
-      <p>
-        Drafts need explicit review. Copying and recording manual use never
-        enter or submit a form, or mark an application submitted.
-      </p>
-      <p>Application job: {jobId}</p>
+      <div className="screening-content-heading">
+        <div>
+          {showHeading ? <h3>Screening answers</h3> : null}
+          <p>
+            Private answer history. Review drafts before use; copying or
+            recording manual use never fills a form or marks an application
+            submitted.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            void query.refetch();
+          }}
+        >
+          Refresh history
+        </Button>
+      </div>
       {query.isLoading ? (
         <p role="status">Loading private answer history…</p>
       ) : null}
@@ -118,40 +151,58 @@ function ScreeningAnswerLibraryContent({ jobId }: { readonly jobId: string }) {
           preserved. A saved profile, posting and destination are required.
         </p>
       ) : null}
-      <Button
-        variant="outline"
-        onClick={() => {
-          void query.refetch();
-        }}
-      >
-        Reload screening history
-      </Button>
+      <div className="screening-capture-heading">
+        <h4>Capture a question</h4>
+        <p>Save the exact question and its context for review.</p>
+      </div>
       <form
         onSubmit={(event) => {
           event.preventDefault();
           void form.handleSubmit();
         }}
-        className="grid gap-3"
+        className="screening-capture"
       >
         {(["applicationId", "question", "context"] as const).map((name) => (
           <form.Field key={name} name={name}>
             {(field) => (
-              <label htmlFor={`${id}-${name}`}>
+              <label
+                htmlFor={`${id}-${name}`}
+                className={
+                  name === "applicationId"
+                    ? "screening-attempt-field"
+                    : undefined
+                }
+              >
                 {name === "applicationId"
                   ? "Application attempt identifier"
                   : name === "question"
                     ? "Exact screening question"
                     : "Question context and constraints"}
-                <Textarea
-                  id={`${id}-${name}`}
-                  value={field.state.value}
-                  onBlur={field.handleBlur}
-                  onChange={(event) => {
-                    field.handleChange(event.target.value);
-                    editCapture(captureKey + ":" + name, event.target.value);
-                  }}
-                  maxLength={name === "applicationId" ? 160 : 4000}
-                />
+                {name === "applicationId" ? (
+                  <Input
+                    id={`${id}-${name}`}
+                    name={name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => {
+                      field.handleChange(event.target.value);
+                      editCapture(captureKey + ":" + name, event.target.value);
+                    }}
+                    maxLength={160}
+                  />
+                ) : (
+                  <Textarea
+                    id={`${id}-${name}`}
+                    name={name}
+                    value={field.state.value}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => {
+                      field.handleChange(event.target.value);
+                      editCapture(captureKey + ":" + name, event.target.value);
+                    }}
+                    maxLength={4000}
+                  />
+                )}
               </label>
             )}
           </form.Field>
@@ -198,58 +249,68 @@ function ScreeningAnswerLibraryContent({ jobId }: { readonly jobId: string }) {
           Question capture failed; your input remains available.
         </p>
       ) : null}
-      {query.data?.questions.map((question) => (
-        <ScreeningQuestion
-          key={question.questionId}
-          jobId={jobId}
-          question={question}
-          read={query.data!}
-        />
-      ))}
-      <details>
-        <summary>Failed attempts</summary>
-        {query.data?.failures.map((failure, index) => (
-          <p key={`${failure.questionId}:${index}`}>
-            {failure.action} · {failure.code} · {failure.recordedAt}
-          </p>
+      <div className="screening-question-list">
+        <h4>Questions</h4>
+        {query.data && !query.data.questions.length ? (
+          <p>No questions captured yet.</p>
+        ) : null}
+        {query.data?.questions.map((question) => (
+          <ScreeningQuestion
+            key={question.questionId}
+            jobId={jobId}
+            question={question}
+            read={query.data!}
+          />
         ))}
-      </details>
-      <details>
-        <summary>Persisted model authority</summary>
-        <pre className="whitespace-pre-wrap break-words">
-          {JSON.stringify(query.data?.determinations ?? [], null, 2)}
-        </pre>
-      </details>
-      <details>
-        <summary>Application-bound history</summary>
-        {query.data?.history.map((entry) => (
-          <article key={entry.snapshotId} className="border p-3">
-            <p>
-              Attempt {entry.applicationId} · revision {entry.revision} ·{" "}
-              {entry.action} · {entry.recordedAt}
+      </div>
+      <details className="screening-record-details">
+        <summary>Record details and history</summary>
+        <p className="break-all">Job ID: {jobId}</p>
+        <details>
+          <summary>Failed attempts</summary>
+          {query.data?.failures.map((failure, index) => (
+            <p key={`${failure.questionId}:${index}`}>
+              {failure.action} · {failure.code} · {failure.recordedAt}
             </p>
-            <p>{entry.question}</p>
-            {entry.manualUse && entry.action === "use" ? (
-              <>
-                <p>
-                  Explicit manual-use attestation ·{" "}
-                  {entry.manualUse.changed
-                    ? "Changed text, unverified user statement"
-                    : "Reviewed text"}
-                </p>
-                <pre className="whitespace-pre-wrap">
-                  {entry.manualUse.text}
+          ))}
+        </details>
+        <details>
+          <summary>Persisted model authority</summary>
+          <pre className="whitespace-pre-wrap break-words">
+            {JSON.stringify(query.data?.determinations ?? [], null, 2)}
+          </pre>
+        </details>
+        <details>
+          <summary>Application-bound history</summary>
+          {query.data?.history.map((entry) => (
+            <article key={entry.snapshotId} className="border p-3">
+              <p>
+                Attempt {entry.applicationId} · revision {entry.revision} ·{" "}
+                {entry.action} · {entry.recordedAt}
+              </p>
+              <p>{entry.question}</p>
+              {entry.manualUse && entry.action === "use" ? (
+                <>
+                  <p>
+                    Explicit manual-use attestation ·{" "}
+                    {entry.manualUse.changed
+                      ? "Changed text, unverified user statement"
+                      : "Reviewed text"}
+                  </p>
+                  <pre className="whitespace-pre-wrap">
+                    {entry.manualUse.text}
+                  </pre>
+                </>
+              ) : null}
+              <details>
+                <summary>Exact retained snapshot</summary>
+                <pre className="whitespace-pre-wrap break-words">
+                  {JSON.stringify(entry, null, 2)}
                 </pre>
-              </>
-            ) : null}
-            <details>
-              <summary>Exact retained snapshot</summary>
-              <pre className="whitespace-pre-wrap break-words">
-                {JSON.stringify(entry, null, 2)}
-              </pre>
-            </details>
-          </article>
-        ))}
+              </details>
+            </article>
+          ))}
+        </details>
       </details>
     </section>
   );
@@ -358,14 +419,17 @@ function ScreeningQuestion({
   const writeBlocked = mutation.isPending || !!mutation.uncertain;
   return (
     <article
-      className="border p-3 grid gap-3"
+      className="screening-question grid gap-3"
       aria-label={`Screening question: ${question.question}`}
     >
-      <h4>{question.question}</h4>
-      <p>
-        Attempt {question.applicationId} · revision {question.revision}
-      </p>
+      <h5>{question.question}</h5>
       <p>{question.context}</p>
+      <details>
+        <summary>Question record details</summary>
+        <p className="break-all">
+          Attempt {question.applicationId} · revision {question.revision}
+        </p>
+      </details>
       {staleEdits ? (
         <div role="alert">
           <p>
@@ -585,12 +649,10 @@ function ScreeningQuestion({
                 );
               } catch {
                 setCopyStatus("Copy failed; no manual use recorded.");
-                useToastStore
-                  .getState()
-                  .toast({
-                    variant: "error",
-                    message: "Screening answer copy failed.",
-                  });
+                useToastStore.getState().toast({
+                  variant: "error",
+                  message: "Screening answer copy failed.",
+                });
               }
             }}
           >

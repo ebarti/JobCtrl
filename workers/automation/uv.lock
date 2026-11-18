@@ -587,7 +587,7 @@ wheels = [
 
 [[package]]
 name = "jobctrl"
-version = "0.4.4"
+version = "0.5.0"
 source = { editable = "." }
 default-groups = ["provider-runtime"]
 dependencies = [
@@ -661,7 +661,7 @@ requires-dist = [
     { name = "google-auth", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "hatchling", marker = "extra == 'dev'", specifier = "==1.32.4" },
     { name = "httpx", specifier = ">=0.24" },
-    { name = "jobstreaming", specifier = "==0.0.5" },
+    { name = "jobstreaming", git = "https://github.com/ebarti/jobstreaming?rev=b3c19b26b40a4283f4e4fc7e4246d2dee203a173" },
     { name = "jsonschema", specifier = ">=4.26,<5" },
     { name = "mcp", marker = "extra == 'providers'", specifier = ">=1.28.1" },
     { name = "openai-codex", marker = "extra == 'providers'", specifier = "==0.163.0" },
@@ -704,18 +704,14 @@ release-build = [
 
 [[package]]
 name = "jobstreaming"
-version = "0.0.5"
-source = { registry = "https://pypi.org/simple" }
+version = "0.0.6"
+source = { git = "https://github.com/ebarti/jobstreaming?rev=b3c19b26b40a4283f4e4fc7e4246d2dee203a173#b3c19b26b40a4283f4e4fc7e4246d2dee203a173" }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "markdownify" },
     { name = "pydantic" },
     { name = "requests" },
     { name = "tls-client" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/fc/c9/aa5c9f310221ba41f071711d8f550ffb0f7a7623fbdb478c82b79c407e35/jobstreaming-0.0.5.tar.gz", hash = "sha256:5f586f23024612f48956b8224b2a808cbc7434f520f54b7619ac4692b33ae266", size = 102815, upload-time = "2026-08-29T20:32:30.774Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8c/e4/79696958df3cfb4e451e93bea7dbc8cbca93c52781cc9524b425fac63e28/jobstreaming-0.0.5-py3-none-any.whl", hash = "sha256:f5dad47b3aa337c4b6dc0683e441a2171b2129299c22c3983efff884aef2bd74", size = 107972, upload-time = "2026-08-29T20:32:29.59Z" },
 ]
 
 [[package]]

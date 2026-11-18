@@ -47,7 +47,10 @@ class ResumeRenderer:
         if not isinstance(theme.get("hiddenSections", []), list) or theme.get("hiddenSections"):
             raise ResumeError("full_baseline_sections_cannot_be_hidden")
         sections = theme.get("sectionOrder", ["summary", "experience", "education", "skills"])
-        if not isinstance(sections, list) or sorted(sections) != ["education", "experience", "skills", "summary"]:
+        required = {"summary", "experience", "education", "skills"}
+        if (not isinstance(sections, list) or any(not isinstance(section, str) for section in sections)
+                or len(sections) != len(set(sections)) or not required.issubset(sections)
+                or set(sections) - required - {"languages"}):
             raise ResumeError("full_baseline_sections_required")
         if theme.get("pageSize", "a4") not in {"a4", "letter"}:
             raise ResumeError("unsupported_resume_page_size")

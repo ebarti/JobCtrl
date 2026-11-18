@@ -88,9 +88,9 @@ export function usePreparationRecovery() {
         if (["queued", "running", "succeeded", "failed", "cancelled"].includes(observed.status)) {
           if (current()?.requestId !== previous.requestId) throw new Error("The earlier request changed while its status was checked.");
           identityFor(previous.operation).clear(previous.requestId);
-          setMessage(`Previous request ${observed.runId} is recorded as ${observed.status}. Its admission has been reconciled.`);
+          setMessage(`Previous preparation is recorded as ${observed.status}. Its admission has been reconciled.`);
         } else {
-          setMessage(`Previous request ${observed.runId} is ${observed.status}. Retry only the same command with its saved identity.`);
+          setMessage(`Previous preparation is ${observed.status}. Retry only the same command with its saved identity.`);
         }
         void client.invalidateQueries({ queryKey: ["tenant", tenantId, "preparation"] });
       } catch (error) {

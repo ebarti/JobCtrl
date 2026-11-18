@@ -4,6 +4,8 @@ import { z } from "zod";
 import { useFitEvidenceMap } from "../../contexts/fit/index.js";
 import { useProfileSources } from "../../contexts/profile/index.js";
 import { useResumeArtifactCatalog } from "../../contexts/resumes/index.js";
+import "../../styles/evidence-map-panels.css";
+import "../../styles/panel-inset.css";
 
 const storySchema = z.object({
   source_text: z.string().optional(), scope: z.string().optional(), action: z.string().optional(),
@@ -89,7 +91,7 @@ export function EvidenceMapConnections({ search = "", focusSourceId = "", jobId 
     const rows = groupedWordingGaps.get(key) ?? [];
     rows.push(gap); groupedWordingGaps.set(key, rows);
   }
-  return <section className="card" aria-labelledby="evidence-connections-title">
+  return <section className="card evidence-map-panel panel-inset" aria-labelledby="evidence-connections-title">
     <h2 id="evidence-connections-title">Evidence connections across jobs</h2>
     <p>These links come from saved source references, assessments and rendered resume revisions. A stale connection is retained as history; it is not a current claim.</p>
     {sourcesQuery.error ? <p role="alert">Profile sources could not be refreshed: {sourcesQuery.error.message}{sourcesQuery.data ? " The sources below are from the last successful read." : ""}</p> : null}
@@ -127,7 +129,7 @@ export function EvidenceMapConnections({ search = "", focusSourceId = "", jobId 
     <p>These are saved requirement assessments, not a new judgment about your capabilities.</p>
     {gaps.length ? <ul>{[...groupedGaps].map(([key, group]) => <li key={key}>
       <strong>Requirement {group[0]!.requirement_id}, revision {group[0]!.requirement_revision}</strong> · {group[0]!.kind.replaceAll("_", " ")}.
-      <ul>{group.map((gap, index) => <li key={`${gap.job_id}:${gap.score_revision}:${index}`}><Link to="/jobs/$jobId" params={{ jobId: gap.job_id }}>{gap.job_id}</Link> · {gap.current ? "current" : "stale"} · {gap.tier}, weight {gap.weight}.
+      <ul>{group.map((gap, index) => <li key={`${gap.job_id}:${gap.score_revision}:${index}`}><Link to="/jobs/$jobId" params={{ jobId: gap.job_id }}>{gap.job_id}</Link> · {gap.current ? "current" : "stale"}{gap.category ? ` · ${gap.category.replaceAll("_", " ")}` : " · historical requirement"}.
         <p>{gap.text}</p><p>{gap.rationale}</p><p>Determination {gap.determination_id} · score revision {gap.score_revision}.</p></li>)}</ul>
     </li>)}</ul> : fit && !fitQuery.error ? <p>No qualification gaps recorded for this view.</p> : null}
     <h3>Recorded wording gaps</h3><p>Wording coverage is separate from the person-fit assessment.</p>

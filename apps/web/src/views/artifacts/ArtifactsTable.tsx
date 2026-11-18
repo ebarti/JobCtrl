@@ -36,12 +36,12 @@ export function ArtifactsTable({
   const mobile = useIsMobile();
   return (
     <FilterableDataGrid<ResumeArtifact>
-      title="Artifacts table"
+      title="Saved materials"
       data={items}
       columns={artifactColumns}
       getRowId={(row) => row.artifactId}
       loading={loading}
-      loadingMessage="Loading saved artifacts."
+      loadingMessage="Loading saved materials."
       emptyMessage="No recorded PDF files match these filters."
       sort={{ columnId: sort, direction }}
       onSortChange={(next) => {
@@ -57,7 +57,7 @@ export function ArtifactsTable({
       mobileLayout="cards"
       {...(mobile
         ? {
-            mobileListLabel: "Artifacts",
+            mobileListLabel: "Materials",
             renderMobileRow: (row: ResumeArtifact) => (
               <ArtifactMobileRow row={row} />
             ),

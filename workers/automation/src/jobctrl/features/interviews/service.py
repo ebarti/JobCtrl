@@ -85,7 +85,7 @@ class PreparationRepository:
                 raise ConflictError("Requirements appeared during interview preparation.")
         if self.fit_revision is not None:
             current_fit = self.service.fit.get_job_fit(job_id, connection=session.source_context, include_coverage=False)
-            if not current_fit["current"] or current_fit["score"]["revision"] != self.fit_revision:
+            if not current_fit["qualifications_current"] or current_fit["score"]["revision"] != self.fit_revision:
                 raise ConflictError("Fit changed during interview preparation.")
         if self.service.resumes is not None and self.material_available:
             if self.material is not None:
@@ -256,7 +256,7 @@ class InterviewService:
         if self.requirements is not None:
             try:
                 candidate = self.requirements.get_job_requirements(job_id, connection=connection)
-                if not candidate.get("stale"):
+                if not candidate.get("stale") and candidate.get("status") == "complete":
                     requirement_snapshot = candidate
             except NotFoundError:
                 pass
@@ -269,9 +269,9 @@ class InterviewService:
                 if item["requirement_id"] in seen:
                     continue
                 seen.add(item["requirement_id"])
-                rows.append({"requirementId": item["requirement_id"], "requirementText": item["text"],
+                rows.append({"requirementId": item["requirement_id"], "requirementText": item["definition"],
                              "sourceExcerpt": " ".join(span["quote"] for span in item.get("spans", [])),
-                             "tier": item["tier"], "weight": item["weight"]})
+                             "category": item["category"]})
                 if len(rows) == 20:
                     break
             if any(len(row["requirementText"]) > 3000 or len(row["sourceExcerpt"]) > 3000 for row in rows):
@@ -279,7 +279,7 @@ class InterviewService:
         fit_context = None
         if self.fit is not None and requirement_snapshot is not None:
             fit = self.fit.get_job_fit(job_id, connection=connection, include_coverage=False)
-            if fit["current"] and fit["score"] is not None:
+            if fit["qualifications_current"] and fit["score"] is not None:
                 fit_context = {"scoreVersion": fit["score"]["revision"],
                                "employerAnalysisGeneration": requirement_snapshot["revision"],
                                "profileSnapshotVersion": profile.profile_revision, "status": "current"}

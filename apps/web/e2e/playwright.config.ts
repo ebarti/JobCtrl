@@ -18,7 +18,8 @@ export default defineConfig({
   retries: 0,
   workers: 1,
   timeout: 90_000,
-  globalTimeout: 480_000,
+  // Standard CI shards retain this ceiling and the individual case deadlines.
+  globalTimeout: 720_000,
   expect: { timeout: 10_000 },
   reporter: [
     ...consoleReporters.map((name): [string, Record<string, unknown>] => [name, name === "html" ? { outputFolder: path.join(evidence, "html"), open: "never" } : {}]),

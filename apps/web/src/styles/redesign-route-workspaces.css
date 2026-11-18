@@ -369,6 +369,12 @@
   min-height: 460px;
 }
 
+.contact-detail-workspace :is(.route-workspace__content, .route-workspace__inspector) > .section {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .activity-detail-workspace__inspector {
   gap: var(--jh-surface-gap);
   padding: var(--jh-section-padding-block) var(--jh-section-padding-inline);
@@ -441,6 +447,10 @@
 }
 
 @media (max-width: 1000px) {
+  .contact-detail-workspace .route-workspace__content {
+    min-height: 0;
+  }
+
   .route-workspace__grid,
   .route-workspace__grid[data-has-navigation][data-has-inspector],
   .job-detail-workspace > .route-workspace__grid,

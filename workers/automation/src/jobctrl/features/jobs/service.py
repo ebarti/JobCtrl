@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Protocol
 
 from jobctrl.app.errors import AppError
@@ -40,6 +41,35 @@ class PostingAcquirer(Protocol):
     async def source_page(self, url, *, session=None, captured=None, cancelled=None): ...
     async def availability(self, posting, *, cancelled=None): ...
     async def verify_refresh_identity(self, previous, candidate): ...
+
+
+def _capture_failure_evidence(error):
+    kinds = {"posting_fetch_blocked": "blocked", "posting_fetch_unavailable": "unavailable", "posting_fetch_failed": "unknown"}
+    if not isinstance(error, AppError) or error.code not in kinds or not isinstance(error.details, dict):
+        return None
+    failure = error.details.get("captureFailure")
+    if (not isinstance(failure, dict) or failure.get("stage") != "posting_fetch"
+            or failure.get("kind") != kinds[error.code]
+            or not isinstance(failure.get("reason_code"), str) or not 0 < len(failure["reason_code"]) <= 64
+            or not all(char.isalnum() or char == "_" for char in failure["reason_code"])):
+        return None
+    return {key: failure[key] for key in ("stage", "kind", "reason_code")}
+
+
+def _analysis_failure_evidence(error):
+    """Persist bounded identifiers, never arbitrary model/exception context."""
+    if not isinstance(error, AppError) or error.code != "role_analysis_failed" or not isinstance(error.details, dict):
+        return []
+    failures = error.details.get("failures")
+    if not isinstance(failures, list):
+        return []
+    return [{key: failure[key] for key in ("code", "provider", "model")}
+            for failure in failures[:3] if isinstance(failure, dict)
+            and isinstance(failure.get("code"), str) and 0 < len(failure["code"]) <= 100
+            and all(char.isalnum() or char in "_-" for char in failure["code"])
+            and isinstance(failure.get("provider"), str) and failure["provider"] in {"codex", "claude", "google"}
+            and isinstance(failure.get("model"), str) and 0 < len(failure["model"]) <= 240
+            and failure["model"].isprintable()]
 
 
 class JobsService:
@@ -216,7 +246,7 @@ class JobsService:
         guard=None,
         on_accepted=None,
         connection=None,
-        allow_deleted_observation=False,
+        discovery_observation=False,
     ) -> dict:
         # Authored fields are an explicit user source. This path does not invent
         # availability, employer identity, quality or semantic equivalence.
@@ -236,8 +266,9 @@ class JobsService:
                 guard=guard,
                 on_accepted=on_accepted,
                 connection=connection,
+                discovery_observation=discovery_observation,
             )
-            if result.get("deleted") and not allow_deleted_observation:
+            if result.get("deleted") and not discovery_observation:
                 raise AppError("job_deleted", "Restore the saved job before capturing or refreshing this locator.", 409)
             return result
         except ValueError:
@@ -246,7 +277,7 @@ class JobsService:
     def ingest(self, data: dict, *, receipt_key=None, guard=None, connection=None) -> dict:
         """Public Discovery adapter port; all canonical writes still belong here."""
         return self.capture(
-            data, receipt_key=receipt_key, guard=guard, connection=connection, allow_deleted_observation=True
+            data, receipt_key=receipt_key, guard=guard, connection=connection, discovery_observation=True
         )
 
     async def capture_external(
@@ -301,11 +332,13 @@ class JobsService:
             self.repository.record_attempt(job_id=result["job_id"], url=url, state="accepted")
             return result
         except Exception as error:
+            capture_failure = _capture_failure_evidence(error)
             self.repository.record_attempt(
                 job_id=existing["job_id"] if existing else None,
                 url=url,
                 failure_code=getattr(error, "code", "capture_failed"),
-                data={"captureEvidence": (getattr(error, "details", None) or {}).get("captureEvidence")},
+                data={"captureEvidence": (getattr(error, "details", None) or {}).get("captureEvidence"),
+                      **({"captureFailure": capture_failure} if capture_failure else {})},
             )
             raise
 
@@ -434,8 +467,7 @@ class JobsService:
         if expected_revision is not None:
             self.assert_posting_current(job_id, expected_revision)
         previous = self.get_analysis(job_id)
-        request_fingerprint = self.role_analysis.request_fingerprint(posting, models=models)
-        if previous["current"] and not force and previous["accepted"].get("request_fingerprint") == request_fingerprint:
+        if previous["current"] and not force and self.role_analysis.can_reuse(posting, previous["accepted"], models=models):
             return (
                 self.repository.bind_analysis_operation(operation_id, operation_fingerprint, posting, previous)
                 if operation_id
@@ -444,14 +476,18 @@ class JobsService:
         if not posting["description"]:
             raise AppError("posting_description_missing", "Capture the complete posting before role analysis.", 409)
         try:
-            result = await self.role_analysis.analyze(posting, models=models, cancelled=cancelled)
+            result = await self.role_analysis.analyze(
+                posting, models=models, cancelled=cancelled,
+                refresh_identity=(operation_id or str(uuid.uuid4())) if force else None,
+            )
             result.update(operation_id=operation_id, operation_fingerprint=operation_fingerprint)
             return self.repository.save_analysis(posting, result, cancelled=cancelled)
         except Exception as error:
+            failure_evidence = _analysis_failure_evidence(error)
             self.record_capture_attempt(
                 job_id=job_id,
                 url=posting["url"],
                 failure_code=getattr(error, "code", "role_analysis_failed"),
-                data={"operation": "role_analysis"},
+                data={"operation": "role_analysis", **({"failures": failure_evidence} if failure_evidence else {})},
             )
             raise

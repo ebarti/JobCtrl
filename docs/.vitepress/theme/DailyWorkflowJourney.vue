@@ -26,7 +26,7 @@ const setupSteps = [
     actor: "You",
     description: "Choose target roles, locations, seniority, and job sources.",
     icon: IconAdjustmentsHorizontal,
-    title: "Configure discovery",
+    title: "Save search preferences",
     tone: "human",
   },
 ] as const;
@@ -34,9 +34,9 @@ const setupSteps = [
 const dailySteps = [
   {
     actor: "JobCtrl",
-    description: "Discover, enrich, score, and prepare eligible jobs.",
+    description: "Run the search you explicitly start, with saved scope and limits.",
     icon: IconRadar,
-    title: "Find and prepare jobs",
+    title: "Find jobs",
     tone: "agent",
   },
   {
@@ -48,9 +48,9 @@ const dailySteps = [
   },
   {
     actor: "You",
-    description: "Edit the tailored resume and verify every claim before approval.",
+    description: "Choose tailored or full baseline, then edit and inspect the real document.",
     icon: IconFileText,
-    title: "Edit the materials",
+    title: "Prepare and edit the resume",
     tone: "human",
   },
   {
@@ -68,11 +68,11 @@ const dailySteps = [
     tone: "human",
   },
   {
-    actor: "JobCtrl",
-    description: "Submit once, verify the outcome, and preserve the audit trail.",
+    actor: "You",
+    description: "Complete browser submission yourself; exact-approved email uses the owned sender. Record the outcome.",
     icon: IconSend,
-    title: "Submit and record",
-    tone: "agent",
+    title: "Complete and record",
+    tone: "human",
   },
 ] as const;
 </script>
@@ -166,7 +166,7 @@ const dailySteps = [
 
       <div class="jh-daily-journey__repeat">
         <IconRefresh aria-hidden="true" :stroke-width="1.9" />
-        <span><strong>Next batch</strong> Return to discovery with the audit trail intact.</span>
+        <span><strong>Next opportunity</strong> Return to the Jobs comparison with the audit trail intact.</span>
       </div>
     </section>
   </figure>

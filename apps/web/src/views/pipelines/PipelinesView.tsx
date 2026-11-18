@@ -23,9 +23,9 @@ export function PipelinesView() {
     stages.set(step.stage, counts);
   }
 
-  return <div className="grid gap-4">
+  return <div className="pipelines-view operational-workspace">
     <PageHead eyebrow="Pipeline" title="Pipelines" subtitle="Start and monitor preparation work." />
-    <section className="card" aria-labelledby="pipeline-active-work">
+    <section className="card operational-panel" aria-labelledby="pipeline-active-work">
       <h2 id="pipeline-active-work">Active work</h2>
       {work.isPending ? <p>Loading recorded action status…</p> : null}
       {work.error ? <p role="alert">Action status could not be refreshed: {work.error.message}{work.data ? " The last loaded counts remain below." : ""}</p> : null}
@@ -33,7 +33,7 @@ export function PipelinesView() {
       <p>These counts include all action types, not just preparation.</p>
       <Link to="/runs">Inspect action runs</Link>
     </section>
-    <section className="card" aria-labelledby="pipeline-capacity">
+    <section className="card operational-panel" aria-labelledby="pipeline-capacity">
       <h2 id="pipeline-capacity">Worker and model capacity</h2>
       {telemetry.isPending ? <p>Loading capacity observations…</p> : null}
       {telemetry.error ? <p role="alert">Pipeline telemetry could not be refreshed: {telemetry.error.message}{telemetry.data ? " The last observation remains below." : ""} <Button type="button" variant="outline" onClick={() => void telemetry.refetch()}>Check again</Button></p> : null}
@@ -48,7 +48,7 @@ export function PipelinesView() {
         <h3>Model lanes</h3>
         {telemetry.data.modelLanes.available ? <>
           <p>Observed {telemetry.data.modelLanes.observedAt} · Default configured lane capacity: {telemetry.data.modelLanes.defaultCapacity}.</p>
-          {telemetry.data.modelLanes.lanes.length ? <ul>{telemetry.data.modelLanes.lanes.map((lane) => <li key={lane.lane}>
+          {telemetry.data.modelLanes.lanes.length ? <ul className="pipeline-evidence-list">{telemetry.data.modelLanes.lanes.map((lane) => <li key={lane.lane}>
             <strong>{lane.lane}</strong>: {lane.active} active · {lane.capacity} configured · {lane.availableCapacity ?? "unknown"} available · {lane.unresolved} unresolved
           </li>)}</ul> : <p>No configured or active lane-specific records. Other lanes use the displayed default.</p>}
           <p>Monetary serialization: {telemetry.data.modelLanes.monetarySerialization ? "enabled" : "disabled"}{telemetry.data.modelLanes.budgetBusy ? " · a model call is currently settling" : ""}.</p>
@@ -56,35 +56,35 @@ export function PipelinesView() {
         <Caveats items={telemetry.data.modelLanes.caveats} />
       </> : null}
     </section>
-    <section className="card" aria-labelledby="pipeline-cohort">
+    <section className="card operational-panel" aria-labelledby="pipeline-cohort">
       <h2 id="pipeline-cohort">Preparation cohort</h2>
       <p>Inspect the recorded targets and stage outcomes for one of the most recent 100 preparation runs. Unrecorded stages and work outside this cohort are not counted.</p>
       {runs.isPending ? <p>Loading preparation runs…</p> : null}
       {runs.error ? <p role="alert">Preparation runs could not be refreshed: {runs.error.message}{runs.data ? " The last loaded runs remain below." : ""} <Button type="button" variant="outline" onClick={() => void runs.refetch()}>Check again</Button></p> : null}
       {runs.data && !runs.data.length ? <p>No preparation runs have been recorded.</p> : null}
       {selected ? <>
-        <label htmlFor="pipeline-selected-run">Run</label>
+        <div className="pipeline-run-picker"><label htmlFor="pipeline-selected-run">Run</label>
         <Select value={selected.runId} onValueChange={(value) => { if (value) setSelectedRunId(value); }}>
           <SelectTrigger id="pipeline-selected-run"><SelectValue>{selected.recipe} · {selected.status} · {selected.runId}</SelectValue></SelectTrigger>
           <SelectContent>{runs.data?.map((run) => <SelectItem key={run.runId} value={run.runId}>{run.recipe} · {run.status} · {run.runId}</SelectItem>)}</SelectContent>
-        </Select>
+        </Select></div>
         <p>Recorded status: {selected.status} · Created {selected.createdAt} · Last updated {selected.updatedAt}</p>
         <p>Recorded target job IDs: {selected.jobIds.length || "none recorded"}{observedCohort && !observedCohort.cohortFrozen ? " · target selection is not yet frozen" : ""}. {selected.parentRunId ? <>Retry of <Link to="/runs/$runId" params={{ runId: selected.parentRunId }}>run {selected.parentRunId}</Link>.</> : null}</p>
         <Link to="/runs/$runId" params={{ runId: selected.runId }}>Inspect this action run</Link>
-        {selected.jobIds.length ? <details><summary>Inspect target jobs</summary><ul>
+        {selected.jobIds.length ? <details><summary>Inspect target jobs</summary><ul className="pipeline-evidence-list">
           {selected.jobIds.map((jobId) => <li key={jobId}><Link to="/jobs/$jobId" params={{ jobId }}>{jobId}</Link></li>)}
         </ul></details> : null}
         <h3>Recorded stage outcomes</h3>
         {observedCohort ? <>
-          {observedCohort.stages.length ? <ul>{observedCohort.stages.map((stage) => <li key={`${stage.scope}:${stage.stage}`}>
+          {observedCohort.stages.length ? <ul className="pipeline-evidence-list">{observedCohort.stages.map((stage) => <li key={`${stage.scope}:${stage.stage}`}>
             <strong>{stage.stage}</strong> ({stage.scope}): {stage.recordedCount} recorded of {stage.expectedCount ?? "unknown"} expected · {stage.unrecordedCount ?? "unknown"} without checkpoints
             <p>{Object.entries(stage.statusCounts).filter(([, count]) => count > 0).map(([status, count]) => `${count} ${status}`).join(" · ") || "No recorded status"}</p>
-            {stage.running.length ? <ul>{stage.running.map((item) => <li key={item.jobId ?? "run"}>
+            {stage.running.length ? <ul className="pipeline-evidence-list">{stage.running.map((item) => <li key={item.jobId ?? "run"}>
               {item.jobId ? `Job ${item.jobId}` : "Run"}: {duration(item.secondsSinceRecordedStart)} since the recorded start{item.unclosedPreviousStart ? " · earlier attempt timing is unresolved" : ""}{item.startEventId ? <> · <Link to="/activity/$eventId" params={{ eventId: item.startEventId }}>start event</Link></> : " · start event unavailable"}. Recorded status does not establish worker-slot occupancy.
             </li>)}</ul> : null}
             <details><summary>Timing evidence ({stage.duration.sampleCount} matching samples)</summary>
               <p>Observed duration: {duration(stage.duration.minimumSeconds)} minimum · {duration(stage.duration.medianSeconds)} median · {duration(stage.duration.maximumSeconds)} maximum.</p>
-              {stage.duration.samples.length ? <ul>{stage.duration.samples.map((sample) => <li key={`${sample.startEventId}:${sample.endEventId}`}>
+              {stage.duration.samples.length ? <ul className="pipeline-evidence-list">{stage.duration.samples.map((sample) => <li key={`${sample.startEventId}:${sample.endEventId}`}>
                 {duration(sample.seconds)} · run {sample.runId}{sample.jobId ? ` · job ${sample.jobId}` : ""} · <Link to="/activity/$eventId" params={{ eventId: sample.startEventId }}>start event</Link> · <Link to="/activity/$eventId" params={{ eventId: sample.endEventId }}>end event</Link>
               </li>)}</ul> : null}<Caveats items={stage.duration.caveats} />
             </details>
@@ -95,7 +95,7 @@ export function PipelinesView() {
           <Caveats items={observedCohort.eta.caveats} />
           {telemetry.data ? <p>{telemetry.data.history.available ? `Timing history: ${telemetry.data.history.eventCount} events, ${telemetry.data.history.since} to ${telemetry.data.history.until} · ${telemetry.data.history.complete ? "complete for this window" : "bounded or incomplete"}.` : "Timing history unavailable."}</p> : null}
         </> : <>
-          {stages.size ? <ul>{Array.from(stages, ([stage, counts]) => <li key={stage}>
+          {stages.size ? <ul className="pipeline-evidence-list">{Array.from(stages, ([stage, counts]) => <li key={stage}>
             <strong>{stage}</strong>: {Array.from(counts, ([status, count]) => `${count} ${status}`).join(" · ")}
           </li>)}</ul> : <p>No stage outcomes have been recorded for this run yet.</p>}
           <p>Completion estimate: {telemetry.isPending ? "loading" : "unavailable"}.</p>
@@ -103,23 +103,23 @@ export function PipelinesView() {
         <details><summary>Inspect stage outcomes and run controls</summary><PreparationRunDetail runId={selected.runId} /></details>
       </> : null}
     </section>
-    {telemetry.data ? <section className="card" aria-labelledby="pipeline-discovery">
+    {telemetry.data ? <section className="card operational-panel" aria-labelledby="pipeline-discovery">
       <h2 id="pipeline-discovery">Discovery source progress</h2>
       {telemetry.data.discovery.available ? <>
         <p>Observed {telemetry.data.discovery.observedAt}; counts cover recorded units only and are not proof of worker liveness.</p>
-        {telemetry.data.discovery.runs.length ? <details><summary>Inspect recent discovery runs ({telemetry.data.discovery.runs.length})</summary>
+        {telemetry.data.discovery.runs.length ? <details className="pipeline-discovery-history"><summary>Inspect recent discovery runs ({telemetry.data.discovery.runs.length})</summary>
           {telemetry.data.discovery.runs.map((run) => <article key={run.runId}>
             <h3>{run.runId} · {run.status}</h3>
             <p>{run.completedUnitCount} completed of {run.knownUnitCount} recorded units; the eventual total may change.</p>
-            {run.families.length ? <ul>{run.families.map((family) => <li key={family.sourceFamily}>{family.sourceFamily}: {family.knownUnitCount} recorded · {Object.entries(family.statusCounts).map(([status, count]) => `${count} ${status}`).join(" · ")}</li>)}</ul> : <p>No source-family units recorded.</p>}
+            {run.families.length ? <ul className="pipeline-evidence-list">{run.families.map((family) => <li key={family.sourceFamily}>{family.sourceFamily}: {family.knownUnitCount} recorded · {Object.entries(family.statusCounts).map(([status, count]) => `${count} ${status}`).join(" · ")}</li>)}</ul> : <p>No source-family units recorded.</p>}
           </article>)}
         </details> : <p>No discovery runs recorded in the recent history.</p>}
         <Caveats items={telemetry.data.discovery.caveats} />
       </> : <p>Discovery progress unavailable ({telemetry.data.discovery.errorCode}).</p>}
     </section> : null}
-    <section className="card" aria-labelledby="pipeline-start-work">
+    <section className="card operational-panel" aria-labelledby="pipeline-start-work">
       <h2 id="pipeline-start-work">Start preparation</h2>
-      <StageTriggerPanel />
+      <div className="pipeline-panel-controls"><StageTriggerPanel /></div>
     </section>
   </div>;
 }
@@ -131,5 +131,5 @@ function duration(value: number | null): string {
 }
 
 function Caveats({ items }: { readonly items: readonly string[] }) {
-  return items.length ? <ul>{items.map((item) => <li key={item}>{item}</li>)}</ul> : null;
+  return items.length ? <ul className="pipeline-evidence-list">{items.map((item) => <li key={item}>{item}</li>)}</ul> : null;
 }

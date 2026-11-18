@@ -1,20 +1,20 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import applyReviewScreenshot from "../../assets/screenshots/apply-review.png";
-import jobsScreenshot from "../../assets/screenshots/jobs.png";
+import resumeScreenshot from "../../assets/screenshots/original-resume.png";
+import jobsScreenshot from "../../assets/screenshots/original-jobs.png";
 
 const screenshots = [
   {
-    alt: "Jobs table with fit scores, stages, and filters",
-    caption: "scored and filterable, with every score inspectable",
+    alt: "Original Jobs table with recorded pay, fit and application state",
+    caption: "compare recorded pay, fit and application state",
     image: jobsScreenshot,
     title: "Jobs",
   },
   {
-    alt: "Apply Review editing a tailored resume with audit evidence",
-    caption: "edit and approve the exact resume that ships",
-    image: applyReviewScreenshot,
-    title: "Apply Review",
+    alt: "Selected job Resume tab with the actual Plate editor",
+    caption: "prepare and edit the actual document beside its job",
+    image: resumeScreenshot,
+    title: "Resume",
   },
 ] as const;
 

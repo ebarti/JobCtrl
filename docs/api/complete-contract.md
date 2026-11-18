@@ -28,6 +28,12 @@ Profile owns facts, sources, evidence, confirmations, preferences, authored
 baseline and wording approval. Reads and writes must preserve source/version
 identity and reject stale edits. See [Profile and Settings](profile-and-settings.md).
 
+The Original candidate adds pending wording edits/history, explicit proposed
+revision lineage and targeted removed-role/achievement recovery. Search place
+bindings retain row identity, selected provider/place metadata and exact text;
+typing invalidates an earlier selection. These writes do not assess meaning or
+start model work. Exact fields remain owned by the focused API reference.
+
 ## Jobs read model and lifecycle
 
 <a id="saved-posting-availability"></a>
@@ -50,14 +56,47 @@ must be checked in the Discovery adapter and real product journey.
 
 ## Requirements and Fit
 
-Requirements exposes qualified meanings, source occurrences and corrections;
+Requirements exposes reusable Skills/Professional Experience meanings, direct
+job-local Education/Languages demands, source occurrences and corrections;
 Fit exposes person qualification and approved-wording coverage as distinct
-records. Retrieval narrows candidates; model determinations decide meaning and
-must retain source versions and provenance. A wording gap does not lower
-person fit. Source or revision changes invalidate stale authority. The Fit
-work-in-progress adapter declares `/v1/jobs/{job_id}/fit`, assessment,
-correction, history and coverage routes; its exact methods and DTOs live in
-`features/fit/http.py` and are not yet integrated E2E evidence.
+records. One model determination compares the full incoming reusable batch with
+the complete current-generation catalog and retains source versions and
+provenance. All four categories use one missing-qualification batch with
+section-specific evidence. Education's explicit equivalent-experience route is
+recorded without asserting a degree; Languages use structured Language /
+Proficiency records only. A current section-backed match creates no
+achievement-wording gap and wording does not lower person fit. The
+`/v1/jobs/{job_id}/fit` read compares the score's original evidence inputs
+with the current evidence and compares the accepted demands independently.
+For saved scores, `requirements_current` reports whether the accepted
+requirements still bind the posting source for new work. A verified regrouping
+of unchanged source demands keeps `current` true. `qualifications_current`
+reports whether the saved score also used the currently accepted demand groups
+for preparation. The adapter also
+declares assessment, correction, history and coverage routes. Post-edit
+reassessment uses the durable `fit.refresh` action,
+an expected saved-input stamp, explicit job scope and finite work limits.
+Read-only pending and operation routes never start model work. Exact methods,
+DTOs and failure boundaries live in the [Fit reference](../../workers/automation/src/jobctrl/features/fit/README.md).
+Route declarations alone do not establish integrated E2E or released behavior.
+
+New documents carry `contract_version: requirements-v2`; missing versions are
+legacy. Old accepted rows and bytes remain history with contract-change refresh
+status and cannot establish current ranking/composition readiness. A
+source-bound English-language gate precedes extraction; non-English postings
+are skipped without translation or a zero score. `requirement-fit-v3-equal`
+gives one item to each distinct canonical requirement and direct demand, with
+no source weights, must-have multiplier or blocker cap. See
+[typed job requirements](jobs-and-materials.md#typed-job-requirements) and the
+[score formula](../user/scoring-and-employer-analysis.md#how-the-score-is-calculated).
+
+The independent library also reads canonical meaning/occurrence history and
+Profile-scoped requirement relationships. Manual association creation/removal/
+restore is revision-fenced, history-preserving and always unassessed. It cannot
+change qualification, coverage, score, approval, current semantic authority or
+an accepted document. See
+[Requirements library and associations](jobs-and-materials.md#requirements-library-and-associations)
+for routes and DTO boundaries.
 
 ## Artifacts and tailoring audit
 

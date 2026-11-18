@@ -41,9 +41,9 @@ class DiscoveryRepository:
                     "source": "persisted"
                     if row or policy is not None and k in {"minFitScore", "autoApply", "applyApprovalRequired"}
                     else "default",
-                    "editable": k != "applyApprovalRequired",
-                    "locked": k == "applyApprovalRequired",
-                    "activation": "restart"
+                    "editable": k not in {"applyApprovalRequired", "resultsPerSite"},
+                    "locked": k in {"applyApprovalRequired", "resultsPerSite"},
+                    "activation": "inactive" if k == "resultsPerSite" else "restart"
                     if k in {"scheduleCron", "schedulingEnabled"}
                     else "next_source_family"
                     if k.startswith("crawl") or k == "useBrowserHeaders"
@@ -57,9 +57,9 @@ class DiscoveryRepository:
                     "source": "persisted"
                     if row or policy is not None and k in {"minFitScore", "autoApply", "applyApprovalRequired"}
                     else "default",
-                    "editable": k != "applyApprovalRequired",
-                    "locked": k == "applyApprovalRequired",
-                    "activation": "restart"
+                    "editable": k not in {"applyApprovalRequired", "resultsPerSite"},
+                    "locked": k in {"applyApprovalRequired", "resultsPerSite"},
+                    "activation": "inactive" if k == "resultsPerSite" else "restart"
                     if k in {"scheduleCron", "schedulingEnabled"}
                     else "next_source_family"
                     if k.startswith("crawl") or k == "useBrowserHeaders"
@@ -720,6 +720,7 @@ class DiscoveryRepository:
                         "newJobs": r["new_jobs"],
                         "observedJobs": r["observed_jobs"],
                         "failureCode": r["failure_code"],
+                        "failures": (json.loads(r["result_json"]) if r["result_json"] else {}).get("failures", []),
                         "createdAt": r["created_at"],
                         "updatedAt": r["updated_at"],
                     }
@@ -740,6 +741,7 @@ class DiscoveryRepository:
                         "updatedAt": unit["updated_at"],
                         "sourceFamily": json.loads(unit["data_json"]).get("source_family", "unknown"),
                         "sourceId": json.loads(unit["data_json"]).get("source_id"),
+                        "termination": (json.loads(unit["result_json"]) if unit["result_json"] else {}).get("termination"),
                     }
                     for unit in conn.execute(
                         "SELECT * FROM discovery_units WHERE run_id=? ORDER BY updated_at,unit_id", (run["run_id"],)
@@ -811,6 +813,48 @@ class DiscoveryRepository:
             )
         return status
 
+    def finalize_bounded_units(self, lease, limit):
+        """Recover fulfilled work across every source family before settlement.
+
+        Reaching the shared admission limit ends unfinished acquisition, but
+        does not establish provider completion. Preserve failed source state.
+        """
+        with self.database.transaction() as conn:
+            run = self.guard_run(conn, lease)
+            if run["new_jobs"] >= limit:
+                failed_sources = {
+                    row[0] for row in conn.execute(
+                        "SELECT source_id FROM discovery_source_runs WHERE run_id=? AND status='failed'", (lease["run_id"],)
+                    )
+                }
+                for row in conn.execute(
+                    "SELECT unit_id,data_json FROM discovery_units WHERE run_id=? AND status='running'", (lease["run_id"],)
+                ).fetchall():
+                    data = json.loads(row["data_json"])
+                    sources = {data["source_id"]} if data.get("source_id") else {"jobstreaming:" + board for board in data.get("sites", [])}
+                    if sources.intersection(failed_sources):
+                        continue
+                    conn.execute(
+                        "UPDATE discovery_units SET status='budget_exhausted',result_json=json_set(COALESCE(result_json,'{}'),'$.termination','budget_exhaustion'),updated_at=? WHERE run_id=? AND unit_id=?",
+                        (now(), lease["run_id"], row["unit_id"]),
+                    )
+                conn.execute(
+                    "UPDATE discovery_source_runs SET status='budget_exhausted',updated_at=? WHERE run_id=? AND status='running'",
+                    (now(), lease["run_id"]),
+                )
+            fulfilled = conn.execute(
+                "SELECT COUNT(*) FROM discovery_units WHERE run_id=? AND status IN ('completed','budget_exhausted')",
+                (lease["run_id"],),
+            ).fetchone()[0]
+            failures = [
+                {"sourceId": row["source_id"], "code": row["error_code"] or "discovery_source_failed"}
+                for row in conn.execute(
+                    "SELECT source_id,error_code FROM discovery_source_runs WHERE run_id=? AND status='failed' ORDER BY source_id",
+                    (lease["run_id"],),
+                )
+            ]
+            return {"fulfilledUnitCount": fulfilled, "failures": failures}
+
     def budget_remaining(self, lease, limit):
         with self.database.connect() as conn:
             run = self.guard_run(conn, lease)
@@ -820,6 +864,11 @@ class DiscoveryRepository:
         with self.database.connect() as conn:
             row = conn.execute("SELECT request_json FROM discovery_runs WHERE run_id=?", (run_id,)).fetchone()
             return json.loads(row[0]) if row else None
+
+    def run_outcome(self, run_id):
+        with self.database.connect() as conn:
+            row = conn.execute("SELECT result_json FROM discovery_runs WHERE run_id=?", (run_id,)).fetchone()
+            return json.loads(row[0]) if row and row[0] else None
 
     def unit(self, run_id, unit_id):
         with self.database.connect() as conn:
@@ -861,12 +910,11 @@ class DiscoveryRepository:
                 "SELECT * FROM discovery_intake_receipts WHERE receipt_key=?", (receipt_key,)
             ).fetchone()
             if previous:
-                return {"job_id": previous["job_id"], "outcome": previous["outcome"], "replayed": True}
+                return {"job_id": previous["job_id"], "outcome": previous["outcome"], "replayed": True, "budget_reached": limit is not None and run["new_jobs"] >= limit}
+            if limit is not None and run["new_jobs"] >= limit:
+                return {"job_id": None, "outcome": "budget_exhausted", "replayed": False, "budget_reached": True}
             outcome, saved = "filtered" if excluded else "accepted", None
             if not excluded:
-                current = jobs.resolve_posting(posting, connection=conn)
-                if current is None and limit is not None and run["new_jobs"] >= limit:
-                    return {"job_id": None, "outcome": "budget_exhausted", "replayed": False}
                 saved = jobs.ingest(
                     {**posting, "run_id": lease["run_id"]},
                     receipt_key=receipt_key,
@@ -909,7 +957,10 @@ class DiscoveryRepository:
                     now(),
                 ),
             )
-        return {"job_id": saved["job_id"] if saved else None, "outcome": outcome, "replayed": False}
+            budget_reached = limit is not None and conn.execute(
+                "SELECT new_jobs FROM discovery_runs WHERE run_id=?", (lease["run_id"],)
+            ).fetchone()[0] >= limit
+        return {"job_id": saved["job_id"] if saved else None, "outcome": outcome, "replayed": False, "budget_reached": budget_reached}
 
     def run_job_ids(self, run_id):
         with self.database.connect() as conn:
