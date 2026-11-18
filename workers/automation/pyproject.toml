@@ -101,6 +101,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jobctrl"]
+# Feature and network READMEs are contributor documentation.
+exclude = ["/src/jobctrl/**/README.md"]
 
 [tool.hatch.build]
 artifacts = ["src/jobctrl/config/*.yaml", "src/jobctrl/assets/fonts/*", "src/jobctrl/assets/interview/*.json", "src/jobctrl/assets/determinations/*.json"]
