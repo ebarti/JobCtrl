@@ -250,6 +250,13 @@ jobs:
       - name: Install locked workspace dependencies
         run: corepack pnpm install --frozen-lockfile
 
+      - name: Ensure the installed PDF journeys have Poppler
+        run: |
+          if ! command -v pdftoppm >/dev/null; then
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install poppler
+          fi
+          pdftoppm -v
+
       - name: Rebuild and verify tracked release-authority bundles
         run: |
           set -euo pipefail
