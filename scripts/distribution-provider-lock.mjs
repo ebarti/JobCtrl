@@ -81,13 +81,19 @@ function markerMatchesDarwinArm64Cpython(marker) {
 
 export function parseExportedRequirements(contents) {
   const packages = new Map();
-  for (const line of contents.split("\n")) {
-    const match = line.match(/^([A-Za-z0-9_.-]+)==([^ ;\\]+)(?: ; (.*?))? \\$/) ?? line.match(/^([A-Za-z0-9_.-]+)==([^ ;]+)$/);
-    if (!match) continue;
+  for (const entry of contents.replace(/\\\r?\n/g, " ").split(/\r?\n/)) {
+    const line = entry.trim();
+    if (!line || line.startsWith("#")) continue;
+    const [pin, ...hashes] = line.split(/\s+--hash=/);
+    const match = pin.match(/^([A-Za-z0-9_.-]+)==([^ ;\\]+)(?: ; (.+))?$/);
+    const label = pin.match(/^[A-Za-z0-9_.-]+(?=\s|=|$)/)?.[0] ?? "Python dependency";
+    invariant(match, `${label}: distribution requires a published version pin`);
     const marker = match[3] ?? null;
     if (!markerMatchesDarwinArm64Cpython(marker)) continue;
     const name = canonicalName(match[1]);
     const version = match[2];
+    invariant(hashes.length > 0 && hashes.every((hash) => /^sha256:[a-f0-9]{64}$/.test(hash)),
+      `${name}==${version}: distribution requires SHA-256 hashes from uv.lock`);
     const previous = packages.get(name);
     invariant(previous === undefined || previous === version, `${name}: export selected conflicting versions`);
     packages.set(name, version);
