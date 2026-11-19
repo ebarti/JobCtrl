@@ -66,6 +66,9 @@ selected database identity. Equivalent simultaneous URL requests share the
 active capture scope. `GET /v1/jobs/url-imports` lists open imports and the
 five most recent closed imports. Its statuses join the durable action receipt
 to the waiting reason recorded by Jobs. Cancellation uses the action run ID.
+Jobs advertises `jobs.url_import_queue` in `/v1/health` for clients that display
+this projection. A client connected to a predecessor can follow the native
+`jobs.capture_url` action receipt and filtered action-run history.
 Each model reservation records its receipt under the import and operation in
 the same transaction. A recovering worker can reuse a successful determination
 only for its exact model request, subject to source and citation validation.

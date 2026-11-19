@@ -69,6 +69,7 @@ function CaptureJob() {
     <h2>Add a job</h2>
     <details><summary>Import posting URL</summary><form className="jobs-capture__url" onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void urlForm.handleSubmit(); }}>
       <urlForm.Field name="url">{(field) => <label>Posting URL<input type="url" value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</urlForm.Field>
+      {imports.mode === "action" ? <p>This server provides action status only. A busy model lane can fail the import without waiting. <Link to="/runs" search={{ workflowType: "jobs.capture_url" }}>View URL import runs</Link></p> : null}
       <Button type="submit" disabled={!importAvailability.available || !imports.ready || imports.start.isPending}>Import job</Button>
       {!importAvailability.available ? <p>{importAvailability.reason}</p> : null}
     </form></details>
@@ -83,6 +84,7 @@ function CaptureJob() {
     {validation ? <p role="alert">{validation}</p> : null}
     {capture.error || imports.start.error || imports.recoveryError ? <p role="alert">{(capture.error ?? imports.start.error ?? imports.recoveryError)?.message}</p> : null}
     {capture.data ? <p role="status">Job captured. <Link to="/jobs/$jobId" params={{ jobId: capture.data.job_id }} search={(previous) => previous}>Open job</Link></p> : null}
+    {imports.receipt ? <p role="status">URL import action recorded. <Link to="/runs/$runId" params={{ runId: imports.receipt.runId }}>View import run</Link></p> : null}
     {imports.list.error ? <p role="alert">URL import status is unavailable. <Button type="button" onClick={() => void imports.list.refetch()}>Check imports</Button></p> : null}
     {imports.list.data?.imports.length ? <section aria-label="Recent URL imports"><h3>Recent URL imports</h3><ul>
       {imports.list.data.imports.map((item) => <li key={item.runId}>

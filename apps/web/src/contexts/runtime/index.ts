@@ -11,6 +11,7 @@ const healthSchema = z.object({
   databaseInstanceId: z.string().min(1).optional(),
   schemaVersion: z.number(),
   features: z.array(z.string()),
+  capabilities: z.array(z.string()).optional(),
   temporal: z.object({ namespace: z.string().min(1), uiBaseUrl: z.string().url().nullable() }).optional(),
   worker: z.object({ status: z.enum(["healthy", "unavailable"]), healthy: z.boolean() }).passthrough(),
   llmSpend: z.object({

@@ -217,6 +217,7 @@ def build_feature(runtime, **ports):
         name="jobs",
         service=service,
         routes=routes,
+        capabilities=("jobs.url_import_queue",),
         action_scopes={"jobs.capture_url": imports.scope},
         action_admissions={"jobs.capture_url": imports.admit},
         action_finalizers={"jobs.capture_url": imports.finish},

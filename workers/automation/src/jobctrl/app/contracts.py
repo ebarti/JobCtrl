@@ -53,3 +53,5 @@ class Feature:
     # Synchronous feature admission in the new action's transaction. Existing
     # identities return before this hook; it must never start external work.
     action_admissions: dict[str, Callable[[str, dict, Any], None]] = field(default_factory=dict)
+    # Optional client contracts explicitly supported by this mounted feature.
+    capabilities: tuple[str, ...] = ()

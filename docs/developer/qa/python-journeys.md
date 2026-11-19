@@ -78,6 +78,10 @@ run and a second waiter can be cancelled. After the browser closes and the
 worker restarts, releasing the holder produces one saved observation. A separate
 restart after a paid call begins checks its receipt and counts external calls:
 completed stages are reused and an interrupted call remains available for review.
+The current form also runs against the actual pre-queue server. A busy lane
+leaves a failed native action and a subsequent, explicitly submitted import
+can succeed. Both receipts remain in native run history after reload, with zero
+requests to the unavailable queue endpoint.
 
 The [predecessor upgrade journey](../../../apps/web/e2e/journeys/preparation-cohort.spec.ts)
 starts with a scored full posting, downgrades it through the predecessor's real

@@ -9,7 +9,7 @@ there is no Fastify business authority or TypeScript/Python JSON-RPC hop.
 
 | Route | Contract |
 | --- | --- |
-| `GET /v1/health` | Application/schema/workspace identity, selected features, live worker heartbeat and model accounting. |
+| `GET /v1/health` | Application/schema/workspace identity, selected features and their advertised capabilities, live worker heartbeat and model accounting. |
 | `GET /v1/setup/status` | Public Profile/provider/browser/Temporal/policy readiness; configuration and verified readiness are distinct. |
 | `GET /v1/settings` | Direct non-secret settings snapshot with integer `revision` and derived read-only `modelAccounting` (selected provider/model, availability, cost source and exact quote). Derivation does not contact providers or inspect credentials. |
 | `PATCH /v1/settings` | Partial top-level values plus required `expectedRevision`; returns a new snapshot or 409 for stale input. Nested maps replace the supplied map. |
@@ -54,6 +54,10 @@ The Jobs URL form submits `POST /v1/actions/jobs.capture_url` with `{ "url": "â€
 an `Idempotency-Key` and `Expected-Database-Instance-Id`. The 202 response
 identifies the durable run. `GET /v1/jobs/url-imports` returns its source URL,
 run ID, current status, cancellation state, failure code and captured job ID.
+The mounted Jobs feature advertises `jobs.url_import_queue` in the health
+responseâ€™s `capabilities` array when it supports this projection. For older
+servers the form uses the same action receipt and links to the filtered native
+run history at `GET /v1/action-runs?action=jobs.capture_url`.
 An active matching URL returns `action_scope_busy` with the existing run ID.
 Transient lane or monetary serialization is visible as `waiting_for_capacity`.
 The synchronous `POST /v1/jobs/import-url` returns a captured posting or an

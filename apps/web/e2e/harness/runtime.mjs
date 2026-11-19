@@ -426,7 +426,7 @@ export async function applicationStack(
   }
   try {
     if (sourceRevision) {
-      if (!["8ab86e9232d66fff9795906e061d208e7a057d8b", "5b9db7ddfa20fa2d618687da1b311e2287286679", "6e4131061fb41aab4743701084a7c74a19fa21f3", "943c8b4d0c6f4a15521e10c04a015de726bfcbb9", "6f46b0ba5913383b7c57ffcce986729fa0bdbf0e", "5d3fda5352fe4418332b989c05f710e0529f578c", "df06b08ae201f7a73dc2c359944c06daf517c69e", "b49dc52e3d727356870317069304ac6ceb9f1237", "38ef94613ebb7c0413d8d5ee89987ef860f53b13"].includes(sourceRevision))
+      if (!["8ab86e9232d66fff9795906e061d208e7a057d8b", "5b9db7ddfa20fa2d618687da1b311e2287286679", "6e4131061fb41aab4743701084a7c74a19fa21f3", "943c8b4d0c6f4a15521e10c04a015de726bfcbb9", "6f46b0ba5913383b7c57ffcce986729fa0bdbf0e", "5d3fda5352fe4418332b989c05f710e0529f578c", "df06b08ae201f7a73dc2c359944c06daf517c69e", "b49dc52e3d727356870317069304ac6ceb9f1237", "38ef94613ebb7c0413d8d5ee89987ef860f53b13", "421c0a0dcd337c4a9070e0ba28e2fa99b84cee39"].includes(sourceRevision))
         throw new Error("The source upgrade journey requires its exact fixed predecessor.");
       const resolved = await execFile("git", ["rev-parse", "--verify", `${sourceRevision}^{commit}`], { cwd: repo, timeout: 5_000 });
       if (resolved.stdout.trim() !== sourceRevision)

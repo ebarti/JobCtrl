@@ -122,6 +122,11 @@ automatically when capacity becomes available. A worker restart recovers
 settled stages from their exact receipts. A changed source or an interrupted
 provider call with an unconfirmed result leaves a recorded failure for review.
 
+When connected to an older server, the form offers **View import run** after
+submission. **View URL import runs** also shows earlier receipts after a reload.
+Those server versions can end the import with `model_lane_busy` when another
+operation holds the lane. The run records that failure.
+
 Direct URL imports interpret the complete visible page capture, including
 posting details and current controls outside its main-content panel. For the
 description, the model selects a recorded source and contiguous line range;
