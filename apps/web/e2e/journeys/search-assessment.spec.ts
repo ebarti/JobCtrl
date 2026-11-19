@@ -30,7 +30,44 @@ test("search reports a saved job's refused person fit separately from successful
   const progress = page.getByRole("region", { name: "Job search progress", exact: true });
   await expect(progress.getByRole("heading", { name: "Search completed · some fit assessments unavailable", exact: true })).toBeVisible();
   await expect(progress).toContainText(/0 (?:of 1 )?jobs assessed · 1 failed/);
-  await expect(page.getByRole("row").filter({ hasText: posting.title })).toContainText("Not assessed");
+  const row = page.getByRole("row").filter({ hasText: posting.title });
+  await expect(row.getByRole("link", { name: "Fit assessment failed" })).toHaveAttribute("href", `/runs/${started.runId}`);
+  await row.getByRole("link", { name: posting.title, exact: true }).click();
+  const panel = page.getByRole("region", { name: "Person fit", exact: true });
+  await expect(panel).toContainText(result.preparation.failures[0]!.code);
+  await expect(panel.getByRole("link", { name: "View preparation run" })).toHaveAttribute("href", `/runs/${started.runId}`);
+});
+
+test("a refused first posting check explains unassessed Fit only for the revision submitted to the run", async ({ api, app, page }) => {
+  await createBaseline(api);
+  const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 1, resultsPerSite: 1 });
+  const started = await action(api, "discovery.search", { queries: ["Synthetic engineer"], locations: [{ location: "Madrid", remote: true }] });
+  const source = await app.external.next();
+  expect(source.path).toBe("/discovery");
+  const job = { job_key: "refused-first-check", url: "https://example.com/jobs/refused-first-check",
+    title: "Synthetic Posting Check Engineer", company: "Synthetic Company", description: "An original posting.", location: "Madrid" };
+  source.respond({ jobs: [job], complete: true, cursor: null });
+  const fetch = await app.external.next();
+  expect(fetch.path).toBe("/posting-page");
+  fetch.respond({}, 503);
+  const outcome = (await completed(api, started.runId))["result"] as { jobIds: string[] };
+  const id = outcome.jobIds[0]!;
+  const run = await json<{ steps: { jobId: string; stage: string; status: string; postingRevision?: number }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
+  expect(run.steps).toContainEqual(expect.objectContaining({ jobId: id, stage: "enrich", status: "failed", postingRevision: 1, errorCode: "posting_fetch_unavailable" }));
+  await page.goto("/jobs");
+  const row = page.getByRole("row").filter({ hasText: job.title });
+  await expect(row.getByRole("link", { name: "Posting check failed" })).toHaveAttribute("href", `/runs/${started.runId}`);
+  await row.getByRole("link", { name: job.title, exact: true }).click();
+  const panel = page.getByRole("region", { name: "Person fit", exact: true });
+  await expect(panel).toContainText("Posting check failed (posting_fetch_unavailable).");
+  const revised = await json<{ job_id: string; revision: number }>(api, "post", "/v1/jobs/capture", {
+    url: job.url, title: job.title, company: job.company, description: "A different posting replaces the earlier content.",
+  });
+  expect(revised.job_id).toBe(id);
+  expect(revised.revision).toBeGreaterThan(1);
+  await expect(panel).toContainText("No person-fit assessment has been recorded yet.");
+  expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(0);
 });
 
 test("explicit saved-job assessment recovers fit without acquisition and preserves accepted scores at the manual-refresh fence", async ({ api, app, page }, testInfo) => {
@@ -149,7 +186,7 @@ test("search cancellation after a worker kill during fit seals preparation and r
   expect(spend).toMatchObject({ costStatus: "unresolved", unresolvedCalls: 1, costUsd: null });
 });
 
-test("search replay preserves a failed job while a replacement worker finishes the frozen later job", async ({ api, app }) => {
+test("search replay preserves a failed job while a replacement worker finishes the frozen later job", async ({ api, app, page }) => {
   const { library } = await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
   await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 2, resultsPerSite: 2 });
@@ -176,6 +213,11 @@ test("search replay preserves a failed job while a replacement worker finishes t
   expect(frozen.jobIds).toHaveLength(2);
   const failed = frozen.steps.find((step) => step.stage === "requirements_extract")!;
   expect(failed).toMatchObject({ jobId: frozen.jobIds[0], status: "failed", errorCode: expect.any(String) });
+  await page.goto("/jobs");
+  const failedRow = page.getByRole("row").filter({ hasText: first.title });
+  await expect(failedRow.getByRole("link", { name: "Requirements extraction failed" })).toHaveAttribute("href", `/runs/${started.runId}`);
+  await expect(page.getByRole("row").filter({ hasText: second.title }).getByRole("link", { name: "Waiting for search checks" }))
+    .toHaveAttribute("href", `/runs/${started.runId}`);
   const replacement = await app.restartWorker();
   expect(replacement.current).not.toBe(replacement.previous);
   await expect.poll(() => held.closed).toBe(true);

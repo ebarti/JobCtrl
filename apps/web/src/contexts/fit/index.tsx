@@ -1,7 +1,7 @@
 export { AssociationStateAction, RequirementAssociationPicker, requirementQualifierText, achievementChoices, type AchievementChoice, type LibraryRequirement, type UserAssociation } from "./components/RequirementAssociationPicker.js";
 import { useForm } from "@tanstack/react-form";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { z } from "zod";
 
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
@@ -286,9 +286,9 @@ function evidenceSection(source: EvidenceOption | undefined) {
   return source ? fitStatusLabel(source.kind) : "Recorded source";
 }
 
-export function PersonFitPanel({ jobId, sources = [], achievements = [], defaultMode = null, managedPreparation = false, requirementsStatus }: {
+export function PersonFitPanel({ jobId, sources = [], achievements = [], defaultMode = null, managedPreparation = false, requirementsStatus, preparationNotice }: {
   jobId: string; sources?: readonly EvidenceOption[]; achievements?: readonly AchievementOption[]; defaultMode?: "baseline" | "tailored" | null;
-  managedPreparation?: boolean; requirementsStatus?: "complete" | "unsupported_language" | undefined;
+  managedPreparation?: boolean; preparationNotice?: ReactNode; requirementsStatus?: "complete" | "unsupported_language" | undefined;
 }) {
   const { featureFlags } = usePorts();
   const assessmentAvailability = getApiCapabilityAvailability(featureFlags, "rescoreJob");
@@ -362,7 +362,7 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
         </li>;
       })}</ul>
       {!historical && !unsupportedLanguage && fit.current && fit.score.score !== null ? <CorrectionForm key={fit.score.revision} score={fit.score.score} revision={fit.score.revision} pending={busy} onSave={(body) => correct.mutate(body)} /> : null}
-    </> : fit && !unsupportedLanguage ? <p>No person-fit assessment has been recorded yet.</p> : null}
+    </> : fit ? preparationNotice ?? (!unsupportedLanguage ? <p>No person-fit assessment has been recorded yet.</p> : null) : null}
     {fit && !fit.score && !managedPreparation && !unsupportedLanguage ? <div className="toolbar">
       <Button type="button" disabled={!assessmentAvailability.available || busy || query.isPending} onClick={runAssessment}>{assess.isPending ? "Assessing…" : "Assess person fit"}</Button>
     </div> : null}

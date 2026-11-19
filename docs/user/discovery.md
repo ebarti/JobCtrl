@@ -210,7 +210,13 @@ waits, it shows how many of those jobs have completed posting and requirements
 checks. A previously accepted, current posting counts as checked. Smaller
 searches also show when requirements are being reconciled or evidence is being
 checked across jobs. The checkpoint summary gives way to the assessed count
-when per-job scoring starts. Selected job
+when per-job scoring starts. In the Jobs table, an unassessed job can show
+that it is waiting for the search, that Fit is running, or which check failed.
+Follow the label to inspect the recorded run. The Fit tab includes the recorded
+failure code. A current non-English posting is marked as skipped. All of these
+jobs still match the **Not assessed** filter while no Fit score exists. When
+the recorded run cannot be tied to the current posting, the table keeps the
+general **Not assessed** label. Selected job
 details identify an active `search` or `assess` recipe as **Assessing fit**, with
 its current stage; this task generates no resume. The ordinary **Prepare resume**
 action is available again after assessment settles. If the preparation owner is

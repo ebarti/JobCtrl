@@ -358,7 +358,7 @@ for (const fault of ["missing row", "foreign requirement", "foreign citation"] a
   });
 }
 
-test("an unsupported-language posting is skipped while its English cohort sibling is assessed", async ({ api, app }) => {
+test("an unsupported-language posting is skipped while its English cohort sibling is assessed", async ({ api, app, page }) => {
   const { library } = await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
   await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 2 });
@@ -390,6 +390,20 @@ test("an unsupported-language posting is skipped while its English cohort siblin
   expect((await json<FitState>(api, "get", `/v1/jobs/${run.jobIds[0]}/fit`)).current).toBe(true);
   expect((await json<{ score: null }>(api, "get", `/v1/jobs/${run.jobIds[1]}/fit`)).score).toBeNull();
   expect(await json(api, "get", `/v1/jobs/${run.jobIds[1]}/requirements`)).toMatchObject({ status: "unsupported_language" });
+  await page.goto("/jobs?fit_state=unassessed");
+  const row = page.getByRole("row").filter({ hasText: spanish.title });
+  await expect(row.getByRole("link", { name: "Skipped · non-English posting" })).toHaveAttribute("href", `/runs/${started.runId}`);
+  await row.getByRole("link", { name: spanish.title, exact: true }).click();
+  const fitPanel = page.getByRole("region", { name: "Person fit", exact: true });
+  await expect(fitPanel).toContainText("Person fit was skipped because this posting was identified as non-English");
+  await expect(fitPanel.getByRole("link", { name: "View preparation run" })).toHaveAttribute("href", `/runs/${started.runId}`);
+  const updated = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+    url: spanish.url, title: spanish.title, company: spanish.company, description: "A new English-language posting describes a different position.",
+  });
+  expect(updated.job_id).toBe(run.jobIds[1]);
+  await expect(fitPanel).toContainText("No person-fit assessment has been recorded yet.");
+  await page.goto("/jobs?fit_state=unassessed");
+  await expect(row.getByRole("cell", { name: "Not assessed", exact: true })).toBeVisible();
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.match_catalog")).toHaveLength(1);
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
 });

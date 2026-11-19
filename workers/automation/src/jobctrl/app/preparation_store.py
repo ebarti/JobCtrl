@@ -219,7 +219,13 @@ class PreparationStore:
             row = conn.execute("SELECT * FROM preparation_runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None:
                 raise NotFoundError("The preparation run does not exist.")
-            steps = conn.execute("SELECT * FROM preparation_steps WHERE run_id=? ORDER BY rowid", (run_id,)).fetchall()
+            steps = conn.execute(
+                "SELECT job_id,stage,status,result_json,error_code,updated_at,CASE "
+                "WHEN stage IN ('enrich','role_analysis') THEN json_extract(input_json,'$.expected_revision') "
+                "WHEN stage IN ('requirements','requirements_extract') THEN json_extract(input_json,'$.expected_posting_revision') "
+                "WHEN stage='fit' THEN json_extract(input_json,'$._requirements_binding.posting_revision') END posting_revision "
+                "FROM preparation_steps WHERE run_id=? ORDER BY rowid", (run_id,),
+            ).fetchall()
         request = json.loads(row["request_json"])
         return {"runId": run_id, "status": row["status"], "recipe": request["recipe"],
                 **({"executionPolicy": request["execution_policy"]} if "execution_policy" in request else {}),
@@ -228,6 +234,7 @@ class PreparationStore:
                 "parentRunId": row["parent_run_id"], "jobIds": json.loads(row["targets_json"]) if row["targets_json"] else [],
                 "createdAt": row["created_at"], "updatedAt": row["updated_at"],
                 "steps": [{"jobId": step["job_id"] or None, "stage": step["stage"], "status": step["status"],
+                           **({"postingRevision": step["posting_revision"]} if type(step["posting_revision"]) is int else {}),
                            "result": json.loads(step["result_json"]) if step["result_json"] else None,
                            "errorCode": step["error_code"], "updatedAt": step["updated_at"]} for step in steps]}
 
