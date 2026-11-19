@@ -195,7 +195,12 @@ separately. A job whose assessment fails stays saved with its explicit outcome,
 and other jobs continue. A completed source alone cannot complete the overall
 search or enable a second launch during assessment.
 The Jobs progress changes to **Assessing saved jobs** while that work runs and
-shows recorded assessed, failed and cohort counts when available. Selected job
+shows recorded assessed, failed and cohort counts when available. While Fit
+waits, it shows how many of those jobs have completed posting and requirements
+checks. A previously accepted, current posting counts as checked. Smaller
+searches also show when requirements are being reconciled or evidence is being
+checked across jobs. The checkpoint summary gives way to the assessed count
+when per-job scoring starts. Selected job
 details identify an active `search` or `assess` recipe as **Assessing fit**, with
 its current stage; this task generates no resume. The ordinary **Prepare resume**
 action is available again after assessment settles. If the preparation owner is

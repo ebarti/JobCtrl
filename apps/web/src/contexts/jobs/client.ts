@@ -1,10 +1,9 @@
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import type { DomainEventEnvelope } from "../../shared/ports/EventStreamPort.js";
+import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
 
 const jobSchema = z.object({
   job_id: z.string(), revision: z.number(), source_id: z.string(), source_revision: z.number(), source_hash: z.string(),
@@ -88,14 +87,14 @@ export function useJobBulkActions() {
   });
   return { bulk, previewDelete, permanentDelete };
 }
-export const jobsInvalidation = {
+export const jobsInvalidation: FeatureEventHandler = {
   eventTypes: ["JobCaptured", "JobSourceObserved", "JobUpdated", "JobCaptureAttempted", "PostingQuarantined", "JobAnalysisUpdated", "ActionQueued", "ActionStarted", "ActionCompleted", "ActionFailed", "ActionCancellationRequested"] as const,
-  handle(event: DomainEventEnvelope, client: QueryClient) {
+  handle(event, invalidate) {
     if (event.eventType.startsWith("Action")) {
       if (event.payload && typeof event.payload === "object" && "action" in event.payload && event.payload.action === "jobs.capture_url")
-        void invalidateQueriesWithOptimisticOwnership(client, jobsKeys.urlImports(event.tenantId));
+        invalidate(jobsKeys.urlImports(event.tenantId));
       return;
     }
-    void invalidateQueriesWithOptimisticOwnership(client, jobsKeys.all(event.tenantId));
+    invalidate(jobsKeys.all(event.tenantId));
   },
 };

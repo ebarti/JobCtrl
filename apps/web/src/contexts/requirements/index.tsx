@@ -1,14 +1,13 @@
 import { useForm } from "@tanstack/react-form";
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { z } from "zod";
 import "../../styles/posting-requirements.css";
 
-import type { DomainEventEnvelope } from "../../shared/ports/EventStreamPort.js";
+import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
 import { Button } from "../../shared/ui/button.js";
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
 import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
 import type { HttpPort } from "../../shared/ports/HttpPort.js";
@@ -206,9 +205,9 @@ export function RequirementsPanel({ jobId, postingRevision }: { jobId: string; p
   </section>;
 }
 
-export const requirementsInvalidation = {
+export const requirementsInvalidation: FeatureEventHandler = {
   eventTypes: ["RequirementBindingCorrected", "RequirementsUpdated", "RequirementMeaningRevised", "RequirementsConsolidated", "JobCaptured", "JobSourceObserved", "JobUpdated"] as const,
-  handle(event: DomainEventEnvelope, client: QueryClient) {
-    void invalidateQueriesWithOptimisticOwnership(client, requirementsKeys.all(event.tenantId));
+  handle(event, invalidate) {
+    invalidate(requirementsKeys.all(event.tenantId));
   },
 };

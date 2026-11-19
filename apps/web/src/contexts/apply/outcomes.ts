@@ -3,7 +3,6 @@ import type { TenantId } from "@jobctrl/domain-types";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import type { HttpLoaderReadContext, HttpReadContext } from "../../shared/lib/loaderReadContext.js";
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
@@ -74,12 +73,12 @@ export function useOutcomeAnalyticsQuery(filters: OutcomeAnalyticsFilters = {}):
 
 export const outcomeEvents: FeatureEventHandler = {
   eventTypes: ["ApplicationOutcomeRecorded", "OutcomeSuggestionCreated", "OutcomeSuggestionDecided", "ApplicationSubmitted", "ApplicationsUpdated", "JobCaptured", "JobSourceObserved", "JobUpdated", "FitAssessed", "FitCorrected", "FitRequirementCorrected", "ResumeAccepted", "ResumeTemplateUpdated", "OfferRecordChanged"],
-  handle(event, client) {
+  handle(event, invalidate) {
     const payload = event.payload;
     const jobId = payload && typeof payload === "object" && "jobId" in payload && typeof payload.jobId === "string"
       ? payload.jobId : event.aggregateId;
-    void invalidateQueriesWithOptimisticOwnership(client, jobId ? outcomesKeys.detail(event.tenantId, jobId) : outcomesKeys.all(event.tenantId));
-    void invalidateQueriesWithOptimisticOwnership(client, outcomesKeys.list(event.tenantId));
-    void invalidateQueriesWithOptimisticOwnership(client, analyticsKeys.all(event.tenantId));
+    invalidate(jobId ? outcomesKeys.detail(event.tenantId, jobId) : outcomesKeys.all(event.tenantId));
+    invalidate(outcomesKeys.list(event.tenantId));
+    invalidate(analyticsKeys.all(event.tenantId));
   },
 };

@@ -228,6 +228,9 @@ test.describe("cohort final currentness guard", () => {
     const cohort = frozen.jobIds;
     expect(frozen.steps.filter((step) => step.stage === "requirements_extract" && step.status === "succeeded")).toHaveLength(2);
     expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(0);
+    await page.goto("/jobs");
+    const checkpoint = page.getByRole("region", { name: "Job search progress", exact: true }).getByLabel("Fit preparation progress", { exact: true });
+    await expect(checkpoint).toHaveText("2 of 2 postings checked. Requirements checked for 2 of 2 jobs. Reconciling requirements across these jobs before Fit scoring.");
     const normalizedDemand = "Maintain operational readiness for durable workflow recovery.";
     const input = matching.body["context"] as CatalogContext;
     expect(input.incoming.map((row) => row.job_id).sort()).toEqual([...cohort].sort());
@@ -235,6 +238,7 @@ test.describe("cohort final currentness guard", () => {
       [{ groupId: "recovery", definition: normalizedDemand, jobIds: cohort }]));
     await serveQualification(app, library, { beforeQualification: async (call) => {
       // The actual qualification request follows both source-bound publications.
+      await expect(checkpoint).toContainText("Checking your evidence against the requirements before publishing Fit scores.");
       const consolidated = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${cohort[0]}/requirements`);
       const sibling = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${cohort[1]}/requirements`);
       expect(consolidated.requirements[0]!.normalized_demand.definition).toBe(normalizedDemand);
@@ -258,6 +262,7 @@ test.describe("cohort final currentness guard", () => {
     const afterSettings = await json<{ settings: { newJobLimit: number } }>(api, "get", "/v1/discovery/settings");
     expect(afterSettings.settings.newJobLimit).toBe(settings.settings.newJobLimit);
     await page.goto("/jobs");
+    await expect(checkpoint).toHaveCount(0);
     for (const posting of [first, second]) {
       const row = page.getByRole("row").filter({ has: page.getByRole("link", { name: posting.title, exact: true }) });
       await expect(row.getByText("10/10", { exact: true })).toBeVisible();

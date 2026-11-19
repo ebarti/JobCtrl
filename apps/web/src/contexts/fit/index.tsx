@@ -1,14 +1,13 @@
 export { AssociationStateAction, RequirementAssociationPicker, requirementQualifierText, achievementChoices, type AchievementChoice, type LibraryRequirement, type UserAssociation } from "./components/RequirementAssociationPicker.js";
 import { useForm } from "@tanstack/react-form";
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { z } from "zod";
 
-import type { DomainEventEnvelope } from "../../shared/ports/EventStreamPort.js";
+import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
 import { Button } from "../../shared/ui/button.js";
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
 import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
 import "../../styles/redesign-fit.css";
@@ -384,7 +383,7 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
   </section>;
 }
 
-export const fitInvalidation = {
+export const fitInvalidation: FeatureEventHandler = {
   eventTypes: ["FitAssessed", "FitCorrected", "FitRequirementCorrected", "FitCoverageUpdated", "FitRefreshUpdated", "FitAssociationUpdated", "FitCurrentWordingUpdated", "ProfileUpdated", "ProfileWordingUpdated", "ProfileSourceUpdated", "JobCaptured", "JobSourceObserved", "JobUpdated", "RequirementBindingCorrected", "RequirementsUpdated", "RequirementMeaningRevised", "RequirementsConsolidated"] as const,
-  handle(event: DomainEventEnvelope, client: QueryClient) { void invalidateQueriesWithOptimisticOwnership(client, fitKeys.all(event.tenantId)); },
+  handle(event, invalidate) { invalidate(fitKeys.all(event.tenantId)); },
 };

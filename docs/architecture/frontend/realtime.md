@@ -22,7 +22,7 @@ expiry or a missing worker heartbeat reconnects the page through the shared path
 
 ## 7.4 The Invalidation Router
 
-The application composition supplies feature handlers to the provider. Handlers invalidate their own tenant-first query keys or apply a safe, identity-bound patch when sufficient information is available. They use `invalidateQueriesWithOptimisticOwnership` for invalidation that may overlap an optimistic mutation. Activity and cross-feature views refresh through their own public invalidations; a feature does not reach into a sibling's private cache.
+The application composition supplies feature handlers to the provider. Every committed envelope reaches its handlers, which identify the affected tenant-first query keys. The provider immediately marks the matching cached queries stale and coalesces overlapping keys into one refresh per query per 250 ms window. A read already underway can finish and receives one trailing refresh for events that arrived during it. Hidden tabs keep recording invalidations and resume event-driven reads when visible. Refreshes use `invalidateQueriesWithOptimisticOwnership` to retain unsettled optimistic writes. Activity and cross-feature views register their own dependencies.
 
 ## 7.7 Reconnect / Backoff
 

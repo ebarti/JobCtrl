@@ -9,8 +9,7 @@ import { z } from "zod";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
-import type { DomainEventEnvelope } from "../../../shared/ports/EventStreamPort.js";
-import { invalidateQueriesWithOptimisticOwnership } from "../../../shared/lib/createOptimisticMutation.js";
+import type { FeatureEventHandler } from "../../../shared/ports/FeatureEvents.js";
 import { createUnconfirmedWriteError } from "../../../shared/lib/unconfirmed-write.js";
 import type { HttpPort } from "../../../shared/ports/HttpPort.js";
 import type { SessionPort } from "../../../shared/ports/SessionPort.js";
@@ -275,31 +274,22 @@ export function useWordingActions() {
   return { decide, draft, edit };
 }
 
-export const wordingInvalidation = {
+export const wordingInvalidation: FeatureEventHandler = {
   eventTypes: [
     "ProfileUpdated",
     "ProfileWordingUpdated",
     "ProfileSourceUpdated",
     "ResumeTemplateUpdated",
   ] as const,
-  handle(event: DomainEventEnvelope, client: QueryClient) {
+  handle(event, invalidate) {
     if (event.eventType === "ResumeTemplateUpdated") {
-      void invalidateQueriesWithOptimisticOwnership(
-        client,
-        profileKeys.resumeTemplates(event.tenantId),
-      );
+      invalidate(profileKeys.resumeTemplates(event.tenantId));
       return;
     }
-    void invalidateQueriesWithOptimisticOwnership(
-      client,
-      wordingKeys.all(event.tenantId),
-    );
+    invalidate(wordingKeys.all(event.tenantId));
     // Wording and source decisions advance the same Profile revision used by
     // later saves and composition, even when factual fields are unchanged.
-    void invalidateQueriesWithOptimisticOwnership(
-      client,
-      profileKeys.profile(event.tenantId),
-    );
+    invalidate(profileKeys.profile(event.tenantId));
   },
 };
 

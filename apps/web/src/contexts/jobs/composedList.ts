@@ -1,7 +1,6 @@
-import { useQuery, type QueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
-import type { DomainEventEnvelope } from "../../shared/ports/EventStreamPort.js";
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
+import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
 
@@ -65,9 +64,9 @@ export function useComposedJobs(input: JobGridQuery) {
   });
 }
 /** Cross-feature changes can affect ordering, membership, and every result page. */
-export const composedJobsEvents = {
+export const composedJobsEvents: FeatureEventHandler = {
   eventTypes: ["FitAssessed", "FitCorrected", "FitRequirementCorrected", "FitCoverageUpdated", "ProfileUpdated", "ProfileWordingUpdated", "ProfileSourceUpdated", "RequirementsUpdated", "RequirementsConsolidated", "RequirementBindingCorrected", "RequirementMeaningRevised", "PreparationUpdated", "CompensationEvidenceChanged", "CompensationRefreshChanged", "CompensationSourcePolicyChanged", "ApplicationSubmitted", "ApplicationsUpdated", "ApplicationOutcomeRecorded", "ResumeComposed", "ResumeEdited", "ResumeReviewed", "ResumeRendered", "ResumeAccepted", "ResumeTemplateUpdated"] as const,
-  handle(event: DomainEventEnvelope, client: QueryClient) {
-    void invalidateQueriesWithOptimisticOwnership(client, composedJobsKeys.all(event.tenantId));
+  handle(event, invalidate) {
+    invalidate(composedJobsKeys.all(event.tenantId));
   },
 };
