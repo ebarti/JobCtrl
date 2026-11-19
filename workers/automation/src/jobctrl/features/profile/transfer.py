@@ -8,11 +8,16 @@ default. Legacy parsing is confined to this transfer adapter.
 from __future__ import annotations
 
 import base64
+from contextlib import closing, contextmanager
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
+from shutil import copyfileobj
 import sqlite3
+import stat
 import struct
+from tempfile import TemporaryDirectory, gettempdir
 
 from jobctrl.app.errors import AppError, ConflictError
 from .models import canonical, fingerprint, profile_identity, validate_transfer_bundle
@@ -202,6 +207,56 @@ def browser_manifest(value: dict | None) -> dict:
     return result
 
 
+def _legacy_file_version(info: os.stat_result) -> tuple[int, ...]:
+    return info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns
+
+
+def _legacy_db_files(path: Path) -> dict[Path, tuple[int, ...]]:
+    files = {}
+    # The journal and WAL can contain durable data. Shared memory is a
+    # transient index that SQLite can rebuild on the private copy.
+    for suffix in ("", "-wal", "-journal"):
+        member = path.with_name(path.name + suffix)
+        try:
+            info = member.lstat()
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(info.st_mode):
+            raise AppError("invalid_profile_source", "Choose a regular legacy Profile database with regular journal files.")
+        files[member] = _legacy_file_version(info)
+    return files
+
+
+@contextmanager
+def _open_legacy_snapshot(path: Path):
+    temporary_parent = Path(gettempdir()).resolve()
+    if temporary_parent.is_relative_to(path.parent.resolve()):
+        raise AppError("invalid_profile_source", "Choose a temporary directory outside the legacy workspace.")
+    before = _legacy_db_files(path)
+    if path not in before:
+        raise AppError("invalid_profile_source", "Choose an existing regular legacy Profile database.")
+    changed = "The legacy database changed during transfer. Stop the legacy JobCtrl runtime and retry."
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    with TemporaryDirectory(prefix="jobctrl-profile-transfer-", dir=temporary_parent) as temporary:
+        snapshot = Path(temporary)
+        for member, version in before.items():
+            with os.fdopen(os.open(member, flags), "rb") as source:
+                if _legacy_file_version(os.fstat(source.fileno())) != version:
+                    raise AppError("profile_source_changed", changed, 409)
+                descriptor = os.open(snapshot / member.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(descriptor, "wb") as target:
+                    copyfileobj(source, target)
+        if _legacy_db_files(path) != before:
+            raise AppError("profile_source_changed", changed, 409)
+        # Opening a WAL-mode database with mode=ro can create WAL and SHM
+        # companions. Confine that activity to the private snapshot.
+        try:
+            with closing(sqlite3.connect((snapshot / path.name).as_uri() + "?mode=ro", uri=True)) as conn:
+                yield conn
+        except sqlite3.Error as error:
+            raise AppError("invalid_profile_source", "The legacy Profile database could not be read from its snapshot.") from error
+
+
 def export_legacy_profile(source_workspace: Path, *, profile_id="default", browser_export: dict | None = None,
                           browser_sources: list[dict] | None = None) -> dict:
     """Read old SQLite only. Optional browser export supplies otherwise absent PDFs.
@@ -212,9 +267,7 @@ def export_legacy_profile(source_workspace: Path, *, profile_id="default", brows
     """
     source = Path(source_workspace)
     path = source if source.suffix in {".db", ".sqlite", ".sqlite3"} else source / "jobctrl.db"
-    if path.is_symlink() or not path.is_file():
-        raise AppError("invalid_profile_source", "Choose an existing regular legacy Profile database.")
-    with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as conn:
+    with _open_legacy_snapshot(path) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only=ON")
         conn.execute("BEGIN")
