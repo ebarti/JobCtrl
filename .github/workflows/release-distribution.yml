@@ -208,6 +208,9 @@ jobs:
     name: Build unsigned candidate once
     needs: resolve
     runs-on: macos-15
+    outputs:
+      candidate_artifact_id: ${{ steps.candidate.outputs.artifact-id }}
+      handoff_artifact_id: ${{ steps.handoff.outputs.artifact-id }}
     permissions:
       actions: read
       contents: read
@@ -250,13 +253,6 @@ jobs:
       - name: Install locked workspace dependencies
         run: corepack pnpm install --frozen-lockfile
 
-      - name: Ensure the installed PDF journeys have Poppler
-        run: |
-          if ! command -v pdftoppm >/dev/null; then
-            HOMEBREW_NO_AUTO_UPDATE=1 brew install poppler
-          fi
-          pdftoppm -v
-
       - name: Rebuild and verify tracked release-authority bundles
         run: |
           set -euo pipefail
@@ -276,19 +272,15 @@ jobs:
           corepack pnpm distribution:audit
           python3 scripts/release_check.py --strict-prompt --release-tag "$RELEASE_TAG"
 
-      - name: Build unsigned candidate
-        run: node scripts/distribution-release.mjs prepare --output "$RUNNER_TEMP/pre-sign" --channel "$RELEASE_CHANNEL" --build-id "$RELEASE_BUILD_ID" --source-date-epoch "$SOURCE_DATE_EPOCH"
+      - name: Assemble unsigned candidate and check the extracted runtime
+        run: node scripts/distribution-release.mjs prepare --output "$RUNNER_TEMP/pre-sign" --channel "$RELEASE_CHANNEL" --build-id "$RELEASE_BUILD_ID" --source-date-epoch "$SOURCE_DATE_EPOCH" --installed-journeys deferred
 
-      - name: Retain failed installed qualification evidence
+      - name: Retain failed build evidence
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: jobctrl-installed-qualification-failure-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/pre-sign/build-failure.json
-            /private/tmp/jobctrl-transform-1428/e2e-*/timings.json
-            /private/tmp/jobctrl-transform-1428/e2e-*/junit.xml
-            /private/tmp/jobctrl-transform-1428/e2e-*/playwright/**/error-context.md
+          name: jobctrl-unsigned-build-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pre-sign/build-failure.json
           if-no-files-found: ignore
           retention-days: 7
 
@@ -314,16 +306,37 @@ jobs:
           )
 
       - name: Retain the prepared candidate
+        id: handoff
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: jobctrl-prepared-candidate-${{ github.run_id }}
+          name: jobctrl-prepared-candidate-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/prepared-candidate
           if-no-files-found: error
           retention-days: 14
 
+      - name: Retain the archive and browser test inventory
+        id: candidate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jobctrl-installed-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/pre-sign/jobctrl-*-darwin-arm64.zip
+            ${{ runner.temp }}/pre-sign/build-result.json
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
+  qualify-installed-journeys:
+    name: Qualify the extracted unsigned candidate
+    needs: [resolve, prepare]
+    uses: ./.github/workflows/release-installed-journeys.yml
+    with:
+      source_ref: ${{ needs.resolve.outputs.release_ref }}
+      candidate_artifact_id: ${{ needs.prepare.outputs.candidate_artifact_id }}
+
   sign:
     name: Sign and notarize on a fresh protected runner
-    needs: [resolve, publication-preflight, prepare]
+    needs: [resolve, publication-preflight, prepare, qualify-installed-journeys]
     runs-on: macos-15
     environment: release-signing
     outputs:
@@ -361,7 +374,7 @@ jobs:
       - name: Download the prepared candidate
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: jobctrl-prepared-candidate-${{ github.run_id }}
+          artifact-ids: ${{ needs.prepare.outputs.handoff_artifact_id }}
           path: ${{ runner.temp }}/prepared-candidate
 
       - name: Reassert the audited source before accepting the prepared handoff
@@ -419,6 +432,12 @@ jobs:
           test "$(jq -r '.releasePublicKey' "$artifact/release-contract.json")" = "$EXPECTED_RELEASE_PUBLIC_KEY"
           test "$(jq -r '.releaseKeyId' "$artifact/release-contract.json")" = "$EXPECTED_RELEASE_KEY_ID"
           test "$(git rev-parse HEAD)" = "$RELEASE_REF"
+
+      - name: Download the installed journey evidence from all shards
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: jobctrl-installed-journeys-*
+          path: ${{ runner.temp }}/prepared/pre-sign/installed-journeys
 
       - name: Reverify the selected candidate tree before any signing secret
         run: |
