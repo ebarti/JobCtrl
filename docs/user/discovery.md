@@ -116,6 +116,14 @@ provider failures are also recorded per board, with source-specific remedies in
 the progress strip. Repeated failures with the same source identity, error code
 and recorded message appear once with the number of affected query/location
 combinations.
+
+Indeed uses the worker environment variable `JOBSTREAMING_INDEED_API_KEY`.
+ZipRecruiter uses `JOBSTREAMING_ZIPRECRUITER_AUTHORIZATION`. If Search reports
+a missing credential, configure that variable and restart the worker. An HTTP
+401 or 403 means the board denied the request. Check that the configured
+credential has access to its search API. A TLS or proxy diagnostic points to
+the worker’s connection settings. Older runs may show a general access error.
+
 **Search details** retains every recorded failure and its query-unit identity;
 different boards, codes or messages remain separate notices.
 Source acquisition is partial when a source completes or the new-job limit ends

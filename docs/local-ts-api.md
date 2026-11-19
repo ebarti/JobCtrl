@@ -123,6 +123,13 @@ Profile revision and the database incarnation used to read its preferences.
 its counts and status. Board failures identify `sourceFamily`, `unitId`, `boards`,
 `code` and a safe actionable `message`; registered-source failures retain their
 `sourceId` and code. The action result carries the same recorded failures.
+New SDK board access failures keep the code `discovery_provider_authentication_configuration`.
+Their optional `diagnostic` is `missing_credential`, `provider_access_denied`,
+`tls_configuration`, `proxy_configuration`, or `authentication_or_configuration`.
+An identified HTTP denial includes `httpStatus` (401 or 403). A committed
+`DiscoveryRunUpdated` warning at stage `board_search` includes the same
+failure in `payload.sourceFailure` before the SDK acknowledges the event.
+Historical failures retain their recorded fields.
 `partial` means at least one source unit completed or reached the new-job limit
 while another failed. A completed source may return no jobs. Reaching the limit
 records `budget_exhausted`, without asserting upstream provider completion.

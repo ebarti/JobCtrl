@@ -899,8 +899,8 @@ class DiscoveryRepository:
                 else None
             )
 
-    def save_unit(self, lease, unit, *, status, cursor=None, result=None):
-        with self.database.transaction() as conn:
+    def save_unit(self, lease, unit, *, status, cursor=None, result=None, connection=None):
+        with nullcontext(connection) if connection is not None else self.database.transaction() as conn:
             self.guard_run(conn, lease)
             data = {**unit, "cursor": cursor}
             conn.execute(
@@ -914,6 +914,26 @@ class DiscoveryRepository:
                     now(),
                 ),
             )
+
+    def record_board_failure(self, lease, unit, error, *, board=None, diagnostic=None):
+        """Persist the safe unit and source outcome together, before SDK acknowledgement."""
+        with self.database.transaction() as conn:
+            self.guard_run(conn, lease)
+            row = conn.execute("SELECT status,result_json FROM discovery_units WHERE run_id=? AND unit_id=?",
+                               (lease["run_id"], unit["unit_id"])).fetchone()
+            result = json.loads(row["result_json"]) if row and row["result_json"] else {}
+            if row and row["status"] == "failed" and "failure" in result:
+                return result["failure"]
+            boards = [board] if board else unit["sites"]
+            failure = {"sourceFamily": "broad_boards", "unitId": unit["unit_id"], "boards": boards,
+                       "code": error.code, "message": error.message, **(diagnostic or {})}
+            self.save_unit(lease, unit, status="failed", result={**result, "failure": failure}, connection=conn)
+            for site in boards:
+                self.source_result(lease, "jobstreaming:" + site, "failed", error_code=error.code, connection=conn)
+            if diagnostic:
+                self.events.append(conn, "DiscoveryRunUpdated", {"runId": lease["run_id"], "status": "running", "sourceFailure": failure},
+                                   feature="discovery", aggregate_id=lease["run_id"], level="warn", stage="board_search")
+            return failure
 
     def settled_intake(self, lease, key, limit, cancelled, connection=None):
         """Check the committed receipt and capacity before potentially paid qualification."""
@@ -1069,8 +1089,8 @@ class DiscoveryRepository:
             return conn.execute("SELECT 1 FROM discovery_intake_receipts WHERE run_id=? AND job_id=? LIMIT 1",
                                 (run_id, job_id)).fetchone() is not None
 
-    def source_result(self, lease, source_id, status, *, new_jobs=0, observed_jobs=0, error_code=None):
-        with self.database.transaction() as conn:
+    def source_result(self, lease, source_id, status, *, new_jobs=0, observed_jobs=0, error_code=None, connection=None):
+        with nullcontext(connection) if connection is not None else self.database.transaction() as conn:
             self.guard_run(conn, lease)
             conn.execute(
                 "INSERT INTO discovery_source_runs VALUES(?,?,?,?,?,?,?) ON CONFLICT(run_id,source_id) DO UPDATE SET status=excluded.status,new_jobs=discovery_source_runs.new_jobs+excluded.new_jobs,observed_jobs=discovery_source_runs.observed_jobs+excluded.observed_jobs,error_code=excluded.error_code,updated_at=excluded.updated_at",

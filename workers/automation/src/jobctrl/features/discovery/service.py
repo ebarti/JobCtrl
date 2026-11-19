@@ -522,7 +522,7 @@ class DiscoveryService:
                         failures.append(failure)
                         if failure["code"] in rate_limit_codes:
                             rate_limited.update(unit["sites"])
-                        for board in unit["sites"]:
+                        for board in failure.get("boards", unit["sites"]):
                             self.repository.source_result(lease, "jobstreaming:" + board, "failed", error_code=failure["code"])
                         continue
                     ready.append(unit)
@@ -551,14 +551,7 @@ class DiscoveryService:
                             raise
                         if error.code in rate_limit_codes:
                             rate_limited.update(unit["sites"])
-                        failure = {"sourceFamily": "broad_boards", "unitId": unit["unit_id"], "boards": unit["sites"], "code": error.code, "message": error.message}
-                        recorded = self.repository.unit(run_id, unit["unit_id"])
-                        self.repository.save_unit(lease, unit, status="failed", result={**((recorded or {}).get("result") or {}), "failure": failure})
-                        failures.append(failure)
-                        for board in unit["sites"]:
-                            self.repository.source_result(
-                                lease, "jobstreaming:" + board, "failed", error_code=error.code
-                            )
+                        failures.append(self.repository.record_board_failure(lease, unit, error))
 
                 # Recover recorded failures even if a prior lease filled the
                 # budget. Only newly admitted multi-query requests share turns.

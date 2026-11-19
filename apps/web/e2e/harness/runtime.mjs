@@ -367,9 +367,10 @@ export async function applicationStack(
           || key === "JOBCTRL_POSTING_PROVIDER_ENDPOINT") delete env[key];
     }
   }
-  if (discoveryTransport === "jobstreaming") {
+  if (discoveryTransport.startsWith("jobstreaming")) {
     delete env.JOBCTRL_DISCOVERY_PROVIDER_ENDPOINT;
     env.JOBCTRL_JOBSTREAMING_PROVIDER_ENDPOINT = `${external.url}/jobstreaming`;
+    if (discoveryTransport !== "jobstreaming") env.JOBCTRL_E2E_BOARD_ACCESS = discoveryTransport;
   }
   if (features !== undefined) env.JOBCTRL_FEATURES = features;
   if (

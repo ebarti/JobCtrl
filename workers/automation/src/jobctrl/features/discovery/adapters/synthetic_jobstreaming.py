@@ -21,18 +21,28 @@ def controlled_registry(workspace):
     from jobstreaming.indeed import Indeed
     from jobstreaming.ziprecruiter import ZipRecruiter
 
+    access = os.environ.get("JOBCTRL_E2E_BOARD_ACCESS")
+
     def indeed(**kwargs):
         adapter = Indeed(api_key=owner["token"], **kwargs)
         adapter.api_url = endpoint + "/indeed"
+        if access == "jobstreaming-indeed-missing":
+            adapter.api_key = None
+        if access == "jobstreaming-tls-failure":
+            # Negotiate TLS with the same owned plaintext listener. Requests
+            # raises a real SSL error before any HTTP data can be exchanged.
+            adapter.api_url = "https://" + adapter.api_url.removeprefix("http://")
         adapter.session.headers.update({"Authorization": "Bearer " + owner["token"]})
         adapter.session.max_redirects = 0
         return adapter
 
     def zip_recruiter(**kwargs):
-        adapter = ZipRecruiter(**kwargs)
-        # Deliberately absent authentication exercises the real SDK refusal.
+        authorized = access == "jobstreaming-indeed-missing"
+        adapter = ZipRecruiter(authorization="Bearer " + owner["token"] if authorized else None, **kwargs)
+        # Normally leave this board unconfigured to exercise the SDK refusal.
         # All SDK origins are still confined even if its request order changes.
-        adapter.authorization = None
+        if not authorized:
+            adapter.authorization = None
         adapter.base_url = endpoint + "/ziprecruiter"
         adapter.api_url = endpoint + "/ziprecruiter"
         return adapter

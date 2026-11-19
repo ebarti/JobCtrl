@@ -7,6 +7,7 @@ from pathlib import Path
 import threading
 
 from jobctrl.app.errors import AppError
+from jobctrl.features.discovery.adapters.board_diagnostics import board_access_error
 from jobctrl.features.discovery.domain import fingerprint
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY
 from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
@@ -281,6 +282,11 @@ class DiscoveryExecutionAdapter:
                             self.repository.save_unit(lease, unit, status="waiting_for_query_turn", result=recorded)
                             return True
                     elif isinstance(event, ErrorEvent):
+                        if event.code.value == "authentication_configuration" and not event.reset_checkpoint:
+                            error = board_access_error(event)
+                            self.repository.record_board_failure(lease, unit, error, board=event.site.value, diagnostic=error.details)
+                            stream.ack(event)
+                            raise error
                         self.repository.source_result(
                             lease, "jobstreaming:" + event.site.value, "failed", error_code=event.code.value
                         )
@@ -294,11 +300,8 @@ class DiscoveryExecutionAdapter:
                         # exhausted. Persist/ack this board's failure, then allow
                         # the owner to continue the other independently keyed units.
                         stream.ack(event)
-                        message = "The source could not complete its search; review its connection before retrying."
-                        if event.code.value == "authentication_configuration":
-                            credential = {"indeed": "JOBSTREAMING_INDEED_API_KEY", "zip_recruiter": "JOBSTREAMING_ZIPRECRUITER_AUTHORIZATION"}.get(event.site.value)
-                            message = f"Configure {credential} in the worker environment, then restart the worker and retry; or deselect this board." if credential else "Configure this source's provider credentials or deselect the board."
-                        raise AppError("discovery_provider_" + event.code.value, message, 502)
+                        raise AppError("discovery_provider_" + event.code.value,
+                                       "The source could not complete its search; review its connection before retrying.", 502)
                     elif isinstance(event, SiteCompleteEvent):
                         reason = getattr(event, "reason", None)
                         value = reason.value if reason is not None else None

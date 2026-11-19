@@ -59,6 +59,10 @@ escape hatch.
   A terminal SDK rate limit defers that board's remaining units for the run.
   The shared run limit also covers concurrent registered sources. Previously
   admitted requests continue with their original scheduling policy.
+- The board adapter translates SDK authentication/configuration errors using
+  the reported exception type and known SDK messages. It commits a safe
+  diagnostic, the failed unit, source outcome and warning event together
+  before acknowledging the SDK. Provider response prose stays private.
 - Newly admitted requests freeze `sourceFetchPolicy=source-native-v1`. Their
   units carry `results_per_site=None`, translated to actual SDK
   `results_wanted=None`; native page sizes and the SDK's 50-page safety bound

@@ -92,7 +92,7 @@ type Fixtures = {
   api: APIRequestContext;
   consoleErrors: string[];
   features: string | undefined;
-  discoveryTransport: "http" | "jobstreaming";
+  discoveryTransport: "http" | "jobstreaming" | "jobstreaming-indeed-missing" | "jobstreaming-tls-failure";
   nativeAccountingPreflight: boolean;
   sourceRevision: string | undefined;
   fitRecoveryDebugger: boolean;
