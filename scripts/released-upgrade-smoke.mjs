@@ -358,6 +358,14 @@ function authoredProfile(config) {
   return value;
 }
 
+function expectedTransferredProfile(legacy) {
+  const value = authoredProfile(legacy);
+  // v0.4.x had no Languages section. Require the new empty default while
+  // retaining every language entry if the source already provides them.
+  value.profile.resume = { language_entries: [], ...value.profile.resume };
+  return value;
+}
+
 async function temporalCommand(payload, env, address, args) {
   return command(path.join(payload, "temporal/temporal"), [...args, "--address", address,
     "--disable-config-file", "--disable-config-env"], env);
@@ -505,7 +513,7 @@ export async function transferProfileToFreshWorkspace({ root, runtime, state, hi
   assert.deepEqual(await readApplicationIdentity(path.join(freshState, "jobctrl.db")),
     { applicationId: PYTHON_APPLICATION.applicationId, userVersion: 1 });
   const imported = await applicationRequest(payload, freshState, env, "GET", "/v1/profile");
-  assert.deepEqual(authoredProfile(imported), authoredProfile(expectedProfile), "all authored Profile fields, baseline, style and template must transfer");
+  assert.deepEqual(authoredProfile(imported), expectedTransferredProfile(expectedProfile), "all authored Profile fields, baseline, style and template must transfer");
   assert.equal((await applicationRequest(payload, freshState, env, "GET", "/v1/jobs")).total, 0);
   await assert.rejects(access(path.join(freshState, "temporal.db")), { code: "ENOENT" });
   checked.push("full-authored-profile-style-template-transferred-explicitly", "source-data-history-selector-registry-and-backups-unchanged", "new-application-identity-with-empty-non-profile-state");
@@ -697,14 +705,14 @@ export async function scenario(old, candidate, root) {
       cleanups.push({ selector: freshSelector, env: freshEnv });
       await command(freshSelector, ["start", "--no-open"], freshEnv);
       assert.equal((await publicRequest("/v1/health")).worker.status, "healthy");
-      assert.deepEqual(authoredProfile(await publicRequest("/v1/profile")), authoredProfile(savedProfile));
+      assert.deepEqual(authoredProfile(await publicRequest("/v1/profile")), expectedTransferredProfile(savedProfile));
       assert.equal((await publicRequest("/v1/jobs")).total, 0);
       const absent = await command(path.join(payload, "temporal/temporal"), ["workflow", "describe", "--workflow-id", workflowId, "--address", "127.0.0.1:7233", "--disable-config-file", "--disable-config-env"], freshEnv, { allowFailure: true });
       assert.notEqual(absent.code, 0, "fresh target must not inherit legacy Temporal workflows");
       await command(freshSelector, ["stop"], freshEnv);
       await command(freshSelector, ["start", "--no-open"], freshEnv);
       assert.equal((await publicRequest("/v1/health")).worker.status, "healthy");
-      assert.deepEqual(authoredProfile(await publicRequest("/v1/profile")), authoredProfile(savedProfile));
+      assert.deepEqual(authoredProfile(await publicRequest("/v1/profile")), expectedTransferredProfile(savedProfile));
       assert.equal((await publicRequest("/v1/jobs")).total, 0);
       await command(freshSelector, ["stop"], freshEnv);
       assert.deepEqual(await legacyRefusalSnapshot({ root, runtime, state, history: path.join(state, "temporal.db") }), before);
