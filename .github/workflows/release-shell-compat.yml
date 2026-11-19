@@ -113,7 +113,7 @@ jobs:
           path: ${{ runner.temp }}/installed-journeys
       - name: Verify every planned case passed exactly once
         run: |
-          node scripts/distribution-build.mjs verify-installed-journeys \
-            --candidate "$RUNNER_TEMP/installed-candidate" --evidence "$RUNNER_TEMP/installed-journeys" \
+          node scripts/verify-installed-journeys.mjs \
+            "$RUNNER_TEMP/installed-candidate/build-result.json" "$RUNNER_TEMP/installed-journeys" \
             | tee -a "$GITHUB_STEP_SUMMARY"
         shell: bash

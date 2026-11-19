@@ -12434,12 +12434,6 @@ async function main2(argv = process2.argv.slice(2)) {
     process2.stdout.write(canonicalJson(result));
     return;
   }
-  if (command === "verify-installed-journeys") {
-    const build = JSON.parse(await readFile3(path3.join(options.candidate, "build-result.json"), "utf8"));
-    const result = await verifyInstalledJourneyClosure(build, options.evidence);
-    process2.stdout.write(canonicalJson(result));
-    return;
-  }
   throw new Error(`unknown distribution build mode: ${command}`);
 }
 var invokedPath2 = process2.argv[1] ? pathToFileURL2(path3.resolve(process2.argv[1])).href : "";

@@ -48,7 +48,6 @@ import {
   chromiumCaseIds,
   installedJourneyPlan,
   INSTALLED_JOURNEY_SHARDS,
-  verifyInstalledJourneyClosure,
 } from "./installed-journey-evidence.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -3609,12 +3608,6 @@ export async function main(argv = process.argv.slice(2)) {
       output: path.resolve(options.output),
       shard: Number(options.shard),
     });
-    process.stdout.write(canonicalJson(result));
-    return;
-  }
-  if (command === "verify-installed-journeys") {
-    const build = JSON.parse(await readFile(path.join(options.candidate, "build-result.json"), "utf8"));
-    const result = await verifyInstalledJourneyClosure(build, options.evidence);
     process.stdout.write(canonicalJson(result));
     return;
   }
