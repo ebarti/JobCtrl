@@ -172,7 +172,7 @@ async function lifecycle(first,second){
 async function legacyAdmission(first,candidate){
  const legacy=path.join(root,'legacy');await mkdir(legacy,{mode:0o700});
  await run(python,['-I','-B','-c',`import pathlib,sqlite3,sys
-p=pathlib.Path(sys.argv[1]);c=sqlite3.connect(p/'jobctrl.db');c.execute('CREATE TABLE legacy_profile(value TEXT)');c.execute("INSERT INTO legacy_profile VALUES ('owned source')");c.execute('PRAGMA user_version=15');c.commit();c.close();(p/'jobctrl.db').chmod(0o600)
+p=pathlib.Path(sys.argv[1]);c=sqlite3.connect(p/'jobctrl.db');c.execute('CREATE TABLE legacy_profile(value TEXT)');c.execute("INSERT INTO legacy_profile VALUES ('owned source')");c.execute('PRAGMA user_version=15');c.commit();c.close();(p/'jobctrl.db').chmod(0o644)
 c=sqlite3.connect(p/'temporal.db');c.execute('CREATE TABLE legacy_history(value TEXT)');c.commit();c.close();(p/'temporal.db').chmod(0o600)
 (p/'jobctrl.db-wal').write_bytes(b'owned legacy companion');(p/'config.json').write_text('owned synthetic source')`,legacy]);
  const before=await tree(legacy),activeBefore=await readFile(path.join(runtime,'active.json')),selectorBefore=await readFile(selector),journalBefore=await readFile(path.join(runtime,'transition.json'));
@@ -183,11 +183,26 @@ c=sqlite3.connect(p/'temporal.db');c.execute('CREATE TABLE legacy_history(value 
  assert.deepEqual(await readFile(path.join(runtime,'active.json')),activeBefore);assert.deepEqual(await readFile(selector),selectorBefore);assert.deepEqual(await readFile(path.join(runtime,'transition.json')),journalBefore);
  const refusedHome=path.join(root,'refused-legacy-install');
  const admission=await run(installer,['--allow-unsigned-local','--home',refusedHome,'--descriptor-file',path.join(first.out,'descriptor.json'),'--signature-file',path.join(first.out,'descriptor.sig'),'--archive-file',path.join(first.out,'payload.zip'),'--json'],{commandEnv:{...legacyEnv,JOBCTRL_RUNTIME_HOME:refusedHome},acceptFailure:true});
- assert.notEqual(admission.code,0,'Installer selected legacy data');assert.deepEqual(await tree(legacy),before);
+ assert.notEqual(admission.code,0,'Installer selected legacy data');
+ assert.match(admission.stderr,/requires explicit Profile-only transfer/);
+ assert.deepEqual(await tree(legacy),before);
+ assert.equal((await stat(path.join(legacy,'jobctrl.db'))).mode & 0o777,0o644);
  for(const selected of ['active.json','transition.json','bin/jobctrl'])await assert.rejects(stat(path.join(refusedHome,selected)),{code:'ENOENT'});
  passed('installer-first-selection-refuses-legacy-before-selector-or-journal-publication');
  await run(selector,['stop'],{commandEnv:legacyEnv});assert.deepEqual(await tree(legacy),before);
  passed('legacy-start-backup-update-rollback-refuse-with-exact-source-preservation');
+
+ const current = path.join(workspace,'jobctrl.db');
+ const currentMode = (await stat(current)).mode & 0o777;
+ await chmod(current,0o644);
+ try {
+  const result = await run(selector,['start','--no-open'],{acceptFailure:true});
+  assert.notEqual(result.code,0);
+  assert.match(result.stderr,/cannot inspect Python application database/);
+ } finally {
+  await chmod(current,currentMode);
+ }
+ passed('nonprivate-python-database-cannot-start');
 }
 
 async function receiptRefusals(){
