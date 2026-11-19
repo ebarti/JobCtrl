@@ -402,6 +402,10 @@ accepted preparation and notes intact.
 Compensation owns posted and market evidence, source policy and normalization.
 Source availability and currency/time-base uncertainty must be represented
 honestly. Its neutral core does not depend on JobCtrl storage or workflow IDs.
+After a refresh verifies posted pay, `GET /v1/jobs/{id}/compensation/posted`
+returns the cited fact while market research continues. A failed market
+refresh leaves the latest accepted estimate available at
+`GET /v1/jobs/{id}/compensation/market` with its own source revision.
 
 ## Actual Offers
 

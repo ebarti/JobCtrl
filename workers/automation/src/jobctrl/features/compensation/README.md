@@ -15,13 +15,15 @@ currency, period, dates, one-sided values and component differences remain
 explicit. A source-bound classification is reused only for an exact model
 input fingerprint after validating its saved receipt again.
 
-A refresh leases its job and snapshots source permissions. Its accepted posted
-and market records publish together only if the lease, posting revision/hash,
-source permissions and optional automatic-refresh switch remain current. Failure
-or cancellation preserves the prior records. The feature stores bounded, safe
-provider receipts and emits identifier-only invalidations. Committed Jobs
-changes can request the `compensation.refresh_stale` action; automatic retries
-respect the seven-day freshness window and one-day source failure backoff.
+A refresh leases its job and snapshots source permissions. Verified posted
+pay publishes before market classification. Each publication checks the lease,
+posting revision/hash, source permissions, cancellation and the automatic
+refresh switch. A failed market refresh preserves the prior estimate and its
+exact posted-pay receipt. An invalid posted extraction preserves the prior
+posted fact. The feature emits identifier-only invalidations. Committed posting
+changes queue only the affected job IDs with source text. Daily stale refreshes
+scan the active backlog. A workspace-wide action scope serializes both paths.
+Market source failure backoff applies to the posting revision already assessed.
 
 The provider adapters support Euro Top Tech, explicitly permitted Levels.fyi
 public pages and licensed feeds, permitted Glassdoor feeds, explicit manual

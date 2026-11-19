@@ -1695,13 +1695,16 @@ test("compensation evidence cites the posting and an explicit manual report and 
   api,
   page,
 }) => {
-  const job = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+  const description = "Develop software. Base salary EUR 80000 to EUR 100000 per year.";
+  const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
+  const job = await json<{ job_id: string; revision: number }>(api, "post", "/v1/jobs/capture", {
     url: "https://example.com/jobs/pay",
     title: "Senior Software Engineer",
     company: "Synthetic Pay Company",
     location: "Madrid, Spain",
-    description: "Develop software.",
-    salary: "Base salary EUR 80000 to EUR 100000 per year.",
+    description,
+    full_description: description,
   });
   // This is an explicitly selected import file, not a database seed or a recorded model output.
   const observationsPath = path.join(app.workspace, "synthetic-pay.json");
@@ -1735,9 +1738,7 @@ test("compensation evidence cites the posting and an explicit manual report and 
   const run = (await submitted.json()) as { runId: string };
   const pay = await modelCall(app, "compensation.posted_pay");
   const postingSource = sources(pay.body)[0]!;
-  expect(postingSource.text).toBe(
-    "Base salary EUR 80000 to EUR 100000 per year.",
-  );
+  expect(postingSource.text).toBe(description);
   pay.reply({
     parse_state: "parsed_range",
     currency: "EUR",
@@ -1755,6 +1756,12 @@ test("compensation evidence cites the posting and an explicit manual report and 
   // Each explicit classification is bound to the actual posting or report row.
   for (const kind of ["posting", "report"] as const) {
     const call = await modelCall(app, "compensation.classification");
+    if (kind === "posting") {
+      const saved = await json<{ recordStatus: string; fact?: { minimumAmount: number; maximumAmount: number } }>(
+        api, "get", `/v1/jobs/${job.job_id}/compensation/posted`,
+      );
+      expect(saved).toMatchObject({ recordStatus: "recorded", fact: { minimumAmount: 80000, maximumAmount: 100000 } });
+    }
     const source = sources(call.body)[0]!;
     expect(source.source_id).toContain(
       kind === "posting"
@@ -1875,6 +1882,56 @@ test("compensation evidence cites the posting and an explicit manual report and 
     accepted.audit.posted.determination.receipt_id,
   );
   expect(retained.summary).toEqual(accepted.summary);
+
+  const revised = "Base salary EUR 82000 to EUR 105000 per year.";
+  await json(api, "patch", `/v1/jobs/${job.job_id}`, { expectedRevision: job.revision, description: revised });
+  const marketFailure = await action(api, "compensation.refresh", { ...options, jobId: job.job_id });
+  const revisedPay = await modelCall(app, "compensation.posted_pay");
+  const revisedSource = sources(revisedPay.body)[0]!;
+  expect(revisedSource.text).toBe(revised);
+  revisedPay.reply({
+    parse_state: "parsed_range", currency: "EUR", period: "year", component: "base_salary",
+    minimum_amount: 82000, maximum_amount: 105000, confidence: "high", warnings: [],
+    citations: [{ source_id: revisedSource.source_id, quote: revised }], rationale: "The new posting states this range.",
+  });
+  (await modelCall(app, "compensation.classification")).invalidJson();
+  await expect.poll(async () => (await json<{ status: string }>(api, "get", `/v1/action-runs/${marketFailure.runId}`)).status)
+    .toBe("failed");
+  const independent = await json<Compensation>(api, "get", `/v1/jobs/${job.job_id}/compensation`);
+  expect(independent.summary.posted.range).toMatchObject({ minimumAmount: 82000, maximumAmount: 105000 });
+  expect(independent.audit.posted.determination.receipt_id).not.toBe(accepted.audit.posted.determination.receipt_id);
+  expect(independent.summary.market.range).toEqual(accepted.summary.market.range);
+  expect(independent.audit.market).toMatchObject({ sourceCurrent: false, estimate: { sourceCount: 1 } });
+});
+
+test("automatic compensation refreshes only changed postings with source text", async ({ app, api }) => {
+  type Refresh = { runId: string; result?: { results?: { jobId: string; status: string }[] } };
+  const setting = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", {
+    expectedRevision: setting.revision, compensationAutomationEnabled: true, dailyBudgetUsd: 0,
+  });
+  const capture = (id: string, description: string) => json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+    url: `https://example.com/jobs/${id}`, title: id, company: "Synthetic salary publisher", description,
+  });
+  await capture("card-without-salary", "");
+  const first = await capture("first-posting", "First public description.");
+  async function failedAttempt(jobId: string, checkConcurrentAdmission = false) {
+    const pay = await modelCall(app, "compensation.posted_pay");
+    expect(sources(pay.body)[0]!.source_id).toContain(jobId);
+    if (checkConcurrentAdmission) {
+      const concurrent = await api.post("/v1/actions/compensation.refresh_stale", { data: { automatic: true } });
+      expect(concurrent.status()).toBe(409);
+      expect(await concurrent.json()).toMatchObject({ error: { code: "action_scope_busy" } });
+    }
+    pay.invalidJson();
+    await expect.poll(async () => {
+      const page = await json<{runs: Refresh[]}>(api, "get", "/v1/action-runs?action=compensation.refresh_stale");
+      return page.runs.find((run) => run.result?.results?.some((r) => r.jobId === jobId))?.result?.results;
+    }, { timeout: 40_000 }).toEqual([{ jobId, status: "failed", code: "model_schema_violation" }]);
+  }
+  await failedAttempt(first.job_id, true);
+  const second = await capture("second-posting", "Second public description.");
+  await failedAttempt(second.job_id);
 });
 
 test("interview preparation honors an explicit empty evidence selection and retains the accepted preparation on failure", async ({

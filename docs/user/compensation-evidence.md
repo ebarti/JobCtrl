@@ -18,6 +18,12 @@ the full posting description, and finally the short description. If that
 preferred source changes while extraction is running, the refresh is rejected
 and the previously accepted posted fact remains available.
 
+As soon as JobCtrl verifies the employer's figures and citations, the posted
+range appears in Jobs. Market research can continue or fail independently.
+Each market estimate retains the exact posted-pay determination used for its
+comparison. A newer employer range can therefore appear alongside an earlier
+market estimate with its own source revision and freshness.
+
 An explicitly stated annual amount stays unchanged; monthly amounts use 12
 months and hourly amounts use 2,080 work hours. An unknown period remains
 unknown. Unpriced bonus and equity remain separate from the cash amount.
@@ -148,11 +154,11 @@ source conflict is a warning to inspect, not a hidden decision rule.
 2. **Choose source policy.** Settings records which user-controlled reported
    sources a future automatic or explicit refresh may use. This step is
    network-free, and an absent preference is not consent.
-3. **Finish Discovery.** After terminal enrichment, `DiscoverWorkflow` invokes
-   the replay-safe `automatic_compensation_refresh` activity. It deduplicates
-   active role/level/country slices and skips every slice that is still fresh.
-   Healthy work renews its exact publication leases; cancellation and owner
-   replacement fence publication without withdrawing the last accepted result.
+3. **Queue changed postings.** The worker collects new and changed posting
+   events by job ID and starts one automatic compensation batch at a time.
+   Cards with an empty salary and no description wait for source text.
+   An unchanged observation preserves the current evidence. The daily schedule
+   checks the full active backlog for missing or expired evidence.
 4. **Parse posted evidence.** The worker records a model-backed posted-fact
    state, normalized legal range fields when available, parser identity,
    confidence, and warnings without overwriting the raw salary.
