@@ -9,7 +9,7 @@ from pydantic import Field, StrictInt, StrictStr
 
 from .domain import Citation, QualifiedMeaning, RequirementError, Value, _nonblank, fingerprint, validate_citations
 from .normalization_citations import CitationSelection, bind_citation_selections
-from .cohort_transport import COHORT_PROMPT_VERSION, expand_group_references
+from .cohort_transport import COHORT_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION, expand_group_references
 from .normalization_partitions import bind_partition_selection
 from .normalization_partitions_v4 import bind_partition_selection as bind_partition_selection_v4
 
@@ -116,7 +116,7 @@ def bind_normalization_slots(value, *, context, sources, prompt_version=NORMALIZ
     if prompt_version == COHORT_PROMPT_VERSION:
         expanded = expand_group_references(value.model_dump(), context, sources)
         intermediate, partition_binding = bind_partition_selection(value, context=context, expanded=expanded)
-    elif prompt_version in (NORMALIZATION_PROMPT_VERSION, NORMALIZATION_PARTITION_V5_PROMPT_VERSION):
+    elif prompt_version in (REFRESH_CATALOG_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION, NORMALIZATION_PARTITION_V5_PROMPT_VERSION):
         intermediate, partition_binding = bind_partition_selection(value, context=context)
     elif prompt_version == NORMALIZATION_PARTITION_V4_PROMPT_VERSION:
         intermediate, partition_binding = bind_partition_selection_v4(value, context=context)

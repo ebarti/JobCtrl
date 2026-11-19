@@ -112,6 +112,15 @@ fingerprints, retained-definition references, and the stored reconciliation.
 It also observes distinct live model lanes overlapping while preserving the
 configured single-lane capacities.
 
+The [single-job refresh journey](../../../apps/web/e2e/journeys/requirements-reuse.spec.ts)
+checks every expanded source against its recorded hash. It upgrades a real v6
+workspace, rereads an accepted action and refuses an interrupted paid comparison
+before a fresh action uses v8. The [payload boundary case](../../../apps/web/e2e/journeys/requirements.spec.ts)
+sends a complete synthetic catalog whose original source documents exceed
+1 MiB, then verifies a second catalog still exceeds the gateway limit after
+packing. Both refusals preserve the accepted snapshot and PDF. Offering an
+incoming ID as a retained capability fails the v8 structured schema.
+
 Additional cases refuse missing or foreign normalization members, qualification
 rows and citations without partial authority; skip an unsupported-language job;
 and cancel an unsettled qualification without issuing another call through a

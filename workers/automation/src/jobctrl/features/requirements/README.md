@@ -135,8 +135,7 @@ judgment and does not mutate the accepted snapshot.
 ## Complete matching and exact reuse
 
 One `requirements.match_catalog` determination uses semantic policy
-`requirements-capability-demand-v2` and citation wire/prompt
-`requirements-capability-demand-citation-v3`. It sees the complete incoming Skills/Experience
+`requirements-capability-demand-v2`. It sees the complete incoming Skills/Experience
 inventory and retained current-generation catalog, including hidden meanings.
 Canonical sources contain their definitions, original extraction and quoted
 posting evidence; accepted occurrences and available posting sources establish
@@ -144,6 +143,25 @@ job demands. The inventory binds its epoch, complete ID/revision set and source
 authority. There is no top-k selection, paging, chunking, lexical fallback or
 separate novelty judgment. Existing-only repair and every semantic ingestion or
 correction use this mandatory gate.
+
+New single-job refreshes use `requirements-capability-demand-partition-v8-sources`.
+The provider receives repeated exact source strings and citation path descriptors
+through request-local dictionaries. Expansion verifies the complete original
+context, the catalog of citation segments and every source document against
+their fingerprints. The response uses v6's exhaustive assignment slots, full
+definitions and citation binding. Its `reuse_requirement_id` field accepts
+only a retained capability ID or null. With an empty retained catalog it
+requires null. The owner still verifies that the model assigned that retained
+member to the group and reproduced its exact meaning. The complete serialized request
+still has to fit the gateway's 1 MiB limit and the selected provider's context.
+
+The durable `requirements.refresh` action records its transport in the original
+admission transaction. Searches record it in their initial preparation request
+and carry that request into retries. Missing admissions from older actions
+select v6, including unstarted jobs in a frozen search. Previously paid requests
+retain their exact receipt fingerprints and one-call allowance. Synchronous
+single-job refresh starts on v8. Explicit catalog repair, corrections and
+separately started selected Preparation recipes use v6. The shared initial-search cohort uses v7.
 
 The v6 immutable model result, `CatalogNormalizationSlots`, contains `status`, exact
 `catalog_revision`, `member_slots`, `occurrence_slots`, `capability_groups`,

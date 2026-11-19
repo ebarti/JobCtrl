@@ -3,7 +3,7 @@ import { action, completed, expect, json, modelCall, terminal, test, type Applic
 import { createBaseline } from "./core-data.js";
 import { authoredPartition } from "./consolidation-data.js";
 import { COMMON_DEMAND, posting, respondProducer, type CohortPosting } from "./preparation-cohort-data.js";
-import { type CatalogContext, typedExtraction } from "./requirements-data.js";
+import { COHORT_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION, type CatalogContext, typedExtraction } from "./requirements-data.js";
 import { serveQualification } from "./search-assessment-data.js";
 
 async function capturePosting(api: APIRequestContext, index: number, description?: string) {
@@ -27,8 +27,9 @@ async function servePostingAndRole(app: ApplicationStack, target: CohortPosting)
   }
 }
 
-async function publishSingleDemand(app: ApplicationStack) {
+async function publishSingleDemand(app: ApplicationStack, prompt: string) {
   const matching = await modelCall(app, "requirements.match_catalog");
+  expect(matching.body["prompt_version"]).toBe(prompt);
   const input = matching.body["context"] as CatalogContext;
   expect(input.incoming).toHaveLength(1);
   const member = input.incoming[0]!;
@@ -70,7 +71,7 @@ test("a search waiting for the Requirements lane survives worker replacement, ca
   held.reply(typedExtraction(held, { classification: "non_english", status: "unsupported_language" }));
   expect((await heldRequest).ok()).toBe(true);
   respondProducer(await modelCall(app, "requirements.extract"), [target]);
-  const jobId = await publishSingleDemand(app);
+  const jobId = await publishSingleDemand(app, COHORT_NORMALIZATION_PROMPT_VERSION);
   await serveQualification(app, library);
   expect((await completed(api, search.runId)).result).toMatchObject({ newJobs: 1, preparation: { assessedJobs: 1, failedJobs: 0 } });
   expect(await json(api, "get", `/v1/jobs/${jobId}/fit`)).toMatchObject({ current: true, score: { revision: 1 } });
@@ -111,7 +112,7 @@ test("a search above the cohort cutoff resumes the per-job Requirements stage an
   held.reply(typedExtraction(held, { classification: "non_english", status: "unsupported_language" }));
   expect((await heldRequest).ok()).toBe(true);
   respondProducer(await modelCall(app, "requirements.extract"), [rows[0]!]);
-  const jobId = await publishSingleDemand(app);
+  const jobId = await publishSingleDemand(app, REFRESH_NORMALIZATION_PROMPT_VERSION);
   for (const row of rows.slice(1)) {
     await servePostingAndRole(app, row);
     respondProducer(await modelCall(app, "requirements.extract"), [row]);

@@ -15,13 +15,17 @@ from .normalization_domain import (
     demand_fingerprint, validate_normalization,
 )
 from .normalization_citations import citation_binding_report, citation_binding_summary, citation_segment_catalog, citation_source_context
-from .normalization_partitions import (cohort_partition_schema, partition_binding_summary, partition_group_handles,
+from .normalization_partitions import (cohort_partition_schema, refresh_partition_schema, partition_binding_summary, partition_group_handles,
                                        partition_selection_schema, partition_selection_schema_v5)
 from .normalization_partitions_v4 import partition_selection_schema as partition_selection_schema_v4
-from .cohort_transport import COHORT_INSTRUCTIONS, COHORT_PROMPT_VERSION, expand_catalog_sources, pack_catalog_sources
+from .cohort_transport import (
+    COHORT_INSTRUCTIONS, COHORT_PROMPT_VERSION, REFRESH_CATALOG_INSTRUCTIONS, REFRESH_CATALOG_PROMPT_VERSION,
+    expand_catalog_sources, pack_catalog_sources,
+)
 
 
 PARTITION_SCHEMAS = {NORMALIZATION_PROMPT_VERSION: partition_selection_schema,
+                     REFRESH_CATALOG_PROMPT_VERSION: refresh_partition_schema,
                      NORMALIZATION_PARTITION_V5_PROMPT_VERSION: partition_selection_schema_v5,
                      NORMALIZATION_PARTITION_V4_PROMPT_VERSION: partition_selection_schema_v4,
                      COHORT_PROMPT_VERSION: cohort_partition_schema}
@@ -31,7 +35,9 @@ def _catalog_sources(prepared):
     sources = {row["source_id"]: row["text"] for row in prepared["sources"]}
     if len(sources) != len(prepared["sources"]):
         raise RequirementError("catalog_snapshot_invalid")
-    if prepared["prompt_version"] == COHORT_PROMPT_VERSION:
+    if prepared["prompt_version"] in (COHORT_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION):
+        if prepared["context"].get("normalization_prompt_version") != prepared["prompt_version"]:
+            raise RequirementError("requirements_citation_wire_changed")
         return expand_catalog_sources(prepared["context"], sources)
     return prepared["context"], sources
 
@@ -91,7 +97,8 @@ class CatalogNormalizationService:
                 for row in occurrences if "_normalization_member_id" in row]
 
     async def _normalize_extraction(self, extraction, *, posting, expected_revision, extraction_receipt,
-                                    source_binding, operation_id, action_fingerprint, cancelled, budget=None, heartbeat=None):
+                                    source_binding, operation_id, action_fingerprint, cancelled, budget=None, heartbeat=None,
+                                    prompt_version):
         with self.store.read_session() as connection:
             captured = self.store.normalization_capture(connection)
             previous = self.store.current_snapshot(posting["job_id"], connection)
@@ -109,7 +116,8 @@ class CatalogNormalizationService:
             "source_id": posting["source_id"], "source_revision": posting["source_revision"], "requirements": rows,
             "extraction_determination_id": extraction_receipt["receipt_id"], "_attempt_id": operation_id}
         return await self._normalize_catalog(captured=captured, proposals={posting["job_id"]: proposal}, incoming=self._incoming_members(rows),
-            operation_id=operation_id, action_fingerprint=action_fingerprint, cancelled=cancelled, heartbeat=heartbeat, budget=budget)
+            operation_id=operation_id, action_fingerprint=action_fingerprint, cancelled=cancelled, heartbeat=heartbeat, budget=budget,
+            prompt_version=prompt_version)
 
     def _normalization_postings(self, job_ids, connection=None):
         postings = {}
@@ -267,7 +275,7 @@ class CatalogNormalizationService:
 
     @classmethod
     def prepare_catalog_consolidation(cls, *, captured, postings, operation_id, proposals=None, incoming=None, guidance=None,
-                                      cohort=False):
+                                      cohort=False, prompt_version=NORMALIZATION_PROMPT_VERSION):
         """Pure public owner payload builder for source-only semantic validation.
 
         Callers supply detached complete source DTOs. This performs no reads,
@@ -275,7 +283,11 @@ class CatalogNormalizationService:
         """
         context, sources, _ = cls._normalization_input(captured, proposals or {}, incoming or [], postings, guidance)
         context["operation_id"] = operation_id
-        version = COHORT_PROMPT_VERSION if cohort else NORMALIZATION_PROMPT_VERSION
+        if prompt_version not in (NORMALIZATION_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION) or (
+            cohort and prompt_version != NORMALIZATION_PROMPT_VERSION
+        ):
+            raise RequirementError("requirements_citation_wire_changed")
+        version = COHORT_PROMPT_VERSION if cohort else prompt_version
         context["normalization_prompt_version"] = version
         context["partition_group_handles"] = partition_group_handles(context)
         context["citation_segments"] = citation_segment_catalog(sources,
@@ -284,10 +296,12 @@ class CatalogNormalizationService:
         context["citation_source_fingerprints"] = {ident: fingerprint(text) for ident, text in sources.items()}
         context["citation_source_context_fingerprint"] = fingerprint(citation_source_context(context, sources))
         schema = PARTITION_SCHEMAS[version](context).model_json_schema()
-        if cohort:
+        instructions = NORMALIZATION_INSTRUCTION
+        if version in (COHORT_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION):
             context, sources = pack_catalog_sources(context, sources)
+            instructions += COHORT_INSTRUCTIONS if cohort else REFRESH_CATALOG_INSTRUCTIONS
         return {"operation": "requirements.match_catalog", "prompt_version": version,
-                "instructions": NORMALIZATION_INSTRUCTION + (COHORT_INSTRUCTIONS if cohort else ""), "response_schema": schema,
+                "instructions": instructions, "response_schema": schema,
                 "context": context, "sources": [{"source_id": ident, "text": text} for ident, text in sources.items()]}
 
     @staticmethod
@@ -322,7 +336,8 @@ class CatalogNormalizationService:
 
     async def _normalize_catalog(self, *, captured, proposals, incoming, operation_id, action_fingerprint,
                                  cancelled, heartbeat=None, budget=None, guidance=None, revision_action=None,
-                                 required_bindings=None, source_posting=None, cohort_state=None, cohort_guard=None):
+                                 required_bindings=None, source_posting=None, cohort_state=None, cohort_guard=None,
+                                 prompt_version=NORMALIZATION_PROMPT_VERSION):
         self._check_cancel(cancelled)
         with self.store.read_session() as connection:
             self.store.assert_normalization_capture(captured, connection)
@@ -337,7 +352,7 @@ class CatalogNormalizationService:
             for offset in range(0, len(optional_jobs), 1000):
                 postings.update(self.jobs.get_job_snapshots(optional_jobs[offset:offset + 1000], connection=connection, include_deleted=True))
         prepared = self.prepare_catalog_consolidation(captured=captured, proposals=proposals, incoming=incoming,
-            postings=postings, guidance=guidance, operation_id=operation_id, cohort=cohort_state is not None)
+            postings=postings, guidance=guidance, operation_id=operation_id, cohort=cohort_state is not None, prompt_version=prompt_version)
         context, sources = _catalog_sources(prepared)
         version = prepared["prompt_version"]
         effective = {row["job_id"]: deepcopy(row) for row in captured["snapshots"]}

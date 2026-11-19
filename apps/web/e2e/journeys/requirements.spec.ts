@@ -8,9 +8,12 @@ import {
 } from "../harness/fixtures.js";
 import {
   catalogMatching,
+  catalogSource,
   citationSelections,
   EXTRACTION_PROMPT_VERSION,
   memberRoots,
+  modelSources,
+  REFRESH_NORMALIZATION_PROMPT_VERSION,
   typedExtraction,
   type CatalogContext,
 } from "./requirements-data.js";
@@ -442,6 +445,7 @@ test("one catalog determination resolves the full posting batch and more than tw
 for (const defect of [
   "unknown field",
   "unknown category",
+  "incoming reuse ID",
   "foreign source",
   "foreign segment",
   "uncertain",
@@ -488,6 +492,11 @@ for (const defect of [
       },
     });
     const { groupId, slot: capability } = memberRoots(value)[0]!;
+    if (defect === "incoming reuse ID") {
+      const input = matching.body["context"] as CatalogContext;
+      matching.reply({ ...value, capability_groups: { ...value.capability_groups,
+        [groupId]: { ...capability, reuse_requirement_id: input.incoming[0]!.member_id } } });
+    }
     if (defect === "unknown field")
       matching.reply({ ...value, unrequested: true });
     if (defect === "unknown category")
@@ -547,6 +556,7 @@ for (const defect of [
     expect(result.status(), await result.text()).toBe(
       defect === "unknown field" ||
         defect === "unknown category" ||
+        defect === "incoming reuse ID" ||
         defect === "foreign source" ||
         defect === "provider unavailable"
         ? 502
@@ -554,6 +564,11 @@ for (const defect of [
           ? 409
           : 422,
     );
+    if (defect === "incoming reuse ID") {
+      const schema = matching.body["response_schema"] as { $defs: { RetainedCapabilityId: { enum: string[] } } };
+      expect(schema.$defs.RetainedCapabilityId.enum).toEqual([accepted.requirements[0]!.requirement_id]);
+      expect(await result.json()).toMatchObject({ error: { code: "model_schema_violation" } });
+    }
     const retained = await json<Requirements>(
       api,
       "get",
@@ -573,7 +588,7 @@ for (const defect of [
 test("an oversized complete catalog request refuses without truncation or automatic continuation and preserves acceptance", async ({
   api,
   app,
-}) => {
+}, info) => {
   const { profile } = await createBaseline(api);
   const posting = await json<Posting>(api, "post", "/v1/jobs/capture", {
     url: "https://example.com/jobs/full-input-refusal",
@@ -623,24 +638,45 @@ test("an oversized complete catalog request refuses without truncation or automa
       ].join("\n"),
     },
   );
-  const before = app.external.calls.length;
-  const refresh = api.post(`/v1/jobs/${posting.job_id}/requirements`, {
+  const refresh = () => api.post(`/v1/jobs/${posting.job_id}/requirements`, {
     data: {
       expected_posting_revision: revised.revision,
       expected_revision: accepted.revision,
       force: true,
     },
   });
-  const extracting = await modelCall(app, "requirements.extract");
-  const result = typedExtraction(extracting, { requirements: clauses.map((text, index) => ({
+  const conditions = qualifiers.map((row) => row.value).join(" ");
+  const extracted = (call: ExternalCall, includeClause: boolean) => typedExtraction(call, { requirements: clauses.map((text, index) => ({
     localId: `responsibility-${index + 1}`, text,
-    definition: `${text} ${qualifiers.map((row) => row.value).join(" ")}`.slice(0, 2400),
-    rationale: qualifiers.map((row) => row.value).join(" ").slice(0, 1900),
-    sourceNote: qualifiers.map((row) => row.value).join(" ").slice(-1900),
+    definition: `${text} ${conditions}`.slice(0, 2500),
+    rationale: includeClause ? `${text} ${conditions}`.slice(0, 1990) : conditions.slice(0, 1900),
+    sourceNote: includeClause ? `${text} ${conditions.slice(-1900)}` : conditions.slice(-1900),
   })) });
+  const repeatedRequest = refresh();
+  const repeated = await modelCall(app, "requirements.extract");
+  repeated.reply(extracted(repeated, false));
+  const packed = await modelCall(app, "requirements.match_catalog");
+  expect(packed.body["prompt_version"]).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
+  const context = packed.body["context"] as CatalogContext;
+  expect(context.members).toHaveLength(101);
+  expect(context.incoming).toHaveLength(100);
+  const sentBytes = Buffer.byteLength(JSON.stringify(packed.body));
+  const originalSourceBytes = modelSources(packed).reduce((total, source) =>
+    total + Buffer.byteLength(JSON.stringify(catalogSource(packed, source.source_id))), 0);
+  expect(sentBytes).toBeLessThan(1024 * 1024);
+  expect(originalSourceBytes).toBeGreaterThan(1024 * 1024);
+  await info.attach("complete-catalog-size", { contentType: "application/json", body: JSON.stringify({ sentBytes, originalSourceBytes }) });
+  // A settled, incomplete partition cannot publish these requirements.
+  packed.reply({ status: "needs_review", catalog_revision: context.catalog_revision });
+  expect(await (await repeatedRequest).json()).toMatchObject({ error: { code: "model_schema_violation" } });
+
+  const before = app.external.calls.length;
+  const uniqueRequest = refresh();
+  const extracting = await modelCall(app, "requirements.extract");
+  const result = extracted(extracting, true);
   expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(1024 * 1024);
   extracting.reply(result);
-  const response = await refresh;
+  const response = await uniqueRequest;
   expect(response.status(), await response.text()).toBe(503);
   expect(await response.json()).toMatchObject({
     error: {

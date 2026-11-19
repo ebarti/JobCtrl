@@ -11,7 +11,7 @@ from .http import ConsolidateRequest, CorrectionRequest, OccurrenceCorrectionsRe
 from .model import RequirementModelAdapter
 from .repository import SqliteRequirementStore
 from .schema import SCHEMA
-from .normalization_schema import SCHEMA as NORMALIZATION_SCHEMA
+from .normalization_schema import REFRESH_TRANSPORT_SCHEMA, SCHEMA as NORMALIZATION_SCHEMA
 from .cohort_storage import SCHEMA as COHORT_SCHEMA
 from .normalization_domain import NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION
 from .service import RequirementsService
@@ -23,6 +23,7 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         raise AppError("requirements_jobs_required", "Requirements requires the public Jobs service.", 500)
     runtime.database.initialize_feature("requirements", SCHEMA)
     runtime.database.initialize_feature("requirements_normalization_v1", NORMALIZATION_SCHEMA)
+    runtime.database.initialize_feature("requirements_refresh_transport_v1", REFRESH_TRANSPORT_SCHEMA)
     runtime.database.initialize_feature("requirements_initial_cohort_v1", COHORT_SCHEMA)
     store = SqliteRequirementStore(runtime.database, runtime.events)
     service = RequirementsService(
@@ -43,6 +44,9 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         except RequirementError as failure:
             raise_application_error(failure)
 
+    def admit_refresh(run_id, payload, connection):
+        store.admit_refresh_transport(run_id, service.refresh_catalog_prompt_version, connection)
+
     async def refresh(context, payload):
         from pydantic import ValidationError
         try:
@@ -55,7 +59,8 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         try:
             with wait_for_model_capacity(context.cancelled):
                 return await service.refresh(job_id, **body.model_dump(), cancelled=context.cancelled,
-                                             heartbeat=context.heartbeat, operation_id=context.run_id)
+                                             heartbeat=context.heartbeat, operation_id=context.run_id,
+                                             catalog_prompt_version=store.refresh_transport(context.run_id))
         except RequirementError as failure:
             raise_application_error(failure)
 
@@ -109,6 +114,7 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         name="requirements", service=service, routes=routes(service),
         actions={"requirements.consolidate": consolidate, "requirements.refresh": refresh, "requirements.revise": revise, "requirements.correct_binding": correct_binding,
                  "requirements.correct_occurrences": correct_occurrences},
+        action_admissions={"requirements.refresh": admit_refresh},
         action_versions={name: CONTRACT_VERSION + ":" + NORMALIZATION_VERSION + ":" + NORMALIZATION_PROMPT_VERSION for name in (
             "requirements.consolidate",
             "requirements.refresh", "requirements.revise", "requirements.correct_binding",

@@ -15,6 +15,15 @@ from .normalization_domain import NORMALIZATION_VERSION
 
 
 class SqliteRequirementStore(NormalizationStore, CohortStorage):
+    def admit_refresh_transport(self, operation_id, prompt_version, connection):
+        connection.execute("INSERT INTO requirements_refresh_transport VALUES (?,?)", (operation_id, prompt_version))
+
+    def refresh_transport(self, operation_id):
+        with self.read_session() as connection:
+            row = connection.execute("SELECT prompt_version FROM requirements_refresh_transport WHERE operation_id=?",
+                                     (operation_id,)).fetchone()
+        return row["prompt_version"] if row is not None else None
+
     def __init__(self, database, events):
         self.database = database
         self.events = events

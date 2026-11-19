@@ -18,6 +18,7 @@ from .domain import (
 from .ports import PostingReader, RequirementModel, RequirementStore
 from .normalization import CatalogNormalizationService
 from .cohort import RequirementsCohortService
+from .cohort_transport import REFRESH_CATALOG_PROMPT_VERSION
 from .extraction_wire import EXTRACTION_VERSION, LEGACY_EXTRACTION_VERSION, extraction_wire
 from .normalization_domain import NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION
 
@@ -31,6 +32,8 @@ def _never_cancelled() -> bool:
 
 
 class RequirementsService(RequirementsCohortService, CatalogNormalizationService):
+    refresh_catalog_prompt_version = REFRESH_CATALOG_PROMPT_VERSION
+
     def __init__(self, store: RequirementStore, jobs: PostingReader, model: RequirementModel):
         self.store = store
         self.jobs = jobs
@@ -548,14 +551,19 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         self, job_id: str, *, expected_posting_revision: int, expected_revision: int,
         force: bool = False, cancelled: Callable[[], bool] = _never_cancelled,
         heartbeat: Callable[[dict], object] | None = None,
-        operation_id: str | None = None,
+        operation_id: str | None = None, catalog_prompt_version: str | None = REFRESH_CATALOG_PROMPT_VERSION,
     ) -> dict:
         self._validate_versions(expected_posting_revision, expected_revision)
         if type(force) is not bool:
             raise RequirementError("invalid_force")
         self._validate_operation_id(operation_id)
+        # Queued predecessor actions and preparation runs have no catalog transport pin.
+        if catalog_prompt_version is None:
+            catalog_prompt_version = NORMALIZATION_PROMPT_VERSION
+        if catalog_prompt_version not in (NORMALIZATION_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION):
+            raise RequirementError("requirements_citation_wire_changed")
         request = {
-            "contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": NORMALIZATION_PROMPT_VERSION, "operation": "refresh", "job_id": job_id, "expected_posting_revision": expected_posting_revision,
+            "contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": catalog_prompt_version, "operation": "refresh", "job_id": job_id, "expected_posting_revision": expected_posting_revision,
             "expected_revision": expected_revision, "force": force,
         }
         # v5 refresh attempts predate an explicit extraction version in their fingerprint.
@@ -609,7 +617,8 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
             extraction = bind_extraction(selection, source_id=source_id, text=source_text)
             await self._normalize_extraction(extraction, posting=posting, expected_revision=expected_revision,
                 extraction_receipt=extraction_receipt, source_binding=source_binding, operation_id=attempt_id,
-                action_fingerprint=action_fingerprint, budget=budget, cancelled=cancelled, heartbeat=heartbeat)
+                action_fingerprint=action_fingerprint, budget=budget, cancelled=cancelled, heartbeat=heartbeat,
+                prompt_version=catalog_prompt_version)
             return self.get_job_requirements(job_id)
         except asyncio.CancelledError:
             self.store.finish_attempt(attempt_id, "cancelled", "cancelled")

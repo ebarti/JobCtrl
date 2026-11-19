@@ -60,6 +60,10 @@ def partition_selection_schema(context):
     return _partition_selection_schema(context, offered_citations=True)
 
 
+def refresh_partition_schema(context):
+    return _partition_selection_schema(context, offered_citations=True, retained_reuse_only=True)
+
+
 def cohort_partition_schema(context):
     return _partition_selection_schema(context, offered_citations=True, cohort=True)
 
@@ -69,7 +73,7 @@ def partition_selection_schema_v5(context):
     return _partition_selection_schema(context, offered_citations=False)
 
 
-def _partition_selection_schema(context, *, offered_citations, cohort=False):
+def _partition_selection_schema(context, *, offered_citations, cohort=False, retained_reuse_only=False):
     member_ids = tuple(row["member_id"] for row in context["members"])
     occurrence_ids = tuple(row["occurrence_id"] for row in context["occurrences"])
     if len(set(member_ids)) != len(member_ids) or len(set(occurrence_ids)) != len(occurrence_ids):
@@ -79,7 +83,13 @@ def _partition_selection_schema(context, *, offered_citations, cohort=False):
     capability_id = _id_type("CapabilityGroupId", handles["capabilities"])
     demand_id = _id_type("DemandGroupId", handles["demands"])
     citation, demand, unresolved = CitationSelection, DemandGroup, UnresolvedSlot
-    capability_fields = {"reuse_requirement_id": (member_id | None, ...)}
+    if cohort or retained_reuse_only:
+        retained = tuple(row["requirement_id"] for row in context["members"] if row["requirement_id"] is not None)
+    reuse_id = member_id | None
+    if retained_reuse_only:
+        # Incoming IDs can be assigned, but do not identify an accepted meaning.
+        reuse_id = _id_type("RetainedCapabilityId", retained) | None if retained else type(None)
+    capability_fields = {"reuse_requirement_id": (reuse_id, ...)}
     if offered_citations:
         citation = _citation_type("Offered", tuple(context["citation_segments"]), context)
         demand_citation = _citation_type("DemandEvidence", _demand_evidence_sources(context), context)
@@ -90,7 +100,6 @@ def _partition_selection_schema(context, *, offered_citations, cohort=False):
                                   citations=(list[citation], Field(min_length=1)))
     capability = create_model("CapabilityGroup", __base__=(CapabilityGroup, SlotValue), **capability_fields)
     if cohort:
-        retained = tuple(row["requirement_id"] for row in context["members"] if row["requirement_id"] is not None)
         if retained:
             capability = capability | create_model("RetainedCapability", __base__=SlotValue,
                 kind=(Literal["reuse"], ...), reuse_requirement_id=(_id_type("RetainedCapabilityId", retained), ...),

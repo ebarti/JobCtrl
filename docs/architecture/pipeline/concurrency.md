@@ -22,6 +22,12 @@ calls. Larger cohorts keep the per-job preparation policy. The route is stored
 with the frozen target IDs, before model work. A request that exceeds the model
 size limit reports the refusal through its recorded stage outcome.
 
+New searches record the single-job Requirements input format when their action
+is admitted. Searches already in the queue and retries of those searches use
+their original format for every target. On the per-job route, the current
+format shares repeated verbatim strings and citation paths within each complete
+catalog comparison. The worker still settles each comparison before the next.
+
 Enrichment, role analysis, Requirements and Fit scoring wait when an active
 model call holds their lane or a finite monetary policy serializes provider
 calls. The action retains its stage and emits a `PreparationWaitingForCapacity`

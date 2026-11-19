@@ -228,9 +228,13 @@ aliases. Exact historical revision reads preserve their original identity;
 current navigation may follow a recorded alias. Old typed job snapshots report
 `consolidation_required` staleness and cannot supply new assessment authority.
 
-Consolidation retains semantic policy `requirements-capability-demand-v2` and uses
-wire/prompt `requirements-capability-demand-partition-v6`. Its strict raw
-`CatalogNormalizationSlots` result requires a property for every supplied member
+Consolidation uses semantic policy `requirements-capability-demand-v2`. Explicit
+catalog repair and corrections use `requirements-capability-demand-partition-v6`.
+New single-job refreshes and new searches on the per-job route use
+`requirements-capability-demand-partition-v8-sources`, which encodes repeated
+exact source fields and citation paths in dictionaries. Its `reuse_requirement_id`
+offers only retained capability IDs and requires null when none exist.
+Both versions use `CatalogNormalizationSlots`, which requires a property for every supplied member
 in `member_slots` and every occurrence in `occurrence_slots`. Each slot is assigned
 to an independent pre-offered capability/demand group handle or explicitly
 unresolved. `capability_groups` and `demand_groups` require every offered handle:

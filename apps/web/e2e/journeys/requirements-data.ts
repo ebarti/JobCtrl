@@ -4,6 +4,7 @@ import { expect, type ExternalCall } from "../harness/fixtures.js";
 export type ModelSource = { source_id: string; text: string };
 export const EXTRACTION_PROMPT_VERSION = "requirements-v2-extract-v6-inference-rationale";
 export const NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v6";
+export const REFRESH_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v8-sources";
 export const COHORT_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v7-cohort";
 export const PARTITION_V5_PROMPT_VERSION = "requirements-capability-demand-partition-v5";
 export const PARTITION_V4_PROMPT_VERSION = "requirements-capability-demand-partition-v4";
@@ -183,7 +184,7 @@ type OccurrenceEvidence = Omit<CatalogContext["occurrences"][number],
 
 /** The current wire carries structural references. Meanings are read from the
  * referenced live source DTOs, never reconstructed from names or identifiers. */
-function catalogSource<T>(call: ExternalCall, sourceId: string): T {
+export function catalogSource<T>(call: ExternalCall, sourceId: string): T {
   const source = modelSources(call).find((row) => row.source_id === sourceId);
   expect(source, `The actual request owns source ${sourceId}`).toBeTruthy();
   const context = call.body["context"] as CatalogContext;
@@ -284,8 +285,9 @@ export const occurrenceRoots = (value: CatalogSlots) => Object.entries(value.dem
 /** Authors supply the complete semantic partition. Only live IDs, supplied
  * independent handles and verbatim citation selections are joined here. */
 export function catalogNormalization(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]): CatalogSlots {
-  const prompt = call.body["prompt_version"] === COHORT_NORMALIZATION_PROMPT_VERSION
-    ? COHORT_NORMALIZATION_PROMPT_VERSION : NORMALIZATION_PROMPT_VERSION;
+  const prompt = call.body["prompt_version"];
+  if (prompt !== NORMALIZATION_PROMPT_VERSION && prompt !== REFRESH_NORMALIZATION_PROMPT_VERSION
+      && prompt !== COHORT_NORMALIZATION_PROMPT_VERSION) throw new Error("Unexpected catalog partition version");
   return normalizationSlots(call, capabilities, demands, prompt);
 }
 

@@ -5,7 +5,7 @@ import { createBaseline, type Profile } from "./core-data.js";
 import { createScoredFit, type FitState } from "./fit-data.js";
 import { servePostingAssessment, serveQualification } from "./search-assessment-data.js";
 import { authoredPartition, readCatalog, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
-import { catalogMatching, memberRoots, modelSources, normalizationFingerprint, typedExtraction, type CatalogContext } from "./requirements-data.js";
+import { catalogMatching, memberRoots, modelSources, NORMALIZATION_PROMPT_VERSION, normalizationFingerprint, typedExtraction, type CatalogContext } from "./requirements-data.js";
 import { COMMON_DEMAND, posting, respondProducer, untilNormalization, type CohortPosting } from "./preparation-cohort-data.js";
 import { cohortCitationSelection, qualificationBatchDecision, qualificationBindings } from "./qualification-data.js";
 
@@ -480,6 +480,8 @@ test.describe("actual serial preparation predecessor", () => {
     expect(resumed.path).toBe("/posting-page");
     expect(resumed.body).toEqual({ url: second.url });
     await servePostingAssessment(app, library, second, { pageRequest: resumed, qualificationExpected: false, catalogDecision: (call) => {
+      expect(call.body["prompt_version"]).toBe(NORMALIZATION_PROMPT_VERSION);
+      expect(call.body["context"]).not.toHaveProperty("cohort_texts");
       const group = retainedCapability(call, accepted.requirements[0]!.requirement_id, "recovery");
       group.memberIds.push(...(call.body["context"] as CatalogContext).incoming.map((row) => row.member_id));
       return authoredPartition(call, [group], [{ groupId: group.groupId, definition: second.description, jobIds: before.jobIds }]);

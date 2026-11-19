@@ -8,13 +8,19 @@ from .domain import RequirementError, canonical_json, fingerprint
 
 
 COHORT_PROMPT_VERSION = "requirements-capability-demand-partition-v7-cohort"
-COHORT_INSTRUCTIONS = """
-COHORT SOURCE TRANSPORT: Read every supplied source document. Within its JSON, an object containing
+REFRESH_CATALOG_PROMPT_VERSION = "requirements-capability-demand-partition-v8-sources"
+SOURCE_DICTIONARY_INSTRUCTIONS = """SOURCE TRANSPORT: Read every supplied source document. Within its JSON, an object containing
 only "$text" selects the exact full original string from context.cohort_texts. In citation_segments
 a string handle selects the exact original path or range descriptor from context.cohort_segment_paths.
 Interpret every reference in place. The recorded source IDs, citation segments, evidence roles and
 posting identities are unchanged. Never cite a dictionary entry or transfer evidence between sources.
-In a used capability_groups slot, kind "reuse" explicitly selects the complete category, name and
+"""
+REFRESH_CATALOG_INSTRUCTIONS = "\n" + SOURCE_DICTIONARY_INSTRUCTIONS + """For reuse_requirement_id, select an assigned retained member's exact non-null requirement_id only
+when its accepted category, name and definition apply verbatim. Otherwise set reuse_requirement_id
+to null. Incoming member IDs participate in assignments and cannot identify a retained capability.
+"""
+# v7's complete instructions and request fingerprints are already in durable use.
+COHORT_INSTRUCTIONS = "\nCOHORT " + SOURCE_DICTIONARY_INSTRUCTIONS + """In a used capability_groups slot, kind "reuse" explicitly selects the complete category, name and
 definition of its retained reuse_requirement_id. Supply the reason and all required citations.
 In a used demand_groups slot, kind "reuse" explicitly selects the exact accepted definition identified
 by reuse_demand_fingerprint. Supply all original demand citations. These choices have exactly the

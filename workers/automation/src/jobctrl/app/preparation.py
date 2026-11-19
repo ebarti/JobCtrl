@@ -109,6 +109,7 @@ class PreparationService:
         if request["scope"] != "pending" or request["force"]:
             return
         request.update(contract_version="requirements-v2",
+                       refresh_catalog_prompt_version=self.requirements.refresh_catalog_prompt_version,
                        resume_mode=request.get("resume_mode", settings.get("resumeMode", "tailored")),
                        min_fit_score=request["min_fit_score"] or settings.get("minFitScore", 7),
                        execution_policy={"version": COHORT_POLICY,
@@ -406,6 +407,7 @@ class PreparationService:
             if cancelled():
                 raise asyncio.CancelledError()
             value = await self.requirements.refresh(job_id, **inputs, operation_id=op,
+                                                   catalog_prompt_version=request.get("refresh_catalog_prompt_version"),
                                                    cancelled=cancelled, heartbeat=context.heartbeat)
             if value.get("stale"):
                 raise ConflictError("The accepted requirement snapshot is stale.")

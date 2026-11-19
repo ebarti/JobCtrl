@@ -38,6 +38,7 @@ for (const partition of ["separate", "merged"] as const) {
       expect(schema.$defs[name]!.additionalProperties).toBe(false);
     }
     expect(schema.$defs["CapabilityGroupId"]!.enum).toEqual(context.partition_group_handles.capabilities);
+    expect(schema.$defs["CapabilityGroup"]!.properties!["reuse_requirement_id"]).toMatchObject({ type: "null" });
     expect(schema.$defs["DemandGroupId"]!.enum).toEqual(context.partition_group_handles.demands);
     expect(schema.$defs["OfferedSourceId"]!.enum!.slice().sort()).toEqual(Object.keys(context.citation_segments).sort());
     expect(schema.$defs["DemandEvidenceSourceId"]!.enum!.slice().sort()).toEqual([

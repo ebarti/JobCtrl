@@ -1,6 +1,7 @@
 import { test, expect, json, modelCall, action, completed, terminal, type ExternalCall } from "../harness/fixtures.js";
 import { captureReusePosting, acceptReuseRequirements, reusableModelCatalog, type CapturedPosting, type RequirementSnapshot } from "./reuse-data.js";
-import { citeSources, modelSources, EXTRACTION_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
+import { catalogMatching, catalogSource, citeSources, modelSources, EXTRACTION_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION,
+  REFRESH_NORMALIZATION_PROMPT_VERSION, typedExtraction, type CatalogContext } from "./requirements-data.js";
 
 const requirement = [{ localId: "recovery", text: "Implement durable workflow recovery." }];
 const body = requirement[0]!.text;
@@ -15,7 +16,7 @@ function assertDestination(snapshot: RequirementSnapshot, posting: CapturedPosti
   expect(occurrence.provenance.resolution).toHaveLength(1);
   expect(occurrence.equivalence_determination_ids).toEqual(occurrence.provenance.resolution.map((receipt) => receipt.receipt_id));
   for (const receipt of occurrence.provenance.resolution) {
-    expect(receipt).toMatchObject({ prompt_version: NORMALIZATION_PROMPT_VERSION,
+    expect(receipt).toMatchObject({ prompt_version: REFRESH_NORMALIZATION_PROMPT_VERSION,
       input_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
       accepted_result_fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/) });
   }
@@ -27,9 +28,10 @@ function assertNormalizationDestination(call: ExternalCall, posting: CapturedPos
   expect(context.occurrences.filter((row) => row.job_id === posting.job_id)).toHaveLength(1);
   const reference = context.posting_sources.find((row) => row.job_id === posting.job_id)!;
   expect(reference).toMatchObject({ job_id: posting.job_id, revision: posting.revision, source_hash: posting.source_hash });
-  const source = modelSources(call).find((row) => row.source_id === reference.source_id)!;
-  expect(source).toBeTruthy();
-  expect(JSON.parse(source.text)).toMatchObject({ job_id: posting.job_id, revision: posting.revision,
+  expect(context.cohort_segment_paths).toBeDefined();
+  expect(Object.values(context.cohort_texts!)).toContain(posting.source_hash);
+  for (const source of modelSources(call)) catalogSource(call, source.source_id);
+  expect(catalogSource(call, reference.source_id)).toMatchObject({ job_id: posting.job_id, revision: posting.revision,
     source_id: posting.source_id, source_revision: posting.source_revision, source_hash: posting.source_hash });
 }
 
@@ -57,7 +59,7 @@ test("Requirements exact content reuse keeps extraction destination bindings and
   const reusedExtraction = await acceptReuseRequirements(api, app, second, requirement, equivalent, { extract: false });
   expect(app.external.calls.slice(beforeSecond).map((call) => call.body["operation"])).toEqual(["requirements.match_catalog"]);
   expect(reusedExtraction.snapshot.requirements[0]!.extraction_determination_id).toBe(accepted.snapshot.requirements[0]!.extraction_determination_id);
-  expect(reusedExtraction.matching!.body["prompt_version"]).toBe(NORMALIZATION_PROMPT_VERSION);
+  expect(reusedExtraction.matching!.body["prompt_version"]).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
   assertDestination(reusedExtraction.snapshot, second, semanticSourceId);
   assertNormalizationDestination(reusedExtraction.matching!, second);
 
@@ -113,6 +115,58 @@ test("Requirements exact content reuse keeps extraction destination bindings and
   expect(effort.extraction!.body["execution"]).toMatchObject({ reasoning_effort: "low" });
   expect(effort.snapshot.requirements[0]!.extraction_determination_id).not.toBe(modeled.snapshot.requirements[0]!.extraction_determination_id);
   assertDestination(effort.snapshot, differentEffort, semanticSourceId);
+});
+
+test.describe("single-job catalog transport upgrade", () => {
+  test.use({ sourceRevision: "38ef94613ebb7c0413d8d5ee89987ef860f53b13" });
+
+  test("a versioned single-job catalog keeps predecessor receipts and refuses an interrupted paid comparison before a new refresh uses the dictionary", async ({ api, app }) => {
+    test.setTimeout(120_000);
+    const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+    await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
+    const posting = await captureReusePosting(api, "single-catalog-wire", body);
+    const payload = { job_id: posting.job_id, expected_posting_revision: posting.revision, expected_revision: 0 };
+    const send = () => api.post("/v1/actions/requirements.refresh", { headers: { "idempotency-key": "original-wire" }, data: payload });
+    const admission = await send();
+    expect(admission.ok()).toBe(true);
+    const original = (await admission.json()).runId;
+    const extraction = await modelCall(app, "requirements.extract");
+    extraction.reply(typedExtraction(extraction, { requirements: requirement }));
+    const comparison = await modelCall(app, "requirements.match_catalog");
+    expect(comparison.body["prompt_version"]).toBe(NORMALIZATION_PROMPT_VERSION);
+    comparison.reply(catalogMatching(comparison, { recovery: { verdict: "new" } }));
+    await completed(api, original);
+    const snapshot = () => json<RequirementSnapshot>(api, "get", `/v1/jobs/${posting.job_id}/requirements`);
+    const accepted = await snapshot();
+
+    const force = { ...payload, expected_revision: accepted.revision, force: true };
+    const interrupted = await action(api, "requirements.refresh", force);
+    const oldExtraction = await modelCall(app, "requirements.extract");
+    oldExtraction.reply(typedExtraction(oldExtraction, { requirements: requirement }));
+    const held = await modelCall(app, "requirements.match_catalog");
+    expect(held.body["prompt_version"]).toBe(NORMALIZATION_PROMPT_VERSION);
+    expect(held.body["context"]).not.toHaveProperty("cohort_texts");
+    const count = app.external.calls.length;
+    await app.upgradeSource();
+    expect(await terminal(api, interrupted.runId)).toMatchObject({ status: "failed", errorCode: "requirements_consolidation_call_unsettled" });
+    const replay = await send();
+    expect(replay.ok()).toBe(true);
+    expect(await replay.json()).toMatchObject({ runId: original, status: "succeeded" });
+    expect(app.external.calls).toHaveLength(count);
+    expect((await snapshot()).requirements).toEqual(accepted.requirements);
+
+    const fresh = await action(api, "requirements.refresh", force);
+    const currentExtraction = await modelCall(app, "requirements.extract");
+    currentExtraction.reply(typedExtraction(currentExtraction, { requirements: requirement }));
+    const packed = await modelCall(app, "requirements.match_catalog");
+    expect(packed.body["prompt_version"]).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
+    assertNormalizationDestination(packed, posting);
+    const choice = catalogMatching(packed, { recovery: { verdict: "equivalent", requirementId: accepted.requirements[0]!.requirement_id } });
+    packed.reply(choice);
+    await completed(api, fresh.runId);
+    expect((await snapshot()).requirements[0]!.provenance.resolution[0]).toMatchObject({ prompt_version: REFRESH_NORMALIZATION_PROMPT_VERSION });
+    expect(app.external.calls.filter(call => call.body["operation"] === "requirements.match_catalog")).toHaveLength(3);
+  });
 });
 
 test.describe("role-analysis offered-source schema compatibility", () => {
