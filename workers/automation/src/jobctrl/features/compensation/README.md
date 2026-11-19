@@ -24,6 +24,11 @@ posted fact. The feature emits identifier-only invalidations. Committed posting
 changes queue only the affected job IDs with source text. Daily stale refreshes
 scan the active backlog. A workspace-wide action scope serializes both paths.
 Market source failure backoff applies to the posting revision already assessed.
+Automatic refreshes and retries of an unfinished or failed refresh reuse a
+successful posted-pay receipt for the exact job, revision, source text, prompt,
+schema and model configuration. The source citations and amounts are verified
+again before publication. An unsettled call blocks another dispatch for that
+input. An explicit refresh after completion requests a fresh determination.
 
 The provider adapters support Euro Top Tech, explicitly permitted Levels.fyi
 public pages and licensed feeds, permitted Glassdoor feeds, explicit manual

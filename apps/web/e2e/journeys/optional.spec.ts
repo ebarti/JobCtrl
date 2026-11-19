@@ -1902,6 +1902,45 @@ test("compensation evidence cites the posting and an explicit manual report and 
   expect(independent.audit.posted.determination.receipt_id).not.toBe(accepted.audit.posted.determination.receipt_id);
   expect(independent.summary.market.range).toEqual(accepted.summary.market.range);
   expect(independent.audit.market).toMatchObject({ sourceCurrent: false, estimate: { sourceCount: 1 } });
+
+  const retry = await action(api, "compensation.refresh", { ...options, jobId: job.job_id });
+  // Only the failed market stage reaches the provider again for this exact revision.
+  (await modelCall(app, "compensation.classification")).invalidJson();
+  await expect.poll(async () => (await json<{ status: string }>(api, "get", `/v1/action-runs/${retry.runId}`)).status)
+    .toBe("failed");
+  const retried = await json<Compensation>(api, "get", `/v1/jobs/${job.job_id}/compensation`);
+  expect(retried.audit.posted.determination.receipt_id).toBe(independent.audit.posted.determination.receipt_id);
+});
+
+test("compensation retry rejects uncited pay and preserves an unsettled posting call", async ({ app, api }) => {
+  const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
+  const job = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/posted-receipt", title: "Synthetic role", company: "Synthetic employer",
+    salary: "Annual base salary EUR 40000 to 50000.",
+  });
+  const refresh = () => action(api, "compensation.refresh", { jobId: job.job_id, includeEuroTopTech: false });
+  const posted = () => json<{ recordStatus: string }>(api, "get", `/v1/jobs/${job.job_id}/compensation/posted`);
+  const run = (id: string) => json<{ status: string; errorCode: string | null }>(api, "get", `/v1/action-runs/${id}`);
+  const first = await refresh();
+  const bad = await modelCall(app, "compensation.posted_pay");
+  const source = sources(bad.body)[0]!;
+  bad.reply({
+    parse_state: "parsed_range", currency: "EUR", period: "year", component: "base_salary",
+    minimum_amount: 40000, maximum_amount: 90000, confidence: "high", warnings: [],
+    citations: [{ source_id: source.source_id, quote: source.text }], rationale: "The cited line states the range.",
+  });
+  await expect.poll(async () => (await run(first.runId)).status).toBe("failed");
+  expect((await posted()).recordStatus).toBe("not_recorded");
+  const second = await refresh();
+  const next = await modelCall(app, "compensation.posted_pay");
+  expect(sources(next.body)[0]).toEqual(source);
+  expect((await posted()).recordStatus).toBe("not_recorded");
+  next.disconnect();
+  await expect.poll(async () => (await run(second.runId)).status).toBe("failed");
+  const third = await refresh();
+  await expect.poll(() => run(third.runId)).toMatchObject({ status: "failed", errorCode: "compensation_posted_call_unsettled" });
+  expect((await posted()).recordStatus).toBe("not_recorded");
 });
 
 test("automatic compensation refreshes only changed postings with source text", async ({ app, api }) => {

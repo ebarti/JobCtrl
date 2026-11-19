@@ -24,6 +24,14 @@ Each market estimate retains the exact posted-pay determination used for its
 comparison. A newer employer range can therefore appear alongside an earlier
 market estimate with its own source revision and freshness.
 
+When a refresh ends before market research completes, retrying it can recover
+an earlier verified posted-pay result without another model call for the same
+posting and model configuration. JobCtrl also applies this check to automatic
+refreshes. A changed posting receives a new assessment. An explicit refresh
+after both stages succeed asks the model to assess the pay again. If a prior
+call has no confirmed outcome, the refresh reports that reason before it can
+send the same request again.
+
 An explicitly stated annual amount stays unchanged; monthly amounts use 12
 months and hourly amounts use 2,080 work hours. An unknown period remains
 unknown. Unpriced bonus and equity remain separate from the cash amount.

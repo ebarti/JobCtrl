@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from jobctrl.app.errors import AppError, ConflictError
 
-from .core.analysis import EvidenceError, annualize, direct_benchmark, estimate_market, extrapolate, extract_posted, posted_from_judgment, validate_classification, validate_source_date
+from .core.analysis import EvidenceError, annualize, direct_benchmark, estimate_market, extrapolate, posted_from_judgment, validate_classification, validate_source_date
 from .core.ports import Observation, Source
 from .geography import CompanyMatch, company_identity_source, extrapolate_for_target, validate_company_match
 from .policy import PolicyInput, registry
@@ -673,7 +673,7 @@ class CompensationService:
             return {"ok": True, "recordStatus": "unavailable", "jobKey": job_id, "failureCode": "compensation_determination_unavailable"}
         return _market_response(job_id, stored) if stored else {"ok": True, "recordStatus": "not_requested", "jobKey": job_id}
 
-    def _claim(self, job_id: str, operation_id: str | None = None, input_hash: str | None = None) -> tuple[str | None, dict | None]:
+    def _claim(self, job_id: str, operation_id: str | None = None, input_hash: str | None = None) -> tuple[str | None, dict | None, str | None]:
         attempt = str(uuid4())
         now = _now()
         expires = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -684,10 +684,10 @@ class CompensationService:
                 if completion:
                     if completion["input_hash"] != input_hash:
                         raise ConflictError("The refresh operation belongs to different input.")
-                    return None, completion["result"]
-            unit.claim(job_id, attempt, now, expires)
+                    return None, completion["result"], None
+            prior_status = unit.claim(job_id, attempt, now, expires)
             unit.append_event("CompensationRefreshChanged", {"jobId": job_id, "status": "running"}, job_id)
-        return attempt, None
+        return attempt, None, prior_status
 
     def _renew(self, job_id: str, attempt: str) -> None:
         now = _now()
@@ -719,7 +719,7 @@ class CompensationService:
                 if completion["input_hash"] != input_hash:
                     raise ConflictError("The refresh operation belongs to different input.")
                 return completion["result"]
-        attempt, completed = self._claim(job_id, operation_id, input_hash)
+        attempt, completed, prior_status = self._claim(job_id, operation_id, input_hash)
         if completed is not None:
             return completed
         if attempt is None:
@@ -736,7 +736,17 @@ class CompensationService:
                 snapshot = unit.posting(job_id)
                 preferences, policy_revision = unit.policy_snapshot()
             source, source_field = _posting_source(snapshot)
-            posted = await extract_posted(source, self.model)
+
+            def guard_pay_admission(connection, _receipt_id):
+                with self.repository.read(connection) as unit:
+                    unit.require_owner(job_id, attempt, _now())
+                    unit.assert_posting_current(snapshot)
+                    automation_guard(unit)
+                    cancellation_guard()
+
+            judgment = await self.model.posted_pay(source, recover=automatic or prior_status != "succeeded",
+                                                   on_admitted=guard_pay_admission)
+            posted = posted_from_judgment(source, judgment)
             automation_guard()
             if context and context.cancelled():
                 raise AppError("cancelled", "Compensation refresh cancelled.", 409)

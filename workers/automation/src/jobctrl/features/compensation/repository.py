@@ -98,7 +98,7 @@ class CompensationSession:
         ).fetchone()
         return dict(row) if row is not None else None
 
-    def claim(self, job_id: str, attempt: str, now: str, expiry: str) -> None:
+    def claim(self, job_id: str, attempt: str, now: str, expiry: str) -> str | None:
         self._require_transaction()
         self.posting(job_id)
         prior = self.refresh_state(job_id)
@@ -110,6 +110,7 @@ class CompensationSession:
             "status='running',attempt_id=excluded.attempt_id,lease_expires_at=excluded.lease_expires_at,"
             "failure_code=NULL,updated_at=excluded.updated_at", (job_id, attempt, expiry, now)
         )
+        return prior["status"] if prior else None
 
     def renew(self, job_id: str, attempt: str, now: str, expiry: str) -> None:
         self._require_transaction()
