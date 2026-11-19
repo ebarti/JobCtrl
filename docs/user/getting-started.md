@@ -295,10 +295,11 @@ supporting sources. Keep the previous workspace for jobs, applications,
 generated materials and workflow history. The target database has application
 ID `1245926228` and user version `1`.
 
-The source transition uses the explicit `profile-transfer` command with a
-read-only source, a nonexistent new target, a complete browser Profile sources
-manifest and `--confirm-profile-only-reset`. Verify the completed receipt before
-selecting the new workspace.
+Stop JobCtrl v0.4.x with `jobctrl stop` before transferring. The
+`profile-transfer` command reads a private copy of the legacy database and its
+recovery files to preserve the source workspace. Use a nonexistent new target,
+a complete browser Profile sources manifest and `--confirm-profile-only-reset`.
+Verify the completed receipt before selecting the new workspace.
 
 An installed cutover also needs a **separate fresh native runtime home** with no
 active release selection. Preserve both the old workspace and its native runtime

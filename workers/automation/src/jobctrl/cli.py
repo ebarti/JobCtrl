@@ -734,7 +734,7 @@ def extension_token(rotate: bool = typer.Option(False, "--rotate")) -> None:
 
 @app.command("profile-transfer")
 def profile_transfer(
-    source: Path = typer.Option(..., "--source", help="Existing source workspace; read-only."),
+    source: Path = typer.Option(..., "--source", help="Stopped legacy workspace to read."),
     target: Path = typer.Option(..., "--target", help="Nonexistent path for the fresh application workspace."),
     confirm_profile_only_reset: bool = typer.Option(False, "--confirm-profile-only-reset", help="Explicitly transfer only Profile; other application data starts empty."),
     browser_sources: Path = typer.Option(..., "--browser-sources", help="Complete read-only browser Profile sources/attachment manifest."),
