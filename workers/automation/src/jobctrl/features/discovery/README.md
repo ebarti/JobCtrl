@@ -25,6 +25,14 @@ escape hatch.
 - Profile target plans, explicit Discovery query controls and one-run overrides
   are distinct authorities. Model suggestions do not change Profile preferences.
   Unknown or invalid refreshes preserve the previous accepted plan.
+- New searches with an accepted authored role plan freeze `saved-role-scope-v1`.
+  Before Jobs admission, Discovery validates a typed `discovery.role_target_match`
+  against the exact public posting and authored role, track, seniority, function
+  and specialization sources. Only a source-supported match spends new-job
+  capacity. A filtered observation retains the source and decision, and an
+  accepted job records the receipt and frozen plan identity. A listing without
+  a description requires native detail or records a missing source. Explicit query
+  overrides and earlier runs retain their respective acquisition contracts.
 - New runs isolate each selected board into a stable query/location/board unit;
   each owns its provider checkpoint and outcome. Terminal board failures are
   reused on same-run worker recovery; a new explicit run is required to retry
@@ -32,6 +40,17 @@ escape hatch.
   never label healthy boards failed or cancel their work. Older persisted runs
   retain their original unit identities; a missing age reference refuses an
   adapted request before network work and requires a new explicitly started run.
+- New multi-query board searches freeze `boardQueryScheduling=fair-new-jobs-v1`.
+  Discovery distributes the remaining slots across distinct query strings and
+  uses frozen plan order to break ties. All locations and boards for a query
+  spend its share. When a query exhausts its units, Discovery redistributes its
+  unused slots before opening the next query's stream.
+  Only a committed new Jobs identity spends a slot. On restart, intake receipts
+  restore each query's count and the provider checkpoint restores its position.
+  Backfill can revisit a partial page, preserving its acknowledged receipts.
+  A terminal SDK rate limit defers that board's remaining units for the run.
+  The shared run limit also covers concurrent registered sources. Previously
+  admitted requests continue with their original scheduling policy.
 - Newly admitted requests freeze `sourceFetchPolicy=source-native-v1`. Their
   units carry `results_per_site=None`, translated to actual SDK
   `results_wanted=None`; native page sizes and the SDK's 50-page safety bound

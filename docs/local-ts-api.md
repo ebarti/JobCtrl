@@ -50,6 +50,15 @@ retained optional capabilities. Their owners validate input and publish exact
 DTOs. Missing optional features remove their routes; unknown API paths return an
 explicit 404, including when static frontend assets are served.
 
+The Jobs URL form submits `POST /v1/actions/jobs.capture_url` with `{ "url": "…" }`,
+an `Idempotency-Key` and `Expected-Database-Instance-Id`. The 202 response
+identifies the durable run. `GET /v1/jobs/url-imports` returns its source URL,
+run ID, current status, cancellation state, failure code and captured job ID.
+An active matching URL returns `action_scope_busy` with the existing run ID.
+Transient lane or monetary serialization is visible as `waiting_for_capacity`.
+The synchronous `POST /v1/jobs/import-url` returns a captured posting or an
+immediate error for clients that explicitly use it.
+
 The reusable requirement library reads `/v1/requirements`,
 `/v1/requirements/{id}` and bounded `/v1/requirements/{id}/history` pages
 (`kind=revisions|occurrences`, `limit` up to 200, `offset`). Original posting
@@ -120,6 +129,15 @@ records `budget_exhausted`, without asserting upstream provider completion.
 If every selected unit fails, the run is `failed`. Per-board request adaptation preserves saved search settings;
 see the [Discovery reference](../workers/automation/src/jobctrl/features/discovery/README.md)
 for cutoff, checkpoint and restart behavior.
+
+`GET /v1/discovery/runs/{run_id}/jobs/{job_id}/role-target` reads the current
+saved job's judgment against that run's frozen role preferences. A missing
+decision is `null`. `POST` on the same route takes `expectedPostingRevision`
+and can assess a saved job from an earlier run that recorded a target plan.
+The response identifies the posting revision, source hash, plan, verdict,
+source citations and model receipt. Review preserves the job, its original
+admission and its Fit score. Foreign run membership, absent frozen targets and
+stale writes are refused.
 
 In the complete product, the same `discovery.search` identity stays active
 through Preparation's initial fit-only `search` recipe. Source status remains

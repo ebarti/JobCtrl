@@ -71,6 +71,14 @@ Listing these scenarios is not evidence that the complete current candidate pass
 
 ### Accepted postings and Fit currentness
 
+The [URL import journeys](../../../apps/web/e2e/journeys/posting-fetch-failures.spec.ts)
+hold the enrichment lane with a separate request and submit a posting through
+Jobs. The browser shows the persisted queue, a duplicate joins the existing
+run and a second waiter can be cancelled. After the browser closes and the
+worker restarts, releasing the holder produces one saved observation. A separate
+restart after a paid call begins checks its receipt and counts external calls:
+completed stages are reused and an interrupted call remains available for review.
+
 The [predecessor upgrade journey](../../../apps/web/e2e/journeys/preparation-cohort.spec.ts)
 starts with a scored full posting, downgrades it through the predecessor's real
 search action and upgrades the same workspace. It checks exact restored posting
@@ -1676,6 +1684,23 @@ merge. This preparation snapshot does not infer either result from earlier runs.
 A controlled HTTP boundary cannot prove those outcomes. Record the exact
 commands, candidate, runner, timings and
 unverified gaps without inferring readiness from test deletion or a green build.
+
+### Saved role criteria at Discovery admission
+
+The [role scope journeys](../../../apps/web/e2e/journeys/discovery-role-scope.spec.ts)
+use fresh workspaces, the public search action and the current saved targets.
+The external model makes opposing choices for identical posting and role
+sources. A missing posting description, mismatch and unknown consume no new-job
+places. Source quotes, verdict counts, the accepted job, the underlying model
+receipt and the frozen target plan are checked together. Invalid output shape,
+unknown verdicts, extra fields, foreign citations, nonverbatim quotes and
+title-only evidence preserve the prior job and review. The historical review
+case updates a posting through the public capture route, checks the new revision
+with a different model decision and verifies the job remains saved.
+
+The existing Jobs Start search and Remote posting-age journeys exercise the
+same role policy through the browser. The Remote journey uses the installed
+Indeed SDK transport and the same saved-role receipt across two board orders.
 
 ### Native Discovery accounting setup
 

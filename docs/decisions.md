@@ -89,6 +89,7 @@ integrated parity.
 
 **Discovery & compensation**
 
+- [Saved role targets govern discovery admission](#_2026-11-19-saved-role-targets-govern-discovery-admission) · 2026-11-19
 - [Compensation Is Warning-Only Evidence From Reported Company-Role Observations](#_2026-06-20-compensation-is-warning-only-evidence-from-reported-company-role-observations) · 2026-06-20
 - [Cross-Source Deduplication By Content Identity](#_2026-07-02-cross-source-deduplication-by-content-identity) · 2026-07-02
 - [Caller-Owned Search Units Make JobStreaming Resumable](#_2026-07-17-caller-owned-search-units-make-jobstreaming-resumable) · 2026-07-17
@@ -3766,3 +3767,16 @@ sample as a universal latency guarantee. The [concurrency reference](architectur
 [Fit owner](../workers/automation/src/jobctrl/features/fit/README.md) and
 [QA ledger](developer/qa/python-journeys.md) own the implementation and observed
 evidence for [#1473](https://github.com/ebarti/JobCtrl/issues/1473).
+
+## 2026-11-19: Saved role targets govern discovery admission
+
+New searches that use a saved target plan freeze a role admission policy.
+Boards can return keyword hits outside the role a person asked for, and corporate
+feeds can list several unrelated functions. Before consuming a new-job place,
+Discovery requires a typed role determination supported by the posting
+description and the user's authored role criteria. A native detail fetch can
+complete a board card. Missing evidence, an unresolved role and a confirmed
+mismatch are separate outcomes. Candidate career history enters the subsequent
+person Fit workflow. The frozen request, exact sources and model receipt bind
+the decision across worker recovery. Historical run admission, manual job
+capture and explicit exploratory query overrides retain their original scopes.

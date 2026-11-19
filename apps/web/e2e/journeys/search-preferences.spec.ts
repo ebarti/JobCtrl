@@ -4,6 +4,7 @@ import { authoredPartition, type NormalizedSnapshot } from "./consolidation-data
 import { untilNormalization } from "./preparation-cohort-data.js";
 import { qualificationBatchDecision, qualificationBindings, qualificationKey } from "./qualification-data.js";
 import { COHORT_NORMALIZATION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
+import { serveRoleTarget } from "./discovery-role-scope-data.js";
 
 type LocationBinding = {
   rowIndex: number;
@@ -519,6 +520,8 @@ test("Jobs starts saved searches directly, preserves live progress across naviga
   expect(first.path).toBe("/discovery");
   expect(first.body["request"]).toMatchObject({ query: "Synthetic Reliability Engineer", location: "Madrid", remote_only: true, sites: ["linkedin"] });
   first.respond({ jobs: [platform, infrastructure], cursor: "next-page", complete: false });
+  await serveRoleTarget(app, "match");
+  await serveRoleTarget(app, "match");
   const next = await app.external.next();
   expect(next.body["runId"]).toBe(runId);
   await expect(progress.getByRole("progressbar")).toBeVisible();
@@ -547,6 +550,7 @@ test("Jobs starts saved searches directly, preserves live progress across naviga
   } finally { await peer.close(); }
   expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/action-runs?action=discovery.search")).runs.map((row) => row.runId)).toEqual([runId]);
   next.respond({ jobs: [systems], cursor: null, complete: true });
+  await serveRoleTarget(app, "match");
   // Acquisition has committed while the first assessment boundary is held.
   await expect.poll(() => app.external.calls.filter((call) => call.path === "/posting-page").length).toBe(1);
   const acquired = await json<{ runs: { runId: string; status: string }[] }>(api, "get", "/v1/discovery/runs");

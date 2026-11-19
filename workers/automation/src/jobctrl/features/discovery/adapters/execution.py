@@ -8,6 +8,7 @@ import threading
 
 from jobctrl.app.errors import AppError
 from jobctrl.features.discovery.domain import fingerprint
+from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY
 from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
 
 
@@ -77,13 +78,13 @@ class DiscoveryExecutionAdapter:
                     pending.cancel()
             await asyncio.gather(task, exhausted, return_exceptions=True)
 
-    async def run_board_unit(self, context, lease, unit, settings, previous):
+    async def run_board_unit(self, context, lease, unit, settings, previous, turn=None):
         # Validate unsupported scope per board before touching its provider.
         for site in unit["sites"]:
             provider_scope(site, location=unit["location"], remote_only=unit["remote_only"], hours_old=unit["hours_old"])
         if self.http_provider is not None:
-            return await self._until_budget(lease, self._http_unit(context, lease, unit, settings, previous))
-        return await self._stream_unit(context, lease, unit, settings, self._signals[(lease["run_id"], lease["epoch"])])
+            return await self._until_budget(lease, self._http_unit(context, lease, unit, settings, previous, turn))
+        return await self._stream_unit(context, lease, unit, settings, self._signals[(lease["run_id"], lease["epoch"])], turn)
 
     async def run_registered_source(self, context, lease, source, settings):
         try:
@@ -93,14 +94,16 @@ class DiscoveryExecutionAdapter:
                 return False
             raise
 
-    async def _http_unit(self, context, lease, unit, settings, previous):
+    async def _http_unit(self, context, lease, unit, settings, previous, turn):
         provider = self.http_provider
         cursor = previous["data"].get("cursor") if previous else None
-        self.repository.save_unit(lease, unit, status="running", cursor=cursor)
-        for _ in range(1000):
+        progress = (previous or {}).get("result") or {}
+        self.repository.save_unit(lease, unit, status="running", cursor=cursor, result=progress)
+        for page_index in range(progress.get("pagesCompleted", 0), 1000):
             self.repository.heartbeat(lease)
             page = await provider.fetch_page(unit, cursor=cursor, run_id=lease["run_id"])
-            for row in page.jobs:
+            turn_filled = False
+            for index, row in enumerate(page.jobs):
                 posting = row.model_dump(exclude={"job_key"})
                 posting["provenance"] = {
                     "authority": "provider",
@@ -108,7 +111,7 @@ class DiscoveryExecutionAdapter:
                     "sourceKind": "search_result",
                     "jobKey": row.job_key,
                 }
-                outcome = self._admit(
+                outcome = await self._admit(
                     context,
                     lease,
                     unit,
@@ -120,16 +123,27 @@ class DiscoveryExecutionAdapter:
                     self._budget_unit(lease, unit, cursor=cursor)
                     self._exhaust_budget(lease)
                     return
+                turn_filled = turn is not None and turn.record(outcome)
+                if turn_filled and index + 1 < len(page.jobs):
+                    # Resume this partial page. Previously committed job keys
+                    # replay without another admission or a second quota charge.
+                    self.repository.save_unit(lease, unit, status="waiting_for_query_turn", cursor=cursor, result=progress)
+                    return True
             # A page cursor advances only after every included receipt committed.
-            self.repository.save_unit(
-                lease, unit, status="completed" if page.complete else "running", cursor=page.cursor
-            )
+            if turn is not None or "pagesCompleted" in progress:
+                progress = {"pagesCompleted": page_index + 1}
+            status = "completed" if page.complete else "running"
+            if turn_filled and not page.complete and page_index + 1 < 1000:
+                status = "waiting_for_query_turn"
+            self.repository.save_unit(lease, unit, status=status, cursor=page.cursor, result=progress)
             if page.complete:
                 return
+            if status == "waiting_for_query_turn":
+                return True
             cursor = page.cursor
         raise AppError("discovery_provider_page_limit", "The provider exceeded the bounded page limit.", 502)
 
-    async def _stream_unit(self, context, lease, unit, settings, stop):
+    async def _stream_unit(self, context, lease, unit, settings, stop, turn):
         from jobstreaming import ErrorEvent, JobEvent, SearchCompleteEvent, SiteCompleteEvent
         from jobstreaming.checkpoint import SqliteCheckpointStore
         from jobctrl.features.discovery.adapters.jobstreaming import JobStreamingGateway, JobStreamingSearchSpec
@@ -172,6 +186,7 @@ class DiscoveryExecutionAdapter:
                 if reason != "source_exhausted":
                     raise AppError("discovery_provider_" + reason, "The source stopped before confirmed exhaustion; start a new search to retry.", 502)
         self.repository.save_unit(lease, unit, status="running", result=recorded)
+        loop = asyncio.get_running_loop()
 
         def consume():
             from jobctrl.features.discovery.adapters.synthetic_jobstreaming import controlled_registry
@@ -227,14 +242,21 @@ class DiscoveryExecutionAdapter:
                             age = posting_age_evidence(event.site.value, event.job.date_posted, hours_old=spec.hours_old, reference=settings["_criteriaAsOf"])
                             posting["provenance"]["postingAge"] = age
                             posting["provenance"]["providerHoursOld"] = scope["hours_old"]
-                        # Preserve targeted LinkedIn detail fetch only when exact
-                        # identity needs content; never merge title/company alone.
-                        if (age is None or age["accepted"]) and not posting["description"] and self._needs_detail(posting):
+                        # A saved-role check obtains missing LinkedIn detail after
+                        # its receipt and exclusion fences, before Jobs identity.
+                        needs_role_detail = event.site.value == "linkedin" and settings.get("_roleTargetPolicy") == ROLE_TARGET_POLICY
+                        if not needs_role_detail and (age is None or age["accepted"]) and not posting["description"] and self._needs_detail(posting):
                             detail = gateway.fetch_detail_for_job_event(event, registry=registry)
                             if detail is not None:
                                 detail_row = gateway.frame_for_job_event(event, spec, job=detail).iloc[0].to_dict()
                                 posting["description"] = str(detail_row.get("description") or "")
-                        outcome = self._admit(
+                        async def fetch_role_detail():
+                            detail = await asyncio.to_thread(gateway.fetch_detail_for_job_event, event, registry=registry)
+                            if detail is not None and detail.job_url == event.job.job_url:
+                                return detail.description
+                            return None
+
+                        check = self._admit(
                             context,
                             lease,
                             unit,
@@ -243,7 +265,9 @@ class DiscoveryExecutionAdapter:
                             "jobstreaming:"
                             + fingerprint([lease["run_id"], unit["unit_id"], event.site.value, event.job_key]),
                             forced_exclusion=age is not None and not age["accepted"],
+                            fetch_detail=fetch_role_detail if needs_role_detail else None,
                         )
+                        outcome = asyncio.run_coroutine_threadsafe(check, loop).result()
                         if outcome["budget_reached"]:
                             # A rejected extra emission has no receipt and must
                             # not be acknowledged. The quota-filling event does.
@@ -252,6 +276,10 @@ class DiscoveryExecutionAdapter:
                             self._budget_unit(lease, unit)
                             self._exhaust_budget(lease)
                             return
+                        if turn is not None and turn.record(outcome):
+                            stream.ack(event)
+                            self.repository.save_unit(lease, unit, status="waiting_for_query_turn", result=recorded)
+                            return True
                     elif isinstance(event, ErrorEvent):
                         self.repository.source_result(
                             lease, "jobstreaming:" + event.site.value, "failed", error_code=event.code.value
@@ -301,7 +329,7 @@ class DiscoveryExecutionAdapter:
                     self.repository.source_result(lease, "jobstreaming:" + site, "completed")
 
         try:
-            await asyncio.to_thread(consume)
+            return await asyncio.to_thread(consume)
         except Exception as error:
             from jobstreaming.exception import JobStreamingError, StreamCancelledError
 
@@ -418,13 +446,13 @@ class DiscoveryExecutionAdapter:
                             reason="ambiguous_career_system",
                             retry_context={"qualification": qualification.model_dump(), "provenance": receipt},
                         )
-                    outcome = self._admit(context, lease, unit, settings, posting, key, forced_exclusion=True)
+                    outcome = await self._admit(context, lease, unit, settings, posting, key, forced_exclusion=True)
                     if outcome["budget_reached"]:
                         self._budget_unit(lease, unit)
                         self._exhaust_budget(lease)
                         return True
                     continue
-            outcome = self._admit(context, lease, unit, settings, posting, key)
+            outcome = await self._admit(context, lease, unit, settings, posting, key)
             if outcome["budget_reached"]:
                 self._budget_unit(lease, unit)
                 self._exhaust_budget(lease)

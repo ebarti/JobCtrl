@@ -74,6 +74,27 @@ supported contextual/CLI uses, not rewritten. **Search-only overrides** can
 supply literal queries and locations for one request without replacing saved
 preferences. The displayed effective summary names the inputs used.
 
+A new search from saved role preferences checks each provider candidate before it
+uses one of the new-job places. It compares the offered role with the roles,
+tracks, levels, functions and specializations saved for that search. The decision
+cites both the posting and the relevant preference. A posting can use a different
+title and still qualify. Unsupported or unresolved role scope stays outside the
+new-job count. A LinkedIn card without a description receives a targeted detail
+request before the role check. A missing description leaves role scope unresolved. Model or source failures remain visible
+in the search result. Person Fit runs later and checks your qualifications
+against the job's requirements. A search using explicit one-run query overrides
+can still explore other roles.
+
+When multiple board queries share a finite new-job limit, each query gets a
+share of the remaining places. Previously saved jobs, duplicates and exclusions
+leave places available. A query that exhausts its results releases its unused
+places for the other queries. Recovery uses the run's committed admissions.
+
+The run's `newJobs` counts newly created job identities. `observedJobs` includes
+accepted observations of previously saved jobs. `roleTargetObservations` shows
+the number of role checks by verdict and the count missing a posting description.
+Filtered listings are recorded separately from observations admitted to Jobs.
+
 Search may make model-backed query preparation only after the explicit launch
 admits that work. Preference saves, reads, navigation and connection remedies
 start no query preparation, match refresh, scoring or resume generation.
@@ -160,6 +181,10 @@ keeps that one action active while the preparation owner enriches each newly
 saved job, records role context and extracts its requirements. It completes this
 work for all newly saved jobs before assessing person fit, so a later posting's
 capability consolidation cannot invalidate an earlier score from the same search.
+If another job temporarily occupies a model lane, the affected stage waits for
+capacity. Activity records the wait. You can cancel the run while it waits.
+When capacity returns, the worker checks the current spending limits and resumes
+the same stage.
 It checks that accepted Fit results are still current before reporting successful
 assessment. A concurrent Profile, posting or requirement change is reported as an
 assessment failure requiring review; accepted scores remain in history and the

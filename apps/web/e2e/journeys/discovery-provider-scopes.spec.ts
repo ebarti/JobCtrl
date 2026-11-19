@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { DiscoverySettingsResponseSchema } from "@jobctrl/contracts";
 import { test, expect, json, completed, terminal, action, type ApplicationStack } from "../harness/fixtures.js";
 import { baseline, createBaseline } from "./core-data.js";
+import { serveRoleTarget } from "./discovery-role-scope-data.js";
 import type { APIRequestContext } from "@playwright/test";
 
 // These are actual acquisition/recovery journeys. Full initial assessment is
@@ -229,6 +230,7 @@ test("Remote posting-age search uses the pinned SDK, isolates auth and unsupport
       posting("Current", now), posting("Stale", now - 10 * 86400_000),
       posting("Unknown", null), posting("Boundary", now - 73 * 3600_000), posting("Future", now + 2 * 86400_000),
     ]));
+    if (boards[0] === "zip_recruiter") await serveRoleTarget(app, "match");
     const result = await runResult(api, runId);
     expect(result.status).toBe("partial");
     expect(result.observedJobs).toBe(1);
@@ -254,7 +256,7 @@ test("Remote posting-age search uses the pinned SDK, isolates auth and unsupport
     const saved = await json<{ settings: { boards: string[]; hoursOld: number } }>(api, "get", "/v1/discovery/settings");
     expect(saved.settings).toMatchObject({ boards, hoursOld: 73 });
   }
-  expect(app.external.calls.filter((call) => call.path !== "/catalog").map((call) => call.path)).toEqual(["/jobstreaming/indeed", "/jobstreaming/indeed"]);
+  expect(app.external.calls.filter((call) => call.path !== "/catalog").map((call) => call.path)).toEqual(["/jobstreaming/indeed", "/model", "/jobstreaming/indeed"]);
   await testInfo.attach("remote-age-partial-source-results", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
 
   await json(api, "post", "/v1/discovery/sources", { sourceId: "greenhouse:synthetic-scoped-out", kind: "ats_api", state: "active", seedUrl: "https://boards.greenhouse.io/synthetic-scoped-out", adapterConfig: { atsKind: "greenhouse", board: "synthetic-scoped-out" }, createOnly: true });
@@ -276,6 +278,7 @@ test("Remote posting-age search uses the pinned SDK, isolates auth and unsupport
   await settings(api, ["zip_recruiter", "glassdoor", "indeed"]);
   const queries = ["Synthetic Reliability Engineer", "Synthetic Platform Engineer"];
   const locations = [{ location: "Madrid", remote: true }, { location: "Barcelona", remote: true }];
+  const priorCalls = app.external.calls.length;
   const multi = await action(api, "discovery.search", { queries: queries.map((query) => ({ query, source_scope: ["broad_boards"] })), locations });
   const combinations = queries.flatMap((query) => locations.map(({ location }) => ({ query, location })));
   for (const [index, { query, location }] of combinations.entries()) {
@@ -286,6 +289,7 @@ test("Remote posting-age search uses the pinned SDK, isolates auth and unsupport
     provider.respond(pageOf([posting(`Compact${index}`, Date.now())]));
   }
   const multiResult = await runResult(api, multi.runId);
+  expect(app.external.calls.slice(priorCalls).filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(combinations.length);
   expect(multiResult).toMatchObject({ status: "partial", newJobs: 4, observedJobs: 4 });
   expect(multiResult.failures).toHaveLength(8);
   expect(new Set(multiResult.failures.map((failure) => failure.unitId)).size).toBe(8);

@@ -10,6 +10,8 @@ import json
 
 from jobctrl.app.errors import AppError, ConflictError
 from jobctrl.features.discovery.domain import SOURCE_FETCH_POLICY, fingerprint, now, search_units, validate_settings
+from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY, match_role_targets, posting_role_evidence, read_role_decision, role_binding, role_target_sources
+from jobctrl.features.discovery.query_fairness import FAIR_QUERY_SCHEDULING, run_fair_query_units
 from jobctrl.features.discovery.remote_search import validate_remote_search_scope
 from jobctrl.features.discovery.targets import TargetPlanner
 from jobctrl.features.discovery.ports import DestinationPolicy, DiscoveryStore, ExecutionPort, JobsPort, ModelPort
@@ -30,6 +32,7 @@ class DiscoveryService:
         self.profile, self.execution = profile, execution
         self.destination_policy = destination_policy
         self.targets = TargetPlanner(repository, profile, model)
+        self._role_checks = asyncio.Lock()
 
     def get_settings(self):
         return self.repository.read_settings()
@@ -365,6 +368,33 @@ class DiscoveryService:
         """Read this exact acquisition's committed outcome, including failure."""
         return self.repository.run_outcome(run_id)
 
+    async def review_role_target(self, run_id, job_id, *, expected_revision=None, read_only=False):
+        request = self.repository.run_request(run_id)
+        if request is None or not self.repository.observed_job(run_id, job_id):
+            raise AppError("discovery_run_job_missing", "This job does not belong to that search.", 404)
+        plan = request["settings"].get("targetPlan")
+        if not role_target_sources(plan):
+            raise AppError("discovery_role_targets_missing", "This search had no frozen role targets.", 409)
+        posting = self.jobs.get_job(job_id)
+        if not read_only and (type(expected_revision) is not int or expected_revision != posting["revision"]):
+            raise ConflictError("The saved posting changed or its expected revision was omitted.")
+        binding = role_binding(run_id, posting, plan["planId"])
+        reviewed = self.repository.role_review(binding)
+        if reviewed is not None:
+            reviewed = read_role_decision(self.model, reviewed, posting, plan)
+        elif not read_only:
+            async with self._role_checks:
+                self.jobs.assert_posting_current(job_id, posting["revision"], posting["source_hash"])
+                reviewed = await match_role_targets(self.model, posting, plan)
+                reviewed = self.repository.role_review(
+                    binding, decision=reviewed,
+                    guard=lambda conn: self.jobs.assert_posting_current(job_id, posting["revision"], posting["source_hash"], connection=conn),
+                )
+        self.jobs.assert_posting_current(job_id, posting["revision"], posting["source_hash"])
+        if read_only and reviewed is None and not posting_role_evidence(posting)["description"].strip():
+            return {**binding, "decision": None, "reason": "posting_description_missing"}
+        return {**binding, "decision": reviewed}
+
     async def search(self, context, payload):
         run_id = context.run_id
         saved = self.repository.run_request(run_id)
@@ -408,13 +438,20 @@ class DiscoveryService:
                 "command_hash": fingerprint(payload),
                 "boardUnitsVersion": 1,
                 "sourceFetchPolicy": SOURCE_FETCH_POLICY,
+                "boardQueryScheduling": FAIR_QUERY_SCHEDULING,
                 "criteriaAsOf": now(),
+                **({"roleTargetPolicy": ROLE_TARGET_POLICY} if role_target_sources(settings.get("targetPlan")) else {}),
             }
+        if request.get("roleTargetPolicy") not in {None, ROLE_TARGET_POLICY}:
+            raise AppError("discovery_role_policy_unsupported", "This search has an unsupported frozen role policy.", 409)
+        if request.get("roleTargetPolicy") and not role_target_sources(request["settings"].get("targetPlan")):
+            raise AppError("discovery_role_targets_missing", "The search lost its frozen role targets.", 409)
         units = search_units(
             request["settings"], isolate_boards=request.get("boardUnitsVersion") == 1,
             source_fetch_policy=request.get("sourceFetchPolicy"),
         )
-        execution_settings = {**request["settings"], "_criteriaAsOf": request.get("criteriaAsOf")}
+        execution_settings = {**request["settings"], "_criteriaAsOf": request.get("criteriaAsOf"),
+                              "_roleTargetPolicy": request.get("roleTargetPolicy")}
         if not units and not any(
             s["state"] in {"active", "experimental"}
             and s.get("kind") in {"ats_api", "employer_careers_page", "smart_extract"}
@@ -451,6 +488,14 @@ class DiscoveryService:
             semaphore = asyncio.Semaphore(int(request["settings"]["maxParallelFamilies"]))
 
             async def run_boards():
+                ready = []
+                prior_units = {}
+                fair = request.get("boardQueryScheduling") == FAIR_QUERY_SCHEDULING and len({u["query"] for u in units}) > 1
+                rate_limit_codes = {"rate_limited", "discovery_provider_rate_limited"}
+                rate_limited = {
+                    source_id.removeprefix("jobstreaming:") for source_id, failure in prior_source_failures.items()
+                    if source_id.startswith("jobstreaming:") and failure["code"] in rate_limit_codes
+                }
                 for unit in units:
                     if context.cancelled():
                         raise AppError("action_cancelled", "Discovery was cancelled.", 409)
@@ -463,24 +508,42 @@ class DiscoveryService:
                     if not unit["sites"]:
                         continue
                     previous = self.repository.unit(run_id, unit["unit_id"])
-                    if previous and previous["status"] in {"completed", "budget_exhausted"}:
+                    if previous and previous["status"] in {"completed", "budget_exhausted", "deferred"}:
                         continue
                     if previous and previous["status"] == "failed" and (previous.get("result") or {}).get("failure"):
                         failure = previous["result"]["failure"]
                         failures.append(failure)
+                        if failure["code"] in rate_limit_codes:
+                            rate_limited.update(unit["sites"])
                         for board in unit["sites"]:
                             self.repository.source_result(lease, "jobstreaming:" + board, "failed", error_code=failure["code"])
                         continue
-                    # Recover recorded outcomes before the capacity gate. A
-                    # worker restart after the final accepted job must retain
-                    # failures even though no acquisition budget remains.
-                    if not self.repository.budget_remaining(lease, request["settings"]["newJobLimit"]):
-                        continue
+                    ready.append(unit)
+                    if previous is not None:
+                        prior_units[unit["unit_id"]] = previous
+
+                def remaining():
+                    return self.repository.budget_remaining(lease, execution_settings["newJobLimit"])
+
+                async def visit(unit, turn=None):
+                    if context.cancelled():
+                        raise AppError("action_cancelled", "Discovery was cancelled.", 409)
+                    previous = prior_units.get(unit["unit_id"])
+                    if fair and rate_limited.intersection(unit["sites"]):
+                        if previous:
+                            self.repository.save_unit(lease, unit, status="deferred", cursor=previous["data"].get("cursor"),
+                                                      result={**(previous.get("result") or {}), "termination": "rate_limited"})
+                        return False
                     try:
-                        await self.execution.run_board_unit(context, lease, unit, execution_settings, previous)
+                        yielded = await self.execution.run_board_unit(context, lease, unit, execution_settings, previous, turn)
+                        if yielded:
+                            prior_units[unit["unit_id"]] = self.repository.unit(run_id, unit["unit_id"])
+                        return yielded
                     except AppError as error:
                         if error.code == "action_cancelled":
                             raise
+                        if error.code in rate_limit_codes:
+                            rate_limited.update(unit["sites"])
                         failure = {"sourceFamily": "broad_boards", "unitId": unit["unit_id"], "boards": unit["sites"], "code": error.code, "message": error.message}
                         recorded = self.repository.unit(run_id, unit["unit_id"])
                         self.repository.save_unit(lease, unit, status="failed", result={**((recorded or {}).get("result") or {}), "failure": failure})
@@ -489,6 +552,18 @@ class DiscoveryService:
                             self.repository.source_result(
                                 lease, "jobstreaming:" + board, "failed", error_code=error.code
                             )
+
+                # Recover recorded failures even if a prior lease filled the
+                # budget. Only newly admitted multi-query requests share turns.
+                if fair and ready:
+                    admitted = self.repository.board_new_jobs_by_query(lease)
+                    yielded = {unit_id for unit_id, state in prior_units.items() if state["status"] == "waiting_for_query_turn"}
+                    await run_fair_query_units(ready, admitted, remaining, visit, yielded)
+                else:
+                    for unit in ready:
+                        if not remaining():
+                            break
+                        await visit(unit)
 
             async def run_sources(kinds):
                 for source in request["sources"]:
@@ -504,7 +579,7 @@ class DiscoveryService:
                     if not payload.get("forceSources") and not self._source_due(source):
                         continue
                     try:
-                        await self.execution.run_registered_source(context, lease, source, request["settings"])
+                        await self.execution.run_registered_source(context, lease, source, execution_settings)
                     except AppError as error:
                         if error.code == "action_cancelled":
                             raise
@@ -562,10 +637,37 @@ class DiscoveryService:
             with suppress(asyncio.CancelledError):
                 await heartbeat
 
-    def _admit(self, context, lease, unit, settings, posting, key, *, forced_exclusion=False):
+    async def _admit(self, context, lease, unit, settings, posting, key, *, forced_exclusion=False, fetch_detail=None):
+        decision = None
+        unavailable = None
         excluded = forced_exclusion or (posting.get("title") or "").strip().casefold() in {
             str(x).strip().casefold() for x in settings["exactTitleExclusions"]
         }
+        if not excluded and settings.get("_roleTargetPolicy") == ROLE_TARGET_POLICY:
+            limit = int(settings["newJobLimit"])
+            settled = self.repository.settled_intake(lease, key, limit, context.cancelled)
+            if settled is not None:
+                return settled
+            plan = settings["targetPlan"]
+            if not posting_role_evidence(posting)["description"].strip() and fetch_detail is not None:
+                details = await fetch_detail()
+                if details:
+                    posting = {**posting, "description": details, "full_description": details,
+                               "provenance": {**posting["provenance"], "sourceKind": "provider_detail",
+                                              "detailMethod": "jobstreaming.fetch_job_detail", "sourceUrl": posting["url"]}}
+            if posting_role_evidence(posting)["description"].strip():
+                # A different source may have settled this receipt or filled the
+                # last slot while detail or a previous determination was pending.
+                async with self._role_checks:
+                    settled = self.repository.settled_intake(lease, key, limit, context.cancelled)
+                    if settled is not None:
+                        return settled
+                    decision = await match_role_targets(self.model, posting, plan)
+                posting = {**posting, "provenance": {**posting["provenance"], "roleTargetMatch": decision}}
+                excluded = decision["verdict"] != "match"
+            else:
+                unavailable = {"reason": "posting_description_missing", "targetPlanId": plan["planId"], "policy": ROLE_TARGET_POLICY}
+                excluded = True
         return self.repository.accept_posting(
             lease,
             unit,
@@ -573,6 +675,8 @@ class DiscoveryService:
             jobs=self.jobs,
             receipt_key=key,
             excluded=excluded,
+            role_target_decision=decision,
+            role_target_unavailable=unavailable,
             limit=int(settings["newJobLimit"]),
             cancelled=context.cancelled,
         )

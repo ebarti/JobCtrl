@@ -11,6 +11,7 @@ from uuid import uuid4
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 from jobctrl.features.discovery.coordinates import source_coordinate
 from jobctrl.features.discovery.domain import DEFAULT_SETTINGS, fingerprint, now, validate_settings
+from jobctrl.features.discovery.qualification import posting_role_evidence, role_binding
 
 
 class DiscoveryRepository:
@@ -828,11 +829,11 @@ class DiscoveryRepository:
                     )
                 }
                 for row in conn.execute(
-                    "SELECT unit_id,data_json FROM discovery_units WHERE run_id=? AND status='running'", (lease["run_id"],)
+                    "SELECT unit_id,status,data_json FROM discovery_units WHERE run_id=? AND status IN ('running','waiting_for_query_turn')", (lease["run_id"],)
                 ).fetchall():
                     data = json.loads(row["data_json"])
                     sources = {data["source_id"]} if data.get("source_id") else {"jobstreaming:" + board for board in data.get("sites", [])}
-                    if sources.intersection(failed_sources):
+                    if row["status"] == "running" and sources.intersection(failed_sources):
                         continue
                     conn.execute(
                         "UPDATE discovery_units SET status='budget_exhausted',result_json=json_set(COALESCE(result_json,'{}'),'$.termination','budget_exhaustion'),updated_at=? WHERE run_id=? AND unit_id=?",
@@ -859,6 +860,19 @@ class DiscoveryRepository:
         with self.database.connect() as conn:
             run = self.guard_run(conn, lease)
             return max(0, int(limit) - run["new_jobs"])
+
+    def board_new_jobs_by_query(self, lease):
+        """Recover each query's share from the same commits that spent the run budget."""
+        with self.database.connect() as conn:
+            self.guard_run(conn, lease)
+            return dict(conn.execute(
+                """SELECT json_extract(u.data_json,'$.query'), COUNT(*)
+                   FROM discovery_intake_receipts r JOIN discovery_units u
+                     ON u.run_id=r.run_id AND u.unit_id=r.unit_id
+                   WHERE r.run_id=? AND r.outcome='accepted' AND json_extract(r.data_json,'$.isNew')=1
+                     AND json_extract(u.data_json,'$.source_family')='broad_boards'
+                   GROUP BY json_extract(u.data_json,'$.query')""", (lease["run_id"],)
+            ))
 
     def run_request(self, run_id):
         with self.database.connect() as conn:
@@ -901,7 +915,43 @@ class DiscoveryRepository:
                 ),
             )
 
-    def accept_posting(self, lease, unit, posting, *, jobs, receipt_key, excluded=False, limit=None, cancelled=None):
+    def settled_intake(self, lease, key, limit, cancelled):
+        """Check the committed receipt and capacity before potentially paid qualification."""
+        with self.database.connect() as conn:
+            run = self.guard_run(conn, lease)
+            if cancelled():
+                raise AppError("action_cancelled", "Discovery was cancelled.", 409)
+            previous = conn.execute("SELECT job_id,outcome FROM discovery_intake_receipts WHERE receipt_key=?", (key,)).fetchone()
+            at_limit = run["new_jobs"] >= limit
+            if previous:
+                return {"job_id": previous["job_id"], "outcome": previous["outcome"], "replayed": True,
+                        "budget_reached": at_limit, "created": False}
+            if at_limit:
+                return {"job_id": None, "outcome": "budget_exhausted", "replayed": False, "budget_reached": True, "created": False}
+            return None
+
+    def role_review(self, binding, *, decision=None, guard=None, connection=None):
+        """Retain post-search judgments separately from the original intake outcome."""
+        if connection is None:
+            with self.database.transaction() if decision is not None else self.database.connect() as conn:
+                return self.role_review(binding, decision=decision, guard=guard, connection=conn)
+        identity = fingerprint(binding)
+        operation = "role-target-review:" + identity
+        if guard is not None:
+            guard(connection)
+        previous = connection.execute(
+            "SELECT result_json FROM discovery_operations WHERE operation_id=? AND kind='role_target_review' AND input_fingerprint=?",
+            (operation, identity),
+        ).fetchone()
+        if previous:
+            return json.loads(previous["result_json"])["decision"]
+        if decision is not None:
+            connection.execute("INSERT INTO discovery_operations VALUES(?,'role_target_review',?,?,?)",
+                               (operation, identity, json.dumps({"binding": binding, "decision": decision}), now()))
+        return decision
+
+    def accept_posting(self, lease, unit, posting, *, jobs, receipt_key, excluded=False, limit=None, cancelled=None,
+                       role_target_decision=None, role_target_unavailable=None):
         with self.database.transaction() as conn:
             run = self.guard_run(conn, lease)
             if cancelled and cancelled():
@@ -910,10 +960,13 @@ class DiscoveryRepository:
                 "SELECT * FROM discovery_intake_receipts WHERE receipt_key=?", (receipt_key,)
             ).fetchone()
             if previous:
-                return {"job_id": previous["job_id"], "outcome": previous["outcome"], "replayed": True, "budget_reached": limit is not None and run["new_jobs"] >= limit}
+                return {"job_id": previous["job_id"], "outcome": previous["outcome"], "replayed": True, "budget_reached": limit is not None and run["new_jobs"] >= limit, "created": False}
             if limit is not None and run["new_jobs"] >= limit:
-                return {"job_id": None, "outcome": "budget_exhausted", "replayed": False, "budget_reached": True}
+                return {"job_id": None, "outcome": "budget_exhausted", "replayed": False, "budget_reached": True, "created": False}
             outcome, saved = "filtered" if excluded else "accepted", None
+            created = False
+            if not excluded and (role_target_unavailable or role_target_decision and role_target_decision["verdict"] != "match"):
+                raise AppError("discovery_role_admission_invalid", "The posting has no accepted role decision.", 409)
             if not excluded:
                 saved = jobs.ingest(
                     {**posting, "run_id": lease["run_id"]},
@@ -923,20 +976,31 @@ class DiscoveryRepository:
                 )
                 if saved.get("deleted"):
                     outcome = "operator_deleted"
+                created = outcome == "accepted" and saved.get("capture_created") is True
                 conn.execute(
                     "UPDATE discovery_runs SET new_jobs=new_jobs+?,observed_jobs=observed_jobs+1,updated_at=? WHERE run_id=?",
-                    (int(saved.get("capture_created") is True and not saved.get("deleted")), now(), lease["run_id"]),
+                    (int(created), now(), lease["run_id"]),
                 )
                 conn.execute(
                     "INSERT INTO discovery_source_runs VALUES(?,?,'running',?,?,NULL,?) ON CONFLICT(run_id,source_id) DO UPDATE SET new_jobs=discovery_source_runs.new_jobs+excluded.new_jobs,observed_jobs=discovery_source_runs.observed_jobs+1,updated_at=excluded.updated_at",
                     (
                         lease["run_id"],
                         posting["source_id"],
-                        int(saved.get("capture_created") is True and not saved.get("deleted")),
+                        int(created),
                         1,
                         now(),
                     ),
                 )
+            evidence = {}
+            if role_target_unavailable:
+                evidence["roleTargetUnavailable"] = role_target_unavailable
+            if role_target_decision:
+                evidence["roleTargetMatch"] = role_target_decision
+                if excluded:
+                    evidence["roleTargetPosting"] = posting_role_evidence(posting)
+                elif saved and not saved.get("deleted") and role_target_decision["postingEvidenceFingerprint"] == fingerprint(posting_role_evidence(saved)):
+                    self.role_review(role_binding(lease["run_id"], saved, role_target_decision["targetPlanId"]),
+                                     decision=role_target_decision, connection=conn)
             conn.execute(
                 "INSERT INTO discovery_intake_receipts VALUES(?,?,?,?,?,?,?)",
                 (
@@ -949,9 +1013,10 @@ class DiscoveryRepository:
                         {
                             "sourceId": posting.get("source_id"),
                             "sourceNativeId": posting.get("source_native_id"),
-                            "isNew": saved.get("capture_created") is True if saved else False,
+                            "isNew": created,
                             "postingRevision": saved["revision"] if saved else None,
                             "provenance": posting.get("provenance") if excluded else None,
+                            **evidence,
                         }
                     ),
                     now(),
@@ -960,7 +1025,7 @@ class DiscoveryRepository:
             budget_reached = limit is not None and conn.execute(
                 "SELECT new_jobs FROM discovery_runs WHERE run_id=?", (lease["run_id"],)
             ).fetchone()[0] >= limit
-        return {"job_id": saved["job_id"] if saved else None, "outcome": outcome, "replayed": False, "budget_reached": budget_reached}
+        return {"job_id": saved["job_id"] if saved else None, "outcome": outcome, "replayed": False, "budget_reached": budget_reached, "created": created}
 
     def run_job_ids(self, run_id):
         with self.database.connect() as conn:
@@ -968,12 +1033,25 @@ class DiscoveryRepository:
                 "SELECT job_id,data_json FROM discovery_intake_receipts WHERE run_id=? AND job_id IS NOT NULL ORDER BY created_at,receipt_key",
                 (run_id,),
             ).fetchall()
+            role_counts = conn.execute(
+                """SELECT COALESCE(json_extract(data_json,'$.roleTargetMatch.verdict'),
+                                   json_extract(data_json,'$.roleTargetUnavailable.reason')) AS decision,
+                          COUNT(*) AS observations
+                   FROM discovery_intake_receipts WHERE run_id=? AND decision IS NOT NULL GROUP BY decision""",
+                (run_id,),
+            ).fetchall()
         return {
             "jobIds": list(dict.fromkeys(row["job_id"] for row in rows)),
             "newJobIds": list(
                 dict.fromkeys(row["job_id"] for row in rows if json.loads(row["data_json"]).get("isNew"))
             ),
+            **({"roleTargetObservations": {row["decision"]: row["observations"] for row in role_counts}} if role_counts else {}),
         }
+
+    def observed_job(self, run_id, job_id):
+        with self.database.connect() as conn:
+            return conn.execute("SELECT 1 FROM discovery_intake_receipts WHERE run_id=? AND job_id=? LIMIT 1",
+                                (run_id, job_id)).fetchone() is not None
 
     def source_result(self, lease, source_id, status, *, new_jobs=0, observed_jobs=0, error_code=None):
         with self.database.transaction() as conn:

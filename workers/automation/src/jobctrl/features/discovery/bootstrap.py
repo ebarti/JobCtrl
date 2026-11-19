@@ -166,6 +166,14 @@ def build_feature(runtime, *, jobs, profile=None, browser_port=None, **ports):
     async def cancel(request):
         return JSONResponse(repository.cancel(request.path_params["run_id"]))
 
+    async def role_target_review(request):
+        read_only = request.method in {"GET", "HEAD"}
+        body = {} if read_only else await json_object(request)
+        return JSONResponse(await service.review_role_target(
+            request.path_params["run_id"], request.path_params["job_id"],
+            expected_revision=body.get("expectedPostingRevision"), read_only=read_only,
+        ))
+
     async def search(request):
         body = await json_object(request)
         return JSONResponse(await service.search(ActionContext(run_id=str(uuid4()), request_id=str(uuid4())), body))
@@ -212,6 +220,7 @@ def build_feature(runtime, *, jobs, profile=None, browser_port=None, **ports):
         Route("/v1/discovery/role-match-feedback/{suggestion_id}/decision", feedback_decision, methods=["POST"]),
         Route("/v1/discovery/runs", runs, methods=["GET"]),
         Route("/v1/discovery/runs/{run_id}/cancel", cancel, methods=["POST"]),
+        Route("/v1/discovery/runs/{run_id}/jobs/{job_id}/role-target", role_target_review, methods=["GET", "POST"]),
         Route("/v1/discovery/search", search, methods=["POST"]),
     )
     return Feature(
