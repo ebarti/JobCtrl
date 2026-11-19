@@ -74,15 +74,14 @@ class InitialCohortStorage:
                 (state["operation_id"], state["input_fingerprint"], encoded(state)))
             return state
 
-    def reserve_initial_cohort_call(self, operation_id, arguments_fingerprint, selection, execution_identity, input_fingerprint):
-        with self._database.transaction() as connection:
-            state = self.initial_cohort_operation(operation_id, connection=connection)
-            self._assert_initial_cohort(connection, state)
-            if state.get("call") is not None:
-                raise AppError("fit_cohort_interrupted", "The initial cohort already has a retained model attempt.", 409)
-            state["call"] = {"status": "started", "arguments_fingerprint": arguments_fingerprint,
-                             "selection": selection, "execution": execution_identity, "input_fingerprint": input_fingerprint}
-            self._write_initial_cohort(connection, state)
+    def reserve_initial_cohort_call(self, operation_id, arguments_fingerprint, selection, execution_identity, input_fingerprint, *, connection):
+        state = self.initial_cohort_operation(operation_id, connection=connection)
+        self._assert_initial_cohort(connection, state)
+        if state.get("call") is not None:
+            raise AppError("fit_cohort_interrupted", "The initial cohort already has a retained model attempt.", 409)
+        state["call"] = {"status": "started", "arguments_fingerprint": arguments_fingerprint,
+                         "selection": selection, "execution": execution_identity, "input_fingerprint": input_fingerprint}
+        self._write_initial_cohort(connection, state)
 
     def complete_initial_cohort_call(self, operation_id, result):
         with self._database.transaction() as connection:

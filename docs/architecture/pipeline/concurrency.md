@@ -22,6 +22,16 @@ calls. Larger cohorts keep the per-job preparation policy. The route is stored
 with the frozen target IDs, before model work. A request that exceeds the model
 size limit reports the refusal through its recorded stage outcome.
 
+Enrichment, role analysis, Requirements and Fit scoring wait when an active
+model call holds their lane or a finite monetary policy serializes provider
+calls. The action retains its stage and emits a `PreparationWaitingForCapacity`
+event with the run, job (for per-job work), stage and capacity reason. Each
+attempt to acquire capacity rechecks current accounting and cancellation. The
+gateway allocates the receipt together with the owner's Requirements or initial
+cohort Fit reservation after admission succeeds. Provider execution occurs once
+outside the capacity wait. Exhausted spend, unresolved accounting and provider
+failures retain their own outcomes.
+
 Requirements stages exact extraction results without presenting them as
 accepted requirements. One owner determination then reconciles every incoming
 cohort member and the complete retained catalog, including hidden meanings.

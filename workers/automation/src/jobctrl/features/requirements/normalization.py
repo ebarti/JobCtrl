@@ -360,15 +360,16 @@ class CatalogNormalizationService:
             heartbeat({"phase": "requirements_consolidation", "catalog_revision": captured["catalog_revision"],
                        "member_count": len(context["members"]), "occurrence_count": len(context["occurrences"])})
         request_pin = {}
-        def reserve(value):
+        def reserve(value, connection):
             if cohort_state is not None:
-                return self.store.reserve_cohort_call(operation_id, value, request_pin, guard, normalization=True)
-            return self.store.reserve_normalization_call(operation_id, value, guard)
+                return self.store.reserve_cohort_call(operation_id, value, request_pin, guard, normalization=True, connection=connection)
+            return self.store.reserve_normalization_call(operation_id, value, guard, connection=connection)
         selection, receipt = await self.model.determine(
             kind="requirements.match_catalog", schema=PARTITION_SCHEMAS[version](context), prompt_version=version,
             instruction=prepared["instructions"], sources=prepared["sources"], context=prepared["context"], entity_id=None,
             validate=lambda value: bind_normalization_slots(value, context=context, sources=sources, prompt_version=version),
-            budget=ModelCallBudget(action_fingerprint, 1, reserve=reserve), catalog_guard=guard,
+            budget=ModelCallBudget(action_fingerprint, 1, reserve=reserve, check_reservation=lambda value:
+                self.store.assert_normalization_call_available(operation_id, value)), catalog_guard=guard,
             retained_request=cohort_state.get("model_request") if cohort_state is not None else None,
             pin_request=request_pin.update if cohort_state is not None else None,
         )

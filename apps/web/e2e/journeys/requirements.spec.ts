@@ -9,6 +9,7 @@ import {
 import {
   catalogMatching,
   citationSelections,
+  EXTRACTION_PROMPT_VERSION,
   memberRoots,
   typedExtraction,
   type CatalogContext,
@@ -213,11 +214,12 @@ test("quote selections derive canonical Unicode ranges and reuse the exact raw e
   const request = { expected_posting_revision: posting.revision, expected_revision: 0 };
   const first = api.post(`/v1/jobs/${posting.job_id}/requirements`, { data: request });
   const extractionCall = await modelCall(app, "requirements.extract");
-  expect(extractionCall.body["prompt_version"]).toBe("requirements-v2-extract-v5-content-bound");
+  expect(extractionCall.body["prompt_version"]).toBe(EXTRACTION_PROMPT_VERSION);
   const schema = extractionCall.body["response_schema"] as { properties: Record<string, unknown> };
   expect(schema.properties).toHaveProperty("quotes");
   expect(schema.properties).toHaveProperty("language");
-  const selected = typedExtraction(extractionCall, { requirements: [{ localId: "leadership", text: quote }] });
+  const rationale = "The stated implementation work requires the capability to build recovery into workflows.";
+  const selected = typedExtraction(extractionCall, { requirements: [{ localId: "leadership", text: quote, basis: "explicit_and_inferred", rationale }] });
   extractionCall.reply(selected);
   const uncertain = await modelCall(app, "requirements.match_catalog");
   uncertain.reply(catalogMatching(uncertain, { leadership: { verdict: "uncertain" } }));
@@ -231,10 +233,26 @@ test("quote selections derive canonical Unicode ranges and reuse the exact raw e
   const response = await retried;
   expect(response.status(), await response.text()).toBe(200);
   const accepted = await response.json() as Requirements;
+  expect(accepted.requirements[0]).toMatchObject({ basis: "explicit_and_inferred", rationale });
   expect(accepted.requirements[0]!.spans).toEqual([{ start: Array.from(prefix).length, end: Array.from(prefix).length + quote.length, quote }]);
   expect(app.external.calls.filter((call) => call.path === "/model").map((call) => call.body["operation"])).toEqual([
     "requirements.extract", "requirements.match_catalog", "requirements.match_catalog",
   ]);
+
+  // Each explicitly forced refresh receives the same source and its own receipt.
+  // The gateway must refuse both missing rationales before they reach normalization.
+  for (const basis of ["inferred", "explicit_and_inferred"] as const) {
+    const before = app.external.calls.length;
+    const refresh = api.post(`/v1/jobs/${posting.job_id}/requirements`, { data: { ...request, expected_revision: accepted.revision, force: true } });
+    const call = await modelCall(app, "requirements.extract");
+    call.reply(typedExtraction(call, { requirements: [{ localId: "leadership", text: quote, basis, rationale: null }] }));
+    const refused = await refresh;
+    expect(refused.status()).toBe(502);
+    expect(await refused.json()).toMatchObject({ error: { code: "model_schema_violation" } });
+    const preserved = await json<Requirements>(api, "get", `/v1/jobs/${posting.job_id}/requirements`);
+    expect(preserved.requirements).toEqual(accepted.requirements);
+    expect(app.external.calls.slice(before).map((entry) => entry.body["operation"])).toEqual(["requirements.extract"]);
+  }
 });
 
 test("foreign missing ambiguous and legacy numeric quote selections preserve accepted requirements without fallback", async ({ api, app }) => {

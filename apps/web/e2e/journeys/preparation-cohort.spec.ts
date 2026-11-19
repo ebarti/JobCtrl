@@ -107,7 +107,9 @@ test("a refused cohort extraction and an explicit cancellation settle only the c
       extracted++;
       if (extracted === 3) break;
       if (extracted === 1) {
-        call.reply(typedExtraction(call, { requirements: [{ localId: "r1", text: COMMON_DEMAND, basis: "inferred", rationale: null }] }));
+        const response = typedExtraction(call, { requirements: [{ localId: "r1", text: COMMON_DEMAND }] });
+        response.requirements[0]!.evidence_refs = ["not-in-the-quote-inventory"];
+        call.reply(response);
         continue;
       }
     }
@@ -115,8 +117,8 @@ test("a refused cohort extraction and an explicit cancellation settle only the c
   }
   const run = await json<{ jobIds: string[]; steps: { jobId: string; stage: string; status: string; errorCode: string | null }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
   expect(run.steps.find((step) => step.jobId === run.jobIds[0] && step.stage === "requirements_extract"))
-    .toMatchObject({ status: "failed", errorCode: "inference_rationale_missing" });
-  const refused = { job_id: run.jobIds[0], state: "blocked", failure_code: "inference_rationale_missing",
+    .toMatchObject({ status: "failed", errorCode: "foreign_or_duplicate_evidence_id" });
+  const refused = { job_id: run.jobIds[0], state: "blocked", failure_code: "foreign_or_duplicate_evidence_id",
     completed_at: expect.any(String), refused_receipt_id: expect.any(String), refused_receipt_status: "succeeded" };
   const running = (job_id: string) => ({ job_id, state: "running", failure_code: null, completed_at: null });
   const attempts = await requirementAttempts(app, started.runId);

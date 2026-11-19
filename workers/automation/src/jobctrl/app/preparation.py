@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from contextlib import nullcontext
 
 from jobctrl.app.contracts import ActionContext
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
+from jobctrl.app.model_capacity import wait_for_model_capacity
 from jobctrl.app.preparation_ports import PreparationCheckpoints, PreparationSettings, RunReader
 
 RECIPES = {"run", "discover", "search", "assess", "enrich", "analyze", "score", "tailor", "prepare"}
@@ -189,6 +191,16 @@ class PreparationService:
 
     def _work_cancelled(self, context):
         return context.cancelled() or self._user_cancelled(context)
+
+    def _capacity_wait(self, context, job_id, stage):
+        if stage not in {*STAGES["search"], "requirements_extract", "requirements_normalize", "fit_qualify"}:
+            return nullcontext()
+        def waiting(reason):
+            self.checkpoints.record_capacity_wait(context.run_id, job_id, stage, reason)
+        # Fit can delegate wording proposals to Profile, which has its own
+        # interruption/approval contract. Only Fit's scoring calls opt in here.
+        lane = "scoring" if stage in {"fit", "fit_qualify"} else None
+        return wait_for_model_capacity(context.cancelled, on_wait=waiting, lane=lane)
 
     def get_run(self, run_id):
         return self._describe_run(self.checkpoints.get_run(run_id))
@@ -546,7 +558,8 @@ class PreparationService:
             inputs.setdefault("_operation_id", _operation(context.run_id, job_id, stage))
             inputs = self.checkpoints.start_step(context.run_id, job_id, stage, inputs)
             context.heartbeat({"jobId": job_id or None, "stage": stage})
-            result = await execute(inputs)
+            with self._capacity_wait(context, job_id, stage):
+                result = await execute(inputs)
             if self._work_cancelled(context):
                 raise asyncio.CancelledError()
             self.checkpoints.finish_step(context.run_id, job_id, stage, "succeeded", result=result)
@@ -793,7 +806,8 @@ class PreparationService:
                         inputs.setdefault("_operation_id", _operation(context.run_id, job_id, stage))
                         inputs = self.checkpoints.start_step(context.run_id, job_id, stage, inputs)
                         context.heartbeat({"jobId": job_id, "stage": stage})
-                        result = await self._execute_stage(context, job_id, stage, inputs, request)
+                        with self._capacity_wait(context, job_id, stage):
+                            result = await self._execute_stage(context, job_id, stage, inputs, request)
                         status = "warning" if stage == "review" and result.get("review_status") not in {None, "pass", "not_applicable"} else "succeeded"
                         self.checkpoints.finish_step(context.run_id, job_id, stage, status, result=result)
                     previous[stage] = self.checkpoints.step(context.run_id, job_id, stage)

@@ -11,13 +11,14 @@ from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 from .domain import (
     CONTRACT_VERSION, EXTRACTION_INSTRUCTION, MEANING_KEYS,
     OCCURRENCE_CORRECTION_INSTRUCTION, OccurrenceCorrectionSelection,
-    ExtractedRequirement, ExtractionSelection, ModelCallBudget, RequirementError, RevisionDecision,
+    ExtractedRequirement, ModelCallBudget, RequirementError, RevisionDecision,
     bind_extraction, bind_occurrence_correction, canonical_json, current_contract, fingerprint, meaning_data, validate_citations,
     validate_extraction_selection,
 )
 from .ports import PostingReader, RequirementModel, RequirementStore
 from .normalization import CatalogNormalizationService
 from .cohort import RequirementsCohortService
+from .extraction_wire import EXTRACTION_VERSION, LEGACY_EXTRACTION_VERSION, extraction_wire
 from .normalization_domain import NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION
 
 
@@ -308,9 +309,10 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         attempt_id = operation_id or str(uuid.uuid4())
         self.store.start_attempt({"attempt_id": attempt_id, "job_id": job_id, "posting_revision": posting["revision"],
                                   "expected_revision": expected_revision, "input_fingerprint": action_fingerprint})
-        budget = ModelCallBudget(action_fingerprint, MAX_NEW_MODEL_CALLS_PER_REFRESH, reserve=lambda value:
+        budget = ModelCallBudget(action_fingerprint, MAX_NEW_MODEL_CALLS_PER_REFRESH, reserve=lambda value, connection:
             self.store.reserve_correction_call(attempt_id, value, MAX_NEW_MODEL_CALLS_PER_REFRESH,
-                                               posting, self.jobs.assert_posting_current))
+                                               posting, self.jobs.assert_posting_current, connection=connection),
+            check_reservation=lambda value: self.store.check_correction_call(attempt_id, value, MAX_NEW_MODEL_CALLS_PER_REFRESH))
         try:
             self._check_cancel(cancelled)
             context = {"posting": self._posting_identity(posting), "operation_id": attempt_id,
@@ -551,10 +553,20 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         self._validate_versions(expected_posting_revision, expected_revision)
         if type(force) is not bool:
             raise RequirementError("invalid_force")
-        action_fingerprint = fingerprint({
+        self._validate_operation_id(operation_id)
+        request = {
             "contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": NORMALIZATION_PROMPT_VERSION, "operation": "refresh", "job_id": job_id, "expected_posting_revision": expected_posting_revision,
             "expected_revision": expected_revision, "force": force,
-        })
+        }
+        # v5 refresh attempts predate an explicit extraction version in their fingerprint.
+        legacy_fingerprint = fingerprint(request)
+        retained = self.store.attempt_fingerprint(operation_id) if operation_id else None
+        if retained == legacy_fingerprint:
+            version, action_fingerprint = LEGACY_EXTRACTION_VERSION, legacy_fingerprint
+        else:
+            version = EXTRACTION_VERSION
+            action_fingerprint = fingerprint({**request, "extraction_version": version})
+        schema, instruction = extraction_wire(version)
         replay = self._replay_snapshot(operation_id, action_fingerprint)
         if replay is not None:
             return replay
@@ -588,8 +600,8 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
             budget = ModelCallBudget(fingerprint({"action": action_fingerprint, "posting": self._posting_identity(posting)}),
                                      MAX_NEW_MODEL_CALLS_PER_REFRESH)
             selection, extraction_receipt = await self.model.determine(
-                kind="requirements.extract", schema=ExtractionSelection, prompt_version="requirements-v2-extract-v5-content-bound",
-                instruction=EXTRACTION_INSTRUCTION, sources=sources,
+                kind="requirements.extract", schema=schema, prompt_version=version,
+                instruction=instruction, sources=sources,
                 context={"contract_version": CONTRACT_VERSION, "posting_content": source_binding, "refresh_binding": refresh_binding}, entity_id=None,
                 validate=lambda result: validate_extraction_selection(result, source_id=source_id, text=source_text),
                 budget=budget, publication_posting=self._publication_identity(posting), source_binding=source_binding,

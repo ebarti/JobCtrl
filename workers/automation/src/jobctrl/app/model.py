@@ -17,6 +17,7 @@ from jsonschema.exceptions import SchemaError, ValidationError
 from jobctrl.app.database import Database
 from jobctrl.app.errors import AppError, NotFoundError
 from jobctrl.app.events import now
+from jobctrl.app.model_capacity import ModelCapacityBusy, admit_model_call
 from jobctrl.app.settings import PROVIDER_CONFIGURATION_KEYS, Settings
 from jobctrl.app.synthetic import synthetic_boundary
 
@@ -259,7 +260,7 @@ class ModelGateway:
                 "budgetBusy": settings["dailyBudgetUsd"] > 0 and any(item["active"] for item in lanes.values()),
                 "scope": "recorded model calls and configured lane limits; provider readiness is separate"}
 
-    def _admit(self, payload: dict, *, require_accounting: bool = False) -> str:
+    def _admit(self, payload: dict, *, require_accounting: bool = False, on_admitted=None) -> str:
         receipt_id = str(uuid.uuid4())
         with self.database.transaction() as connection:
             settings = self.settings.snapshot(connection)
@@ -297,11 +298,11 @@ class ModelGateway:
                 raise AppError("spend_limit_reached", "The configured model spend or lane token limit has been reached.", 409)
             active = connection.execute("SELECT COUNT(*) FROM app_model_calls WHERE status='running' AND lane=?", (lane,)).fetchone()[0]
             if active >= settings["laneConcurrency"].get(lane, 1):
-                raise AppError("model_lane_busy", "The model lane is at its configured capacity.", 429)
+                raise ModelCapacityBusy("model_lane_busy", "The model lane is at its configured capacity.", 429)
             # Capped accounting must settle one accepted call before admitting a
             # peer, otherwise concurrent checks could all spend the same budget.
             if budget and connection.execute("SELECT 1 FROM app_model_calls WHERE status='running' LIMIT 1").fetchone():
-                raise AppError("model_budget_busy", "A budgeted model call is still settling.", 429)
+                raise ModelCapacityBusy("model_budget_busy", "A budgeted model call is still settling.", 429)
             connection.execute(
                 "INSERT INTO app_model_calls(receipt_id,operation,provider,model,lane,prompt_version,input_fingerprint,created_at,status,owner_pid,pricing_json) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -309,6 +310,9 @@ class ModelGateway:
                  payload["prompt_version"], hashlib.sha256(_canonical(payload).encode()).hexdigest(), now(), "running", os.getpid(),
                  _canonical(quote) if quote is not None else None),
             )
+            if on_admitted is not None:
+                # The caller's durable phase must own this receipt before external execution can begin.
+                on_admitted(connection, receipt_id)
         return receipt_id
 
     async def _external(self, payload: dict, execution: ModelExecution):
@@ -341,14 +345,16 @@ class ModelGateway:
     async def determine(self, *, operation: str, instructions: str, sources, response_schema: dict,
                         context: dict | None = None, prompt_version: str = "1", lane: str = "interactive",
                         model: str | None = None, require_accounting: bool = False,
-                        execution: ModelExecution | None = None) -> ModelResult:
+                        execution: ModelExecution | None = None, on_admitted=None) -> ModelResult:
         if type(require_accounting) is not bool:
             raise AppError("invalid_model_request", "Accounting admission must be an explicit boolean.")
         execution = self._execution(execution, model=model)
         payload = self._payload(operation=operation, instructions=instructions, sources=sources,
                                 response_schema=response_schema, context=context, prompt_version=prompt_version,
                                 lane=lane, execution=execution)
-        receipt_id = self._admit(payload, require_accounting=require_accounting)
+        receipt_id = await admit_model_call(
+            lane, lambda: self._admit(payload, require_accounting=require_accounting, on_admitted=on_admitted)
+        )
         usage = {}
         try:
             value, usage = await self._external(payload, execution)

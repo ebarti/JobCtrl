@@ -5,12 +5,12 @@ from uuid import NAMESPACE_URL, uuid5
 
 from jobctrl.app.errors import ConflictError
 
-from .domain import (CONTRACT_VERSION, EXTRACTION_INSTRUCTION, ExtractionSelection, ModelCallBudget,
+from .domain import (CONTRACT_VERSION, ModelCallBudget,
                      RequirementError, bind_extraction, canonical_json, fingerprint, validate_extraction_selection)
 from .cohort_transport import COHORT_PROMPT_VERSION
+from .extraction_wire import EXTRACTION_VERSION, extraction_wire
 
 COHORT_VERSION = "requirements-initial-cohort-v1"
-EXTRACTION_VERSION = "requirements-v2-extract-v5-content-bound"
 
 
 class RequirementsCohortService:
@@ -35,17 +35,19 @@ class RequirementsCohortService:
         self._validate_versions(expected_posting_revision, expected_revision)
         if not operation_id:
             raise RequirementError("invalid_operation_id")
-        request = {"cohort_version": COHORT_VERSION, "extraction_version": EXTRACTION_VERSION,
+        state = self.store.cohort_operation(operation_id)
+        version = state["request"].get("extraction_version") if state is not None else EXTRACTION_VERSION
+        schema, instruction = extraction_wire(version)
+        request = {"cohort_version": COHORT_VERSION, "extraction_version": version,
                    "job_id": job_id, "expected_posting_revision": expected_posting_revision,
                    "expected_revision": expected_revision, "operation_id": operation_id}
         input_hash = fingerprint(request)
-        state = self.store.cohort_operation(operation_id, input_hash)
         if state is None:
             posting = self.jobs.assert_posting_current(job_id, expected_posting_revision)
             state = {"request": request, "input_fingerprint": input_hash, "posting": posting, "status": "staging"}
             state = self.store.start_cohort_operation(operation_id, input_hash, state,
                 lambda connection: self._cohort_posting(state, connection))
-        if state["request"] != request:
+        if state["request"] != request or state["input_fingerprint"] != input_hash:
             raise RequirementError("requirements_cohort_contract_changed")
         posting = self._cohort_posting(state, allow_accepted=True)
         if state.get("result") is not None:
@@ -69,13 +71,13 @@ class RequirementsCohortService:
         def guard(connection):
             return self._cohort_posting(state, connection)
         request_pin = {}
-        selection, receipt = await self.model.determine(kind="requirements.extract", schema=ExtractionSelection,
-            prompt_version=EXTRACTION_VERSION, instruction=EXTRACTION_INSTRUCTION,
+        selection, receipt = await self.model.determine(kind="requirements.extract", schema=schema,
+            prompt_version=version, instruction=instruction,
             sources=[{"source_id": source["source_id"], "text": text}],
             context={"contract_version": CONTRACT_VERSION, "posting_content": source, "refresh_binding": None}, entity_id=None,
             validate=lambda value: validate_extraction_selection(value, source_id=source["source_id"], text=text),
-            budget=ModelCallBudget(input_hash, 1, reserve=lambda value:
-                self.store.reserve_cohort_call(operation_id, value, request_pin, guard)),
+            budget=ModelCallBudget(input_hash, 1, reserve=lambda value, connection:
+                self.store.reserve_cohort_call(operation_id, value, request_pin, guard, connection=connection)),
             retained_request=state.get("model_request"), pin_request=request_pin.update,
             refused_receipt_id=state.get("refused_extraction_receipt_id"),
             pin_refusal=lambda receipt_id: self.store.update_cohort_operation(
@@ -103,13 +105,15 @@ class RequirementsCohortService:
         posting = self._cohort_posting(state, allow_accepted=True)
         if item["status"] == "accepted":
             return state, posting, None
+        version = state["request"].get("extraction_version")
+        schema, _ = extraction_wire(version)
         receipt = self.model.receipt(item["extraction_receipt_id"])
         if (receipt.get("status") != "succeeded" or receipt.get("operation") != "requirements.extract"
-                or receipt.get("prompt_version") != EXTRACTION_VERSION
+                or receipt.get("prompt_version") != version
                 or any(receipt.get(key) != item["extraction_provenance"].get(key) for key in (
                     "receipt_id", "provider", "model", "lane", "prompt_version", "input_fingerprint", "created_at"))):
             raise RequirementError("model_cache_receipt_invalid")
-        selection = ExtractionSelection.model_validate(receipt["value"])
+        selection = schema.model_validate(receipt["value"])
         text = posting.get("text") or posting.get("description") or ""
         source = self._content_source(text)
         if source != item["source_binding"]:

@@ -86,8 +86,11 @@ The strict single-posting extraction response contains:
 - `quotes`: the owned exact quote inventory.
 - `requirements`: `local_id`, `category` (`skill` or
   `professional_experience`), `name`, `definition`, `basis` (`explicit`,
-  `inferred` or `explicit_and_inferred`), nullable `rationale` and `source_note`,
-  and `evidence_refs`.
+  `inferred` or `explicit_and_inferred`), `rationale`, nullable `source_note`,
+  and `evidence_refs`. The v6 provider schema requires a nonblank rationale
+  for both inference bases. A fully explicit demand may use null or explain a
+  non-obvious boundary. Each staged v5 extraction or existing refresh attempt
+  retains its original prompt, schema and receipt identity during recovery.
 - `education`: `qualification`, `subjects`, nullable `alternative` and
   `source_note`, and `evidence_refs`.
 - `languages`: `language`, nullable `proficiency` and `source_note`, and
@@ -266,6 +269,12 @@ canonical, alias or certificate changes and no normalization call. Its original
 posting and accepted-head fences still apply.
 
 ## Initial Search cohort
+
+Durable Requirements refresh and Preparation wait through temporary model
+capacity contention. The gateway transaction records an extraction or
+normalization dispatch reservation when it allocates the provider receipt.
+An interrupted capacity wait leaves the operation eligible for admission. An
+already reserved, unsettled dispatch retains its recovery fence.
 
 Preparation calls `prepare_cohort_job` for each frozen job. Each posting keeps
 its original extraction local IDs, immutable source hash, extraction receipt and

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { expect, type ExternalCall } from "../harness/fixtures.js";
 
 export type ModelSource = { source_id: string; text: string };
+export const EXTRACTION_PROMPT_VERSION = "requirements-v2-extract-v6-inference-rationale";
 export const NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v6";
 export const COHORT_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v7-cohort";
 export const PARTITION_V5_PROMPT_VERSION = "requirements-capability-demand-partition-v5";

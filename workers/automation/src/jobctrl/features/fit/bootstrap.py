@@ -4,6 +4,7 @@ from pydantic import ValidationError
 
 from jobctrl.app.contracts import Feature, Runtime
 from jobctrl.app.errors import AppError
+from jobctrl.app.model_capacity import wait_for_model_capacity
 
 from .http import AssessInput, CorrectInput, CoverageInput, RefreshInput, routes
 from .schema import REFRESH_SCHEMA, SCHEMA
@@ -31,7 +32,8 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         job_id = values.pop("job_id")
         arguments = AssessInput.model_validate(values).model_dump()
         context.heartbeat({"jobId": job_id, "phase": "qualification"})
-        result = await service.assess_job(job_id, **arguments, cancelled=context.cancelled, operation_id=context.run_id)
+        with wait_for_model_capacity(context.cancelled, lane="scoring"):
+            result = await service.assess_job(job_id, **arguments, cancelled=context.cancelled, operation_id=context.run_id)
         context.heartbeat({"jobId": job_id, "revision": result["score"]["revision"], "phase": "complete"})
         return result
 

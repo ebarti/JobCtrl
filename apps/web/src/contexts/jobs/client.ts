@@ -18,6 +18,7 @@ export type PostingSnapshot = z.infer<typeof jobSchema>;
 export const jobsKeys = {
   all: (tenantId: string) => ["tenant", tenantId, "jobs"] as const,
   lists: (tenantId: string) => [...jobsKeys.all(tenantId), "list"] as const,
+  urlImports: (tenantId: string) => [...jobsKeys.all(tenantId), "url-imports"] as const,
   list: (tenantId: string, q: string, offset: number, limit: number, status: string, sort: string, direction: string) => [...jobsKeys.lists(tenantId), { q, offset, limit, status, sort, direction }] as const,
   detail: (tenantId: string, jobId: string) => [...jobsKeys.all(tenantId), "detail", jobId] as const,
 };
@@ -54,8 +55,6 @@ export function useJobActions(jobId?: string) {
   };
   const capture = useMutation({ mutationFn: async (body: { url: string; title: string; company: string; description: string; location: string }) =>
     parseJob(await http.json<unknown>("POST", "/v1/jobs/capture", { body })), onSuccess: update });
-  const importUrl = useMutation({ mutationFn: async (url: string) =>
-    parseJob(await http.json<unknown>("POST", "/v1/jobs/import-url", { body: { url } })), onSuccess: update });
   const refresh = useMutation({ mutationFn: async (revision: number) => {
     if (!jobId) throw new Error("No job selected.");
     return parseJob(await http.json<unknown>("POST", `/v1/jobs/${encodeURIComponent(jobId)}/refresh`, { body: { expectedRevision: revision } }));
@@ -64,7 +63,7 @@ export function useJobActions(jobId?: string) {
     if (!jobId) throw new Error("No job selected.");
     return parseJob(await http.json<unknown>("POST", `/v1/jobs/${encodeURIComponent(jobId)}/availability`, { body: { expectedRevision: revision } }));
   }, onSuccess: update });
-  return { capture, importUrl, refresh, checkAvailability };
+  return { capture, refresh, checkAvailability };
 }
 const deletionSelectionSchema = z.object({ selectionId: z.string(), jobIds: z.array(z.string()), count: z.number(), expiresAt: z.string(),
   retentionNotice: z.string(), retainedIndependentData: z.array(z.string()),
@@ -90,6 +89,13 @@ export function useJobBulkActions() {
   return { bulk, previewDelete, permanentDelete };
 }
 export const jobsInvalidation = {
-  eventTypes: ["JobCaptured", "JobSourceObserved", "JobUpdated", "JobCaptureAttempted", "PostingQuarantined", "JobAnalysisUpdated"] as const,
-  handle(event: DomainEventEnvelope, client: QueryClient) { void invalidateQueriesWithOptimisticOwnership(client, jobsKeys.all(event.tenantId)); },
+  eventTypes: ["JobCaptured", "JobSourceObserved", "JobUpdated", "JobCaptureAttempted", "PostingQuarantined", "JobAnalysisUpdated", "ActionQueued", "ActionStarted", "ActionCompleted", "ActionFailed", "ActionCancellationRequested"] as const,
+  handle(event: DomainEventEnvelope, client: QueryClient) {
+    if (event.eventType.startsWith("Action")) {
+      if (event.payload && typeof event.payload === "object" && "action" in event.payload && event.payload.action === "jobs.capture_url")
+        void invalidateQueriesWithOptimisticOwnership(client, jobsKeys.urlImports(event.tenantId));
+      return;
+    }
+    void invalidateQueriesWithOptimisticOwnership(client, jobsKeys.all(event.tenantId));
+  },
 };

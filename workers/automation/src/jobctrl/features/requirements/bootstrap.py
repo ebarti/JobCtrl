@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from jobctrl.app.contracts import Feature, Runtime
 from jobctrl.app.errors import AppError
+from jobctrl.app.model_capacity import wait_for_model_capacity
 
 from .domain import CONTRACT_VERSION, RequirementError
 from .http import ConsolidateRequest, CorrectionRequest, OccurrenceCorrectionsRequest, RefreshRequest, RevisionRequest, raise_application_error, routes
@@ -52,8 +53,9 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         except (ValidationError, AttributeError):
             raise AppError("invalid_request", "The requirement action fields are invalid.") from None
         try:
-            return await service.refresh(job_id, **body.model_dump(), cancelled=context.cancelled,
-                                         heartbeat=context.heartbeat, operation_id=context.run_id)
+            with wait_for_model_capacity(context.cancelled):
+                return await service.refresh(job_id, **body.model_dump(), cancelled=context.cancelled,
+                                             heartbeat=context.heartbeat, operation_id=context.run_id)
         except RequirementError as failure:
             raise_application_error(failure)
 

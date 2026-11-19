@@ -151,6 +151,11 @@ bypasses accepted authority or refresh admission.
 
 ## Initial Search cohort
 
+Durable Fit assessment and Preparation wait for model capacity. Initial
+qualification records its attempt together with the gateway receipt in the
+admission transaction. A worker can resume a capacity wait, while recovery of
+an already admitted call requires its settled authority.
+
 `qualify_cohort` receives the complete frozen job list, posting and Requirements
 revisions and hashes, and each job's original score revision. It captures the
 Profile, scoring guidance and current and historical qualification heads.

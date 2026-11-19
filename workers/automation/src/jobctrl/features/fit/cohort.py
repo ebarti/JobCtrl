@@ -47,9 +47,10 @@ class CohortModel:
         model = self.service.model
         execution = model.freeze_execution()
         input_hash = model.fingerprint(**arguments, execution=execution)
-        self.service.store.reserve_initial_cohort_call(self.operation_id, request_hash,
-            {"provider": execution.provider, "model": execution.model}, execution.identity(), input_hash)
-        result = await model.determine(**arguments, execution=execution)
+        def admitted(connection, _receipt_id):
+            self.service.store.reserve_initial_cohort_call(self.operation_id, request_hash,
+                {"provider": execution.provider, "model": execution.model}, execution.identity(), input_hash, connection=connection)
+        result = await model.determine(**arguments, execution=execution, on_admitted=admitted)
         raw = {"value": result.value, "provenance": dto(result.provenance)}
         if raw["provenance"]["input_fingerprint"] != input_hash:
             raise AppError("fit_model_provenance_invalid", "The cohort receipt belongs to another request.", 422)

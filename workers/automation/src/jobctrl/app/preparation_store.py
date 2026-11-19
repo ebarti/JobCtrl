@@ -71,6 +71,12 @@ class PreparationStore:
                            level=level, stage=stage)
 
 
+    def record_capacity_wait(self, run_id, job_id, stage, reason):
+        with self.database.transaction() as connection:
+            self.events.append(connection, "PreparationWaitingForCapacity",
+                               {"runId": run_id, "jobId": job_id or None, "stage": stage, "reason": reason},
+                               feature="preparation", aggregate_id=run_id, stage=stage)
+
     def admit_run(self, run_id, request, connection, *, parent=None, targets=None):
         """Freeze new-action policy without a nested transaction or worker work."""
         if parent is not None:

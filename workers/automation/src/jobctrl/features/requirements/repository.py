@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 
@@ -199,27 +199,31 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
             raise RequirementError("model_cache_binding_invalid")
         return saved
 
-    def reserve_correction_call(self, attempt_id, input_fingerprint, maximum, posting, posting_guard):
-        """Append an admission intent before dispatch; retries cannot reset work."""
+    def check_correction_call(self, attempt_id, input_fingerprint, maximum, connection=None):
         operation = "requirements.correct_occurrences.call_intent"
         key = fingerprint({"operation": operation, "attempt_id": attempt_id, "input": input_fingerprint})
-        with self.database.transaction() as connection:
-            posting_guard(posting["job_id"], posting["revision"], posting["source_hash"], connection=connection)
+        with self.read_session() if connection is None else nullcontext(connection) as connection:
             if connection.execute("SELECT 1 FROM requirements_model_cache WHERE input_fingerprint=?", (key,)).fetchone():
                 raise RequirementError("requirements_correction_call_unsettled")
             used = connection.execute(
                 "SELECT count(*) FROM requirements_model_cache WHERE operation=? "
                 "AND json_extract(result_json,'$.attempt_id')=?", (operation, attempt_id),
             ).fetchone()[0]
-            if used >= maximum:
-                raise RequirementError("requirements_catalog_unavailable", details={"reason": "model_call_bound",
-                                       "maximum_new_model_calls": maximum})
-            connection.execute("INSERT INTO requirements_model_cache VALUES (?,?,?,?,?,?,?,?,?)", (
-                key, operation, posting["job_id"], posting["revision"], posting["source_hash"], None,
-                canonical_json({"contract_version": CONTRACT_VERSION, "attempt_id": attempt_id,
-                                "input_fingerprint": input_fingerprint}), "{}", now(),
-            ))
-            return used + 1
+        if used >= maximum:
+            raise RequirementError("requirements_catalog_unavailable", details={"reason": "model_call_bound",
+                                   "maximum_new_model_calls": maximum})
+        return operation, key, used
+
+    def reserve_correction_call(self, attempt_id, input_fingerprint, maximum, posting, posting_guard, *, connection):
+        """Append an admission intent before dispatch; retries cannot reset work."""
+        posting_guard(posting["job_id"], posting["revision"], posting["source_hash"], connection=connection)
+        operation, key, used = self.check_correction_call(attempt_id, input_fingerprint, maximum, connection)
+        connection.execute("INSERT INTO requirements_model_cache VALUES (?,?,?,?,?,?,?,?,?)", (
+            key, operation, posting["job_id"], posting["revision"], posting["source_hash"], None,
+            canonical_json({"contract_version": CONTRACT_VERSION, "attempt_id": attempt_id,
+                            "input_fingerprint": input_fingerprint}), "{}", now(),
+        ))
+        return used + 1
 
     @staticmethod
     def _document(meaning):
@@ -377,6 +381,11 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
             "SELECT * FROM requirements_attempts WHERE job_id=? ORDER BY started_at DESC,attempt_id DESC LIMIT 1", (job_id,),
         ).fetchone()
         return dict(row) if row else None
+
+    def attempt_fingerprint(self, attempt_id):
+        with self.database.connect() as conn:
+            row = conn.execute("SELECT input_fingerprint FROM requirements_attempts WHERE attempt_id=?", (attempt_id,)).fetchone()
+            return row[0] if row else None
 
     def start_attempt(self, attempt):
         with self.database.transaction() as connection:

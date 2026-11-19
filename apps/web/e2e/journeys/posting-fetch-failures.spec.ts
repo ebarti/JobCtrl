@@ -1,6 +1,90 @@
-import { test, expect, json, action, terminal } from "../harness/fixtures.js";
+import { test, expect, json, action, terminal, modelCall } from "../harness/fixtures.js";
+import { posting, respondProducer } from "./preparation-cohort-data.js";
+import { citeSources } from "./requirements-data.js";
 
 test.use({ features: "jobs" });
+
+test("URL imports wait for occupied model capacity and survive closing Jobs and restarting its worker", async ({ api, app, page }, testInfo) => {
+  test.setTimeout(120_000);
+  const [holder, target, abandoned] = [901, 902, 903].map(posting);
+  const heldRequest = api.post("/v1/jobs/import-url", { data: { url: holder!.url }, timeout: 110_000 });
+  respondProducer(await app.external.next(), [holder!]);
+  const held = await modelCall(app, "page_interpretation");
+  try {
+    await page.goto("/jobs");
+    await page.getByText("Add a job by URL or text", { exact: true }).click();
+    await page.getByText("Import posting URL", { exact: true }).click();
+    const form = page.locator("form.jobs-capture__url");
+    await form.locator("input").fill(target!.url);
+    await form.getByRole("button", { name: "Import job", exact: true }).click();
+    respondProducer(await app.external.next(), [target!]);
+    const queue = page.getByRole("region", { name: "Recent URL imports" });
+    await expect(queue).toContainText("Queued for model capacity", { timeout: 6000 });
+    await queue.scrollIntoViewIfNeeded();
+    const screenshot = testInfo.outputPath("queued-for-model-capacity.png");
+    await page.screenshot({ path: screenshot, animations: "disabled" });
+    await testInfo.attach("jobs-import-queued-under-load", { contentType: "image/png", path: screenshot });
+    type Import = { runId: string; url: string; status: string; errorCode: string | null; jobId: string | null };
+    const read = async () => (await json<{ imports: Import[] }>(api, "get", "/v1/jobs/url-imports")).imports;
+    const original = (await read()).find((item) => item.url === target!.url)!;
+    const duplicate = await api.post("/v1/actions/jobs.capture_url", { data: { url: target!.url } });
+    expect(duplicate.status()).toBe(409);
+    expect((await duplicate.json()).error.details.runId).toBe(original.runId);
+    const other = await action(api, "jobs.capture_url", { url: abandoned!.url });
+    respondProducer(await app.external.next(), [abandoned!]);
+    await expect.poll(async () => (await read()).find((item) => item.runId === other.runId)?.status).toBe("waiting_for_capacity");
+    await api.post(`/v1/action-runs/${other.runId}/cancel`, { data: {} });
+    expect(await terminal(api, other.runId)).toMatchObject({ status: "cancelled" });
+    const browser = page.context();
+    await page.close();
+    await app.restartWorker();
+    const recoveredFetch = await app.external.next({ timeout: 50_000 });
+    respondProducer(recoveredFetch, [target!]);
+    const reopened = await browser.newPage();
+    await reopened.goto("/jobs");
+    await reopened.getByText("Add a job by URL or text", { exact: true }).click();
+    const recoveredQueue = reopened.getByRole("region", { name: "Recent URL imports" });
+    await expect(recoveredQueue).toContainText("Queued for model capacity");
+    const field = (value: string) => ({ value, citations: citeSources(held, ["rendered_page"]), rationale: "Explicit source-bound classification for the held request." });
+    held.reply({ availability: field("unknown"), page_kind: field("listing"), access_state: field("clear"), apply_control: field("unknown") });
+    expect((await (await heldRequest).json()).error.code).toBe("manual_capture_required");
+    for (const op of ["page_interpretation", "posting_extraction", "description_quality"])
+      respondProducer(await modelCall(app, op), [target!]);
+    const finished = await terminal(api, original.runId);
+    expect(finished).toMatchObject({ status: "succeeded", result: { url: target!.url, title: target!.title } });
+    const saved = (finished.result as { job_id: string }).job_id;
+    await expect(recoveredQueue.getByRole("link", { name: "Open job" })).toHaveAttribute("href", new RegExp(saved));
+    const history = await json<{ observations: unknown[] }>(api, "get", `/v1/jobs/${saved}/snapshots`);
+    expect(history.observations).toHaveLength(1);
+    expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(4);
+  } finally {
+    if (!held.closed) held.disconnect();
+    await heldRequest.catch(() => {});
+  }
+});
+
+test("URL import reuses settled model stages and refuses to repeat an interrupted paid call", async ({ api, app }) => {
+  test.setTimeout(110_000);
+  const target = posting(904);
+  const request = { data: { url: target.url }, headers: { "Idempotency-Key": "synthetic-interrupted-import" } };
+  const submitted = await api.post("/v1/actions/jobs.capture_url", request);
+  expect(submitted.status()).toBe(202);
+  const { runId } = await submitted.json() as { runId: string };
+  respondProducer(await app.external.next(), [target]);
+  respondProducer(await modelCall(app, "page_interpretation"), [target]);
+  const interrupted = await modelCall(app, "posting_extraction");
+  try {
+    await app.restartWorker();
+    respondProducer(await app.external.next({ timeout: 50_000 }), [target]);
+    expect(await terminal(api, runId)).toMatchObject({ status: "failed", errorCode: "import_call_unsettled" });
+    expect(await (await api.post("/v1/actions/jobs.capture_url", request)).json()).toMatchObject({ runId, status: "failed" });
+    expect(app.external.calls.filter((call) => call.path === "/model").map((call) => call.body["operation"]))
+      .toEqual(["page_interpretation", "posting_extraction"]);
+    expect((await json<{ total: number }>(api, "get", "/v1/jobs")).total).toBe(0);
+  } finally {
+    if (!interrupted.closed) interrupted.disconnect();
+  }
+});
 
 test("posting fetch refusals retain safe typed evidence and accepted sources without model calls or implicit retries", async ({ api, app }, testInfo) => {
   const posting = await json<{ job_id: string; revision: number }>(api, "post", "/v1/jobs/capture", {

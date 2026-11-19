@@ -105,10 +105,17 @@ class RequirementModelAdapter:
                 return parsed, self._bind(provenance, publication_posting, source_binding)
         if retained_request is not None:
             raise RequirementError("requirements_cohort_interrupted")
-        if budget is not None:
-            budget.consume(input_fingerprint)
+        if budget is not None and budget.check_reservation is not None:
+            # An already admitted owner intent keeps its exact refusal, even if
+            # that interrupted dispatch also left global accounting unresolved.
+            budget.check_reservation(input_fingerprint)
+
+        def admitted(connection, _receipt_id):
+            if budget is not None:
+                budget.consume(input_fingerprint, connection)
+
         try:
-            result = await self.gateway.determine(**arguments, execution=execution)
+            result = await self.gateway.determine(**arguments, execution=execution, on_admitted=admitted)
         except AppError as failure:
             self._raise_catalog_refusal(failure, kind, context)
             raise
