@@ -81,7 +81,9 @@ cites both the posting and the relevant preference. A posting can use a differen
 title and still qualify. Unsupported or unresolved role scope stays outside the
 new-job count. A LinkedIn card without a description receives a targeted detail
 request before the role check. A missing description leaves role scope unresolved. Model or source failures remain visible
-in the search result. Person Fit runs later and checks your qualifications
+in the search result. A durable search waits when the model lane is occupied.
+If the worker stops during a paid role check, recovery uses a completed receipt
+or reports that its outcome is unresolved. Person Fit runs later and checks your qualifications
 against the job's requirements. A search using explicit one-run query overrides
 can still explore other roles.
 

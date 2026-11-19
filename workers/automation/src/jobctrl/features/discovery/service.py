@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from datetime import datetime, timedelta, timezone
 import json
 
 from jobctrl.app.errors import AppError, ConflictError
+from jobctrl.app.model_capacity import wait_for_model_capacity
 from jobctrl.features.discovery.domain import SOURCE_FETCH_POLICY, fingerprint, now, search_units, validate_settings
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY, match_role_targets, posting_role_evidence, read_role_decision, role_binding, role_target_sources
 from jobctrl.features.discovery.query_fairness import FAIR_QUERY_SCHEDULING, run_fair_query_units
 from jobctrl.features.discovery.remote_search import validate_remote_search_scope
+from jobctrl.features.discovery.role_calls import ROLE_CALL_CUSTODY
 from jobctrl.features.discovery.targets import TargetPlanner
 from jobctrl.features.discovery.ports import DestinationPolicy, DiscoveryStore, ExecutionPort, JobsPort, ModelPort
+
+
+class _SettledIntake(Exception):
+    def __init__(self, outcome):
+        self.outcome = outcome
 
 
 class DiscoveryService:
@@ -32,7 +39,6 @@ class DiscoveryService:
         self.profile, self.execution = profile, execution
         self.destination_policy = destination_policy
         self.targets = TargetPlanner(repository, profile, model)
-        self._role_checks = asyncio.Lock()
 
     def get_settings(self):
         return self.repository.read_settings()
@@ -383,19 +389,18 @@ class DiscoveryService:
         if reviewed is not None:
             reviewed = read_role_decision(self.model, reviewed, posting, plan)
         elif not read_only:
-            async with self._role_checks:
-                self.jobs.assert_posting_current(job_id, posting["revision"], posting["source_hash"])
-                reviewed = await match_role_targets(self.model, posting, plan)
-                reviewed = self.repository.role_review(
-                    binding, decision=reviewed,
-                    guard=lambda conn: self.jobs.assert_posting_current(job_id, posting["revision"], posting["source_hash"], connection=conn),
-                )
+            def current(conn):
+                self.jobs.assert_posting_current(job_id, posting["revision"], posting["source_hash"], connection=conn)
+
+            reviewed = await match_role_targets(self.model, posting, plan, store=self.repository,
+                                                owner="role-call:review:" + fingerprint(binding), guard=current)
+            reviewed = self.repository.role_review(binding, decision=reviewed, guard=current)
         self.jobs.assert_posting_current(job_id, posting["revision"], posting["source_hash"])
         if read_only and reviewed is None and not posting_role_evidence(posting)["description"].strip():
             return {**binding, "decision": None, "reason": "posting_description_missing"}
         return {**binding, "decision": reviewed}
 
-    async def search(self, context, payload):
+    async def search(self, context, payload, *, durable=True):
         run_id = context.run_id
         saved = self.repository.run_request(run_id)
         if saved:
@@ -440,9 +445,10 @@ class DiscoveryService:
                 "sourceFetchPolicy": SOURCE_FETCH_POLICY,
                 "boardQueryScheduling": FAIR_QUERY_SCHEDULING,
                 "criteriaAsOf": now(),
-                **({"roleTargetPolicy": ROLE_TARGET_POLICY} if role_target_sources(settings.get("targetPlan")) else {}),
+                **({"roleTargetPolicy": ROLE_TARGET_POLICY, "roleCallCustody": ROLE_CALL_CUSTODY}
+                   if role_target_sources(settings.get("targetPlan")) else {}),
             }
-        if request.get("roleTargetPolicy") not in {None, ROLE_TARGET_POLICY}:
+        if request.get("roleTargetPolicy") not in {None, ROLE_TARGET_POLICY} or request.get("roleCallCustody") not in {None, ROLE_CALL_CUSTODY}:
             raise AppError("discovery_role_policy_unsupported", "This search has an unsupported frozen role policy.", 409)
         if request.get("roleTargetPolicy") and not role_target_sources(request["settings"].get("targetPlan")):
             raise AppError("discovery_role_targets_missing", "The search lost its frozen role targets.", 409)
@@ -451,7 +457,8 @@ class DiscoveryService:
             source_fetch_policy=request.get("sourceFetchPolicy"),
         )
         execution_settings = {**request["settings"], "_criteriaAsOf": request.get("criteriaAsOf"),
-                              "_roleTargetPolicy": request.get("roleTargetPolicy")}
+                              "_roleTargetPolicy": request.get("roleTargetPolicy"), "_roleCallCustody": request.get("roleCallCustody"),
+                              "_durableRoleChecks": durable}
         if not units and not any(
             s["state"] in {"active", "experimental"}
             and s.get("kind") in {"ats_api", "employer_careers_page", "smart_extract"}
@@ -657,12 +664,28 @@ class DiscoveryService:
                                               "detailMethod": "jobstreaming.fetch_job_detail", "sourceUrl": posting["url"]}}
             if posting_role_evidence(posting)["description"].strip():
                 # A different source may have settled this receipt or filled the
-                # last slot while detail or a previous determination was pending.
-                async with self._role_checks:
-                    settled = self.repository.settled_intake(lease, key, limit, context.cancelled)
+                # last slot while detail or a model lane was pending.
+                def guard(connection):
+                    settled = self.repository.settled_intake(lease, key, limit, context.cancelled, connection)
                     if settled is not None:
-                        return settled
-                    decision = await match_role_targets(self.model, posting, plan)
+                        raise _SettledIntake(settled)
+
+                def wait_cancelled():
+                    if context.cancelled():
+                        return True
+                    guard(None)  # Stop waiting as soon as another source fills the run.
+                    return False
+
+                owner = "role-call:intake:" + fingerprint([lease["run_id"], posting["source_id"], posting.get("source_native_id") or posting["url"]])
+                wait = (wait_for_model_capacity(wait_cancelled, lane="discovery",
+                            on_wait=lambda reason: self.repository.waiting_for_role_capacity(lease, unit["unit_id"], reason))
+                        if settings.get("_durableRoleChecks") else nullcontext())
+                try:
+                    with wait:
+                        decision = await match_role_targets(self.model, posting, plan, store=self.repository, owner=owner, guard=guard,
+                                                            legacy_recovery=lease["epoch"] > 1 and settings.get("_roleCallCustody") is None)
+                except _SettledIntake as previous:
+                    return previous.outcome
                 posting = {**posting, "provenance": {**posting["provenance"], "roleTargetMatch": decision}}
                 excluded = decision["verdict"] != "match"
             else:

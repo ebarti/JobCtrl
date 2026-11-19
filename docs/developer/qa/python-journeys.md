@@ -1703,6 +1703,22 @@ The existing Jobs Start search and Remote posting-age journeys exercise the
 same role policy through the browser. The Remote journey uses the installed
 Indeed SDK transport and the same saved-role receipt across two board orders.
 
+The [worker recovery journeys](../../../apps/web/e2e/journeys/discovery-role-recovery.spec.ts)
+kill a worker during an admitted role decision with an unlimited monetary
+budget, and separately hold the discovery lane with an API-process review.
+They check external call counts, visible wait/refusal state, canonical job
+counts and the result of repeating a historical review.
+
+The interrupted-call reproduction issued two external calls and saved a job.
+The occupied-lane reproduction failed its only source. On the repaired source
+candidate `ed940f87ed05c5ab2ceac53463b8501cd348eae32feda777af431fd7d9c13c9e`,
+both recovery cases and all three saved-role journeys passed. The pinned-SDK
+Remote journey and a separate local predecessor upgrade passed on the same
+candidate. That upgrade held the original worker's role call, changed the
+provider's response after restart, and verified one call, zero jobs and an
+explicit unresolved source. The isolated upgrade used local predecessor
+`42d5f4eebd04de15992ef8a261ea286ed8595d8c`.
+
 ### Native Discovery accounting setup
 
 `discovery-accounting.spec.ts` runs a fresh owned application with the ordinary

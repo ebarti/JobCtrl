@@ -915,9 +915,9 @@ class DiscoveryRepository:
                 ),
             )
 
-    def settled_intake(self, lease, key, limit, cancelled):
+    def settled_intake(self, lease, key, limit, cancelled, connection=None):
         """Check the committed receipt and capacity before potentially paid qualification."""
-        with self.database.connect() as conn:
+        with nullcontext(connection) if connection is not None else self.database.connect() as conn:
             run = self.guard_run(conn, lease)
             if cancelled():
                 raise AppError("action_cancelled", "Discovery was cancelled.", 409)
@@ -929,6 +929,22 @@ class DiscoveryRepository:
             if at_limit:
                 return {"job_id": None, "outcome": "budget_exhausted", "replayed": False, "budget_reached": True, "created": False}
             return None
+
+    def role_call(self, owner, connection=None):
+        with nullcontext(connection) if connection is not None else self.database.connect() as conn:
+            row = conn.execute("SELECT input_fingerprint,result_json FROM discovery_operations WHERE operation_id=? AND kind='role_target_call'",
+                               (owner,)).fetchone()
+            return {"input_fingerprint": row["input_fingerprint"], "receipt_id": json.loads(row["result_json"])} if row else None
+
+    def bind_role_call(self, owner, expected, receipt_id, connection):
+        connection.execute("INSERT INTO discovery_operations VALUES(?,'role_target_call',?,?,?)",
+                           (owner, expected, json.dumps(receipt_id), now()))
+
+    def waiting_for_role_capacity(self, lease, unit_id, reason):
+        with self.database.transaction() as conn:
+            self.guard_run(conn, lease)
+            self.events.append(conn, "DiscoveryRoleTargetWaiting", {"runId": lease["run_id"], "unitId": unit_id, "reason": reason},
+                               feature="discovery", aggregate_id=lease["run_id"], stage="role_target")
 
     def role_review(self, binding, *, decision=None, guard=None, connection=None):
         """Retain post-search judgments separately from the original intake outcome."""

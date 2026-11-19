@@ -33,6 +33,14 @@ escape hatch.
   accepted job records the receipt and frozen plan identity. A listing without
   a description requires native detail or records a missing source. Explicit query
   overrides and earlier runs retain their respective acquisition contracts.
+  Gateway admission atomically records the paid receipt for the run and candidate,
+  or for the exact historical review revision. Recovery resolves that receipt
+  before any provider call. A matching interrupted legacy receipt also blocks
+  redispatch. A recovered older saved-role run without exact paid-call custody
+  needs a new deliberate search for a candidate whose outcome cannot be recovered.
+  Durable intake publishes `DiscoveryRoleTargetWaiting` while the
+  configured lane or monetary accounting is occupied. Historical reviews return
+  current contention or the earlier call's outcome to the requesting client.
 - New runs isolate each selected board into a stable query/location/board unit;
   each owns its provider checkpoint and outcome. Terminal board failures are
   reused on same-run worker recovery; a new explicit run is required to retry

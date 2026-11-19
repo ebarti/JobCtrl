@@ -6,6 +6,7 @@ from pydantic import Field, StrictStr, ValidationError
 
 from jobctrl.app.errors import AppError
 from jobctrl.features.discovery.domain import fingerprint
+from jobctrl.features.discovery.role_calls import dispatch_role_call
 from jobctrl.semantic import Citation, DeterminationFailure, DeterminationModel, Source, validate_citations
 
 
@@ -83,7 +84,7 @@ def read_role_decision(model, saved, posting, plan):
     return {**saved, **decision}
 
 
-async def match_role_targets(model, posting, plan):
+async def match_role_targets(model, posting, plan, *, store, owner, guard, legacy_recovery=False):
     """Assess this posting against authored preferences. Identical model inputs can share authority."""
     offered, sources = _role_sources(posting, plan)
     schema = RoleTargetDecision.model_json_schema()
@@ -106,19 +107,10 @@ async def match_role_targets(model, posting, plan):
         sources=[s.model_dump() for s in sources], response_schema=schema, execution=execution,
     )
     expected = model.fingerprint(**request)
-    receipt = model.find_succeeded(expected)
-    decision = None
-    if receipt is not None:
-        try:
-            decision = _validate_target_decision(receipt["value"], sources)
-        except AppError:
-            # A previous structurally completed but ungrounded answer cannot be reused.
-            receipt = None
-    if receipt is None:
-        response = await model.determine(**request)
-        receipt = model.receipt(response.provenance["receipt_id"])
-        decision = _validate_target_decision(receipt["value"], sources)
+    receipt = await dispatch_role_call(model, store, owner, request, expected,
+                                       lambda value: _validate_target_decision(value, sources), guard, legacy_recovery=legacy_recovery)
     _verify_role_receipt(receipt, expected, execution.provider, execution.model)
+    decision = _validate_target_decision(receipt["value"], sources)
     return {
         **decision.model_dump(), "policy": ROLE_TARGET_POLICY, "targetPlanId": plan["planId"],
         "profileRevision": plan["profileRevision"], "postingEvidenceFingerprint": fingerprint(offered),

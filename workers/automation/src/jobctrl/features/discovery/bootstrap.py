@@ -176,7 +176,7 @@ def build_feature(runtime, *, jobs, profile=None, browser_port=None, **ports):
 
     async def search(request):
         body = await json_object(request)
-        return JSONResponse(await service.search(ActionContext(run_id=str(uuid4()), request_id=str(uuid4())), body))
+        return JSONResponse(await service.search(ActionContext(run_id=str(uuid4()), request_id=str(uuid4())), body, durable=False))
 
     async def search_action(context, payload):
         return {**await service.search(context, payload), "preparationAvailable": False}

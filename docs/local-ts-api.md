@@ -137,7 +137,9 @@ and can assess a saved job from an earlier run that recorded a target plan.
 The response identifies the posting revision, source hash, plan, verdict,
 source citations and model receipt. Review preserves the job, its original
 admission and its Fit score. Foreign run membership, absent frozen targets and
-stale writes are refused.
+stale writes are refused. Repeating a POST for the same revision returns its
+recorded decision or failure. An in-flight or interrupted role call returns
+`discovery_role_call_unsettled` and its outcome needs review.
 
 In the complete product, the same `discovery.search` identity stays active
 through Preparation's initial fit-only `search` recipe. Source status remains
