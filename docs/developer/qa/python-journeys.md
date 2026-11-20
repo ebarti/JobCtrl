@@ -71,6 +71,12 @@ Listing these scenarios is not evidence that the complete current candidate pass
 
 ### Accepted postings and Fit currentness
 
+The [predecessor Fit journey](../../../apps/web/e2e/journeys/legacy-fit-reasons.spec.ts)
+checks the Jobs grid before and after a matching Fit skip is recorded. It uses
+an exact posting revision and hash from the search. A fresh language decision
+on the unchanged posting updates the Fit tab. The grid links the earlier search’s
+skip until a posting refresh changes the source. The grid uses bulk reads.
+
 The [URL import journeys](../../../apps/web/e2e/journeys/posting-fetch-failures.spec.ts)
 hold the enrichment lane with a separate request and submit a posting through
 Jobs. The browser shows the persisted queue, a duplicate joins the existing

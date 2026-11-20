@@ -216,7 +216,10 @@ Follow the label to inspect the recorded run. The Fit tab includes the recorded
 failure code. A current non-English posting is marked as skipped. All of these
 jobs still match the **Not assessed** filter while no Fit score exists. When
 the recorded run cannot be tied to the current posting, the table keeps the
-general **Not assessed** label. Selected job
+general **Not assessed** label. On older servers, **Non-English in this run**
+means the run’s requirements check classified this exact posting revision.
+**Skipped in this run · non-English** means its Fit step also recorded the skip.
+The Fit tab shows the latest accepted requirements for the posting. Selected job
 details identify an active `search` or `assess` recipe as **Assessing fit**, with
 its current stage; this task generates no resume. The ordinary **Prepare resume**
 action is available again after assessment settles. If the preparation owner is

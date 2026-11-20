@@ -29,19 +29,28 @@ function explain(input: FitPreparationInput, candidates: RunForJob[]): FitPrepar
   const requirements = steps?.get("requirements");
   const recorded = requirements?.status === "succeeded" ? requirements.result : null;
   const matchesPosting = recorded?.postingRevision === job.revision && recorded?.postingHash === job.source_hash;
-  const languageFromRun = matchesPosting && recorded?.status === "unsupported_language";
+  const languageFromRun = matchesPosting && recorded?.status === "unsupported_language" &&
+    typeof recorded.revision === "number" && Number.isSafeInteger(recorded.revision) && recorded.revision > 0;
+  const fit = steps?.get("fit");
   if (currentRequirements?.status === "unsupported_language") {
     const linked = languageFromRun && currentRequirements.revision === recorded?.revision;
     return { label: "Skipped · non-English posting", detail: "The accepted posting-language check identified a non-English posting.",
       runId: linked ? selected!.run.runId : null };
   }
-  if (!selected || !steps || languageFromRun) return null;
+  if (!selected || !steps) return null;
   const { run } = selected;
+  // Older Jobs grids omit the current Requirements binding. Describe only what
+  // this run recorded for this exact posting, even if it is later reassessed.
+  if (currentRequirements === undefined && languageFromRun) {
+    if (!fit) return { label: "Non-English in this run", detail: "This run’s requirements check marked this posting revision as non-English.", runId: run.runId };
+    if (fit.status === "skipped" && fit.result?.skip === "unsupported_posting_language" && fit.result.requirements_revision === recorded.revision &&
+      (fit.postingRevision === undefined || fit.postingRevision === job.revision))
+      return { label: "Skipped in this run · non-English", detail: "This run skipped Fit after its requirements check marked this posting revision as non-English.", runId: run.runId };
+  }
   const enrich = steps.get("enrich");
   const role = steps.get("role_analysis");
   const upstreamRevision = role?.status === "succeeded" ? role.result?.postingRevision
     : enrich && ["succeeded", "skipped"].includes(enrich.status) ? enrich.result?.revision : undefined;
-  const fit = steps.get("fit");
   for (const [stage, label] of stages) {
     const step = steps.get(stage);
     if (step?.status !== "failed") continue;
@@ -49,7 +58,7 @@ function explain(input: FitPreparationInput, candidates: RunForJob[]): FitPrepar
     if (revision !== job.revision || (recorded?.postingHash && !matchesPosting)) return null;
     return { label: label + " failed", detail: `${label} failed${step.errorCode ? ` (${step.errorCode})` : ""}.`, runId: run.runId };
   }
-  if (!active(run) || !run.cohortFrozen || run.recipe !== "search" || !["per_job", "cohort"].includes(run.targetRoute ?? "")) return null;
+  if (languageFromRun || !active(run) || !run.cohortFrozen || run.recipe !== "search" || !["per_job", "cohort"].includes(run.targetRoute ?? "")) return null;
   if (recorded && !matchesPosting || upstreamRevision !== undefined && upstreamRevision !== job.revision) return null;
   for (const step of steps.values()) {
     if (["pending", "running"].includes(step.status) && step.postingRevision !== undefined && step.postingRevision !== job.revision) return null;
