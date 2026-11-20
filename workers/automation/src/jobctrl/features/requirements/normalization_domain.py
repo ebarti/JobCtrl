@@ -21,6 +21,34 @@ NORMALIZATION_PARTITION_V4_PROMPT_VERSION = "requirements-capability-demand-part
 NORMALIZATION_PARTITION_V5_PROMPT_VERSION = "requirements-capability-demand-partition-v5"
 NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v6"
 
+# Each active wire keeps its own provider prompt identity. A stored predecessor
+# still names the exact original schema, instructions and receipt fingerprint.
+BACKGROUND_MANUAL_PROMPT = NORMALIZATION_PROMPT_VERSION + "-background-v1"
+BACKGROUND_COHORT_PROMPT = COHORT_PROMPT_VERSION + "-background-v1"
+BACKGROUND_REFRESH_PROMPT = TABLE_CATALOG_PROMPT_VERSION + "-background-v1"
+BACKGROUND_TRANSPORTS = {
+    BACKGROUND_MANUAL_PROMPT: NORMALIZATION_PROMPT_VERSION,
+    BACKGROUND_COHORT_PROMPT: COHORT_PROMPT_VERSION,
+    BACKGROUND_REFRESH_PROMPT: TABLE_CATALOG_PROMPT_VERSION,
+}
+BACKGROUND_INSTRUCTION = """
+SOURCE-ESTABLISHED ALTERNATIVES IN PRIOR BACKGROUND
+Determine what the posting asks a person to have done or experienced. If prior professional
+work in any one of several stated fields, roles or environments satisfies a single background
+prerequisite, the alternatives can themselves define one professional_experience meaning.
+Preserve the choice, including an open-ended route when the posting offers one, in the complete job demand. Where the
+choice defines the only meaningful core, retain it there too. No technical act common to all
+routes is necessary. Selecting one route, requiring every route, inventing an umbrella
+practice or reducing a bounded choice to generic experience would each change eligibility.
+A partially overlapping catalog entry alone does not make a clear source uncertain. Only
+reuse a core the sources actually support, and preserve different jobs' actual demands.
+When the source instead asks for a demonstrable technical practice with examples or a choice
+of instruments, retain that practice as a skill and preserve any material choice at its
+stated scope. Retain separately demanded competences or background as separate requirements.
+If owned evidence does not establish whether a background is required, which routes qualify,
+or whether separate practice is required, retain material uncertainty for the affected inputs.
+"""
+
 
 class CapabilityFields(QualifiedMeaning):
     group_id: StrictStr = Field(min_length=1, max_length=120)
@@ -114,6 +142,7 @@ def bind_normalization_selection(value: CatalogNormalizationSelection, *, contex
 
 
 def bind_normalization_slots(value, *, context, sources, prompt_version=NORMALIZATION_PROMPT_VERSION):
+    prompt_version = BACKGROUND_TRANSPORTS.get(prompt_version, prompt_version)
     if prompt_version == COHORT_PROMPT_VERSION:
         expanded = expand_group_references(value.model_dump(), context, sources)
         intermediate, partition_binding = bind_partition_selection(value, context=context, expanded=expanded)

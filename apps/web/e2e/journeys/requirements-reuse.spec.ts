@@ -1,6 +1,6 @@
 import { test, expect, json, modelCall, action, completed, terminal, type ExternalCall } from "../harness/fixtures.js";
 import { captureReusePosting, acceptReuseRequirements, reusableModelCatalog, type CapturedPosting, type RequirementSnapshot } from "./reuse-data.js";
-import { catalogContext, catalogMatching, catalogSource, citeSources, modelSources, EXTRACTION_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION,
+import { catalogContext, catalogMatching, catalogSource, citeSources, modelSources, EXTRACTION_PROMPT_VERSION, V6_NORMALIZATION_PROMPT_VERSION,
   REFRESH_NORMALIZATION_PROMPT_VERSION, SOURCE_DICTIONARY_PROMPT_VERSION, typedExtraction } from "./requirements-data.js";
 
 const requirement = [{ localId: "recovery", text: "Implement durable workflow recovery." }];
@@ -160,7 +160,7 @@ test("one complete single-job comparison binds all 100 original postings and eve
 });
 
 for (const [version, sourceRevision, prompt] of [
-  ["v6", "38ef94613ebb7c0413d8d5ee89987ef860f53b13", NORMALIZATION_PROMPT_VERSION],
+  ["v6", "38ef94613ebb7c0413d8d5ee89987ef860f53b13", V6_NORMALIZATION_PROMPT_VERSION],
   ["v8", "e41c55189285697549ea35d40bb62b4070c9462b", SOURCE_DICTIONARY_PROMPT_VERSION],
 ] as const) test.describe(`single-job catalog transport upgrade from ${version}`, () => {
   test.use({ sourceRevision });

@@ -5,7 +5,7 @@ import { createBaseline, type Profile } from "./core-data.js";
 import { createScoredFit, type FitState } from "./fit-data.js";
 import { servePostingAssessment, serveQualification } from "./search-assessment-data.js";
 import { authoredPartition, readCatalog, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
-import { catalogMatching, memberRoots, modelSources, NORMALIZATION_PROMPT_VERSION, normalizationFingerprint, typedExtraction, type CatalogContext } from "./requirements-data.js";
+import { catalogMatching, memberRoots, modelSources, V6_NORMALIZATION_PROMPT_VERSION, normalizationFingerprint, typedExtraction, type CatalogContext } from "./requirements-data.js";
 import { COMMON_DEMAND, posting, respondProducer, untilNormalization, type CohortPosting } from "./preparation-cohort-data.js";
 import { cohortCitationSelection, qualificationBatchDecision, qualificationBindings } from "./qualification-data.js";
 
@@ -475,7 +475,9 @@ test.describe("actual serial preparation predecessor", () => {
     const held = await app.external.next();
     expect(held.path).toBe("/posting-page");
     expect(held.body).toEqual({ url: second.url });
-    const before = await json<{ jobIds: string[]; jobConcurrency: number; executionPolicy?: unknown; steps: { jobId: string; stage: string; status: string; result: unknown }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
+    const before = await json<{ jobIds: string[]; jobConcurrency: number; executionPolicy?: unknown; steps: {
+      jobId: string | null; stage: string; status: string; result: unknown; postingRevision?: number
+    }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
     expect(before.executionPolicy).toBeUndefined();
     expect(before.jobConcurrency).toBe(1);
     expect(before.jobIds).toHaveLength(2);
@@ -494,7 +496,7 @@ test.describe("actual serial preparation predecessor", () => {
     expect(resumed.path).toBe("/posting-page");
     expect(resumed.body).toEqual({ url: second.url });
     await servePostingAssessment(app, library, second, { pageRequest: resumed, qualificationExpected: false, catalogDecision: (call) => {
-      expect(call.body["prompt_version"]).toBe(NORMALIZATION_PROMPT_VERSION);
+      expect(call.body["prompt_version"]).toBe(V6_NORMALIZATION_PROMPT_VERSION);
       expect(call.body["context"]).not.toHaveProperty("cohort_texts");
       const group = retainedCapability(call, accepted.requirements[0]!.requirement_id, "recovery");
       group.memberIds.push(...(call.body["context"] as CatalogContext).incoming.map((row) => row.member_id));
@@ -518,7 +520,15 @@ test.describe("actual serial preparation predecessor", () => {
     expect(after.executionPolicy).toBeUndefined();
     expect(after.jobConcurrency).toBe(1);
     expect(after.jobIds).toEqual(before.jobIds);
-    for (const step of before.steps.filter((row) => row.status === "succeeded")) expect(after.steps).toContainEqual(step);
+    for (const step of before.steps.filter((row) => row.status === "succeeded")) {
+      const matches = after.steps.filter(row => row.jobId === step.jobId && row.stage === step.stage);
+      expect(matches).toHaveLength(1);
+      const { postingRevision, ...originalFields } = matches[0]!;
+      expect(originalFields).toEqual(step);
+      if (step.stage === "role_analysis" || step.stage === "requirements") expect(postingRevision).toBe(accepted.posting_revision);
+      else if (step.stage === "enrich") expect(postingRevision).toBe(1); // The original discovered listing.
+      else expect(postingRevision).toBeUndefined();
+    }
     const retained = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${before.jobIds[0]}/requirements`);
     expect(retained.requirements[0]!.requirement_id).toBe(accepted.requirements[0]!.requirement_id);
     expect(retained.requirements[0]!.extraction_determination_id).toBe(accepted.requirements[0]!.extraction_determination_id);

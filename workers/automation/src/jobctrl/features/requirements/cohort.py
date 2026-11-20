@@ -8,6 +8,7 @@ from jobctrl.app.errors import ConflictError
 from .domain import (CONTRACT_VERSION, ModelCallBudget,
                      RequirementError, bind_extraction, canonical_json, fingerprint, validate_extraction_selection)
 from .cohort_transport import COHORT_PROMPT_VERSION
+from .normalization_domain import BACKGROUND_COHORT_PROMPT
 from .extraction_wire import EXTRACTION_VERSION, extraction_wire
 
 COHORT_VERSION = "requirements-initial-cohort-v1"
@@ -148,12 +149,16 @@ class RequirementsCohortService:
             self.store.update_cohort_operation(operation_id, {"status": "accepted", "result": result}, connection=connection)
             return result
 
-    async def finalize_cohort(self, prepared, *, operation_id, cancelled=lambda: False, heartbeat=None):
+    async def finalize_cohort(self, prepared, *, operation_id, cancelled=lambda: False, heartbeat=None,
+                              catalog_prompt_version=BACKGROUND_COHORT_PROMPT):
         self._validate_operation_id(operation_id)
         if (not operation_id or not isinstance(prepared, list) or not 1 <= len(prepared) <= 1000
                 or len({row["job_id"] for row in prepared}) != len(prepared)):
             raise RequirementError("requirements_cohort_scope_invalid")
-        action = fingerprint({"cohort_version": COHORT_VERSION, "normalization_prompt_version": COHORT_PROMPT_VERSION,
+        version = COHORT_PROMPT_VERSION if catalog_prompt_version is None else catalog_prompt_version
+        if version not in (COHORT_PROMPT_VERSION, BACKGROUND_COHORT_PROMPT):
+            raise RequirementError("requirements_citation_wire_changed")
+        action = fingerprint({"cohort_version": COHORT_VERSION, "normalization_prompt_version": version,
                               "prepared": prepared})
         state = self.store.cohort_operation(operation_id, action)
         if state is not None and state.get("result") is not None:
@@ -195,7 +200,7 @@ class RequirementsCohortService:
         if state["incoming"]:
             report = await self._normalize_catalog(captured=state["captured"], proposals=state["proposals"], incoming=state["incoming"],
                 operation_id=operation_id, action_fingerprint=action, cancelled=cancelled, heartbeat=heartbeat,
-                cohort_state=state, cohort_guard=frozen_jobs)
+                cohort_state=state, cohort_guard=frozen_jobs, prompt_version=version)
             revisions.update({row["job_id"]: row["revision"] for row in report["affected_jobs"]})
         else:
             with self.store.database.transaction() as connection:

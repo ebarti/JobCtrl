@@ -123,6 +123,12 @@ fingerprints. It upgrades real v6 and v8 workspaces, rereads an accepted
 action and refuses an interrupted paid comparison before a new v9 refresh.
 It also builds a complete catalog through 100 real single-job refreshes in an
 owned synthetic workspace and verifies every posting and occurrence on the final call.
+The [background alternatives journey](../../../apps/web/e2e/journeys/requirements-background.spec.ts)
+retains an original v9 refusal across upgrade, checks an explicitly admitted
+new comparison against the same extraction, and follows the two independent
+model-selected demands through Fit. A later unresolved comparison preserves
+the first accepted snapshot. These controlled choices verify the model's
+authority and publication behavior.
 The [payload boundary case](../../../apps/web/e2e/journeys/requirements.spec.ts)
 sends a complete synthetic catalog whose original source documents exceed
 1 MiB and admits 100 distinct incoming definitions with their complete source

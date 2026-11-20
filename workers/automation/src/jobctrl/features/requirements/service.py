@@ -21,7 +21,8 @@ from .cohort import RequirementsCohortService
 from .cohort_transport import REFRESH_CATALOG_PROMPT_VERSION
 from .catalog_transport import TABLE_CATALOG_PROMPT_VERSION
 from .extraction_wire import EXTRACTION_VERSION, LEGACY_EXTRACTION_VERSION, extraction_wire
-from .normalization_domain import NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION
+from .normalization_domain import (BACKGROUND_COHORT_PROMPT, BACKGROUND_MANUAL_PROMPT, BACKGROUND_REFRESH_PROMPT,
+                                   NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION)
 
 
 MAX_POSTING_BYTES = 192000
@@ -33,7 +34,14 @@ def _never_cancelled() -> bool:
 
 
 class RequirementsService(RequirementsCohortService, CatalogNormalizationService):
-    refresh_catalog_prompt_version = TABLE_CATALOG_PROMPT_VERSION
+    refresh_catalog_prompt_version = BACKGROUND_REFRESH_PROMPT
+    cohort_catalog_prompt_version = BACKGROUND_COHORT_PROMPT
+
+    def admit_manual_catalog_prompt(self, operation_id, connection):
+        self.store.admit_catalog_prompt(operation_id, BACKGROUND_MANUAL_PROMPT, connection)
+
+    def admitted_catalog_prompt(self, operation_id):
+        return self.store.catalog_prompt(operation_id)
 
     def __init__(self, store: RequirementStore, jobs: PostingReader, model: RequirementModel):
         self.store = store
@@ -289,7 +297,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
     async def correct_occurrences(
         self, job_id: str, *, expected_revision: int, expected_posting_revision: int, corrections: list[dict],
         cancelled: Callable[[], bool] = _never_cancelled, operation_id: str | None = None,
-        heartbeat: Callable[[dict], object] | None = None,
+        heartbeat: Callable[[dict], object] | None = None, catalog_prompt_version=BACKGROUND_MANUAL_PROMPT,
     ) -> dict:
         """Replace exactly the selected interpretations, preserving all other authority."""
         self._validate_versions(expected_posting_revision, expected_revision)
@@ -302,7 +310,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         identifiers = [row["occurrence_id"] for row in corrections]
         if len(set(identifiers)) != len(identifiers):
             raise RequirementError("invalid_correction_selection")
-        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": NORMALIZATION_PROMPT_VERSION, "operation": "correct_occurrences",
+        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": catalog_prompt_version, "operation": "correct_occurrences",
             "job_id": job_id, "expected_revision": expected_revision,
             "expected_posting_revision": expected_posting_revision, "corrections": corrections})
         replay = self._replay_snapshot(operation_id, action_fingerprint)
@@ -380,7 +388,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
                 captured = self.store.normalization_capture(connection)
             await self._normalize_catalog(captured=captured, proposals={job_id: proposal}, incoming=self._incoming_members(occurrences),
                 operation_id=attempt_id, action_fingerprint=action_fingerprint, cancelled=cancelled,
-                heartbeat=heartbeat, budget=budget, guidance={"occurrence_corrections": corrections})
+                heartbeat=heartbeat, budget=budget, guidance={"occurrence_corrections": corrections}, prompt_version=catalog_prompt_version)
             return self.get_job_requirements(job_id)
         except asyncio.CancelledError:
             self.store.finish_attempt(attempt_id, "cancelled", "cancelled")
@@ -393,7 +401,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         self, job_id: str, occurrence_id: str, *, expected_revision: int,
         expected_posting_revision: int, requirement_id: str, requirement_revision: int,
         reason: str, cancelled: Callable[[], bool] = _never_cancelled,
-        operation_id: str | None = None,
+        operation_id: str | None = None, catalog_prompt_version=BACKGROUND_MANUAL_PROMPT,
     ) -> dict:
         """Validate an explicit binding inside the mandatory complete partition."""
         self._validate_versions(expected_posting_revision, expected_revision)
@@ -401,7 +409,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
             raise RequirementError("correction_reason_required")
         if type(requirement_revision) is not int or requirement_revision < 1:
             raise RequirementError("invalid_revision")
-        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": NORMALIZATION_PROMPT_VERSION,
+        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": catalog_prompt_version,
             "operation": "correct_binding", "job_id": job_id, "occurrence_id": occurrence_id,
             "expected_revision": expected_revision, "expected_posting_revision": expected_posting_revision,
             "requirement_id": requirement_id, "requirement_revision": requirement_revision, "reason": reason})
@@ -443,7 +451,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
                 operation_id=attempt_id, action_fingerprint=action_fingerprint, cancelled=cancelled,
                 guidance={"binding_correction": {"reason": reason, "occurrence_id": occurrence_id,
                     "requested_requirement_id": requirement_id, "authority": "The requested target is a user-selected hypothesis, not semantic proof."}},
-                required_bindings={replacement["_normalization_member_id"]: requirement_id})
+                required_bindings={replacement["_normalization_member_id"]: requirement_id}, prompt_version=catalog_prompt_version)
             return self.get_job_requirements(job_id)
         except asyncio.CancelledError:
             self.store.finish_attempt(attempt_id, "cancelled", "cancelled")
@@ -457,7 +465,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         expected_posting_revision: int, proposed: ExtractedRequirement, reason: str,
         cancelled: Callable[[], bool] = _never_cancelled,
         operation_id: str | None = None,
-        heartbeat: Callable[[dict], object] | None = None,
+        heartbeat: Callable[[dict], object] | None = None, catalog_prompt_version=BACKGROUND_MANUAL_PROMPT,
     ) -> dict:
         """Correct a canonical meaning without rewriting its previous revision.
 
@@ -468,7 +476,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         self._validate_versions(expected_posting_revision, expected_revision)
         if not reason.strip():
             raise RequirementError("correction_reason_required")
-        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": NORMALIZATION_PROMPT_VERSION, "operation": "revise", "requirement_id": requirement_id,
+        action_fingerprint = fingerprint({"contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": catalog_prompt_version, "operation": "revise", "requirement_id": requirement_id,
                                           "expected_revision": expected_revision, "job_id": job_id,
                                           "expected_posting_revision": expected_posting_revision,
                                           "proposed": proposed.model_dump(), "reason": reason})
@@ -525,7 +533,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         attempt_id = operation_id or str(uuid.uuid4())
         report = await self._normalize_catalog(captured=captured, proposals={}, incoming=[], operation_id=attempt_id,
             action_fingerprint=action_fingerprint, cancelled=cancelled, heartbeat=heartbeat, budget=budget,
-            source_posting=posting,
+            source_posting=posting, prompt_version=catalog_prompt_version,
             guidance={"canonical_correction": {"requirement_id": requirement_id, "proposed": proposed.model_dump(),
                 "reason": reason, "support_receipt": correction_receipt,
                 "authority": "Review this source-checked correction while normalizing the complete catalog; preserve each job's own demand."}},
@@ -566,7 +574,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         self, job_id: str, *, expected_posting_revision: int, expected_revision: int,
         force: bool = False, cancelled: Callable[[], bool] = _never_cancelled,
         heartbeat: Callable[[dict], object] | None = None,
-        operation_id: str | None = None, catalog_prompt_version: str | None = TABLE_CATALOG_PROMPT_VERSION,
+        operation_id: str | None = None, catalog_prompt_version: str | None = BACKGROUND_REFRESH_PROMPT,
     ) -> dict:
         self._validate_versions(expected_posting_revision, expected_revision)
         if type(force) is not bool:
@@ -575,7 +583,8 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         # Queued predecessor actions and preparation runs have no catalog transport pin.
         if catalog_prompt_version is None:
             catalog_prompt_version = NORMALIZATION_PROMPT_VERSION
-        if catalog_prompt_version not in (NORMALIZATION_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION, TABLE_CATALOG_PROMPT_VERSION):
+        if catalog_prompt_version not in (NORMALIZATION_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION, TABLE_CATALOG_PROMPT_VERSION,
+                                          BACKGROUND_MANUAL_PROMPT, BACKGROUND_REFRESH_PROMPT):
             raise RequirementError("requirements_citation_wire_changed")
         request = {
             "contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": catalog_prompt_version, "operation": "refresh", "job_id": job_id, "expected_posting_revision": expected_posting_revision,

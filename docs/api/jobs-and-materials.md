@@ -238,16 +238,19 @@ the fields that were recorded. The original Requirements read remains an
 optional accepted snapshot.
 
 Consolidation uses semantic policy `requirements-capability-demand-v2`. Explicit
-catalog repair and corrections use `requirements-capability-demand-partition-v6`.
+catalog repair and corrections use `requirements-capability-demand-partition-v6-background-v1`.
 New single-job refreshes and new searches on the per-job route use
-`requirements-capability-demand-partition-v9-tables`. Named columns identify
-the exact fields in each repeated row. References select whole source strings
+`requirements-capability-demand-partition-v9-tables-background-v1`. Shared
+initial-search cohorts use `requirements-capability-demand-partition-v7-cohort-background-v1`.
+The instruction revision clarifies a single prerequisite that accepts any of
+several prior backgrounds. Existing action IDs retain their admitted instructions.
+Named columns identify the exact fields in each repeated row. References select whole source strings
 and each source explicitly lists its available segment IDs beside its citation
 path layout. The owner verifies the reconstructed context and original source
 documents before dispatch and when binding the response. Groups can select
 only a retained capability ID for `reuse_requirement_id`. With no retained
 capabilities this field requires null. Previously admitted work keeps its
-original v6 or v8 format through retry. The complete input must fit the existing
+original v6, v7, v8 or v9 format through retry. The complete input must fit the existing
 1 MiB gateway bound and the selected provider's context.
 All three versions use `CatalogNormalizationSlots`, which requires a property for every supplied member
 in `member_slots` and every occurrence in `occurrence_slots`. Each slot is assigned

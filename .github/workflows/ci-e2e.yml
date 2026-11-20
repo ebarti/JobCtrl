@@ -48,6 +48,8 @@ jobs:
         run: git fetch --no-tags --depth=1 origin 17f9ce5be1de2f21735fb27d5dfe8f6d1b7c8118
       - name: Fetch the fixed predecessor for the single-job source dictionary
         run: git fetch --no-tags --depth=1 origin e41c55189285697549ea35d40bb62b4070c9462b
+      - name: Fetch the fixed predecessor for the original catalog table prompt
+        run: git fetch --no-tags --depth=1 origin e804fac0cf71f3294a71d77d43cc098f133bab34
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - name: Set up Node

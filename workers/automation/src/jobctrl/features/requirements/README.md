@@ -47,6 +47,13 @@ software implementation and technology use remain Skills when phrased as
 experience or prior work. Professional Experience requires a separate source-
 established role, domain or operating-context prerequisite.
 
+One explicitly accepted choice among prior fields, roles or environments can
+itself define a single Professional Experience prerequisite. The normalized
+job demand retains which backgrounds qualify. A shared technical practice
+with example tools remains a Skill. Separately requested skills or background
+retain their own evidence. Material doubt about what the source requires
+continues to refuse the complete comparison.
+
 Personal attributes, certifications/licenses, job conditions, benefits and
 application instructions are excluded. Numerical duration/tenure analysis is
 excluded, including empty generic experience residues manufactured by removing
@@ -144,7 +151,7 @@ authority. There is no top-k selection, paging, chunking, lexical fallback or
 separate novelty judgment. Existing-only repair and every semantic ingestion or
 correction use this mandatory gate.
 
-New single-job refreshes use `requirements-capability-demand-partition-v9-tables`.
+New single-job refreshes use `requirements-capability-demand-partition-v9-tables-background-v1`.
 The request supplies named column lists for repeated object shapes, a dictionary
 of repeated whole strings across context and sources, and shared citation path
 layouts. Each source retains its own ID and its explicitly offered segment IDs.
@@ -167,9 +174,13 @@ admission transaction. Searches record it in their initial preparation request
 and carry that request into retries. A missing marker selects v6, including
 unstarted jobs in a frozen search. A recorded v8 uses its original source
 string and citation path dictionaries. Previously paid requests retain their
-exact fingerprints and one-call allowance. Synchronous single-job refresh and
-new durable refreshes select v9. Explicit catalog repair, corrections and
-separately started selected Preparation recipes use v6. The shared initial-search cohort uses v7.
+exact fingerprints and one-call allowance. New requests add `-background-v1` to
+the distinct model prompt on each active format. Synchronous and durable
+single-job refreshes use v9 tables, explicit catalog repair, corrections and
+independently started Preparation use v6, and shared initial-search cohorts
+use v7. An earlier plain v6, v7, v8 or v9 operation keeps its original
+instructions through recovery. An explicitly admitted fresh action may reuse
+its validated extraction when the source and execution binding still match.
 
 The v6 immutable model result, `CatalogNormalizationSlots`, contains `status`, exact
 `catalog_revision`, `member_slots`, `occurrence_slots`, `capability_groups`,
@@ -309,7 +320,7 @@ another job's `r1`. Staging a receipt leaves the accepted snapshot untouched.
 
 `finalize_cohort` submits one complete retained catalog and all staged reusable
 occurrences to `requirements.match_catalog`. Its
-`requirements-capability-demand-partition-v7-cohort` wire stores repeated exact
+v7 cohort wire stores repeated exact
 source strings and citation path descriptors in request-local dictionaries. The
 owner verifies that expansion restores every original document and the complete
 context. The model can explicitly select a retained capability or demand

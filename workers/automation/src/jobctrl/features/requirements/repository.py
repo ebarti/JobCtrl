@@ -15,14 +15,30 @@ from .normalization_domain import NORMALIZATION_VERSION
 
 
 class SqliteRequirementStore(NormalizationStore, CohortStorage):
-    def admit_refresh_transport(self, operation_id, prompt_version, connection):
+    def admit_catalog_prompt(self, operation_id, prompt_version, connection):
         connection.execute("INSERT INTO requirements_refresh_transport VALUES (?,?)", (operation_id, prompt_version))
 
-    def refresh_transport(self, operation_id):
+    def catalog_prompt(self, operation_id):
         with self.read_session() as connection:
             row = connection.execute("SELECT prompt_version FROM requirements_refresh_transport WHERE operation_id=?",
                                      (operation_id,)).fetchone()
         return row["prompt_version"] if row is not None else None
+
+    def admit_consolidation_prompt(self, operation_id, current, predecessor):
+        # This synchronous public endpoint accepts caller-owned operation IDs.
+        # A paid or published pre-pin operation still owns its original request.
+        with self.database.transaction() as connection:
+            row = connection.execute("SELECT prompt_version FROM requirements_refresh_transport WHERE operation_id=?",
+                                     (operation_id,)).fetchone()
+            if row is not None:
+                return row["prompt_version"]
+            previous = connection.execute(
+                "SELECT 1 FROM requirements_normalization_intents WHERE operation_id=? "
+                "UNION ALL SELECT 1 FROM requirements_reconciliations WHERE operation_id=? LIMIT 1",
+                (operation_id, operation_id)).fetchone()
+            version = predecessor if previous is not None else current
+            self.admit_catalog_prompt(operation_id, version, connection)
+            return version
 
     def __init__(self, database, events):
         self.database = database

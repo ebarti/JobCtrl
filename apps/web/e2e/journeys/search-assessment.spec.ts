@@ -3,7 +3,7 @@ import { createBaseline, createPosting } from "./core-data.js";
 import type { FitState } from "./fit-data.js";
 import { servePostingAssessment, serveSavedAssessment, serveQualification } from "./search-assessment-data.js";
 import { authoredPartition, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
-import { modelSources, type CatalogContext } from "./requirements-data.js";
+import { modelSources, NORMALIZATION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
 import { qualificationBindings } from "./qualification-data.js";
 import { respondProducer, untilNormalization } from "./preparation-cohort-data.js";
 
@@ -129,6 +129,8 @@ test("explicit saved-job assessment recovers fit without acquisition and preserv
   await expect(history.locator(".preparation-run-row__outcomes")).toHaveCount(1);
   await expect(runRows.nth(0).getByRole("button", { name: /^Assess selected jobs/ })).toHaveAttribute("aria-expanded", "false");
   expect(app.external.calls.some((call) => call.path === "/discovery" || call.path === "/posting-page")).toBe(false);
+  expect(app.external.calls.filter(call => call.body["operation"] === "requirements.match_catalog")
+    .map(call => call.body["prompt_version"])).toEqual([NORMALIZATION_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION]);
   const operations = app.external.calls.filter((call) => call.path === "/model").map((call) => String(call.body["operation"]));
   expect(operations.filter((operation) => operation === "fit.qualification-batch")).toHaveLength(1);
   expect(operations.some((operation) => operation.startsWith("fit.coverage") || operation.startsWith("profile.wording") || operation.startsWith("resumes."))).toBe(false);

@@ -3,10 +3,13 @@ import { expect, type ExternalCall } from "../harness/fixtures.js";
 
 export type ModelSource = { source_id: string; text: string };
 export const EXTRACTION_PROMPT_VERSION = "requirements-v2-extract-v6-inference-rationale";
-export const NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v6";
+export const V6_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v6";
+export const NORMALIZATION_PROMPT_VERSION = V6_NORMALIZATION_PROMPT_VERSION + "-background-v1";
 export const SOURCE_DICTIONARY_PROMPT_VERSION = "requirements-capability-demand-partition-v8-sources";
-export const REFRESH_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v9-tables";
-export const COHORT_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v7-cohort";
+export const V9_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v9-tables";
+export const REFRESH_NORMALIZATION_PROMPT_VERSION = V9_NORMALIZATION_PROMPT_VERSION + "-background-v1";
+const v7CohortPrompt = "requirements-capability-demand-partition-v7-cohort";
+export const COHORT_NORMALIZATION_PROMPT_VERSION = v7CohortPrompt + "-background-v1";
 export const PARTITION_V5_PROMPT_VERSION = "requirements-capability-demand-partition-v5";
 export const PARTITION_V4_PROMPT_VERSION = "requirements-capability-demand-partition-v4";
 export const CITATION_SELECTION_PROMPT_VERSION = "requirements-capability-demand-citation-v3";
@@ -221,7 +224,8 @@ function tableRequest(call: ExternalCall) {
 }
 
 export function catalogContext(call: ExternalCall): CatalogContext {
-  return call.body["prompt_version"] === REFRESH_NORMALIZATION_PROMPT_VERSION ? tableRequest(call).context : call.body["context"] as CatalogContext;
+  return [V9_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION].includes(String(call.body["prompt_version"]))
+    ? tableRequest(call).context : call.body["context"] as CatalogContext;
 }
 
 type CatalogMeaning = { category: "skill" | "professional_experience"; name: string; definition: string };
@@ -235,7 +239,7 @@ type OccurrenceEvidence = Omit<CatalogContext["occurrences"][number],
 /** The current wire carries structural references. Meanings are read from the
  * referenced live source DTOs, never reconstructed from names or identifiers. */
 export function catalogSource<T>(call: ExternalCall, sourceId: string): T {
-  if (call.body["prompt_version"] === REFRESH_NORMALIZATION_PROMPT_VERSION) {
+  if ([V9_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION].includes(String(call.body["prompt_version"]))) {
     const { sources } = tableRequest(call);
     expect(sources.has(sourceId)).toBe(true);
     return sources.get(sourceId) as T;
@@ -341,8 +345,9 @@ export const occurrenceRoots = (value: CatalogSlots) => Object.entries(value.dem
  * independent handles and verbatim citation selections are joined here. */
 export function catalogNormalization(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]): CatalogSlots {
   const prompt = call.body["prompt_version"];
-  if (prompt !== NORMALIZATION_PROMPT_VERSION && prompt !== REFRESH_NORMALIZATION_PROMPT_VERSION && prompt !== SOURCE_DICTIONARY_PROMPT_VERSION
-      && prompt !== COHORT_NORMALIZATION_PROMPT_VERSION) throw new Error("Unexpected catalog partition version");
+  if (typeof prompt !== "string" || ![V6_NORMALIZATION_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION,
+    V9_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION, SOURCE_DICTIONARY_PROMPT_VERSION,
+    v7CohortPrompt, COHORT_NORMALIZATION_PROMPT_VERSION].includes(prompt)) throw new Error("Unexpected catalog partition version");
   return normalizationSlots(call, capabilities, demands, prompt);
 }
 
