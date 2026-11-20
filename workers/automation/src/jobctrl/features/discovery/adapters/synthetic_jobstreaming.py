@@ -19,7 +19,9 @@ def controlled_registry(workspace):
         raise AppError("synthetic_boundary_unowned", "The SDK transport requires an owned synthetic workspace.", 503)
     from jobstreaming import AdapterRegistry
     from jobstreaming.indeed import Indeed
+    from jobstreaming.linkedin import LinkedIn
     from jobstreaming.ziprecruiter import ZipRecruiter
+    from requests.adapters import HTTPAdapter
 
     access = os.environ.get("JOBCTRL_E2E_BOARD_ACCESS")
 
@@ -47,7 +49,25 @@ def controlled_registry(workspace):
         adapter.api_url = endpoint + "/ziprecruiter"
         return adapter
 
+    class LinkedInLoopback(HTTPAdapter):
+        def send(self, request, **kwargs):
+            # Preserve the SDK's canonical listing URL for targeted detail
+            # validation. Only the socket destination changes.
+            request.url = endpoint + "/linkedin" + request.path_url
+            kwargs["proxies"] = {}
+            return super().send(request, **kwargs)
+
+    def linkedin(**kwargs):
+        adapter = LinkedIn(**kwargs)
+        transport = LinkedInLoopback()
+        adapter.session.mount("http://", transport)
+        adapter.session.mount("https://", transport)
+        adapter.session.max_redirects = 0
+        adapter.session.headers.update({"Authorization": "Bearer " + owner["token"]})
+        return adapter
+
     registry = AdapterRegistry()
     registry.register("indeed", indeed)
+    registry.register("linkedin", linkedin)
     registry.register("zip_recruiter", zip_recruiter)
     return registry

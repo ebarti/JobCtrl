@@ -57,6 +57,9 @@ escape hatch.
   restore each query's count and the provider checkpoint restores its position.
   Backfill can revisit a partial page, preserving its acknowledged receipts.
   A terminal SDK rate limit defers that board's remaining units for the run.
+  A streamed error and a directly raised detail error use the same safe
+  rate-limit diagnostic. The run list explains older generic messages from
+  their recorded board rate-limit code, including after an upgrade.
   The shared run limit also covers concurrent registered sources. Previously
   admitted requests continue with their original scheduling policy.
 - The board adapter translates SDK authentication/configuration errors using

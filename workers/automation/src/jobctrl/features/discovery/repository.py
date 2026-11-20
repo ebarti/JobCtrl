@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 from jobctrl.features.discovery.coordinates import source_coordinate
-from jobctrl.features.discovery.domain import DEFAULT_SETTINGS, fingerprint, now, validate_settings
+from jobctrl.features.discovery.domain import BOARD_RATE_LIMIT_CODE, DEFAULT_SETTINGS, fingerprint, now, public_board_failure, validate_settings
 from jobctrl.features.discovery.qualification import posting_role_evidence, role_binding
 
 
@@ -171,7 +171,7 @@ class DiscoveryRepository:
                 source["politeness"] = {
                     "robotsDisallowedCount": 0,
                     "rateLimitedCount": sum(
-                        r["error_code"] in {"rate_limited", "source_acquisition_deferred"} for r in runs
+                        r["error_code"] in {BOARD_RATE_LIMIT_CODE, "rate_limited", "source_acquisition_deferred"} for r in runs
                     ),
                     "budgetExhaustedCount": sum(r["error_code"] == "source_budget_exhausted" for r in runs),
                     "lastBlockedReason": None,
@@ -721,7 +721,8 @@ class DiscoveryRepository:
                         "newJobs": r["new_jobs"],
                         "observedJobs": r["observed_jobs"],
                         "failureCode": r["failure_code"],
-                        "failures": (json.loads(r["result_json"]) if r["result_json"] else {}).get("failures", []),
+                        "failures": [public_board_failure(failure) for failure in
+                                     (json.loads(r["result_json"]) if r["result_json"] else {}).get("failures", [])],
                         "createdAt": r["created_at"],
                         "updatedAt": r["updated_at"],
                     }
@@ -915,7 +916,7 @@ class DiscoveryRepository:
                 ),
             )
 
-    def record_board_failure(self, lease, unit, error, *, board=None, diagnostic=None):
+    def record_board_failure(self, lease, unit, error, *, board=None):
         """Persist the safe unit and source outcome together, before SDK acknowledgement."""
         with self.database.transaction() as conn:
             self.guard_run(conn, lease)
@@ -925,6 +926,7 @@ class DiscoveryRepository:
             if row and row["status"] == "failed" and "failure" in result:
                 return result["failure"]
             boards = [board] if board else unit["sites"]
+            diagnostic = error.details if error.code in {BOARD_RATE_LIMIT_CODE, "discovery_provider_authentication_configuration"} else None
             failure = {"sourceFamily": "broad_boards", "unitId": unit["unit_id"], "boards": boards,
                        "code": error.code, "message": error.message, **(diagnostic or {})}
             self.save_unit(lease, unit, status="failed", result={**result, "failure": failure}, connection=conn)

@@ -206,6 +206,8 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
 
   const resultCounts = result.success && result.data.newJobs !== undefined && result.data.observedJobs !== undefined ? { newJobs: result.data.newJobs, observedJobs: result.data.observedJobs } : null;
   const counts = action && terminal(action.status) && resultCounts ? resultCounts : recorded ? { newJobs: recorded.newJobs, observedJobs: recorded.observedJobs } : resultCounts;
+  const recordedFailures = recorded && ["completed", "partial", "failed", "cancelled"].includes(recorded.status) ? recorded.failures : undefined;
+  const sourceFailures = recordedFailures ?? (result.success ? result.data.failures : undefined) ?? [];
   const statusUnavailable = Boolean(actions.error || detail.error || outcomeUnavailable || (recovery.record && recovery.statusError && !recovery.canRetry) || reconcileError);
   const status = memory?.busy ? "queueing" : statusUnavailable ? "status-unavailable" : action
     ? action.cancellationRequested && active(action.status) ? "cancel-requested" : action.status === "succeeded" ? terminalOutcome === "partial" ? "partial" : "completed" : action.status
@@ -216,7 +218,7 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
     assessmentAvailable: result.success ? result.data.preparationAvailable : undefined,
     assessment: result.success ? result.data.preparation : undefined,
     acquisitionStatus: result.success ? result.data.acquisitionStatus : undefined,
-    action, counts, status, sourceFailures: result.success ? result.data.failures ?? recorded?.failures ?? [] : recorded?.failures ?? [], statusUnavailable, countsStale: Boolean(runs.error || statusUnavailable),
+    action, counts, status, sourceFailures, statusUnavailable, countsStale: Boolean(runs.error || statusUnavailable),
     blockedReason, canStart: !blockedReason && !start.isPending, isPending: Boolean(memory?.busy || start.isPending),
     pendingBody: pending?.body, uncertain: Boolean(pending?.uncertain && !ownAction), recovery,
     hasUnconfirmedRequest: Boolean(recovery.record && !ownAction && (pending?.uncertain || recovery.statusError)),

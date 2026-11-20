@@ -7,7 +7,7 @@ from pathlib import Path
 import threading
 
 from jobctrl.app.errors import AppError
-from jobctrl.features.discovery.adapters.board_diagnostics import board_access_error
+from jobctrl.features.discovery.adapters.board_diagnostics import board_access_error, board_rate_limit_error
 from jobctrl.features.discovery.domain import fingerprint
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY
 from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
@@ -282,9 +282,9 @@ class DiscoveryExecutionAdapter:
                             self.repository.save_unit(lease, unit, status="waiting_for_query_turn", result=recorded)
                             return True
                     elif isinstance(event, ErrorEvent):
-                        if event.code.value == "authentication_configuration" and not event.reset_checkpoint:
-                            error = board_access_error(event)
-                            self.repository.record_board_failure(lease, unit, error, board=event.site.value, diagnostic=error.details)
+                        if event.code.value in {"authentication_configuration", "rate_limited"} and not event.reset_checkpoint:
+                            error = board_rate_limit_error() if event.code.value == "rate_limited" else board_access_error(event)
+                            self.repository.record_board_failure(lease, unit, error, board=event.site.value)
                             stream.ack(event)
                             raise error
                         self.repository.source_result(
@@ -344,6 +344,8 @@ class DiscoveryExecutionAdapter:
                     return
                 raise AppError("action_cancelled", "Discovery was cancelled.", 409) from None
             if isinstance(error, JobStreamingError):
+                if error.code.value == "rate_limited":
+                    raise board_rate_limit_error() from None
                 raise AppError("discovery_provider_" + error.code.value, "A search provider could not complete its request.", 502) from None
             raise
 

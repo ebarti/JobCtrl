@@ -123,6 +123,9 @@ a missing credential, configure that variable and restart the worker. An HTTP
 401 or 403 means the board denied the request. Check that the configured
 credential has access to its search API. A TLS or proxy diagnostic points to
 the worker’s connection settings. Older runs may show a general access error.
+A board that rate-limits a search appears by name in the progress strip and
+Search details. Wait before starting another search on that board. Older runs
+show this explanation when they recorded the board’s rate-limit code.
 
 **Search details** retains every recorded failure and its query-unit identity;
 different boards, codes or messages remain separate notices.

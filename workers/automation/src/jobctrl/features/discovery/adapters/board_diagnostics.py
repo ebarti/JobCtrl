@@ -1,12 +1,17 @@
-"""Translate the pinned SDK's typed authentication failures into safe public facts."""
+"""Translate the pinned SDK's typed board failures into safe public facts."""
 
 from jobctrl.app.errors import AppError
+from jobctrl.features.discovery.domain import BOARD_RATE_LIMIT_CODE, BOARD_RATE_LIMIT_MESSAGE
 
 
 _BOARD_CREDENTIALS = {
     "indeed": ("Indeed", "JOBSTREAMING_INDEED_API_KEY"),
     "zip_recruiter": ("ZipRecruiter", "JOBSTREAMING_ZIPRECRUITER_AUTHORIZATION"),
 }
+
+
+def board_rate_limit_error():
+    return AppError(BOARD_RATE_LIMIT_CODE, BOARD_RATE_LIMIT_MESSAGE, 502, {"diagnostic": "rate_limited"})
 
 
 def board_access_error(event):
