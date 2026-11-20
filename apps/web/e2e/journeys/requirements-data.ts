@@ -7,7 +7,8 @@ export const V6_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-p
 export const NORMALIZATION_PROMPT_VERSION = V6_NORMALIZATION_PROMPT_VERSION + "-background-v1";
 export const SOURCE_DICTIONARY_PROMPT_VERSION = "requirements-capability-demand-partition-v8-sources";
 export const V9_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v9-tables";
-export const REFRESH_NORMALIZATION_PROMPT_VERSION = V9_NORMALIZATION_PROMPT_VERSION + "-background-v1";
+export const V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION = V9_NORMALIZATION_PROMPT_VERSION + "-background-v1";
+export const REFRESH_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v10-demand-choices";
 const v7CohortPrompt = "requirements-capability-demand-partition-v7-cohort";
 export const COHORT_NORMALIZATION_PROMPT_VERSION = v7CohortPrompt + "-background-v1";
 export const PARTITION_V5_PROMPT_VERSION = "requirements-capability-demand-partition-v5";
@@ -126,9 +127,9 @@ export type CatalogContext = {
   members: { member_id: string; source_id: string; requirement_id: string | null; revision: number | null }[];
   occurrences: { job_id: string; occurrence_id: string; member_id: string; source_id: string; posting_revision: number; posting_hash: string;
     requirement_id: string; requirement_revision: number; source_kind: "proposed" | "accepted_snapshot";
-    snapshot_revision: number | null; base_snapshot_revision: number; correction_determination_id: string | null;
+    snapshot_revision: number | null; base_snapshot_revision: number; prior_demand_source_id?: string | null; correction_determination_id: string | null;
     previous_occurrence_id: string | null; resolution_determination_ids: string[] }[];
-  accepted_demands: { group_member_ids: string[]; source_id: string; demand_fingerprint: string; normalization_version: string }[];
+  accepted_demands: { definition?: string; group_member_ids: string[]; source_id: string; demand_fingerprint: string; normalization_version: string }[];
   accepted_occurrence_counts: Record<string, number>;
   posting_sources: { job_id: string; revision: number; source_hash: string; source_id: string }[];
   citation_segments: Record<string, Record<string, CitationSegment | string>>;
@@ -224,7 +225,7 @@ function tableRequest(call: ExternalCall) {
 }
 
 export function catalogContext(call: ExternalCall): CatalogContext {
-  return [V9_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION].includes(String(call.body["prompt_version"]))
+  return [V9_NORMALIZATION_PROMPT_VERSION, V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION].includes(String(call.body["prompt_version"]))
     ? tableRequest(call).context : call.body["context"] as CatalogContext;
 }
 
@@ -239,7 +240,7 @@ type OccurrenceEvidence = Omit<CatalogContext["occurrences"][number],
 /** The current wire carries structural references. Meanings are read from the
  * referenced live source DTOs, never reconstructed from names or identifiers. */
 export function catalogSource<T>(call: ExternalCall, sourceId: string): T {
-  if ([V9_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION].includes(String(call.body["prompt_version"]))) {
+  if ([V9_NORMALIZATION_PROMPT_VERSION, V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION].includes(String(call.body["prompt_version"]))) {
     const { sources } = tableRequest(call);
     expect(sources.has(sourceId)).toBe(true);
     return sources.get(sourceId) as T;
@@ -291,7 +292,11 @@ export function catalogOccurrenceEvidence(call: ExternalCall, occurrenceId: stri
   const source = catalogSource<OccurrenceEvidence>(call, occurrence!.source_id);
   // These lineage fields belong to context and its persisted source_context;
   // the source document carries the remaining shared identity/evidence pins.
-  const { correction_determination_id, previous_occurrence_id, resolution_determination_ids, ...sourcePins } = occurrence!;
+  const { correction_determination_id, previous_occurrence_id, resolution_determination_ids, prior_demand_source_id, ...sourcePins } = occurrence!;
+  if (call.body["prompt_version"] === REFRESH_NORMALIZATION_PROMPT_VERSION) {
+    const prior = catalogContext(call).accepted_demands.find(row => row.demand_fingerprint === source.normalized_demand?.demand_fingerprint);
+    expect(prior_demand_source_id).toBe(prior?.source_id ?? null);
+  }
   expect(source).toMatchObject(sourcePins);
   return source;
 }
@@ -327,12 +332,17 @@ export type BoundCorrectionWitness = NormalizationCorrection<ReturnType<typeof c
 export type MemberRootSlot = { kind: "group"; category: "skill" | "professional_experience"; name: string;
   definition: string; reuse_requirement_id: string | null; reason: string; citations: CitationSelection[] };
 export type OccurrenceRootSlot = { kind: "group"; definition: string; reuse_demand_fingerprint: string | null; citations: CitationSelection[] };
+export type DemandChoiceSlot = (
+  | { kind: "keep"; citations: CitationSelection[] }
+  | { kind: "select"; prior_demand_source_id: string; citations: CitationSelection[] }
+  | { kind: "author"; definition: string; citations: CitationSelection[] }
+) & { reuse_demand_fingerprint?: never };
 type UnresolvedSlot = { kind: "unresolved"; reason: string; citations: CitationSelection[] };
 export type MemberSlot = { kind: "assigned"; capability_group_id: string } | UnresolvedSlot;
 export type OccurrenceSlot = { kind: "assigned"; demand_group_id: string } | UnresolvedSlot;
 export type CatalogSlots = { status: "complete" | "needs_review"; catalog_revision: number;
   member_slots: Record<string, MemberSlot>; occurrence_slots: Record<string, OccurrenceSlot>;
-  capability_groups: Record<string, MemberRootSlot | null>; demand_groups: Record<string, OccurrenceRootSlot | null>;
+  capability_groups: Record<string, MemberRootSlot | null>; demand_groups: Record<string, OccurrenceRootSlot | DemandChoiceSlot | null>;
   corrections: CorrectionWitness[] };
 export const memberRoots = (value: CatalogSlots) => Object.entries(value.capability_groups).flatMap(([groupId, slot]) =>
   slot === null ? [] : [{ groupId, memberId: Object.entries(value.member_slots).find(([, assignment]) =>
@@ -346,7 +356,7 @@ export const occurrenceRoots = (value: CatalogSlots) => Object.entries(value.dem
 export function catalogNormalization(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]): CatalogSlots {
   const prompt = call.body["prompt_version"];
   if (typeof prompt !== "string" || ![V6_NORMALIZATION_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION,
-    V9_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION, SOURCE_DICTIONARY_PROMPT_VERSION,
+    V9_NORMALIZATION_PROMPT_VERSION, V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION, SOURCE_DICTIONARY_PROMPT_VERSION,
     v7CohortPrompt, COHORT_NORMALIZATION_PROMPT_VERSION].includes(prompt)) throw new Error("Unexpected catalog partition version");
   return normalizationSlots(call, capabilities, demands, prompt);
 }
@@ -376,8 +386,21 @@ function normalizationSlots(call: ExternalCall, capabilities: CapabilityChoice[]
   const demand_groups: CatalogSlots["demand_groups"] = Object.fromEntries(handles.demands.map((id) => [id, null]));
   authored.demands.forEach((demand, index) => {
     const groupId = handles.demands[index]!;
-    demand_groups[groupId] = { kind: "group", definition: demand.definition,
-      reuse_demand_fingerprint: demand.reuse_demand_fingerprint, citations: demand.citations };
+    if (prompt !== REFRESH_NORMALIZATION_PROMPT_VERSION) {
+      demand_groups[groupId] = { kind: "group", definition: demand.definition,
+        reuse_demand_fingerprint: demand.reuse_demand_fingerprint, citations: demand.citations };
+    } else if (demand.reuse_demand_fingerprint === null) {
+      demand_groups[groupId] = { kind: "author", definition: demand.definition, citations: demand.citations };
+    } else {
+      const previous = context.accepted_demands.find(row => row.demand_fingerprint === demand.reuse_demand_fingerprint)!;
+      expect(previous.definition).toBe(demand.definition);
+      const occurrences = new Set(demand.bindings.flatMap(binding => binding.occurrence_ids));
+      const prior = new Set(context.occurrences.filter(row => occurrences.has(row.occurrence_id) && row.prior_demand_source_id)
+        .map(row => row.prior_demand_source_id));
+      demand_groups[groupId] = prior.size === 1 && prior.has(previous.source_id)
+        ? { kind: "keep", citations: demand.citations }
+        : { kind: "select", prior_demand_source_id: previous.source_id, citations: demand.citations };
+    }
     for (const occurrenceId of demand.bindings.flatMap((binding) => binding.occurrence_ids))
       occurrence_slots[occurrenceId] = { kind: "assigned", demand_group_id: groupId };
   });

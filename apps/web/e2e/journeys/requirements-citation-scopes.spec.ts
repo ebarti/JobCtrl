@@ -40,7 +40,7 @@ test("demand evidence excludes offered prior definitions while exact reuse and c
   expect(schema.$defs["DemandEvidenceCitation"]!.properties).toMatchObject({ segment_id: { type: "string", minLength: 1, maxLength: 120 } });
   const authored = catalogMatching(invalidCall, { peer: { verdict: "equivalent", requirementId: requirement.requirement_id, demandDefinition: definition } });
   const demand = occurrenceRoots(authored)[0]!.slot;
-  expect(demand.reuse_demand_fingerprint).toBe(fingerprint);
+  expect(demand.kind).toBe("keep");
   // This is an offered, exact prior definition, not an invented source or a
   // mislabeled quote. Its role is reuse context, not original demand evidence.
   demand.citations.push(...citationSelections(invalidCall, [{ sourceId: prior.source_id, valuePath: ["definition"] }]));
@@ -59,7 +59,7 @@ test("demand evidence excludes offered prior definitions while exact reuse and c
   const publishing = api.post(requirementsPath(second.job_id), { data: payload });
   const validCall = await modelCall(app, "requirements.match_catalog");
   const valid = catalogMatching(validCall, { peer: { verdict: "equivalent", requirementId: requirement.requirement_id, demandDefinition: definition } });
-  expect(occurrenceRoots(valid)[0]!.slot.reuse_demand_fingerprint).toBe(fingerprint);
+  expect(occurrenceRoots(valid)[0]!.slot.kind).toBe("keep");
   validCall.reply(valid);
   const published = await publishing;
   expect(published.status(), await published.text()).toBe(200);

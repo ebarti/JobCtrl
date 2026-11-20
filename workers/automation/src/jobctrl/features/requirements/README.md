@@ -151,7 +151,7 @@ authority. There is no top-k selection, paging, chunking, lexical fallback or
 separate novelty judgment. Existing-only repair and every semantic ingestion or
 correction use this mandatory gate.
 
-New single-job refreshes use `requirements-capability-demand-partition-v9-tables-background-v1`.
+New single-job refreshes use `requirements-capability-demand-partition-v10-demand-choices`.
 The request supplies named column lists for repeated object shapes, a dictionary
 of repeated whole strings across context and sources, and shared citation path
 layouts. Each source retains its own ID and its explicitly offered segment IDs.
@@ -169,16 +169,27 @@ requirements, original postings, and source text as well as the number of jobs.
 A refusal preserves the accepted snapshot without truncating, splitting or
 automatically resending the request.
 
+Each V10 demand group makes one source-bound choice. `keep` selects the sole
+accepted demand found in its assigned occurrence sources and can apply it to
+new occurrences assigned to that group. If the group has zero or several
+distinct prior demands, the owner refuses `keep`. `select` identifies one exact
+offered prior demand by its short source ID. The accepted-demand table pairs
+that ID with the full definition and member IDs. Both choices retain the exact
+accepted definition and signature, require the matching category and a shared
+retained member, and cite every original occurrence. `author` supplies a new
+complete definition. The receipt binds the raw choice, expanded selection and
+final decision. Earlier table comparisons retain their original response schema.
+
 The durable `requirements.refresh` action records its transport in its original
 admission transaction. Searches record it in their initial preparation request
 and carry that request into retries. A missing marker selects v6, including
 unstarted jobs in a frozen search. A recorded v8 uses its original source
 string and citation path dictionaries. Previously paid requests retain their
-exact fingerprints and one-call allowance. New requests add `-background-v1` to
-the distinct model prompt on each active format. Synchronous and durable
-single-job refreshes use v9 tables, explicit catalog repair, corrections and
+exact fingerprints and one-call allowance. Each active format preserves the
+source-established alternative-background instruction. Synchronous and durable
+single-job refreshes use V10 demand choices, explicit catalog repair, corrections and
 independently started Preparation use v6, and shared initial-search cohorts
-use v7. An earlier plain v6, v7, v8 or v9 operation keeps its original
+use v7. Every earlier v6, v7, v8 or v9 operation keeps its original
 instructions through recovery. An explicitly admitted fresh action may reuse
 its validated extraction when the source and execution binding still match.
 

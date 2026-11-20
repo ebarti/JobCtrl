@@ -129,6 +129,11 @@ new comparison against the same extraction, and follows the two independent
 model-selected demands through Fit. A later unresolved comparison preserves
 the first accepted snapshot. These controlled choices verify the model's
 authority and publication behavior.
+The [retained demand choice journeys](../../../apps/web/e2e/journeys/requirements-demand-choices.spec.ts)
+follow an explicit choice of a saved definition through its source bindings,
+reconciliation receipt and Fit score. They also verify that ambiguous, foreign
+and uncited choices preserve the accepted catalog, and that restarting a worker
+with an unsettled comparison keeps the original run and provider call.
 The [payload boundary case](../../../apps/web/e2e/journeys/requirements.spec.ts)
 sends a complete synthetic catalog whose original source documents exceed
 1 MiB and admits 100 distinct incoming definitions with their complete source

@@ -50,6 +50,8 @@ jobs:
         run: git fetch --no-tags --depth=1 origin e41c55189285697549ea35d40bb62b4070c9462b
       - name: Fetch the fixed predecessor for the original catalog table prompt
         run: git fetch --no-tags --depth=1 origin e804fac0cf71f3294a71d77d43cc098f133bab34
+      - name: Fetch the fixed predecessor for explicit retained demand choices
+        run: git fetch --no-tags --depth=1 origin c74d8ae3e43c55ae57c6d2bcb9e024c42f27d708
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - name: Set up Node

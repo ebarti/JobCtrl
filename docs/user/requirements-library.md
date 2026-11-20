@@ -52,6 +52,12 @@ that instead requests a technical practice can list example tools under that
 skill. If the posting leaves eligibility unclear, its Requirements attempt
 can remain unresolved.
 
+When a new posting joins the library, Requirements compares its wording with
+the exact demands already saved. It can keep the demand associated with the
+posting evidence, select a specific saved demand shared by the relevant jobs,
+or write a new definition from the posting. If the choice is ambiguous, the
+last accepted requirements remain available.
+
 This guide describes the Original redesign source candidate. The
 [active acceptance ledger](../plans/2026-11-11-original-app-redesign.md) separates
 implementation and verification. The

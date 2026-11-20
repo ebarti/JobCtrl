@@ -1,7 +1,7 @@
 import { test, expect, json, modelCall, action, completed, terminal, type ExternalCall } from "../harness/fixtures.js";
 import { captureReusePosting, acceptReuseRequirements, reusableModelCatalog, type CapturedPosting, type RequirementSnapshot } from "./reuse-data.js";
 import { catalogContext, catalogMatching, catalogSource, citeSources, modelSources, EXTRACTION_PROMPT_VERSION, V6_NORMALIZATION_PROMPT_VERSION,
-  REFRESH_NORMALIZATION_PROMPT_VERSION, SOURCE_DICTIONARY_PROMPT_VERSION, typedExtraction } from "./requirements-data.js";
+  REFRESH_NORMALIZATION_PROMPT_VERSION, SOURCE_DICTIONARY_PROMPT_VERSION, V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION, typedExtraction } from "./requirements-data.js";
 
 const requirement = [{ localId: "recovery", text: "Implement durable workflow recovery." }];
 const body = requirement[0]!.text;
@@ -162,6 +162,7 @@ test("one complete single-job comparison binds all 100 original postings and eve
 for (const [version, sourceRevision, prompt] of [
   ["v6", "38ef94613ebb7c0413d8d5ee89987ef860f53b13", V6_NORMALIZATION_PROMPT_VERSION],
   ["v8", "e41c55189285697549ea35d40bb62b4070c9462b", SOURCE_DICTIONARY_PROMPT_VERSION],
+  ["v9 background", "c74d8ae3e43c55ae57c6d2bcb9e024c42f27d708", V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION],
 ] as const) test.describe(`single-job catalog transport upgrade from ${version}`, () => {
   test.use({ sourceRevision });
 
@@ -196,7 +197,8 @@ for (const [version, sourceRevision, prompt] of [
     oldExtraction.reply(typedExtraction(oldExtraction, { requirements: requirement }));
     const held = await modelCall(app, "requirements.match_catalog");
     expect(held.body["prompt_version"]).toBe(prompt);
-    expect(held.body["context"]).not.toHaveProperty("catalog_tables");
+    if (version === "v9 background") expect(held.body["context"]).toHaveProperty("catalog_tables");
+    else expect(held.body["context"]).not.toHaveProperty("catalog_tables");
     if (version === "v8") expect(held.body["context"]).toHaveProperty("cohort_texts");
     else expect(held.body["context"]).not.toHaveProperty("cohort_texts");
     const count = app.external.calls.length;
@@ -208,7 +210,7 @@ for (const [version, sourceRevision, prompt] of [
     expect(app.external.calls).toHaveLength(count);
     const historical = await json(api, "get", `/v1/jobs/${priorJob.job_id}/requirements/attempts/latest`);
     expect(historical).toMatchObject({ state: "blocked", failure_code: "model_schema_violation" });
-    expect(historical).not.toHaveProperty("failure_details");
+    if (version !== "v9 background") expect(historical).not.toHaveProperty("failure_details");
     expect(await json(api, "get", `/v1/jobs/${priorJob.job_id}/requirements`)).toBeNull();
     expect((await snapshot()).requirements).toEqual(accepted.requirements);
 

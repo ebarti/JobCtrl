@@ -69,6 +69,26 @@ def table_partition_schema(context):
     return _partition_selection_schema(context, offered_citations=True, retained_reuse_only=True, shared_slot_schema=True)
 
 
+def demand_choice_partition_schema(context):
+    return _partition_selection_schema(context, offered_citations=True, retained_reuse_only=True, shared_slot_schema=True,
+                                       demand_choices=True)
+
+
+def _demand_choice_schema(context, citation):
+    citations = (list[citation], Field(min_length=1))
+    authored = create_model("AuthoredDemand", __base__=SlotValue, kind=(Literal["author"], ...),
+        definition=(StrictStr, Field(min_length=1, max_length=6000)), citations=citations)
+    references = tuple(row["source_id"] for row in context["accepted_demands"])
+    if not references:
+        return authored
+    if len(references) != len(set(references)):
+        raise RequirementError("catalog_snapshot_invalid")
+    keep = create_model("OccurrenceDemand", __base__=SlotValue, kind=(Literal["keep"], ...), citations=citations)
+    select = create_model("SelectedDemand", __base__=SlotValue, kind=(Literal["select"], ...),
+        prior_demand_source_id=(_id_type("PriorDemandSource", references), ...), citations=citations)
+    return authored | keep | select
+
+
 def cohort_partition_schema(context):
     return _partition_selection_schema(context, offered_citations=True, cohort=True)
 
@@ -78,7 +98,7 @@ def partition_selection_schema_v5(context):
     return _partition_selection_schema(context, offered_citations=False)
 
 
-def _partition_selection_schema(context, *, offered_citations, cohort=False, retained_reuse_only=False, shared_slot_schema=False):
+def _partition_selection_schema(context, *, offered_citations, cohort=False, retained_reuse_only=False, shared_slot_schema=False, demand_choices=False):
     member_ids = tuple(row["member_id"] for row in context["members"])
     occurrence_ids = tuple(row["occurrence_id"] for row in context["occurrences"])
     if len(set(member_ids)) != len(member_ids) or len(set(occurrence_ids)) != len(occurrence_ids):
@@ -99,8 +119,8 @@ def _partition_selection_schema(context, *, offered_citations, cohort=False, ret
         citation = _citation_type("Offered", tuple(context["citation_segments"]), context)
         demand_citation = _citation_type("DemandEvidence", _demand_evidence_sources(context), context)
         capability_fields["citations"] = (list[citation], Field(min_length=1))
-        demand = create_model("DemandGroup", __base__=(DemandGroup, SlotValue),
-                              citations=(list[demand_citation], Field(min_length=1)))
+        demand = (_demand_choice_schema(context, demand_citation) if demand_choices else
+                  create_model("DemandGroup", __base__=(DemandGroup, SlotValue), citations=(list[demand_citation], Field(min_length=1))))
         unresolved = create_model("UnresolvedSlot", __base__=(UnresolvedSlot, SlotValue),
                                   citations=(list[citation], Field(min_length=1)))
     capability = create_model("CapabilityGroup", __base__=(CapabilityGroup, SlotValue), **capability_fields)

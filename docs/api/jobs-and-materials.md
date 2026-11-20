@@ -240,7 +240,13 @@ optional accepted snapshot.
 Consolidation uses semantic policy `requirements-capability-demand-v2`. Explicit
 catalog repair and corrections use `requirements-capability-demand-partition-v6-background-v1`.
 New single-job refreshes and new searches on the per-job route use
-`requirements-capability-demand-partition-v9-tables-background-v1`. Shared
+`requirements-capability-demand-partition-v10-demand-choices`. Each demand group
+chooses `keep` for the sole accepted demand bound to its occurrences, `select`
+for a specific offered prior demand source, or `author` for a new full
+definition. A choice of `keep` can also bind newly assigned occurrences when
+the selected prior demand applies to them. Multiple distinct prior demands
+require an explicit source selection or an authored definition. The response
+retains the original evidence citations for every occurrence. Shared
 initial-search cohorts use `requirements-capability-demand-partition-v7-cohort-background-v1`.
 The instruction revision clarifies a single prerequisite that accepts any of
 several prior backgrounds. Existing action IDs retain their admitted instructions.
