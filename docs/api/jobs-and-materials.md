@@ -159,6 +159,17 @@ preparation. Operation reads retain both frozen preparation flags. Previously
 frozen operations without the new flag retain enabled coverage and their existing
 request identity.
 
+When a manual Fit qualification was paid but a revision conflict prevented
+publication, a new explicitly admitted refresh can recover one settled exact
+qualification for the same Profile and selected jobs. It verifies the full
+gateway input and execution identity, then rechecks every returned requirement
+and its source evidence. A successful recovery exposes
+`counters.qualification_receipts_reused` and consumes no new provider call.
+Ambiguous and unsettled exact receipts produce
+`fit_refresh_qualification_receipt_ambiguous` or
+`fit_refresh_qualification_receipt_unsettled`. The previous action remains
+stale and its score cannot be published.
+
 Fresh refresh operations expose independent `impact_selection_scope_version` and
 `qualification_transport_version` pins. Complete frozen scope is preserved while
 exact current qualifications and mandatory reassessments are resolved before an

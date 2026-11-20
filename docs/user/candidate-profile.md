@@ -286,6 +286,13 @@ The panel shows the recorded phase, assessed/reused/proposal counts and outcome:
   another bounded request. **Request cancellation** asks the worker to stop;
   wait for the recorded outcome before assuming it stopped.
 
+If the catalog changes while a qualification model call is running, the
+earlier score stays available. When you start a fresh update, JobCtrl can use
+the completed response if it can verify one receipt for the same evidence,
+model and settings. It checks every assessment against the current sources
+before publishing. If receipts conflict or the earlier call is unfinished,
+the update stops and reports the reason in its run history.
+
 Approved wording and accepted documents remain available throughout. This
 action does not regenerate an accepted resume or approve a wording proposal.
 After reviewing and dismissing a completed request, **Retry failed wording**

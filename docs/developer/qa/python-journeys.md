@@ -197,6 +197,16 @@ shared normalization refusal settled every affected attempt, and actual worker
 loss retained the original reservation until recovery. Accepted snapshots stayed
 intact.
 
+The [manual Fit receipt journey](../../../apps/web/e2e/journeys/fit-refresh-receipt.spec.ts)
+holds qualification while an unrelated unsupported-language job is accepted.
+It checks the original source conflict, exact paid-call counts and score
+publication under a new action, including a real predecessor. Changed source
+or effective effort requires a distinct provider input. Invalid achievement
+evidence and multiple exact gateway receipts preserve the prior score. An older
+low-effort receipt before an unpinned high-effort stale operation cannot supply
+a later low-effort refresh. A new operation with an unresolved transport effect
+also refuses duplicate dispatch.
+
 ### Bounded Fit impact scope and durable call recovery — 17 November 2026
 
 [Fit refresh scope](../../../apps/web/e2e/journeys/fit-refresh-scope.spec.ts) adds eight

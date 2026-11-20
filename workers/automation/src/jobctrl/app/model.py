@@ -180,6 +180,15 @@ class ModelGateway:
         ).fetchall()
         return [self.receipt(row[0], connection) for row in rows]
 
+    @staticmethod
+    def receipt_ids_in_window(operation: str, opened: str, closed: str, connection) -> list[str]:
+        """Distinguish no admission, a single admission, and ambiguous admissions."""
+        rows = connection.execute(
+            "SELECT receipt_id FROM app_model_calls WHERE operation=? AND created_at>=? AND created_at<=? "
+            "ORDER BY created_at,receipt_id LIMIT 2", (operation, opened, closed),
+        ).fetchall()
+        return [row[0] for row in rows]
+
     def find_succeeded(self, input_fingerprint: str, connection=None) -> dict | None:
         """Exact receipt lookup only; feature owners still validate acceptance."""
         if connection is None:
