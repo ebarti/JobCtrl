@@ -251,7 +251,11 @@ optional accepted snapshot.
 Consolidation uses semantic policy `requirements-capability-demand-v2`. Explicit
 catalog repair and corrections use `requirements-capability-demand-partition-v6-background-v1`.
 New single-job refreshes and new searches on the per-job route use
-`requirements-capability-demand-partition-v10-demand-choices`. Each demand group
+`requirements-capability-demand-partition-v11-cited-occurrences`. Every occurrence
+slot declares `cited` or `unresolved`. A demand group assigns an occurrence by
+citing an offered segment of its original source. The owner rejects an occurrence
+cited by zero or multiple groups. Every accepted group still belongs to one
+capability and supplies one complete demand per job and capability. Each demand group
 chooses `keep` for the sole accepted demand bound to its occurrences, `select`
 for a specific offered prior demand source, or `author` for a new full
 definition. A choice of `keep` can also bind newly assigned occurrences when

@@ -69,9 +69,13 @@ def table_partition_schema(context):
     return _partition_selection_schema(context, offered_citations=True, retained_reuse_only=True, shared_slot_schema=True)
 
 
-def demand_choice_partition_schema(context):
+def demand_choice_partition_schema(context, *, cited_occurrences=False):
     return _partition_selection_schema(context, offered_citations=True, retained_reuse_only=True, shared_slot_schema=True,
-                                       demand_choices=True)
+                                       demand_choices=True, cited_occurrences=cited_occurrences)
+
+
+def cited_occurrence_partition_schema(context):
+    return demand_choice_partition_schema(context, cited_occurrences=True)
 
 
 def _demand_choice_schema(context, citation):
@@ -98,7 +102,7 @@ def partition_selection_schema_v5(context):
     return _partition_selection_schema(context, offered_citations=False)
 
 
-def _partition_selection_schema(context, *, offered_citations, cohort=False, retained_reuse_only=False, shared_slot_schema=False, demand_choices=False):
+def _partition_selection_schema(context, *, offered_citations, cohort=False, retained_reuse_only=False, shared_slot_schema=False, demand_choices=False, cited_occurrences=False):
     member_ids = tuple(row["member_id"] for row in context["members"])
     occurrence_ids = tuple(row["occurrence_id"] for row in context["occurrences"])
     if len(set(member_ids)) != len(member_ids) or len(set(occurrence_ids)) != len(occurrence_ids):
@@ -136,8 +140,9 @@ def _partition_selection_schema(context, *, offered_citations, cohort=False, ret
                 citations=(list[demand_citation], Field(min_length=1)))
     member_assignment = create_model("MemberAssignment", __base__=SlotValue,
         kind=(Literal["assigned"], ...), capability_group_id=(capability_id, ...))
-    occurrence_assignment = create_model("OccurrenceAssignment", __base__=SlotValue,
-        kind=(Literal["assigned"], ...), demand_group_id=(demand_id, ...))
+    occurrence_assignment = (create_model("CitedOccurrence", __base__=SlotValue, kind=(Literal["cited"], ...))
+        if cited_occurrences else create_model("OccurrenceAssignment", __base__=SlotValue,
+            kind=(Literal["assigned"], ...), demand_group_id=(demand_id, ...)))
     def slots(name, entries, definition):
         if shared_slot_schema:
             definition = TypeAliasType(name + "Value", definition)

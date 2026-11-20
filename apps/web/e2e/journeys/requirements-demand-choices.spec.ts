@@ -104,8 +104,14 @@ test("table comparisons bind each retained demand once and refuse foreign or amb
     const intermediate = audit.stored_report.intermediate_selection as { demands: (Omit<OccurrenceRootSlot, "kind"> & {
       bindings: { occurrence_ids: string[] }[] })[] };
     const expanded = structuredClone(response);
+    for (const row of context.occurrences) {
+      expect(response.occurrence_slots[row.occurrence_id]).toEqual({ kind: "cited" });
+      const owners = Object.entries(response.demand_groups).filter(([, group]) => group?.citations.some(ref => ref.source_id === row.source_id));
+      expect(owners).toHaveLength(1);
+      expanded.occurrence_slots[row.occurrence_id] = { kind: "assigned", demand_group_id: owners[0]![0] };
+    }
     for (const demand of intermediate.demands) {
-      const assignment = response.occurrence_slots[demand.bindings[0]!.occurrence_ids[0]!]!;
+      const assignment = expanded.occurrence_slots[demand.bindings[0]!.occurrence_ids[0]!]!;
       if (assignment.kind !== "assigned") throw new Error("The published demand must have a recorded occurrence assignment");
       expanded.demand_groups[assignment.demand_group_id] = { kind: "group", definition: demand.definition,
         reuse_demand_fingerprint: demand.reuse_demand_fingerprint, citations: demand.citations };

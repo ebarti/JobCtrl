@@ -8,7 +8,8 @@ export const NORMALIZATION_PROMPT_VERSION = V6_NORMALIZATION_PROMPT_VERSION + "-
 export const SOURCE_DICTIONARY_PROMPT_VERSION = "requirements-capability-demand-partition-v8-sources";
 export const V9_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v9-tables";
 export const V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION = V9_NORMALIZATION_PROMPT_VERSION + "-background-v1";
-export const REFRESH_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v10-demand-choices";
+export const V10_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v10-demand-choices";
+export const REFRESH_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v11-cited-occurrences";
 const v7CohortPrompt = "requirements-capability-demand-partition-v7-cohort";
 export const COHORT_NORMALIZATION_PROMPT_VERSION = v7CohortPrompt + "-background-v1";
 export const PARTITION_V5_PROMPT_VERSION = "requirements-capability-demand-partition-v5";
@@ -225,7 +226,7 @@ function tableRequest(call: ExternalCall) {
 }
 
 export function catalogContext(call: ExternalCall): CatalogContext {
-  return [V9_NORMALIZATION_PROMPT_VERSION, V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION].includes(String(call.body["prompt_version"]))
+  return [V9_NORMALIZATION_PROMPT_VERSION, V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION, V10_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION].includes(String(call.body["prompt_version"]))
     ? tableRequest(call).context : call.body["context"] as CatalogContext;
 }
 
@@ -240,7 +241,7 @@ type OccurrenceEvidence = Omit<CatalogContext["occurrences"][number],
 /** The current wire carries structural references. Meanings are read from the
  * referenced live source DTOs, never reconstructed from names or identifiers. */
 export function catalogSource<T>(call: ExternalCall, sourceId: string): T {
-  if ([V9_NORMALIZATION_PROMPT_VERSION, V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION].includes(String(call.body["prompt_version"]))) {
+  if ([V9_NORMALIZATION_PROMPT_VERSION, V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION, V10_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION].includes(String(call.body["prompt_version"]))) {
     const { sources } = tableRequest(call);
     expect(sources.has(sourceId)).toBe(true);
     return sources.get(sourceId) as T;
@@ -293,7 +294,7 @@ export function catalogOccurrenceEvidence(call: ExternalCall, occurrenceId: stri
   // These lineage fields belong to context and its persisted source_context;
   // the source document carries the remaining shared identity/evidence pins.
   const { correction_determination_id, previous_occurrence_id, resolution_determination_ids, prior_demand_source_id, ...sourcePins } = occurrence!;
-  if (call.body["prompt_version"] === REFRESH_NORMALIZATION_PROMPT_VERSION) {
+  if ([V10_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION].includes(String(call.body["prompt_version"]))) {
     const prior = catalogContext(call).accepted_demands.find(row => row.demand_fingerprint === source.normalized_demand?.demand_fingerprint);
     expect(prior_demand_source_id).toBe(prior?.source_id ?? null);
   }
@@ -339,7 +340,7 @@ export type DemandChoiceSlot = (
 ) & { reuse_demand_fingerprint?: never };
 type UnresolvedSlot = { kind: "unresolved"; reason: string; citations: CitationSelection[] };
 export type MemberSlot = { kind: "assigned"; capability_group_id: string } | UnresolvedSlot;
-export type OccurrenceSlot = { kind: "assigned"; demand_group_id: string } | UnresolvedSlot;
+export type OccurrenceSlot = { kind: "assigned"; demand_group_id: string } | { kind: "cited" } | UnresolvedSlot;
 export type CatalogSlots = { status: "complete" | "needs_review"; catalog_revision: number;
   member_slots: Record<string, MemberSlot>; occurrence_slots: Record<string, OccurrenceSlot>;
   capability_groups: Record<string, MemberRootSlot | null>; demand_groups: Record<string, OccurrenceRootSlot | DemandChoiceSlot | null>;
@@ -348,15 +349,14 @@ export const memberRoots = (value: CatalogSlots) => Object.entries(value.capabil
   slot === null ? [] : [{ groupId, memberId: Object.entries(value.member_slots).find(([, assignment]) =>
     assignment.kind === "assigned" && assignment.capability_group_id === groupId)![0], slot }]);
 export const occurrenceRoots = (value: CatalogSlots) => Object.entries(value.demand_groups).flatMap(([groupId, slot]) =>
-  slot === null ? [] : [{ groupId, occurrenceId: Object.entries(value.occurrence_slots).find(([, assignment]) =>
-    assignment.kind === "assigned" && assignment.demand_group_id === groupId)![0], slot }]);
+  slot === null ? [] : [{ groupId, slot }]);
 
 /** Authors supply the complete semantic partition. Only live IDs, supplied
  * independent handles and verbatim citation selections are joined here. */
 export function catalogNormalization(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]): CatalogSlots {
   const prompt = call.body["prompt_version"];
   if (typeof prompt !== "string" || ![V6_NORMALIZATION_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION,
-    V9_NORMALIZATION_PROMPT_VERSION, V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION, SOURCE_DICTIONARY_PROMPT_VERSION,
+    V9_NORMALIZATION_PROMPT_VERSION, V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION, V10_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION, SOURCE_DICTIONARY_PROMPT_VERSION,
     v7CohortPrompt, COHORT_NORMALIZATION_PROMPT_VERSION].includes(prompt)) throw new Error("Unexpected catalog partition version");
   return normalizationSlots(call, capabilities, demands, prompt);
 }
@@ -386,7 +386,7 @@ function normalizationSlots(call: ExternalCall, capabilities: CapabilityChoice[]
   const demand_groups: CatalogSlots["demand_groups"] = Object.fromEntries(handles.demands.map((id) => [id, null]));
   authored.demands.forEach((demand, index) => {
     const groupId = handles.demands[index]!;
-    if (prompt !== REFRESH_NORMALIZATION_PROMPT_VERSION) {
+    if (![V10_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION].includes(prompt)) {
       demand_groups[groupId] = { kind: "group", definition: demand.definition,
         reuse_demand_fingerprint: demand.reuse_demand_fingerprint, citations: demand.citations };
     } else if (demand.reuse_demand_fingerprint === null) {
@@ -402,7 +402,7 @@ function normalizationSlots(call: ExternalCall, capabilities: CapabilityChoice[]
         : { kind: "select", prior_demand_source_id: previous.source_id, citations: demand.citations };
     }
     for (const occurrenceId of demand.bindings.flatMap((binding) => binding.occurrence_ids))
-      occurrence_slots[occurrenceId] = { kind: "assigned", demand_group_id: groupId };
+      occurrence_slots[occurrenceId] = prompt === REFRESH_NORMALIZATION_PROMPT_VERSION ? { kind: "cited" } : { kind: "assigned", demand_group_id: groupId };
   });
   return { status: "complete", catalog_revision: authored.catalog_revision, member_slots, occurrence_slots,
     capability_groups, demand_groups, corrections: [] };

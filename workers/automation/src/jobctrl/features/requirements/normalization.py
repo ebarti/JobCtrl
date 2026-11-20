@@ -11,13 +11,13 @@ from jobctrl.app.errors import ConflictError
 from .domain import CONTRACT_VERSION, MEANING_KEYS, ModelCallBudget, RequirementError, canonical_json, fingerprint, meaning_data, now
 from .normalization_domain import (
     BACKGROUND_COHORT_PROMPT, BACKGROUND_INSTRUCTION, BACKGROUND_MANUAL_PROMPT, BACKGROUND_TRANSPORTS,
-    DEMAND_CHOICE_INSTRUCTION, NORMALIZATION_CITATION_PROMPT_VERSION, NORMALIZATION_INSTRUCTION, NORMALIZATION_PARTITION_V4_PROMPT_VERSION, NORMALIZATION_PARTITION_V5_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION,
+    CITED_OCCURRENCE_PARTITION_INSTRUCTION, DEMAND_CHOICE_INSTRUCTION, NORMALIZATION_CITATION_PROMPT_VERSION, NORMALIZATION_INSTRUCTION, NORMALIZATION_PARTITION_V4_PROMPT_VERSION, NORMALIZATION_PARTITION_V5_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION,
     CatalogNormalization, CatalogNormalizationSelection, bind_normalization_selection, bind_normalization_slots,
     demand_fingerprint, validate_normalization,
 )
 from .normalization_citations import citation_binding_report, citation_binding_summary, citation_segment_catalog, citation_source_context
-from .normalization_demand_choices import DEMAND_CHOICE_PROMPT, add_demand_choice_context
-from .normalization_partitions import (demand_choice_partition_schema, cohort_partition_schema, refresh_partition_schema, table_partition_schema, partition_binding_summary, partition_group_handles,
+from .normalization_demand_choices import CITED_OCCURRENCE_PROMPT, DEMAND_CHOICE_PROMPT, add_demand_choice_context
+from .normalization_partitions import (cited_occurrence_partition_schema, demand_choice_partition_schema, cohort_partition_schema, refresh_partition_schema, table_partition_schema, partition_binding_summary, partition_group_handles,
                                        partition_selection_schema, partition_selection_schema_v5)
 from .normalization_partitions_v4 import partition_selection_schema as partition_selection_schema_v4
 from .cohort_transport import (
@@ -34,7 +34,7 @@ PARTITION_SCHEMAS = {NORMALIZATION_PROMPT_VERSION: partition_selection_schema,
                      NORMALIZATION_PARTITION_V4_PROMPT_VERSION: partition_selection_schema_v4,
                      COHORT_PROMPT_VERSION: cohort_partition_schema}
 PARTITION_SCHEMAS.update({prompt: PARTITION_SCHEMAS[wire] for prompt, wire in BACKGROUND_TRANSPORTS.items()})
-PARTITION_SCHEMAS[DEMAND_CHOICE_PROMPT] = demand_choice_partition_schema
+PARTITION_SCHEMAS.update({DEMAND_CHOICE_PROMPT: demand_choice_partition_schema, CITED_OCCURRENCE_PROMPT: cited_occurrence_partition_schema})
 
 
 def _catalog_sources(prepared):
@@ -306,7 +306,7 @@ class CatalogNormalizationService:
             NORMALIZATION_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION, TABLE_CATALOG_PROMPT_VERSION)
         if transport not in allowed_transports:
             raise RequirementError("requirements_citation_wire_changed")
-        if version == DEMAND_CHOICE_PROMPT:
+        if version in (DEMAND_CHOICE_PROMPT, CITED_OCCURRENCE_PROMPT):
             add_demand_choice_context(context, sources, NORMALIZATION_VERSION)
         context["normalization_prompt_version"] = version
         context["partition_group_handles"] = partition_group_handles(context)
@@ -316,7 +316,8 @@ class CatalogNormalizationService:
         context["citation_source_fingerprints"] = {ident: fingerprint(text) for ident, text in sources.items()}
         context["citation_source_context_fingerprint"] = fingerprint(citation_source_context(context, sources))
         schema = PARTITION_SCHEMAS[version](context).model_json_schema()
-        instructions = DEMAND_CHOICE_INSTRUCTION if version == DEMAND_CHOICE_PROMPT else NORMALIZATION_INSTRUCTION
+        instructions = {DEMAND_CHOICE_PROMPT: DEMAND_CHOICE_INSTRUCTION,
+                        CITED_OCCURRENCE_PROMPT: CITED_OCCURRENCE_PARTITION_INSTRUCTION}.get(version, NORMALIZATION_INSTRUCTION)
         if version in BACKGROUND_TRANSPORTS:
             instructions += BACKGROUND_INSTRUCTION
         if transport == TABLE_CATALOG_PROMPT_VERSION:

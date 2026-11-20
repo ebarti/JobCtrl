@@ -151,7 +151,7 @@ authority. There is no top-k selection, paging, chunking, lexical fallback or
 separate novelty judgment. Existing-only repair and every semantic ingestion or
 correction use this mandatory gate.
 
-New single-job refreshes use `requirements-capability-demand-partition-v10-demand-choices`.
+New single-job refreshes use `requirements-capability-demand-partition-v11-cited-occurrences`.
 The request supplies named column lists for repeated object shapes, a dictionary
 of repeated whole strings across context and sources, and shared citation path
 layouts. Each source retains its own ID and its explicitly offered segment IDs.
@@ -169,7 +169,16 @@ requirements, original postings, and source text as well as the number of jobs.
 A refusal preserves the accepted snapshot without truncating, splitting or
 automatically resending the request.
 
-Each V10 demand group makes one source-bound choice. `keep` selects the sole
+Every V11 occurrence slot marks its source as `cited` or `unresolved`. The model
+assigns each cited occurrence once by selecting an offered segment of its
+original source in exactly one demand group. Posting and inventory citations
+retain their evidence roles. The owner verifies complete, unique occurrence
+membership, one capability per demand, and one demand for each job and
+capability. The receipt records the original response, the bound assignment map
+and the expanded decision fingerprints. Earlier V10 operations retain their
+explicit occurrence-to-group selections and reject contradictions with citations.
+
+Each V10 or V11 demand group makes one source-bound choice. `keep` selects the sole
 accepted demand found in its assigned occurrence sources and can apply it to
 new occurrences assigned to that group. If the group has zero or several
 distinct prior demands, the owner refuses `keep`. `select` identifies one exact
@@ -187,9 +196,9 @@ unstarted jobs in a frozen search. A recorded v8 uses its original source
 string and citation path dictionaries. Previously paid requests retain their
 exact fingerprints and one-call allowance. Each active format preserves the
 source-established alternative-background instruction. Synchronous and durable
-single-job refreshes use V10 demand choices, explicit catalog repair, corrections and
+single-job refreshes use V11 cited occurrence assignments, explicit catalog repair, corrections and
 independently started Preparation use v6, and shared initial-search cohorts
-use v7. Every earlier v6, v7, v8 or v9 operation keeps its original
+use v7. Every earlier v6, v7, v8, v9 or v10 operation keeps its original
 instructions through recovery. An explicitly admitted fresh action may reuse
 its validated extraction when the source and execution binding still match.
 

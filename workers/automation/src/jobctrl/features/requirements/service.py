@@ -20,7 +20,7 @@ from .normalization import CatalogNormalizationService
 from .cohort import RequirementsCohortService
 from .cohort_transport import REFRESH_CATALOG_PROMPT_VERSION
 from .catalog_transport import TABLE_CATALOG_PROMPT_VERSION
-from .normalization_demand_choices import DEMAND_CHOICE_PROMPT
+from .normalization_demand_choices import CITED_OCCURRENCE_PROMPT, DEMAND_CHOICE_PROMPT
 from .extraction_wire import EXTRACTION_VERSION, LEGACY_EXTRACTION_VERSION, extraction_wire
 from .normalization_domain import (BACKGROUND_COHORT_PROMPT, BACKGROUND_MANUAL_PROMPT, BACKGROUND_REFRESH_PROMPT,
                                    NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION)
@@ -35,7 +35,7 @@ def _never_cancelled() -> bool:
 
 
 class RequirementsService(RequirementsCohortService, CatalogNormalizationService):
-    refresh_catalog_prompt_version = DEMAND_CHOICE_PROMPT
+    refresh_catalog_prompt_version = CITED_OCCURRENCE_PROMPT
     cohort_catalog_prompt_version = BACKGROUND_COHORT_PROMPT
 
     def admit_manual_catalog_prompt(self, operation_id, connection):
@@ -575,7 +575,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         self, job_id: str, *, expected_posting_revision: int, expected_revision: int,
         force: bool = False, cancelled: Callable[[], bool] = _never_cancelled,
         heartbeat: Callable[[dict], object] | None = None,
-        operation_id: str | None = None, catalog_prompt_version: str | None = DEMAND_CHOICE_PROMPT,
+        operation_id: str | None = None, catalog_prompt_version: str | None = CITED_OCCURRENCE_PROMPT,
     ) -> dict:
         self._validate_versions(expected_posting_revision, expected_revision)
         if type(force) is not bool:
@@ -585,7 +585,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         if catalog_prompt_version is None:
             catalog_prompt_version = NORMALIZATION_PROMPT_VERSION
         if catalog_prompt_version not in (NORMALIZATION_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION, TABLE_CATALOG_PROMPT_VERSION,
-                                          BACKGROUND_MANUAL_PROMPT, BACKGROUND_REFRESH_PROMPT, DEMAND_CHOICE_PROMPT):
+                                          BACKGROUND_MANUAL_PROMPT, BACKGROUND_REFRESH_PROMPT, DEMAND_CHOICE_PROMPT, CITED_OCCURRENCE_PROMPT):
             raise RequirementError("requirements_citation_wire_changed")
         request = {
             "contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": catalog_prompt_version, "operation": "refresh", "job_id": job_id, "expected_posting_revision": expected_posting_revision,

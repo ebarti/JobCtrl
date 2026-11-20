@@ -39,7 +39,9 @@ for (const partition of ["separate", "merged"] as const) {
     }
     expect(schema.$defs["CapabilityGroupId"]!.enum).toEqual(context.partition_group_handles.capabilities);
     expect(schema.$defs["CapabilityGroup"]!.properties!["reuse_requirement_id"]).toMatchObject({ type: "null" });
-    expect(schema.$defs["DemandGroupId"]!.enum).toEqual(context.partition_group_handles.demands);
+    expect(schema.$defs["CitedOccurrence"]!.required).toEqual(["kind"]);
+    expect(schema.$defs["CitedOccurrence"]!.additionalProperties).toBe(false);
+    expect(Object.values(raw.occurrence_slots)).toEqual(context.occurrences.map(() => ({ kind: "cited" })));
     expect(schema.$defs["OfferedSourceId"]!.enum!.slice().sort()).toEqual(Object.keys(context.citation_segments).sort());
     expect(schema.$defs["DemandEvidenceSourceId"]!.enum!.slice().sort()).toEqual([
       context.catalog_inventory_source_id, ...context.occurrences.map((row) => row.source_id),
