@@ -12,6 +12,7 @@ import {
 } from "../hooks/useDigestQuery.js";
 import type { Digest } from "../contracts.js";
 import { formatDateTime } from "../../../shared/lib/formatters.js";
+import { modelActivityBeforeToday } from "../../../shared/lib/model-activity.js";
 import { Alert, AlertDescription, AlertTitle } from "../../../shared/ui/alert.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Button } from "../../../shared/ui/button.js";
@@ -52,6 +53,7 @@ function digestRows(digest: Digest): readonly DigestRow[] {
   const costStatus = budget.costStatus ?? (budget.status === "incomplete" ? "unresolved" : "complete");
   const accountingBlocked = budget.accountingBlocked ?? (budget.status === "incomplete" && costStatus !== "pending");
   const active = (budget.activeCalls ?? 0) > 0 || costStatus === "pending";
+  const earlierActivity = modelActivityBeforeToday(budget);
   const budgetDetail = accountingBlocked
     ? budget.monetaryAccountingBlocked === false
       ? `Unknown past token usage prevents enforcing limits for: ${budget.tokenAccountingBlockedLanes?.join(", ") ?? "configured lanes"}.`
@@ -136,7 +138,7 @@ function digestRows(digest: Digest): readonly DigestRow[] {
           : budget.status === "over_budget" ? "Limit reached"
             : budget.unlimited ? "No daily limit"
               : costStatus === "unavailable" ? "Cost unavailable" : "Within limit",
-      detail: budgetDetail,
+      detail: earlierActivity ? `${budgetDetail} · ${earlierActivity}` : budgetDetail,
       href: digest.deepLinks.budget,
       actionLabel: "Open",
       tone: costStatus === "pending" ? undefined : budget.status === "ok" ? "ok" : "warn",

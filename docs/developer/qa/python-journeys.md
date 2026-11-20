@@ -1839,6 +1839,9 @@ monetary completeness remains intact, while enabling a token-lane limit refuses
 further work. The actual worker-kill recovery journey independently asserts
 `costStatus=unresolved`, a retained unresolved call and null monetary total.
 No receipt, accepted artifact, monetary gate or token gate is bypassed.
+Health distinguishes all currently running calls from the subset admitted on
+the current UTC day. The accounting journey checks both counts while a call is
+held and after it settles.
 
 The focused accounting run on 12 November passed actual worker-kill recovery
 (33.2 seconds) and both accounting cases, with zero retries. Final UI barriers

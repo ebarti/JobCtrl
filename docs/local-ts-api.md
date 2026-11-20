@@ -32,16 +32,20 @@ The health `llmSpend` read model separates `costStatus` and `tokenStatus`, each
 have unavailable monetary cost and complete token usage. `costUsd` is nullable
 unless the complete monetary total is known; `knownCostUsd` is only the recorded
 subtotal. `costAuthority` describes monetary evidence, while
-`accountingComplete` requires both dimensions complete. `activeCalls`,
-`unresolvedCalls`, `unavailableCostCalls` and `unavailableTokenCalls` retain the
-distinction; `unlimited` reflects the current zero-dollar-cap setting. These are
+`accountingComplete` requires both dimensions complete. `activeCalls` counts all
+running model receipts with a live owner, including calls admitted on earlier
+UTC days. `dailyActiveCalls`, each `lanes[].active` count, both usage statuses,
+amounts, `unresolvedCalls`, `unavailableCostCalls` and `unavailableTokenCalls`
+relate to calls admitted on the reported UTC day. Predecessor responses omit
+`dailyActiveCalls` and count only today's running calls in `activeCalls`.
+`unlimited` reflects the current zero-dollar-cap setting. These are
 read-only classifications and do not change receipt or admission policy.
 `dailyBudgetUsd`, `accountingBlocked`, `monetaryAccountingBlocked` and
 `tokenAccountingBlockedLanes` derive from the same settings/receipt snapshot.
 The blockers describe historical uncertain or unavailable usage under enabled
 limits, not running-call progress or known usage reaching a ceiling. An empty
 blocked-lane list means no finite token lane lacks the evidence required for
-admission. Digest carries these blockers plus active/unresolved counts; unknown
+admission. Digest carries these blockers plus both active counts and the daily unresolved count; unknown
 history alone no longer makes its budget status incomplete. Exact amounts and
 knowledge statuses remain unchanged even when accounting does not block work.
 

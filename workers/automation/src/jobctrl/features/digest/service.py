@@ -100,7 +100,8 @@ class DigestService:
                        "accountingBlocked": spending["accountingBlocked"],
                        "monetaryAccountingBlocked": spending["monetaryAccountingBlocked"],
                        "tokenAccountingBlockedLanes": spending["tokenAccountingBlockedLanes"],
-                       "activeCalls": spending["activeCalls"], "unresolvedCalls": spending["unresolvedCalls"],
+                       "activeCalls": spending["activeCalls"], "dailyActiveCalls": spending["dailyActiveCalls"],
+                       "unresolvedCalls": spending["unresolvedCalls"],
                        "dailyBudgetUsd": float(budget),
                        "remainingUsd": max(0.0, budget - amount) if amount is not None and budget > 0 else None,
                        "unlimited": budget <= 0}

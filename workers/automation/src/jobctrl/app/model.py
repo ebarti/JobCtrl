@@ -209,21 +209,27 @@ class ModelGateway:
                 "AND (input_tokens IS NULL OR output_tokens IS NULL) THEN 1 ELSE 0 END) unavailable_tokens "
                 "FROM app_model_calls WHERE created_at>=? GROUP BY lane", (day,)
             ).fetchall()
+            # A live reservation occupies its lane until it settles, across UTC days.
             running = connection.execute(
-                "SELECT lane,owner_pid,COUNT(*) calls FROM app_model_calls WHERE created_at>=? "
-                "AND status='running' GROUP BY lane,owner_pid", (day,)
+                "SELECT lane,owner_pid,COUNT(*) calls,SUM(created_at>=?) daily_calls FROM app_model_calls "
+                "WHERE status='running' GROUP BY lane,owner_pid", (day,)
             ).fetchall()
         lanes = {row["lane"]: {**dict(row), "active": 0} for row in rows}
-        owners = {row["owner_pid"]: _alive(row["owner_pid"]) for row in running}
+        owners = {pid: _alive(pid) for pid in {row["owner_pid"] for row in running}}
+        active = 0
         for row in running:
-            lanes[row["lane"]]["active" if owners[row["owner_pid"]] else "unresolved"] += row["calls"]
-        active = sum(row["active"] for row in lanes.values())
+            alive = owners[row["owner_pid"]]
+            if alive:
+                active += row["calls"]
+            if row["daily_calls"]:
+                lanes[row["lane"]]["active" if alive else "unresolved"] += row["daily_calls"]
+        daily_active = sum(row["active"] for row in lanes.values())
         unresolved = sum(row["unresolved"] for row in lanes.values())
         missing_cost = sum(row["unavailable_cost"] for row in lanes.values())
         missing_tokens = sum(row["unavailable_tokens"] for row in lanes.values())
 
         def status(unavailable):
-            return "unresolved" if unresolved else "pending" if active else "unavailable" if unavailable else "complete"
+            return "unresolved" if unresolved else "pending" if daily_active else "unavailable" if unavailable else "complete"
 
         cost_status, token_status = status(missing_cost), status(missing_tokens)
         known_cost = sum(row["cost_usd"] or 0 for row in lanes.values())
@@ -238,7 +244,7 @@ class ModelGateway:
                 "monetaryAccountingBlocked": monetary_blocked, "tokenAccountingBlockedLanes": blocked_lanes,
                 "costUsd": known_cost if cost_status == "complete" else None, "knownCostUsd": known_cost,
                 "costStatus": cost_status, "tokenStatus": token_status,
-                "activeCalls": active, "unresolvedCalls": unresolved,
+                "activeCalls": active, "dailyActiveCalls": daily_active, "unresolvedCalls": unresolved,
                 "unavailableCostCalls": missing_cost, "unavailableTokenCalls": missing_tokens,
                 "accountingComplete": cost_status == "complete" and token_status == "complete",
                 "costAuthority": "incomplete" if cost_status != "complete" else "includes_estimates"
