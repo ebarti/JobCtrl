@@ -1,4 +1,4 @@
-"""Concrete search-provider/browser execution behind Discovery application ports."""
+"""JobStreaming search execution, checkpoints and durable admission."""
 
 from __future__ import annotations
 
@@ -13,25 +13,11 @@ from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY
 from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
 
 
-class _AcquisitionContext:
-    """Stop provider work at capacity without cancelling the user's action."""
-
-    def __init__(self, context, stop):
-        self._context, self._stop = context, stop
-
-    def __getattr__(self, name):
-        return getattr(self._context, name)
-
-    def cancelled(self):
-        return self._stop.is_set() or self._context.cancelled()
-
-
 class DiscoveryExecutionAdapter:
-    def __init__(self, repository, *, jobs, model, workspace, browser_port=None, http_provider=None):
-        self.repository, self.jobs, self.model = repository, jobs, model
-        self.workspace, self.browser_port, self.http_provider = Path(workspace), browser_port, http_provider
+    def __init__(self, repository, *, jobs, workspace):
+        self.repository, self.jobs = repository, jobs
+        self.workspace = Path(workspace)
         self._signals = {}
-        self._budgets = {}
         self._admit = None
 
     def bind_admission(self, admission):
@@ -40,23 +26,16 @@ class DiscoveryExecutionAdapter:
     def begin(self, lease):
         key = (lease["run_id"], lease["epoch"])
         self._signals[key] = threading.Event()
-        self._budgets[key] = (asyncio.get_running_loop(), asyncio.Event())
 
     def stop(self, lease):
         key = (lease["run_id"], lease["epoch"])
         signal = self._signals.pop(key, None)
-        self._budgets.pop(key, None)
         if signal is not None:
             signal.set()
 
     def _exhaust_budget(self, lease):
         key = (lease["run_id"], lease["epoch"])
-        signal, budget = self._signals.get(key), self._budgets.get(key)
-        if signal is not None:
-            signal.set()
-        if budget is not None:
-            loop, exhausted = budget
-            loop.call_soon_threadsafe(exhausted.set)
+        self._signals[key].set()
 
     def _budget_unit(self, lease, unit, *, cursor=None):
         recorded = self.repository.unit(lease["run_id"], unit["unit_id"])
@@ -65,86 +44,11 @@ class DiscoveryExecutionAdapter:
             result={**((recorded or {}).get("result") or {}), "termination": "budget_exhaustion"},
         )
 
-    async def _until_budget(self, lease, work):
-        task = asyncio.create_task(work)
-        exhausted = asyncio.create_task(self._budgets[(lease["run_id"], lease["epoch"])][1].wait())
-        try:
-            done, _ = await asyncio.wait({task, exhausted}, return_when=asyncio.FIRST_COMPLETED)
-            if task in done:
-                return await task
-            return False
-        finally:
-            for pending in (task, exhausted):
-                if not pending.done():
-                    pending.cancel()
-            await asyncio.gather(task, exhausted, return_exceptions=True)
-
     async def run_board_unit(self, context, lease, unit, settings, previous, turn=None):
         # Validate unsupported scope per board before touching its provider.
         for site in unit["sites"]:
             provider_scope(site, location=unit["location"], remote_only=unit["remote_only"], hours_old=unit["hours_old"])
-        if self.http_provider is not None:
-            return await self._until_budget(lease, self._http_unit(context, lease, unit, settings, previous, turn))
-        return await self._stream_unit(context, lease, unit, settings, self._signals[(lease["run_id"], lease["epoch"])], turn)
-
-    async def run_registered_source(self, context, lease, source, settings):
-        try:
-            return await self._until_budget(lease, self._registered_source(context, lease, source, settings))
-        except AppError as error:
-            if error.code == "action_cancelled" and not context.cancelled() and not self.repository.budget_remaining(lease, settings["newJobLimit"]):
-                return False
-            raise
-
-    async def _http_unit(self, context, lease, unit, settings, previous, turn):
-        provider = self.http_provider
-        cursor = previous["data"].get("cursor") if previous else None
-        progress = (previous or {}).get("result") or {}
-        self.repository.save_unit(lease, unit, status="running", cursor=cursor, result=progress)
-        for page_index in range(progress.get("pagesCompleted", 0), 1000):
-            self.repository.heartbeat(lease)
-            page = await provider.fetch_page(unit, cursor=cursor, run_id=lease["run_id"])
-            turn_filled = False
-            for index, row in enumerate(page.jobs):
-                posting = row.model_dump(exclude={"job_key"})
-                posting["provenance"] = {
-                    "authority": "provider",
-                    "provider": "http",
-                    "sourceKind": "search_result",
-                    "jobKey": row.job_key,
-                }
-                outcome = await self._admit(
-                    context,
-                    lease,
-                    unit,
-                    settings,
-                    posting,
-                    "http:" + fingerprint([lease["run_id"], unit["unit_id"], row.job_key]),
-                )
-                if outcome["budget_reached"]:
-                    self._budget_unit(lease, unit, cursor=cursor)
-                    self._exhaust_budget(lease)
-                    return
-                turn_filled = turn is not None and turn.record(outcome)
-                if turn_filled and index + 1 < len(page.jobs):
-                    # Resume this partial page. Previously committed job keys
-                    # replay without another admission or a second quota charge.
-                    self.repository.save_unit(lease, unit, status="waiting_for_query_turn", cursor=cursor, result=progress)
-                    return True
-            # A page cursor advances only after every included receipt committed.
-            if turn is not None or "pagesCompleted" in progress:
-                progress = {"pagesCompleted": page_index + 1}
-            status = "completed" if page.complete else "running"
-            if turn_filled and not page.complete and page_index + 1 < 1000:
-                status = "waiting_for_query_turn"
-            self.repository.save_unit(lease, unit, status=status, cursor=page.cursor, result=progress)
-            if page.complete:
-                return
-            if status == "waiting_for_query_turn":
-                return True
-            cursor = page.cursor
-        raise AppError("discovery_provider_page_limit", "The provider exceeded the bounded page limit.", 502)
-
-    async def _stream_unit(self, context, lease, unit, settings, stop, turn):
+        stop = self._signals[(lease["run_id"], lease["epoch"])]
         from jobstreaming import ErrorEvent, JobEvent, SearchCompleteEvent, SiteCompleteEvent
         from jobstreaming.checkpoint import SqliteCheckpointStore
         from jobctrl.features.discovery.adapters.jobstreaming import JobStreamingGateway, JobStreamingSearchSpec
@@ -180,7 +84,6 @@ class DiscoveryExecutionAdapter:
                 "discovery_checkpoint_path_unsafe", "The provider checkpoint file is not owned by this workspace.", 409
             )
         store = SqliteCheckpointStore(checkpoint_path)
-        previous = self.repository.unit(lease["run_id"], unit["unit_id"])
         recorded = (previous or {}).get("result") or {}
         if spec.results_per_site is None:
             for reason in recorded.get("sourceTerminations", {}).values():
@@ -356,112 +259,3 @@ class DiscoveryExecutionAdapter:
             and job["description"]
             for job in self.jobs.list_job_snapshots(include_inactive=True)
         )
-
-    async def _registered_source(self, context, lease, source, settings):
-        from jobctrl.features.discovery.adapters.registered import configured_session
-        from jobctrl.network.policy import ATS_API_POLICY, ENRICHMENT_CRAWL_POLICY
-
-        config = source.get("adapterConfig") or {}
-        queries = [
-            q
-            for q in settings.get("queries", [])
-            if not isinstance(q, dict)
-            or not q.get("source_scope")
-            or set(q["source_scope"]).intersection(
-                {
-                    source["sourceId"],
-                    source["sourceId"].split(":", 1)[0],
-                    "workday" if source.get("kind") == "ats_api" else "smartextract",
-                    "smart_extract",
-                }
-            )
-        ]
-        if settings.get("queries") and not queries:
-            return False
-        session = configured_session(
-            source, settings, policy=ATS_API_POLICY if source.get("kind") == "ats_api" else ENRICHMENT_CRAWL_POLICY
-        )
-        search_template = source.get("seedUrl") or config.get("url") or ""
-        if source.get("kind") != "ats_api" and (
-            config.get("query_mode") == "search_only" or "{query" in search_template or "{location" in search_template
-        ):
-            variants = [
-                {**settings, "queries": [query], "locations": [location]}
-                for query in queries
-                for location in settings.get("locations") or []
-            ]
-        else:
-            variants = [{**settings, "queries": queries}]
-        if len(variants) > 1000:
-            raise AppError("discovery_search_unit_limit", "The source exceeds the bounded search-unit limit.")
-        completed = False
-        for variant in variants:
-            if not self.repository.budget_remaining(lease, settings["newJobLimit"]):
-                return completed
-            completed = await self._registered_source_unit(context, lease, source, variant, session) or completed
-        return completed
-
-    async def _registered_source_unit(self, context, lease, source, settings, session):
-        from jobctrl.features.discovery.adapters.registered import acquire_registered_source
-
-        unit = {
-            "unit_id": "source:"
-            + fingerprint([source["sourceId"], source["revision"], settings.get("queries"), settings.get("locations")]),
-            "source_id": source["sourceId"],
-            "source_family": "ats_api" if source.get("kind") == "ats_api" else "smart_extract",
-        }
-        previous = self.repository.unit(lease["run_id"], unit["unit_id"])
-        if previous and previous["status"] in {"completed", "budget_exhausted"}:
-            return True
-        self.repository.save_unit(lease, unit, status="running")
-        postings = await acquire_registered_source(
-            source,
-            settings=settings,
-            context=_AcquisitionContext(context, self._signals[(lease["run_id"], lease["epoch"])]),
-            jobs=self.jobs,
-            model=self.model,
-            browser_port=self.browser_port,
-            session=session,
-            capture_required=self.repository.require_capture,
-        )
-        for posting in postings:
-            if posting.pop("quarantine", False):
-                self.jobs.quarantine_posting(posting)
-                continue
-            key = "registered:" + fingerprint(
-                [lease["run_id"], source["sourceId"], posting.get("source_native_id") or posting["url"]]
-            )
-            if source.get("kind") != "ats_api":
-                from jobctrl.features.discovery.qualification import qualify_posting
-
-                qualification, receipt = await qualify_posting(self.model, posting, settings.get("locations") or [])
-                posting["provenance"]["discoveryQualification"] = {
-                    "value": qualification.model_dump(),
-                    "provenance": receipt,
-                }
-                if (
-                    not posting.get("company")
-                    or qualification.specific_role != "yes"
-                    or qualification.location_match != "match"
-                ):
-                    if qualification.location_match != "mismatch":
-                        self.repository.require_capture(
-                            posting["url"],
-                            source_id=source["sourceId"],
-                            reason="ambiguous_career_system",
-                            retry_context={"qualification": qualification.model_dump(), "provenance": receipt},
-                        )
-                    outcome = await self._admit(context, lease, unit, settings, posting, key, forced_exclusion=True)
-                    if outcome["budget_reached"]:
-                        self._budget_unit(lease, unit)
-                        self._exhaust_budget(lease)
-                        return True
-                    continue
-            outcome = await self._admit(context, lease, unit, settings, posting, key)
-            if outcome["budget_reached"]:
-                self._budget_unit(lease, unit)
-                self._exhaust_budget(lease)
-                return True
-        self.repository.save_unit(lease, unit, status="completed")
-        self.repository.source_result(lease, source["sourceId"], "completed")
-        return True

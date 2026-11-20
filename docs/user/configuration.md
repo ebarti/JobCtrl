@@ -88,7 +88,7 @@ bytes stay under the document owner, independent from app appearance.
 | `~/.jobctrl/.env` | Legacy plaintext provider keys until migration, plus runtime environment configuration. |
 | repo `.env` | Development-only overrides for the current checkout. |
 | shell environment | Ephemeral overrides for commands, CI, and headless operation; not the normal persistent credential store. |
-| `workers/automation/src/jobctrl/config/*.yaml` | Packaged employer and site behavior registries (`employers.yaml`, `sites.yaml`). The dynamic source registry lives in SQLite. |
+| JobStreaming board catalog | The installed SDK supplies the boards. Discovery stores selected board IDs, availability and versioned settings in SQLite. |
 
 The development launcher loads `$JOBCTRL_DIR/.env` (default `~/.jobctrl/.env`),
 repo `.env`, and `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`) before

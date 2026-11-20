@@ -1,3 +1,4 @@
+import { indeedPage } from "./indeed-data.js";
 import type { Locator, Page } from "@playwright/test";
 import { test, expect, json, action, completed } from "../harness/fixtures.js";
 import { createBaseline, createPosting } from "./core-data.js";
@@ -22,14 +23,14 @@ test("expanded operational pages retain readable panel insets filters payloads a
   const posting = await createPosting(api, "operational-layout");
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
   await json(api, "patch", "/v1/discovery/settings", {
-    expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 1, resultsPerSite: 1,
+    expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 1, resultsPerSite: 1,
   });
   const discovery = await action(api, "discovery.search", {
     queries: ["Synthetic operational layout engineer"], locations: [{ location: "Madrid", remote: true }],
   });
   const provider = await app.external.next();
-  expect(provider.path).toBe("/discovery");
-  provider.respond({ jobs: [], cursor: null, complete: true });
+  expect(provider.path).toBe("/jobstreaming/indeed");
+  provider.respond(indeedPage({ jobs: [], cursor: null, complete: true }));
   await completed(api, discovery.runId);
   const preparation = await action(api, "preparation.run", {
     recipe: "prepare", scope: "selected", job_ids: [posting.job_id], limit: 1, resume_mode: "baseline",

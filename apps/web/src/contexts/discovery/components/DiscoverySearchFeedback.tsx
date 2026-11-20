@@ -1,3 +1,4 @@
+import { boardLabel } from "../boards.js";
 import type { ReactNode } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
@@ -25,9 +26,9 @@ const STATUS_LABELS: Readonly<Record<string, string>> = {
   "status-unavailable": "Search status unavailable", checking: "Checking search status…", unconfirmed: "Search request needs confirmation",
 };
 
-const BOARD_LABELS: Readonly<Record<string, string>> = { indeed: "Indeed", linkedin: "LinkedIn", glassdoor: "Glassdoor", zip_recruiter: "ZipRecruiter", google: "Google Jobs", bayt: "Bayt", bdjobs: "Bdjobs", naukri: "Naukri" };
+
 function sourceLabel(failure: DiscoverySearchController["sourceFailures"][number]) {
-  return failure.boards?.map((board) => BOARD_LABELS[board] ?? "Job board").join(", ") ?? "Employer source";
+  return failure.boards?.map((board) => boardLabel(board)).join(", ") ?? "Employer source";
 }
 
 function groupSourceFailures(failures: DiscoverySearchController["sourceFailures"]) {

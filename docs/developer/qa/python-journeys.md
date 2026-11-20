@@ -1952,3 +1952,8 @@ final passing recovery case. All Python code bytes remained identical to the
 five-case recovery run; only Discovery's owning README changed the source-tree
 hash. The listed inventory is now 73 journeys in 29 spec files, without a new
 complete-suite claim.
+
+
+### JobStreaming-only discovery and concurrent URL import
+
+The [source upgrade journeys](../../../apps/web/e2e/journeys/discovery-sdk-upgrade.spec.ts) upgrade an owned workspace containing an active employer feed and saved jobs. They verify the SDK board catalog, existing job identity, disabled board state and source revision fences. An interrupted run with a retired source must end with its recorded reason before further acquisition. The [concurrent URL import journey](../../../apps/web/e2e/journeys/search-import-capacity.spec.ts) clicks **Start search** for 100 synthetic jobs and imports a separate posting URL while the model lane is occupied. It checks exactly one imported job and the search's own cohort.

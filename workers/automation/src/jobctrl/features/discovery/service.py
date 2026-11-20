@@ -5,8 +5,6 @@ from __future__ import annotations
 import asyncio
 import base64
 from contextlib import nullcontext, suppress
-from datetime import datetime, timedelta, timezone
-import json
 
 from jobctrl.app.errors import AppError, ConflictError
 from jobctrl.app.model_capacity import wait_for_model_capacity
@@ -16,7 +14,7 @@ from jobctrl.features.discovery.query_fairness import FAIR_QUERY_SCHEDULING, run
 from jobctrl.features.discovery.remote_search import validate_remote_search_scope
 from jobctrl.features.discovery.role_calls import ROLE_CALL_CUSTODY
 from jobctrl.features.discovery.targets import TargetPlanner
-from jobctrl.features.discovery.ports import DestinationPolicy, DiscoveryStore, ExecutionPort, JobsPort, ModelPort
+from jobctrl.features.discovery.ports import DiscoveryStore, ExecutionPort, JobsPort, ModelPort
 
 
 class _SettledIntake(Exception):
@@ -32,12 +30,10 @@ class DiscoveryService:
         jobs: JobsPort,
         model: ModelPort,
         execution: ExecutionPort,
-        destination_policy: DestinationPolicy,
         profile=None,
     ):
         self.repository, self.jobs, self.model = repository, jobs, model
         self.profile, self.execution = profile, execution
-        self.destination_policy = destination_policy
         self.targets = TargetPlanner(repository, profile, model)
 
     def get_settings(self):
@@ -57,6 +53,8 @@ class DiscoveryService:
 
     def save_settings(self, changes):
         try:
+            if "boards" in changes and any(board not in self.repository.boards for board in changes["boards"]):
+                raise ValueError("Unsupported JobStreaming board")
             settings = validate_settings({**self.get_settings()["settings"], **changes})
         except (ValueError, TypeError):
             raise AppError("invalid_discovery_settings", "The Discovery settings are invalid.") from None
@@ -80,88 +78,20 @@ class DiscoveryService:
     def list_sources(self):
         return self.repository.sources()
 
-    def upsert_source(self, data):
-        return self.repository.upsert_source(data)
-
     def patch_source_state(self, source_id, data):
         if data.get("expectedRevision") is None:
             raise AppError(
                 "expected_revision_required", "Supply the saved source revision before changing its state.", 428
             )
-        return self.repository.upsert_source({**self.repository.source(source_id), **data, "sourceId": source_id})
+        if set(data) - {"state", "reason", "expectedRevision"}:
+            raise AppError("invalid_source_state", "Only the state of an existing JobStreaming board can change.")
+        return self.repository.set_board_state(source_id, data.get("state"), data["expectedRevision"])
 
     def digest_summary(self):
         return {"sources": self.list_sources()["sources"], "runs": self.repository.runs()["runs"]}
 
     def progress_summary(self, *, limit=100):
         return self.repository.progress_summary(limit=limit)
-
-    def list_source_proposals(self):
-        return self.repository.proposals()
-
-    def reset_source_proposal(self, candidate_id):
-        return self.repository.decide_proposal(candidate_id, "reset")
-
-    async def decide_source_proposal(self, candidate_id, decision, expected_revision=None):
-        if decision == "promote":
-            proposal = next(
-                (p for p in self.list_source_proposals()["candidates"] if p["candidateId"] == candidate_id), None
-            )
-            if proposal and not await self.destination_policy.is_public(proposal["candidateUrl"]):
-                raise AppError("source_destination_unsafe", "The source destination is not public.", 409)
-        return self.repository.decide_proposal(candidate_id, decision, expected_revision)
-
-    async def propose_sources_from_history(self, job_id=None):
-        snapshots = [self.jobs.get_job(job_id)] if job_id else self.jobs.list_job_snapshots(include_inactive=True)
-        results = []
-        for snapshot in snapshots:
-            history = self.jobs.history(snapshot["job_id"])
-            for url in dict.fromkeys(
-                filter(None, (snapshot.get("url"), snapshot.get("canonical_url"), snapshot.get("application_url")))
-            ):
-                if not await self.destination_policy.is_public(url):
-                    results.append({"jobId": snapshot["job_id"], "url": url, "status": "invalid"})
-                    continue
-                provenance = snapshot.get("provenance", {})
-                import hashlib
-
-                evidence = {
-                    "originJobId": snapshot["job_id"],
-                    "originPostingUrl": snapshot["url"],
-                    "inputUrl": url,
-                    "urlKind": "posting_url"
-                    if url == snapshot["url"]
-                    else "canonical_url"
-                    if url == snapshot.get("canonical_url")
-                    else "application_url",
-                    "observations": [
-                        {
-                            "observationId": o["observation_id"],
-                            "sourceId": o["source_id"],
-                            "runId": o.get("run_id") or "",
-                            "observedUrl": o["observed_url"],
-                            "observedAt": o["observed_at"],
-                        }
-                        for o in history["observations"]
-                    ],
-                    "extraction": {
-                        "tier": provenance.get("extractionTier"),
-                        "enrichedAt": snapshot["observed_at"] if not snapshot.get("needs_enrichment") else None,
-                        "snapshotVersion": snapshot["revision"],
-                        "descriptionSha256": hashlib.sha256(snapshot["description"].encode()).hexdigest(),
-                        "snapshotSha256": snapshot["source_hash"],
-                        "snapshotEvidence": [json.dumps(provenance, ensure_ascii=False)[:16000]],
-                    },
-                    "sample": {
-                        "title": snapshot["title"],
-                        "company": snapshot["company"],
-                        "descriptionExcerpt": snapshot["description"][:4000],
-                    },
-                }
-                results.append(
-                    {"jobId": snapshot["job_id"], "url": url, **self.repository.propose_source(url, evidence)}
-                )
-        return {"ok": True, "results": results}
 
     def preview_source(self, source_id):
         self.repository.source(source_id)
@@ -421,6 +351,8 @@ class DiscoveryService:
             }
             try:
                 settings = validate_settings(settings)
+                if any(board not in self.repository.boards for board in settings["boards"]):
+                    raise ValueError("Unsupported JobStreaming board")
             except (ValueError, TypeError):
                 raise AppError(
                     "invalid_discovery_overrides", "The action-scoped Discovery controls are invalid."
@@ -459,17 +391,24 @@ class DiscoveryService:
         execution_settings = {**request["settings"], "_criteriaAsOf": request.get("criteriaAsOf"),
                               "_roleTargetPolicy": request.get("roleTargetPolicy"), "_roleCallCustody": request.get("roleCallCustody"),
                               "_durableRoleChecks": durable}
-        if not units and not any(
-            s["state"] in {"active", "experimental"}
-            and s.get("kind") in {"ats_api", "employer_careers_page", "smart_extract"}
-            for s in request["sources"]
-        ):
-            raise AppError(
-                "discovery_targets_missing", "Save or supply explicit search queries before running Discovery.", 409
-            )
+        # Older frozen requests may contain retired feeds. Only the SDK board
+        # identity can authorize acquisition when a worker resumes.
+        board_states = {source["sourceId"]: source["state"] for source in request["sources"]}
+        for unit in units:
+            unit["sites"] = [board for board in unit["sites"] if board in self.repository.boards
+                             and board_states.get("jobstreaming:" + board, "active") in {"active", "experimental"}]
+        units = [unit for unit in units if unit["sites"]]
         lease = self.repository.claim_run(run_id, request)
         if lease["completed"]:
             return lease["result"]
+        supported_sources = {"jobstreaming:" + board for board in self.repository.boards}
+        if saved and any(source_id not in supported_sources and state in {"active", "experimental"}
+                         for source_id, state in board_states.items()):
+            self.repository.settle(lease, "failed", failure_code="discovery_source_retired")
+            raise AppError("discovery_source_retired", "This search used a retired source. Start a new search with your selected JobStreaming boards.", 409)
+        if not units:
+            self.repository.settle(lease, "failed", failure_code="discovery_targets_missing")
+            raise AppError("discovery_targets_missing", "Select an active JobStreaming board and supply a search query and location.", 409)
         prior_outcome = self.repository.finalize_bounded_units(lease, request["settings"]["newJobLimit"])
         prior_source_failures = {failure["sourceId"]: failure for failure in prior_outcome["failures"]}
         self.execution.begin(lease)
@@ -487,114 +426,68 @@ class DiscoveryService:
         heartbeat = asyncio.create_task(keep_alive())
         failures = []
         try:
-            active_boards = {
-                s.get("adapterConfig", {}).get("board")
-                for s in request["sources"]
-                if s["state"] in {"active", "experimental"} and s.get("kind") == "broad_board"
+            ready = []
+            prior_units = {}
+            fair = request.get("boardQueryScheduling") == FAIR_QUERY_SCHEDULING and len({u["query"] for u in units}) > 1
+            rate_limit_codes = {"rate_limited", "discovery_provider_rate_limited"}
+            rate_limited = {
+                source_id.removeprefix("jobstreaming:") for source_id, failure in prior_source_failures.items()
+                if source_id.startswith("jobstreaming:") and failure["code"] in rate_limit_codes
             }
-            semaphore = asyncio.Semaphore(int(request["settings"]["maxParallelFamilies"]))
+            for unit in units:
+                if context.cancelled():
+                    raise AppError("action_cancelled", "Discovery was cancelled.", 409)
+                previous = self.repository.unit(run_id, unit["unit_id"])
+                if previous and previous["status"] in {"completed", "budget_exhausted", "deferred"}:
+                    continue
+                if previous and previous["status"] == "failed" and (previous.get("result") or {}).get("failure"):
+                    failure = previous["result"]["failure"]
+                    failures.append(failure)
+                    if failure["code"] in rate_limit_codes:
+                        rate_limited.update(unit["sites"])
+                    for board in failure.get("boards", unit["sites"]):
+                        self.repository.source_result(lease, "jobstreaming:" + board, "failed", error_code=failure["code"])
+                    continue
+                ready.append(unit)
+                if previous is not None:
+                    prior_units[unit["unit_id"]] = previous
 
-            async def run_boards():
-                ready = []
-                prior_units = {}
-                fair = request.get("boardQueryScheduling") == FAIR_QUERY_SCHEDULING and len({u["query"] for u in units}) > 1
-                rate_limit_codes = {"rate_limited", "discovery_provider_rate_limited"}
-                rate_limited = {
-                    source_id.removeprefix("jobstreaming:") for source_id, failure in prior_source_failures.items()
-                    if source_id.startswith("jobstreaming:") and failure["code"] in rate_limit_codes
-                }
-                for unit in units:
-                    if context.cancelled():
-                        raise AppError("action_cancelled", "Discovery was cancelled.", 409)
-                    unit["sites"] = [
-                        site
-                        for site in unit["sites"]
-                        if site in active_boards
-                        or not any(s.get("adapterConfig", {}).get("board") == site for s in request["sources"])
-                    ]
-                    if not unit["sites"]:
-                        continue
-                    previous = self.repository.unit(run_id, unit["unit_id"])
-                    if previous and previous["status"] in {"completed", "budget_exhausted", "deferred"}:
-                        continue
-                    if previous and previous["status"] == "failed" and (previous.get("result") or {}).get("failure"):
-                        failure = previous["result"]["failure"]
-                        failures.append(failure)
-                        if failure["code"] in rate_limit_codes:
-                            rate_limited.update(unit["sites"])
-                        for board in failure.get("boards", unit["sites"]):
-                            self.repository.source_result(lease, "jobstreaming:" + board, "failed", error_code=failure["code"])
-                        continue
-                    ready.append(unit)
-                    if previous is not None:
-                        prior_units[unit["unit_id"]] = previous
+            def remaining():
+                return self.repository.budget_remaining(lease, execution_settings["newJobLimit"])
 
-                def remaining():
-                    return self.repository.budget_remaining(lease, execution_settings["newJobLimit"])
+            async def visit(unit, turn=None):
+                if context.cancelled():
+                    raise AppError("action_cancelled", "Discovery was cancelled.", 409)
+                previous = prior_units.get(unit["unit_id"])
+                if fair and rate_limited.intersection(unit["sites"]):
+                    if previous:
+                        self.repository.save_unit(lease, unit, status="deferred", cursor=previous["data"].get("cursor"),
+                                                  result={**(previous.get("result") or {}), "termination": "rate_limited"})
+                    return False
+                try:
+                    yielded = await self.execution.run_board_unit(context, lease, unit, execution_settings, previous, turn)
+                    if yielded:
+                        prior_units[unit["unit_id"]] = self.repository.unit(run_id, unit["unit_id"])
+                    return yielded
+                except AppError as error:
+                    if error.code == "action_cancelled":
+                        raise
+                    if error.code in rate_limit_codes:
+                        rate_limited.update(unit["sites"])
+                    failures.append(self.repository.record_board_failure(lease, unit, error))
 
-                async def visit(unit, turn=None):
-                    if context.cancelled():
-                        raise AppError("action_cancelled", "Discovery was cancelled.", 409)
-                    previous = prior_units.get(unit["unit_id"])
-                    if fair and rate_limited.intersection(unit["sites"]):
-                        if previous:
-                            self.repository.save_unit(lease, unit, status="deferred", cursor=previous["data"].get("cursor"),
-                                                      result={**(previous.get("result") or {}), "termination": "rate_limited"})
-                        return False
-                    try:
-                        yielded = await self.execution.run_board_unit(context, lease, unit, execution_settings, previous, turn)
-                        if yielded:
-                            prior_units[unit["unit_id"]] = self.repository.unit(run_id, unit["unit_id"])
-                        return yielded
-                    except AppError as error:
-                        if error.code == "action_cancelled":
-                            raise
-                        if error.code in rate_limit_codes:
-                            rate_limited.update(unit["sites"])
-                        failures.append(self.repository.record_board_failure(lease, unit, error))
+            # Recover recorded failures even if a prior lease filled the
+            # budget. Only newly admitted multi-query requests share turns.
+            if fair and ready:
+                admitted = self.repository.board_new_jobs_by_query(lease)
+                yielded = {unit_id for unit_id, state in prior_units.items() if state["status"] == "waiting_for_query_turn"}
+                await run_fair_query_units(ready, admitted, remaining, visit, yielded)
+            else:
+                for unit in ready:
+                    if not remaining():
+                        break
+                    await visit(unit)
 
-                # Recover recorded failures even if a prior lease filled the
-                # budget. Only newly admitted multi-query requests share turns.
-                if fair and ready:
-                    admitted = self.repository.board_new_jobs_by_query(lease)
-                    yielded = {unit_id for unit_id, state in prior_units.items() if state["status"] == "waiting_for_query_turn"}
-                    await run_fair_query_units(ready, admitted, remaining, visit, yielded)
-                else:
-                    for unit in ready:
-                        if not remaining():
-                            break
-                        await visit(unit)
-
-            async def run_sources(kinds):
-                for source in request["sources"]:
-                    if source["state"] not in {"active", "experimental"} or source.get("kind") not in kinds:
-                        continue
-                    if context.cancelled():
-                        raise AppError("action_cancelled", "Discovery was cancelled.", 409)
-                    if source["sourceId"] in prior_source_failures:
-                        failures.append(prior_source_failures[source["sourceId"]])
-                        continue
-                    if not self.repository.budget_remaining(lease, request["settings"]["newJobLimit"]):
-                        return
-                    if not payload.get("forceSources") and not self._source_due(source):
-                        continue
-                    try:
-                        await self.execution.run_registered_source(context, lease, source, execution_settings)
-                    except AppError as error:
-                        if error.code == "action_cancelled":
-                            raise
-                        failures.append({"sourceId": source["sourceId"], "code": error.code})
-                        self.repository.source_result(lease, source["sourceId"], "failed", error_code=error.code)
-
-            async def family(callback):
-                async with semaphore:
-                    await callback()
-
-            await asyncio.gather(
-                family(run_boards),
-                family(lambda: run_sources({"ats_api"})),
-                family(lambda: run_sources({"employer_careers_page", "smart_extract"})),
-            )
             run = next(r for r in self.repository.runs()["runs"] if r["runId"] == run_id)
             outcome = self.repository.finalize_bounded_units(lease, request["settings"]["newJobLimit"])
             represented = {
@@ -696,22 +589,3 @@ class DiscoveryService:
             limit=int(settings["newJobLimit"]),
             cancelled=context.cancelled,
         )
-
-    @staticmethod
-    def _source_due(source):
-        last = source.get("lastRunCompletedAt")
-        if not last:
-            return True
-        try:
-            observed = datetime.fromisoformat(last)
-            if observed.tzinfo is None:
-                observed = observed.replace(tzinfo=timezone.utc)
-            failures = int(source.get("consecutiveFailures") or 0)
-            minutes = (
-                min(360, 15 * 2 ** min(5, failures - 1))
-                if failures
-                else int((source.get("adapterConfig") or {}).get("cadenceMinutes", 360))
-            )
-            return observed + timedelta(minutes=max(1, minutes)) <= datetime.now(timezone.utc)
-        except (TypeError, ValueError, OverflowError):
-            raise AppError("source_schedule_invalid", "The recorded source schedule requires review.", 409) from None

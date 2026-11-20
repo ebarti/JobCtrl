@@ -12,8 +12,6 @@ export const discoveryKeys = {
     ["tenant", tenantId, "discovery", "job-url-import", workflowId, executionId] as const,
   settings: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "settings"] as const,
-  sourceLocator: (tenantId: TenantId) =>
-    ["tenant", tenantId, "discovery", "source-locator"] as const,
   sourceRegistry: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "source-registry"] as const,
   sourcePreview: (tenantId: TenantId, sourceId: string) =>

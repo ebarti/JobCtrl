@@ -1,3 +1,4 @@
+import { indeedPage } from "./indeed-data.js";
 import { action, completed, expect, json, modelCall, test } from "../harness/fixtures.js";
 import { createBaseline } from "./core-data.js";
 import { posting, respondProducer } from "./preparation-cohort-data.js";
@@ -8,13 +9,13 @@ test.use({ sourceRevision: "17f9ce5be1de2f21735fb27d5dfe8f6d1b7c8118" });
 test("the predecessor Jobs grid identifies a run's source-bound language decision before and after it skips Fit", async ({ api, app, page }) => {
   await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 11, resultsPerSite: 11 });
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 11, resultsPerSite: 11 });
   const started = await action(api, "discovery.search", { queries: ["Synthetic engineer"], locations: [{ location: "Madrid", remote: true }] });
   const target = { ...posting(1200), description: "Maintain durable workflows. Mantener la recuperación de los flujos de trabajo." };
   const siblings = Array.from({ length: 10 }, (_, i) => posting(1201 + i));
   const source = await app.external.next();
-  expect(source.path).toBe("/discovery");
-  source.respond({ jobs: [target, ...siblings], complete: true, cursor: null });
+  expect(source.path).toBe("/jobstreaming/indeed");
+  source.respond(indeedPage({ jobs: [target, ...siblings], complete: true, cursor: null }));
   respondProducer(await app.external.next(), [target]);
   for (const operation of ["page_interpretation", "posting_extraction", "description_quality", "jobs.role_analysis", "requirements.extract"]) {
     respondProducer(await modelCall(app, operation), [{ ...target, unsupported: true }]);

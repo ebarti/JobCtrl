@@ -92,7 +92,7 @@ type Fixtures = {
   api: APIRequestContext;
   consoleErrors: string[];
   features: string | undefined;
-  discoveryTransport: "http" | "jobstreaming" | "jobstreaming-indeed-missing" | "jobstreaming-tls-failure";
+  discoveryTransport: "jobstreaming" | "jobstreaming-indeed-missing" | "jobstreaming-tls-failure";
   nativeAccountingPreflight: boolean;
   sourceRevision: string | undefined;
   fitRecoveryDebugger: boolean;
@@ -113,7 +113,7 @@ type Fixtures = {
 
 export const test = base.extend<Fixtures, WorkerFixtures>({
   features: [undefined, { option: true }],
-  discoveryTransport: ["http", { option: true }],
+  discoveryTransport: ["jobstreaming", { option: true }],
   nativeAccountingPreflight: [false, { option: true }],
   sourceRevision: [undefined, { option: true }],
   fitRecoveryDebugger: [false, { option: true }],

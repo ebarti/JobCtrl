@@ -131,10 +131,10 @@ retries return their original run before this check. A lost acknowledgement
 retains its key until exact reconciliation. The Jobs launch pins both the saved
 Profile revision and the database incarnation used to read its preferences.
 
+`GET /v1/discovery/sources` returns boards from the installed JobStreaming registry and their local state. Change an existing board with `PATCH /v1/discovery/sources/{source_id}/state` and its `expectedRevision`. A preview reads saved observations. Automatic searches run exclusively through JobStreaming. Jobs independently owns the durable `jobs.capture_url` action for a supplied posting URL.
+
 `GET /v1/discovery/runs` includes the canonical run's `failures` list alongside
-its counts and status. Board failures identify `sourceFamily`, `unitId`, `boards`,
-`code` and a safe actionable `message`; registered-source failures retain their
-`sourceId` and code. The action result carries the same recorded failures.
+its counts and status. Board failures identify `sourceFamily`, `unitId`, `boards`, `code` and a safe actionable `message`. Historical records retain their original source identifiers. The action result carries the same recorded failures.
 New SDK board access failures keep the code `discovery_provider_authentication_configuration`.
 Their optional `diagnostic` is `missing_credential`, `provider_access_denied`,
 `tls_configuration`, `proxy_configuration`, or `authentication_or_configuration`.

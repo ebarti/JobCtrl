@@ -210,7 +210,7 @@ test("Discovery source tools expose every read-only tab and nested disclosure at
   await visitExpanded(page, testInfo, "discovery", "/discovery", "Search for jobs");
   await page.getByRole("button", { name: "Manage search sources", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Search sources", exact: true })).toBeVisible();
-  for (const tab of ["Source registry", "Source locator", "Quarantine review", "Role matching", "Manual capture"] as const) {
+  for (const tab of ["JobStreaming boards", "Quarantine review", "Role matching", "Manual capture"] as const) {
     await page.getByRole("tablist", { name: "Discovery tools", exact: true }).getByRole("tab", { name: tab, exact: true }).click();
     await captureExpanded(page, testInfo, `discovery-${tab.toLowerCase().replaceAll(" ", "-")}`, "Search for jobs");
   }

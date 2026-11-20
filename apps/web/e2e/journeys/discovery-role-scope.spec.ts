@@ -1,3 +1,4 @@
+import { indeedPage } from "./indeed-data.js";
 import { action, completed, expect, json, terminal, test } from "../harness/fixtures.js";
 import { baseline, createBaseline } from "./core-data.js";
 import { serveRoleTarget } from "./discovery-role-scope-data.js";
@@ -11,14 +12,14 @@ type Review = { decision: Scope | null; jobId: string; postingRevision: number }
 test("saved role targets require cited scope before a provider listing spends capacity and allow a source-bound review of saved jobs", async ({ api, app }) => {
   const { profile } = await createBaseline(api, { ...baseline, experience: { target_role: "Synthetic systems leadership", target_locations: "Madrid" } });
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 1 });
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 1 });
   const controls = { queries: [], locations: [], expectedProfileVersion: profile.profileVersion };
   const listing = (id: string) => ({ job_key: id, title: "Synthetic position " + id, company: "Synthetic Employer",
-    description: "The synthetic responsibilities for " + id, location: "Madrid", url: "https://example.com/jobs/" + id });
+    description: "The synthetic responsibilities for " + id, location: "Madrid", url: "https://www.indeed.com/viewjob?jk=" + id });
   const search = await action(api, "discovery.search", controls);
   const board = await app.external.next();
-  expect(board.path).toBe("/discovery");
-  board.respond({ jobs: [{ ...listing("listing-only"), description: "" }, listing("one"), listing("two"), listing("three")], cursor: null, complete: true });
+  expect(board.path).toBe("/jobstreaming/indeed");
+  board.respond(indeedPage({ jobs: [{ ...listing("listing-only"), description: "" }, listing("one"), listing("two"), listing("three")], cursor: null, complete: true }));
   await serveRoleTarget(app, "mismatch");
   await serveRoleTarget(app, "unknown");
   await serveRoleTarget(app, "match");
@@ -44,7 +45,7 @@ test("saved role targets require cited scope before a provider listing spends ca
   for (const invalid of invalidResults) {
     const refused = await action(api, "discovery.search", controls);
     const secondBoard = await app.external.next();
-    secondBoard.respond({ jobs: [listing("invalid-evidence")], cursor: null, complete: true });
+    secondBoard.respond(indeedPage({ jobs: [listing("invalid-evidence")], cursor: null, complete: true }));
     await serveRoleTarget(app, "match", invalid);
     expect(await terminal(api, refused.runId)).toMatchObject({ status: "failed" });
   }
@@ -71,7 +72,7 @@ test("saved role targets require cited scope before a provider listing spends ca
 
   // Explicit one-run queries can deliberately explore a different target.
   const explicit = await action(api, "discovery.search", { queries: ["exploratory"], locations: ["Madrid"] });
-  (await app.external.next()).respond({ jobs: [listing("exploratory")], cursor: null, complete: true });
+  (await app.external.next()).respond(indeedPage({ jobs: [listing("exploratory")], cursor: null, complete: true }));
   expect((await completed(api, explicit.runId)).result).toMatchObject({ newJobs: 1 });
   expect(app.external.calls.filter((call) => call.body["operation"] === "discovery.role_target_match")).toHaveLength(4 + invalidResults.length);
 });
@@ -79,10 +80,10 @@ test("saved role targets require cited scope before a provider listing spends ca
 test("the same saved role and posting honor the opposite external scope decision", async ({ api, app }) => {
   const { profile } = await createBaseline(api, { ...baseline, experience: { target_role: "Synthetic systems leadership", target_locations: "Madrid" } });
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 1 });
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 1 });
   const search = await action(api, "discovery.search", { queries: [], locations: [], expectedProfileVersion: profile.profileVersion });
-  (await app.external.next()).respond({ jobs: [{ job_key: "three", title: "Synthetic position three", company: "Synthetic Employer",
-    description: "The synthetic responsibilities for three", location: "Madrid", url: "https://example.com/jobs/three" }], cursor: null, complete: true });
+  (await app.external.next()).respond(indeedPage({ jobs: [{ job_key: "three", title: "Synthetic position three", company: "Synthetic Employer",
+    description: "The synthetic responsibilities for three", location: "Madrid", url: "https://www.indeed.com/viewjob?jk=three" }], cursor: null, complete: true }));
   await serveRoleTarget(app, "mismatch");
   expect((await completed(api, search.runId)).result).toMatchObject({ newJobs: 0, roleTargetObservations: { mismatch: 1 } });
   expect((await json<{ jobs: Job[] }>(api, "get", "/v1/jobs")).jobs).toEqual([]);

@@ -509,8 +509,6 @@ Page availability, individual-posting state and description quality use cited mo
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
-### Arbitrary-site discovery captures
+### Importing a known posting URL
 
-Smart Extract resolves listing cards through the same rendered and structured posting-source preparation as direct URL imports. Card titles, employer guesses and blank places are not canonical posting facts. Its full-posting qualification checks the extracted specific role, description and saved location/work-model scope before creating a Job, as described in [Discovery](discovery.md#how-target-search-controls-are-used). The accepted posting snapshot records the page, extraction and qualification determination IDs. That exact capture seeds enrichment; failed or uncertain qualification preserves existing accepted job content and creates no replacement job.
-
-For archived Smart Extract recovery, interrupted snapshot publication retains the exact qualified capture and determination references. Retry completes that capture without another page fetch or model call, while preserving newer accepted snapshots, enrichment and owner deletion. A publication failure leaves the archived item available for retry; canonical Job existence alone does not acknowledge it.
+**Jobs → Import job → Import posting URL** fetches the supplied public posting, extracts its job facts and preserves the source snapshot. Importing during an active search queues the request if model capacity is occupied. A retry uses the same receipt. JobStreaming owns the separate board search path. [Discovery](discovery.md#capture-a-known-posting).

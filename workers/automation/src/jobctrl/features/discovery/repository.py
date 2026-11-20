@@ -9,14 +9,14 @@ import time
 from uuid import uuid4
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
-from jobctrl.features.discovery.coordinates import source_coordinate
 from jobctrl.features.discovery.domain import BOARD_RATE_LIMIT_CODE, DEFAULT_SETTINGS, fingerprint, now, public_board_failure, validate_settings
 from jobctrl.features.discovery.qualification import posting_role_evidence, role_binding
 
 
 class DiscoveryRepository:
-    def __init__(self, database, events, settings=None):
+    def __init__(self, database, events, settings, *, boards):
         self.database, self.events, self.settings = database, events, settings
+        self.boards = boards
 
     def read_settings(self, connection=None):
         if connection is None:
@@ -24,6 +24,7 @@ class DiscoveryRepository:
                 return self.read_settings(conn)
         row = connection.execute("SELECT revision,data_json FROM discovery_settings WHERE singleton=1").fetchone()
         settings = {**DEFAULT_SETTINGS, **(json.loads(row[1]) if row else {})}
+        settings["maxParallelFamilies"] = 1
         policy = self.settings.snapshot(connection) if self.settings is not None else None
         if policy is not None:
             settings.update(
@@ -42,9 +43,9 @@ class DiscoveryRepository:
                     "source": "persisted"
                     if row or policy is not None and k in {"minFitScore", "autoApply", "applyApprovalRequired"}
                     else "default",
-                    "editable": k not in {"applyApprovalRequired", "resultsPerSite"},
-                    "locked": k in {"applyApprovalRequired", "resultsPerSite"},
-                    "activation": "inactive" if k == "resultsPerSite" else "restart"
+                    "editable": k not in {"applyApprovalRequired", "resultsPerSite", "maxParallelFamilies"},
+                    "locked": k in {"applyApprovalRequired", "resultsPerSite", "maxParallelFamilies"},
+                    "activation": "inactive" if k in {"resultsPerSite", "maxParallelFamilies"} else "restart"
                     if k in {"scheduleCron", "schedulingEnabled"}
                     else "next_source_family"
                     if k.startswith("crawl") or k == "useBrowserHeaders"
@@ -58,9 +59,9 @@ class DiscoveryRepository:
                     "source": "persisted"
                     if row or policy is not None and k in {"minFitScore", "autoApply", "applyApprovalRequired"}
                     else "default",
-                    "editable": k not in {"applyApprovalRequired", "resultsPerSite"},
-                    "locked": k in {"applyApprovalRequired", "resultsPerSite"},
-                    "activation": "inactive" if k == "resultsPerSite" else "restart"
+                    "editable": k not in {"applyApprovalRequired", "resultsPerSite", "maxParallelFamilies"},
+                    "locked": k in {"applyApprovalRequired", "resultsPerSite", "maxParallelFamilies"},
+                    "activation": "inactive" if k in {"resultsPerSite", "maxParallelFamilies"} else "restart"
                     if k in {"scheduleCron", "schedulingEnabled"}
                     else "next_source_family"
                     if k.startswith("crawl") or k == "useBrowserHeaders"
@@ -109,6 +110,7 @@ class DiscoveryRepository:
                 )
             except (ValueError, TypeError):
                 raise AppError("invalid_discovery_settings", "The Discovery settings are invalid.") from None
+            settings["maxParallelFamilies"] = 1
             revision = previous["revision"] + 1
             owned = {
                 k: v for k, v in settings.items() if k not in {"minFitScore", "autoApply", "applyApprovalRequired"}
@@ -127,8 +129,11 @@ class DiscoveryRepository:
         with self.database.connect() as conn:
             result = []
             for row in conn.execute("SELECT * FROM discovery_sources ORDER BY state,source_id"):
+                board = row["source_id"].removeprefix("jobstreaming:")
+                if row["source_id"] != "jobstreaming:" + board or board not in self.boards:
+                    continue
                 source = {
-                    **json.loads(row["data_json"]),
+                    **self._board_definition(board),
                     "sourceId": row["source_id"],
                     "state": row["state"],
                     "revision": row["revision"],
@@ -180,268 +185,48 @@ class DiscoveryRepository:
                 result.append(source)
         return {"ok": True, "sources": result}
 
-    def source(self, source_id, *, connection=None):
-        if connection is not None:
-            row = connection.execute("SELECT * FROM discovery_sources WHERE source_id=?", (source_id,)).fetchone()
-        else:
-            with self.database.connect() as conn:
-                row = conn.execute("SELECT * FROM discovery_sources WHERE source_id=?", (source_id,)).fetchone()
-        if row is None:
-            raise NotFoundError("The Discovery source does not exist.")
+    @staticmethod
+    def _board_definition(board):
         return {
-            **json.loads(row["data_json"]),
-            "sourceId": source_id,
-            "state": row["state"],
-            "revision": row["revision"],
+            "sourceId": "jobstreaming:" + board,
+            "kind": "broad_board",
+            "displayName": board,
+            "owner": "system",
+            "priority": "lead_generator",
+            "policyId": "broad_board_lead_generator",
+            "adapterConfig": {"board": board},
         }
 
-    def upsert_source(self, data, *, connection=None, preserve_state=False):
-        from contextlib import nullcontext
+    def source(self, source_id, *, connection=None):
+        board = source_id.removeprefix("jobstreaming:")
+        if source_id != "jobstreaming:" + board or board not in self.boards:
+            raise NotFoundError("The JobStreaming board does not exist.")
+        with nullcontext(connection) if connection is not None else self.database.connect() as conn:
+            row = conn.execute("SELECT state,revision FROM discovery_sources WHERE source_id=?", (source_id,)).fetchone()
+        if row is None:
+            raise NotFoundError("The JobStreaming board does not exist.")
+        return {**self._board_definition(board), "state": row["state"], "revision": row["revision"]}
 
-        source_id = data.get("sourceId") or data.get("source_id")
-        if not isinstance(source_id, str) or not source_id.strip() or len(source_id) > 500:
-            raise AppError("invalid_source", "A source ID is required.")
-        if data.get("seedUrl"):
-            if source_coordinate(data["seedUrl"]) is None:
-                raise AppError("invalid_source_url", "A public source URL is required.") from None
-        state = data.get("state", "active")
-        if state not in {"active", "experimental", "disabled", "quarantined"}:
-            raise AppError("invalid_source_state", "Choose a valid source state.")
-        with nullcontext(connection) if connection is not None else self.database.transaction() as conn:
-            row = conn.execute("SELECT * FROM discovery_sources WHERE source_id=?", (source_id,)).fetchone()
-            if row and preserve_state:
-                return {"ok": True, "source": self.source(source_id, connection=conn)}
-            if row and data.get("createOnly") is True:
-                raise ConflictError("That source ID already exists; review it before changing its configuration.")
-            expected = data.get("expectedRevision")
-            if row and expected is None and not preserve_state:
-                raise AppError(
-                    "expected_revision_required", "Supply the saved source revision before changing it.", 428
-                )
-            if row and expected is not None and expected != row["revision"]:
+    def set_board_state(self, source_id, state, expected):
+        if not isinstance(state, str) or state not in {"active", "experimental", "disabled", "quarantined"}:
+            raise AppError("invalid_source_state", "Choose a valid board state.")
+        with self.database.transaction() as conn:
+            source = self.source(source_id, connection=conn)
+            if type(expected) is not int or source["revision"] != expected:
                 raise ConflictError()
-            saved = {
-                "kind": "ats_api",
-                "displayName": source_id,
-                "owner": "user",
-                "priority": "standard",
-                "policyId": "ats_api_canonical",
-                "adapterConfig": {},
-                **(json.loads(row["data_json"]) if row else {}),
-                **data,
-            }
-            if row and preserve_state:
-                state = row["state"]
-            revision = row["revision"] + 1 if row else 1
-            saved.pop("expectedRevision", None)
-            saved.pop("createOnly", None)
-            conn.execute(
-                "INSERT INTO discovery_sources VALUES(?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET revision=excluded.revision,state=excluded.state,data_json=excluded.data_json,updated_at=excluded.updated_at",
-                (source_id, revision, state, json.dumps(saved, ensure_ascii=False), now()),
-            )
-            self.events.append(
-                conn,
-                "DiscoverySourceUpdated",
-                {"sourceId": source_id, "revision": revision},
-                feature="discovery",
-                aggregate_id=source_id,
-            )
-        return {"ok": True, "source": self.source(source_id, connection=connection)}
+            revision = expected + 1
+            conn.execute("UPDATE discovery_sources SET revision=?,state=?,updated_at=? WHERE source_id=?",
+                         (revision, state, now(), source_id))
+            self.events.append(conn, "DiscoverySourceUpdated", {"sourceId": source_id, "revision": revision},
+                               feature="discovery", aggregate_id=source_id)
+            return {"ok": True, "source": {**source, "state": state, "revision": revision}}
 
     def seed_boards(self):
-        from jobctrl.features.discovery.defaults import packaged_sources
-
         with self.database.transaction() as conn:
-            for board in DEFAULT_SETTINGS["boards"]:
-                source_id = "jobstreaming:" + board
-                if not conn.execute("SELECT 1 FROM discovery_sources WHERE source_id=?", (source_id,)).fetchone():
-                    self.upsert_source(
-                        {
-                            "sourceId": source_id,
-                            "kind": "broad_board",
-                            "displayName": board,
-                            "owner": "system",
-                            "priority": "lead_generator",
-                            "policyId": "broad_board_lead_generator",
-                            "adapterConfig": {"board": board},
-                        },
-                        connection=conn,
-                    )
-            for source in packaged_sources():
-                if not conn.execute(
-                    "SELECT 1 FROM discovery_sources WHERE source_id=?", (source["sourceId"],)
-                ).fetchone():
-                    self.upsert_source(source, connection=conn)
-
-    def proposals(self):
-        sources = self.sources()["sources"]
-        with self.database.connect() as conn:
-            candidates = []
-            for row in conn.execute("SELECT * FROM discovery_candidates ORDER BY updated_at DESC"):
-                data = json.loads(row["data_json"])
-                data.update(
-                    candidateId=row["candidate_id"],
-                    candidateUrl=row["coordinate"],
-                    decision=row["decision"],
-                    revision=row["revision"],
-                    discoveredAt=row["created_at"],
-                )
-                data["origins"] = [
-                    json.loads(e[0])
-                    for e in conn.execute(
-                        "SELECT data_json FROM discovery_candidate_evidence WHERE candidate_id=? ORDER BY created_at",
-                        (row["candidate_id"],),
-                    )
-                ]
-                data["overlaps"] = [
-                    {"sourceId": s["sourceId"], "state": s["state"], "seedUrl": s.get("seedUrl")}
-                    for s in sources
-                    if s["sourceId"] == data.get("sourceId")
-                    or s.get("seedUrl")
-                    and source_coordinate(s["seedUrl"]) is not None
-                    and source_coordinate(s["seedUrl"]).url == row["coordinate"]
-                ]
-                data["employerDomainMatched"], data["manualActionReason"] = False, None
-                data["proposal"] = {
-                    "coordinateKey": row["coordinate"],
-                    "sourceId": data["sourceId"],
-                    "atsKind": data.get("detectedAtsKind"),
-                    "boardToken": data.get("boardToken"),
-                    "completeness": "unknown",
-                    "promotionBlockedReason": data.get("promotionBlockedReason"),
-                    "evidence": data["origins"],
-                    "overlaps": data["overlaps"],
-                }
-                candidates.append(data)
-        return {"ok": True, "candidates": candidates}
-
-    def propose_source(self, url, evidence):
-        coordinate = source_coordinate(url)
-        if coordinate is None:
-            return {"status": "invalid", "candidateId": None}
-        with self.database.transaction() as conn:
-            existing = conn.execute(
-                "SELECT * FROM discovery_candidates WHERE coordinate=?", (coordinate.url,)
-            ).fetchone()
-            if existing and existing["decision"] == "reject":
-                return {"status": "suppressed", "candidateId": existing["candidate_id"]}
-            if existing and existing["decision"] == "promote":
-                return {"status": "unchanged", "candidateId": existing["candidate_id"]}
-            configured_workday = None
-            if coordinate.ats_kind == "workday":
-                for registry in conn.execute("SELECT source_id,data_json FROM discovery_sources"):
-                    entry = json.loads(registry["data_json"])
-                    seed = source_coordinate(entry.get("seedUrl") or "")
-                    config = entry.get("adapterConfig") or {}
-                    if (
-                        seed is not None
-                        and seed.url == coordinate.url
-                        and all(config.get(key) for key in ("base_url", "tenant", "site_id"))
-                    ):
-                        configured_workday = registry["source_id"]
-                        break
-            data = {
-                "sourceId": configured_workday or coordinate.source_id,
-                "sourceKind": "ats_api" if coordinate.ats_kind else "employer_careers_page",
-                "detectedAtsKind": coordinate.ats_kind,
-                "boardToken": coordinate.board_token,
-                "completeness": "unknown",
-                "proposalOnly": True,
-                "confidence": 1.0 if coordinate.ats_kind else 0.0,
-                "promotionBlockedReason": "workday_requires_configured_employer"
-                if coordinate.ats_kind == "workday" and configured_workday is None
-                else "regional_lever_adapter_unsupported"
-                if coordinate.source_id.startswith("lever:eu:")
-                else None,
-            }
-            ident = existing["candidate_id"] if existing else coordinate.candidate_id
-            receipt_id = fingerprint([ident, evidence])
-            if (
-                existing
-                and existing["decision"] == "pending"
-                and json.loads(existing["data_json"]) == data
-                and conn.execute(
-                    "SELECT 1 FROM discovery_candidate_evidence WHERE evidence_id=?", (receipt_id,)
-                ).fetchone()
-            ):
-                return {"status": "unchanged", "candidateId": ident}
-            conn.execute(
-                "INSERT INTO discovery_candidates VALUES(?,?,?,?,?,?,?) ON CONFLICT(candidate_id) DO UPDATE SET decision='pending',revision=discovery_candidates.revision+1,data_json=excluded.data_json,updated_at=excluded.updated_at",
-                (ident, coordinate.url, "pending", 1, json.dumps(data), now(), now()),
-            )
-            conn.execute(
-                "INSERT INTO discovery_candidate_evidence VALUES(?,?,?,?) ON CONFLICT(evidence_id) DO NOTHING",
-                (receipt_id, ident, json.dumps(evidence, ensure_ascii=False), now()),
-            )
-            self.events.append(
-                conn, "SourceProposalUpdated", {"candidateId": ident}, feature="discovery", aggregate_id=ident
-            )
-        return {"status": "proposed", "candidateId": ident}
-
-    def decide_proposal(self, candidate_id, decision, expected_revision=None):
-        if decision not in {"promote", "reject", "reset"}:
-            raise AppError("invalid_source_decision", "Choose promote, reject or reset.")
-        with self.database.transaction() as conn:
-            row = conn.execute("SELECT * FROM discovery_candidates WHERE candidate_id=?", (candidate_id,)).fetchone()
-            if row is None:
-                raise NotFoundError("The source proposal does not exist.")
-            if expected_revision is not None and expected_revision != row["revision"]:
-                raise ConflictError()
-            data = json.loads(row["data_json"])
-            source = None
-            if decision == "promote":
-                if row["decision"] == "reject":
-                    raise ConflictError("Reset the rejected coordinate before explicitly promoting it.")
-                if data.get("promotionBlockedReason"):
-                    raise AppError("source_promotion_blocked", data["promotionBlockedReason"], 409)
-                overlap = conn.execute(
-                    "SELECT state FROM discovery_sources WHERE source_id=?", (data["sourceId"],)
-                ).fetchone()
-                if overlap and overlap[0] in {"disabled", "quarantined", "paused"}:
-                    raise ConflictError("The overlapping source is disabled; change its state explicitly first.")
-                source = self.upsert_source(
-                    {
-                        "sourceId": data["sourceId"],
-                        "seedUrl": row["coordinate"],
-                        "kind": data["sourceKind"],
-                        "adapterConfig": {"atsKind": data.get("detectedAtsKind"), "board": data.get("boardToken")},
-                    },
-                    connection=conn,
-                    preserve_state=True,
-                )["source"]
-            conn.execute(
-                "UPDATE discovery_candidates SET decision=?,revision=revision+1,updated_at=? WHERE candidate_id=?",
-                (decision, now(), candidate_id),
-            )
-            self.events.append(
-                conn,
-                "SourceProposalUpdated",
-                {"candidateId": candidate_id, "decision": decision},
-                feature="discovery",
-                aggregate_id=candidate_id,
-            )
-        return {"ok": True, "candidateId": candidate_id, "decision": decision, "source": source, "decidedAt": now()}
-
-    def require_capture(self, url, *, source_id=None, reason="manual_capture_required", retry_context=None):
-        item_id = "capture:" + fingerprint([url, source_id])[:32]
-        with self.database.transaction() as conn:
-            row = conn.execute("SELECT * FROM discovery_captures WHERE item_id=?", (item_id,)).fetchone()
-            if not row:
-                data = {
-                    "originatingUrl": url,
-                    "sourceId": source_id,
-                    "reason": reason,
-                    "retryContext": retry_context or {},
-                    "requiredAt": now(),
-                }
-                conn.execute(
-                    "INSERT INTO discovery_captures VALUES(?,?,1,'pending',?,?)",
-                    (item_id, fingerprint(str(uuid4())), json.dumps(data), now()),
-                )
-                self.events.append(
-                    conn, "DiscoveryCaptureUpdated", {"itemId": item_id}, feature="discovery", aggregate_id=item_id
-                )
-        return item_id
+            for board in self.boards:
+                source = self._board_definition(board)
+                conn.execute("INSERT OR IGNORE INTO discovery_sources VALUES(?,1,'active',?,?)",
+                             (source["sourceId"], json.dumps(source), now()))
 
     def captures(self):
         with self.database.connect() as conn:

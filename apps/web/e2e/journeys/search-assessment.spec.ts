@@ -1,3 +1,4 @@
+import { indeedPage } from "./indeed-data.js";
 import { test, expect, json, action, completed, terminal } from "../harness/fixtures.js";
 import { createBaseline, createPosting } from "./core-data.js";
 import type { FitState } from "./fit-data.js";
@@ -10,13 +11,13 @@ import { respondProducer, untilNormalization } from "./preparation-cohort-data.j
 test("search reports a saved job's refused person fit separately from successful source acquisition", async ({ api, app, page }) => {
   const { library } = await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 1, resultsPerSite: 1 });
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 1, resultsPerSite: 1 });
   await page.goto("/jobs");
   const started = await action(api, "discovery.search", { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }] });
   const source = await app.external.next();
-  expect(source.path).toBe("/discovery");
-  const posting = { job_key: "refused-fit", url: "https://example.com/jobs/refused-fit", title: "Synthetic Refused Fit Engineer", company: "Synthetic Refusal Company", description: "Maintain durable workflow recovery.", location: "Madrid" };
-  source.respond({ jobs: [posting], cursor: null, complete: true });
+  expect(source.path).toBe("/jobstreaming/indeed");
+  const posting = { job_key: "refused-fit", url: "https://www.indeed.com/viewjob?jk=refused-fit", title: "Synthetic Refused Fit Engineer", company: "Synthetic Refusal Company", description: "Maintain durable workflow recovery.", location: "Madrid" };
+  source.respond(indeedPage({ jobs: [posting], cursor: null, complete: true }));
   await servePostingAssessment(app, library, posting, { invalidEvidence: true });
   const settled = await completed(api, started.runId);
   const result = settled["result"] as { jobIds: string[]; preparation: { failures: { jobId: string; stage: string; code: string }[] } };
@@ -41,13 +42,13 @@ test("search reports a saved job's refused person fit separately from successful
 test("a refused first posting check explains unassessed Fit only for the revision submitted to the run", async ({ api, app, page }) => {
   await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 1, resultsPerSite: 1 });
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 1, resultsPerSite: 1 });
   const started = await action(api, "discovery.search", { queries: ["Synthetic engineer"], locations: [{ location: "Madrid", remote: true }] });
   const source = await app.external.next();
-  expect(source.path).toBe("/discovery");
-  const job = { job_key: "refused-first-check", url: "https://example.com/jobs/refused-first-check",
+  expect(source.path).toBe("/jobstreaming/indeed");
+  const job = { job_key: "refused-first-check", url: "https://www.indeed.com/viewjob?jk=refused-first-check",
     title: "Synthetic Posting Check Engineer", company: "Synthetic Company", description: "An original posting.", location: "Madrid" };
-  source.respond({ jobs: [job], complete: true, cursor: null });
+  source.respond(indeedPage({ jobs: [job], complete: true, cursor: null }));
   const fetch = await app.external.next();
   expect(fetch.path).toBe("/posting-page");
   fetch.respond({}, 503);
@@ -128,7 +129,7 @@ test("explicit saved-job assessment recovers fit without acquisition and preserv
   await expect(history.locator('.preparation-run-row__toggle[aria-expanded="true"]')).toHaveCount(1);
   await expect(history.locator(".preparation-run-row__outcomes")).toHaveCount(1);
   await expect(runRows.nth(0).getByRole("button", { name: /^Assess selected jobs/ })).toHaveAttribute("aria-expanded", "false");
-  expect(app.external.calls.some((call) => call.path === "/discovery" || call.path === "/posting-page")).toBe(false);
+  expect(app.external.calls.some((call) => call.path === "/jobstreaming/indeed" || call.path === "/posting-page")).toBe(false);
   expect(app.external.calls.filter(call => call.body["operation"] === "requirements.match_catalog")
     .map(call => call.body["prompt_version"])).toEqual([NORMALIZATION_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION]);
   const operations = app.external.calls.filter((call) => call.path === "/model").map((call) => String(call.body["operation"]));
@@ -139,7 +140,7 @@ test("explicit saved-job assessment recovers fit without acquisition and preserv
 
   const cohort: { job_id: string }[] = [];
   for (const index of [1, 2]) cohort.push(await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
-    url: `https://example.com/jobs/completed-cohort-${index}`, title: `Synthetic Cohort Engineer ${index}`,
+    url: `https://www.indeed.com/viewjob?jk=completed-cohort-${index}`, title: `Synthetic Cohort Engineer ${index}`,
     company: "Synthetic Cohort Company", description: `Maintain synthetic cohort ${index} recovery ownership.`,
   }));
   const cohortRun = await action(api, "preparation.run", { recipe: "assess", job_ids: cohort.map((row) => row.job_id), scope: "selected" });
@@ -158,12 +159,12 @@ test("explicit saved-job assessment recovers fit without acquisition and preserv
 test("search cancellation after a worker kill during fit seals preparation and retains the exact saved cohort", async ({ api, app }) => {
   const { library } = await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 1, resultsPerSite: 1 });
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 1, resultsPerSite: 1 });
   const started = await action(api, "discovery.search", { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }] });
   const source = await app.external.next();
-  expect(source.path).toBe("/discovery");
-  const posting = { job_key: "cancelled-fit", url: "https://example.com/jobs/cancelled-fit", title: "Synthetic Cancelled Fit Engineer", company: "Synthetic Cancellation Company", description: "Maintain durable workflow recovery.", location: "Madrid" };
-  source.respond({ jobs: [posting], cursor: null, complete: true });
+  expect(source.path).toBe("/jobstreaming/indeed");
+  const posting = { job_key: "cancelled-fit", url: "https://www.indeed.com/viewjob?jk=cancelled-fit", title: "Synthetic Cancelled Fit Engineer", company: "Synthetic Cancellation Company", description: "Maintain durable workflow recovery.", location: "Madrid" };
+  source.respond(indeedPage({ jobs: [posting], cursor: null, complete: true }));
   let cohort: string[] = [];
   await servePostingAssessment(app, library, posting, { beforeQualification: async (call) => {
     const preparing = await json<{ cohortFrozen: boolean; jobIds: string[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
@@ -183,7 +184,7 @@ test("search cancellation after a worker kill during fit seals preparation and r
   expect(retained.steps.find((step) => step.stage === "requirements")).toMatchObject({ status: "succeeded" });
   expect((await json<{ score: null }>(api, "get", `/v1/jobs/${cohort[0]}/fit`)).score).toBeNull();
   expect((await json<{ requirements: unknown[] }>(api, "get", `/v1/jobs/${cohort[0]}/requirements`)).requirements).toHaveLength(1);
-  expect(app.external.calls.filter((call) => call.path === "/discovery")).toHaveLength(1);
+  expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(1);
   const spend = (await json<{ llmSpend: { costStatus: string; unresolvedCalls: number; costUsd: number | null } }>(api, "get", "/v1/health")).llmSpend;
   expect(spend).toMatchObject({ costStatus: "unresolved", unresolvedCalls: 1, costUsd: null });
 });
@@ -191,13 +192,13 @@ test("search cancellation after a worker kill during fit seals preparation and r
 test("search replay preserves a failed job while a replacement worker finishes the frozen later job", async ({ api, app, page }) => {
   const { library } = await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 2, resultsPerSite: 2 });
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 2, resultsPerSite: 2 });
   const started = await action(api, "discovery.search", { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }] });
-  const first = { job_key: "replay-failed", url: "https://example.com/jobs/replay-failed", title: "Synthetic First Replay Engineer", company: "Synthetic Replay Company", description: "Maintain first-job workflow recovery.", location: "Madrid" };
-  const second = { job_key: "replay-later", url: "https://example.com/jobs/replay-later", title: "Synthetic Later Replay Engineer", company: "Synthetic Replay Company", description: "Maintain later-job workflow recovery.", location: "Madrid" };
+  const first = { job_key: "replay-failed", url: "https://www.indeed.com/viewjob?jk=replay-failed", title: "Synthetic First Replay Engineer", company: "Synthetic Replay Company", description: "Maintain first-job workflow recovery.", location: "Madrid" };
+  const second = { job_key: "replay-later", url: "https://www.indeed.com/viewjob?jk=replay-later", title: "Synthetic Later Replay Engineer", company: "Synthetic Replay Company", description: "Maintain later-job workflow recovery.", location: "Madrid" };
   const source = await app.external.next();
-  expect(source.path).toBe("/discovery");
-  source.respond({ jobs: [first, second], cursor: null, complete: true });
+  expect(source.path).toBe("/jobstreaming/indeed");
+  source.respond(indeedPage({ jobs: [first, second], cursor: null, complete: true }));
   const authored = [{ ...first, demand: first.description, foreignExtractionSource: true }, { ...second, demand: second.description }];
   for (;;) {
     const call = await app.external.next();
@@ -245,7 +246,7 @@ test("search replay preserves a failed job while a replacement worker finishes t
   const retained = await json<{ jobIds: string[]; steps: unknown[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
   expect(retained.jobIds).toEqual(frozen.jobIds);
   expect(retained.steps).toContainEqual(failed);
-  expect(app.external.calls.filter((call) => call.path === "/discovery")).toHaveLength(1);
+  expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(1);
   expect((await json<FitState>(api, "get", `/v1/jobs/${frozen.jobIds[1]}/fit`)).current).toBe(true);
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.match_catalog")).toHaveLength(1);
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
@@ -257,14 +258,14 @@ test.describe("cohort final currentness guard", () => {
   test("search settles cohort consolidation before Fit, reuses identical demands and reports concurrent changes without replacing accepted scores", async ({ api, app, page }) => {
     const { library } = await createBaseline(api);
     const settings = await json<{ revision: number; settings: { newJobLimit: number } }>(api, "get", "/v1/discovery/settings");
-    await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0 });
+    await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0 });
     const payload = { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }], newJobLimit: 2 };
     const started = await action(api, "discovery.search", payload);
-    const first = { job_key: "cohort-first", url: "https://example.com/jobs/cohort-first", title: "Synthetic First Cohort Engineer", company: "Synthetic Cohort Company", description: "Maintain durable workflow recovery, including operational readiness.", location: "Madrid" };
-    const second = { job_key: "cohort-second", url: "https://example.com/jobs/cohort-second", title: "Synthetic Second Cohort Engineer", company: "Synthetic Cohort Company", description: "Maintain operational readiness for durable workflow recovery.", location: "Madrid" };
+    const first = { job_key: "cohort-first", url: "https://www.indeed.com/viewjob?jk=cohort-first", title: "Synthetic First Cohort Engineer", company: "Synthetic Cohort Company", description: "Maintain durable workflow recovery, including operational readiness.", location: "Madrid" };
+    const second = { job_key: "cohort-second", url: "https://www.indeed.com/viewjob?jk=cohort-second", title: "Synthetic Second Cohort Engineer", company: "Synthetic Cohort Company", description: "Maintain operational readiness for durable workflow recovery.", location: "Madrid" };
     const source = await app.external.next();
-    expect(source.path).toBe("/discovery");
-    source.respond({ jobs: [first, second], cursor: null, complete: true });
+    expect(source.path).toBe("/jobstreaming/indeed");
+    source.respond(indeedPage({ jobs: [first, second], cursor: null, complete: true }));
     const matching = await untilNormalization(app, [first, second].map((row) => ({ ...row, demand: row.description })));
     const frozen = await json<{ cohortFrozen: boolean; jobIds: string[]; steps: { jobId: string; stage: string; status: string }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
     expect(frozen.cohortFrozen).toBe(true);
@@ -315,11 +316,11 @@ test.describe("cohort final currentness guard", () => {
     // Observe the real final guard after both scores publish. A source edit in
     // this durable gap must leave the score tied to the last analyzed requirements.
     const changed = await action(api, "discovery.search", payload);
-    const third = { job_key: "cohort-concurrent-first", url: "https://example.com/jobs/cohort-concurrent-first", title: "Synthetic Source Change Engineer", company: "Synthetic Cohort Company", description: "Operate source-owned incident response.", location: "Madrid" };
-    const fourth = { job_key: "cohort-concurrent-second", url: "https://example.com/jobs/cohort-concurrent-second", title: "Synthetic Concurrent Sibling Engineer", company: "Synthetic Cohort Company", description: "Maintain documented deployment ownership.", location: "Madrid" };
+    const third = { job_key: "cohort-concurrent-first", url: "https://www.indeed.com/viewjob?jk=cohort-concurrent-first", title: "Synthetic Source Change Engineer", company: "Synthetic Cohort Company", description: "Operate source-owned incident response.", location: "Madrid" };
+    const fourth = { job_key: "cohort-concurrent-second", url: "https://www.indeed.com/viewjob?jk=cohort-concurrent-second", title: "Synthetic Concurrent Sibling Engineer", company: "Synthetic Cohort Company", description: "Maintain documented deployment ownership.", location: "Madrid" };
     const laterSource = await app.external.next();
-    expect(laterSource.path).toBe("/discovery");
-    laterSource.respond({ jobs: [third, fourth], cursor: null, complete: true });
+    expect(laterSource.path).toBe("/jobstreaming/indeed");
+    laterSource.respond(indeedPage({ jobs: [third, fourth], cursor: null, complete: true }));
     const laterMatching = await untilNormalization(app, [third, fourth].map((row) => ({ ...row, demand: row.description })));
     const changedCohort = (await json<{ jobIds: string[] }>(api, "get", `/v1/preparation/runs/${changed.runId}`)).jobIds;
     expect(changedCohort).toHaveLength(2);
@@ -367,15 +368,15 @@ test.describe("cohort final currentness guard", () => {
 test("search assesses retained new jobs after every source fails and preserves the canonical failed acquisition", async ({ api, app }) => {
   const { library } = await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 5, resultsPerSite: 5 });
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 5, resultsPerSite: 5 });
   const started = await action(api, "discovery.search", { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }] });
-  const posting = { job_key: "retained-after-source-failure", url: "https://example.com/jobs/retained-after-source-failure", title: "Synthetic Retained Engineer", company: "Synthetic Retained Company", description: "Maintain retained-job workflow recovery.", location: "Madrid" };
+  const posting = { job_key: "retained-after-source-failure", url: "https://www.indeed.com/viewjob?jk=retained-after-source-failure", title: "Synthetic Retained Engineer", company: "Synthetic Retained Company", description: "Maintain retained-job workflow recovery.", location: "Madrid" };
   const source = await app.external.next();
-  expect(source.path).toBe("/discovery");
-  source.respond({ jobs: [posting], cursor: "unfinished-source", complete: false });
+  expect(source.path).toBe("/jobstreaming/indeed");
+  source.respond(indeedPage({ jobs: [posting], cursor: "unfinished-source", complete: false }));
   const failing = await app.external.next();
-  expect(failing.path).toBe("/discovery");
-  failing.respond({ error: "controlled_external_provider_unavailable" }, 503);
+  expect(failing.path).toBe("/jobstreaming/indeed");
+  failing.respond({ error: "controlled_external_provider_unavailable" }, 401);
   await servePostingAssessment(app, library, posting);
   const finished = await completed(api, started.runId);
   const outcome = finished["result"] as { jobIds: string[]; failures: { code: string }[] };
@@ -384,5 +385,5 @@ test("search assesses retained new jobs after every source fails and preserves t
   const recorded = await json<{ runs: { runId: string; status: string; failures: { code: string }[] }[] }>(api, "get", "/v1/discovery/runs");
   expect(recorded.runs.find((run) => run.runId === started.runId)).toMatchObject({ status: "failed", failures: outcome.failures });
   expect((await json<FitState>(api, "get", `/v1/jobs/${outcome.jobIds[0]}/fit`)).score.score).toBe(10);
-  expect(app.external.calls.filter((call) => call.path === "/discovery")).toHaveLength(2);
+  expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(2);
 });

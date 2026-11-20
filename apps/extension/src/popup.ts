@@ -22,7 +22,6 @@ const queueState = requiredElement("queue-state");
 let queueReviewRequest = 0;
 let queueDetailRequest = 0;
 const saveTokenButton = requiredButton("save-token");
-const selectDiscoveryButton = requiredButton("select-discovery");
 const statusText = requiredElement("status");
 const tokenInput = requiredInput("token-input");
 
@@ -39,23 +38,6 @@ saveTokenButton.addEventListener("click", () => {
     }
     return refreshStatus({ preserveStatus: true });
   });
-});
-
-selectDiscoveryButton.addEventListener("click", () => {
-  selectDiscoveryButton.disabled = true;
-  setStatus("Selecting this Chrome profile for Discovery...");
-  void sendMessage({ type: "selectDiscoveryProfile" })
-    .then((response) => {
-      if (response.ok && response.status === "profile_selected") {
-        setStatus("This Chrome profile is now selected for Discovery.");
-      } else {
-        setStatus(response.ok ? "The extension returned an unexpected selection response." : response.message);
-      }
-      return refreshStatus({ preserveStatus: true });
-    })
-    .finally(() => {
-      selectDiscoveryButton.disabled = false;
-    });
 });
 
 captureButton.addEventListener("click", () => {
@@ -212,14 +194,12 @@ async function refreshStatus(options: { preserveStatus?: boolean } = {}): Promis
     return;
   }
   setProtocolControlsEnabled(true);
-  apiState.textContent = `${response.apiReady ? "Local app ready" : "Local app down"} · ${response.discoverySelected ? "Discovery connected" : "Discovery not selected"} · installation …${response.installationIdSuffix}`;
+  apiState.textContent = response.apiReady ? "Local app ready" : "Local app down";
   autofillButton.disabled = !response.paired;
   captureButton.disabled = !response.paired;
   clearQueueButton.disabled = response.queueSize === 0;
   retryQueueButton.disabled = !response.paired || response.queueSize === 0;
   reviewQueueButton.disabled = response.queueSize === 0;
-  selectDiscoveryButton.hidden = !response.paired || !response.apiReady || response.discoverySelected;
-  selectDiscoveryButton.disabled = selectDiscoveryButton.hidden;
   if (!queueReview.hidden) await refreshQueueReview();
   if (options.preserveStatus) {
     return;
@@ -228,8 +208,6 @@ async function refreshStatus(options: { preserveStatus?: boolean } = {}): Promis
     setStatus("Paste the pairing token from JobCtrl Settings.");
   } else if (!response.apiReady) {
     setStatus(`Local app is down. ${response.queueSize} queued capture(s).`);
-  } else if (!response.discoverySelected) {
-    setStatus("The token is saved, but Discovery is not using this Chrome profile. Select it below.");
   } else if (response.queueSize > 0) {
     setStatus(`${response.queueSize} queued capture(s). Select Sync queued captures to retry.`);
   } else {
@@ -254,8 +232,6 @@ function setProtocolControlsEnabled(enabled: boolean): void {
   retryQueueButton.disabled = !enabled;
   reviewQueueButton.disabled = !enabled;
   discardQueuedButton.disabled = true;
-  selectDiscoveryButton.hidden = true;
-  selectDiscoveryButton.disabled = true;
 }
 
 function isCurrentReadyResponse(
@@ -265,10 +241,7 @@ function isCurrentReadyResponse(
     response.protocolVersion === EXTENSION_MESSAGE_PROTOCOL_VERSION &&
     typeof response.paired === "boolean" &&
     typeof response.apiReady === "boolean" &&
-    typeof response.discoverySelected === "boolean" &&
-    typeof response.queueSize === "number" &&
-    typeof response.installationIdSuffix === "string" &&
-    /^[0-9a-f]{8}$/i.test(response.installationIdSuffix)
+    typeof response.queueSize === "number"
   );
 }
 
@@ -317,12 +290,9 @@ type PopupResponse =
       protocolVersion?: unknown;
       paired?: unknown;
       apiReady?: unknown;
-      discoverySelected?: unknown;
       queueSize?: unknown;
-      installationIdSuffix?: unknown;
     }
   | { ok: true; status: "review_opened"; suggestions: number; missing: number }
-  | { ok: true; status: "profile_selected" }
   | { ok: true; status: "token_saved" }
   | { ok: false; error: string; message: string };
 
@@ -332,7 +302,5 @@ interface CurrentReadyResponse {
   protocolVersion: number;
   paired: boolean;
   apiReady: boolean;
-  discoverySelected: boolean;
   queueSize: number;
-  installationIdSuffix: string;
 }

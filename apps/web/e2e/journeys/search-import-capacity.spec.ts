@@ -1,3 +1,4 @@
+import { indeedPage } from "./indeed-data.js";
 import type { Request, Response } from "@playwright/test";
 import { completed, expect, json, modelCall, test } from "../harness/fixtures.js";
 import { baseline, createBaseline } from "./core-data.js";
@@ -17,13 +18,13 @@ test("Start search for 100 keeps Jobs current while a URL import waits for enric
   await json(api, "patch", "/v1/settings", { expectedRevision: userSettings.revision, dailyBudgetUsd: 0 });
   const discoverySettings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
   await json(api, "patch", "/v1/discovery/settings", {
-    expectedRevision: discoverySettings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 100, resultsPerSite: 100,
+    expectedRevision: discoverySettings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 100, resultsPerSite: 100,
   });
   const degree = "Synthetic Engineering Degree";
   const requirement = "A Synthetic Engineering Degree is required.";
   const positions = Array.from({ length: 100 }, (_, index) => {
     const id = String(index + 1).padStart(3, "0");
-    return { job_key: "search-stress-" + id, url: "https://example.com/jobs/search-stress-" + id,
+    return { job_key: "search-stress-" + id, url: "https://www.indeed.com/viewjob?jk=search-stress-" + id,
       title: "Reliability Engineer, Team " + id, company: "Example Systems " + id, location: "Madrid",
       description: "This is the reliability engineering position for Team " + id + ". " + requirement };
   });
@@ -72,8 +73,8 @@ test("Start search for 100 keeps Jobs current while a URL import waits for enric
   expect(response.request().postDataJSON()).toEqual({ queries: [], locations: [], expectedProfileVersion: profile.profileVersion });
   const { runId } = await response.json();
   const board = await app.external.next();
-  expect(board.path).toBe("/discovery");
-  board.respond({ jobs: positions, cursor: null, complete: true });
+  expect(board.path).toBe("/jobstreaming/indeed");
+  board.respond(indeedPage({ jobs: positions, cursor: null, complete: true }));
   for (let index = 0; index < positions.length; index++) await serveRoleTarget(app, "match");
   const firstPage = await app.external.next();
   expect(firstPage.path).toBe("/posting-page");

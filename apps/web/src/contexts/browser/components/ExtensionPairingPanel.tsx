@@ -1,5 +1,4 @@
 import type {
-  DiscoveryBrowserBridgeStatusResponse,
   ExtensionCapabilityTokenResponse,
 } from "@jobctrl/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -15,7 +14,6 @@ import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { browserCapabilityKeys } from "../browserCapabilityKeys.js";
 import { parseExtensionToken, parseExtensionTokenWrite } from "../browserApi.js";
 import { isUnconfirmedWrite } from "../../../shared/lib/unconfirmed-write.js";
-import { useDiscoveryBrowserBridgeQuery } from "../hooks/useDiscoveryBrowserBridgeQuery.js";
 
 export function ExtensionPairingPanel() {
   const tenantId = useTenantId();
@@ -26,7 +24,6 @@ export function ExtensionPairingPanel() {
     queryFn: async () => parseExtensionToken(await http.json<unknown>("GET", "/v1/extension/pairing-token")),
     meta: { suppressGlobalErrorToast: true },
   });
-  const bridgeQuery = useDiscoveryBrowserBridgeQuery();
   const rotateToken = useMutation<
     ExtensionCapabilityTokenResponse,
     Error,
@@ -46,9 +43,6 @@ export function ExtensionPairingPanel() {
       void queryClient.invalidateQueries({
         queryKey: browserCapabilityKeys.extensionPairing(tenantId),
       });
-      void queryClient.invalidateQueries({
-        queryKey: browserCapabilityKeys.discoveryBrowserBridge(tenantId),
-      });
     },
   });
   const [message, setMessage] = useState("");
@@ -56,10 +50,9 @@ export function ExtensionPairingPanel() {
   const [confirmRotation, setConfirmRotation] = useState(false);
   const uncertainRotation = isUnconfirmedWrite(rotateToken.error);
   const token = tokenQuery.data?.token ?? "";
-  const bridge = bridgeQuery.data;
-  const connected = Boolean(token && bridge?.connected && !uncertainRotation);
   const badge = uncertainRotation ? { label: "Check pairing", tone: "warn" as const }
-    : extensionBadge(token, tokenQuery.error, bridge, bridgeQuery.error);
+    : tokenQuery.error ? { label: "Unavailable", tone: "danger" as const }
+    : token ? { label: "Token available", tone: "info" as const } : { label: "Loading", tone: "info" as const };
 
   async function copyToken() {
     if (!token || uncertainRotation) return;
@@ -108,9 +101,9 @@ export function ExtensionPairingPanel() {
         </StatusBadge>
       }
       className="extension-pairing-settings"
-      collapsedSummary="Live Chrome profile connection"
+      collapsedSummary="Chrome extension pairing"
       defaultOpen={false}
-      description="Optionally use your current Chrome profile for Discovery and Enrich"
+      description="Connect the extension to your local workspace"
       title="Browser extension"
     >
       <div
@@ -118,14 +111,8 @@ export function ExtensionPairingPanel() {
         aria-label="Browser extension pairing"
       >
         <div>
-          <h3>Live Chrome connection</h3>
-          <p>
-            Discovery and Enrich prefer the connected extension for requests
-            and inactive tabs in your currently running Chrome profile. Without
-            it, they use anonymous access and respect site restrictions. JobCtrl
-            does not copy the profile. Saving this token selects its extension
-            installation for Discovery and replaces any previous selection.
-          </p>
+          <h3>Pair with Chrome</h3>
+          <p>Paste the capability token into the JobCtrl extension to save the current posting and review autofill suggestions.</p>
         </div>
         <div
           className="extension-pairing-controls"
@@ -140,19 +127,6 @@ export function ExtensionPairingPanel() {
             Rotation could not be confirmed. Check the current token before copying or rotating it again.
             <Button type="button" variant="outline" onClick={() => { void tokenQuery.refetch().then((result) => { if (result.isSuccess) rotateToken.reset(); }); }}>Check current token</Button>
           </div> : null}
-          {!bridgeQuery.isPending && !connected ? (
-            <div className="banner inline" role="alert">
-              {bridgeQuery.error
-                ? "Extension status is unavailable. Discovery and Enrich can still run with anonymous access."
-                : "Extension offline. Discovery and Enrich can run with anonymous access. Open Chrome with the paired extension to prefer your signed-in profile."}
-            </div>
-          ) : null}
-          {connected ? (
-            <div className="status-line" role="status">
-              Connected extension preferred for Discovery and Enrich in your
-              live Chrome profile.
-            </div>
-          ) : null}
           <Field className="field extension-token-field">
             <FieldLabel htmlFor="extension-capability-token">
               Capability token
@@ -171,28 +145,12 @@ export function ExtensionPairingPanel() {
             <div>
               <dt>Capabilities</dt>
               <dd data-typography="body">
-                capture, autofill read, Discovery browser
+                Save posting, review autofill
               </dd>
             </div>
             <div>
               <dt>Profile handling</dt>
               <dd data-typography="body">Current Chrome profile; never copied</dd>
-            </div>
-            <div>
-              <dt>Selected extension</dt>
-              <dd data-typography="body">
-                {bridge?.installationBound
-                  ? `Chrome installation …${bridge.installationIdSuffix ?? "unknown"}`
-                  : "Not selected"}
-              </dd>
-            </div>
-            <div>
-              <dt>Discovery tasks</dt>
-              <dd data-typography="body">
-                {bridge
-                  ? `${bridge.pendingTasks} waiting, ${bridge.activeTasks} active`
-                  : "Unavailable"}
-              </dd>
             </div>
           </dl>
           <div className="form-actions extension-pairing-actions">
@@ -233,16 +191,4 @@ export function ExtensionPairingPanel() {
       </div>
     </DisclosureSection>
   );
-}
-
-function extensionBadge(
-  token: string,
-  tokenError: Error | null,
-  bridge: DiscoveryBrowserBridgeStatusResponse | undefined,
-  bridgeError: Error | null,
-): { label: string; tone: "danger" | "info" | "ok" | "warn" } {
-  if (tokenError || bridgeError) return { label: "Unavailable", tone: "danger" };
-  if (!token || bridge === undefined) return { label: "Loading", tone: "info" };
-  if (bridge.connected) return { label: "Connected in Chrome", tone: "ok" };
-  return { label: "Extension offline", tone: "warn" };
 }

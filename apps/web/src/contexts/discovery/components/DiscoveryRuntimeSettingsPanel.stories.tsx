@@ -21,11 +21,11 @@ export const EnvironmentManaged: Story = {
       handlers: [
         http.get("*/v1/discovery/settings", () => HttpResponse.json({
           ...sampleDiscoverySettingsResponse,
-          settings: { ...sampleDiscoverySettingsResponse.settings, maxParallelFamilies: 4 },
+          settings: { ...sampleDiscoverySettingsResponse.settings, hoursOld: 72 },
           effectiveSettings: {
             ...sampleDiscoverySettingsResponse.effectiveSettings,
-            maxParallelFamilies: {
-              value: 4,
+            hoursOld: {
+              value: 72,
               source: "environment",
               activation: "next_run",
               editable: false,

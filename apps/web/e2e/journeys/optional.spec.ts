@@ -1,3 +1,4 @@
+import { indeedPage } from "./indeed-data.js";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -562,16 +563,26 @@ test("interview notes and learning activity preserve source ownership; the diges
     request.method() === "POST" &&
     new URL(request.url()).pathname === path &&
     request.postDataJSON()?.action === "compare";
+  // Reads during navigation or SSE updates can reach the same URL. Drop only
+  // the response to the comparison POST under test.
+  async function dropNextComparison(onResponse: (status: number) => void) {
+    const pattern = `**${path}`;
+    let forwarded = false;
+    const intercept = async (route: import("@playwright/test").Route) => {
+      if (forwarded || !isCompare(route.request())) return route.fallback();
+      forwarded = true;
+      try {
+        const response = await route.fetch();
+        onResponse(response.status());
+        await route.abort("failed");
+      } finally {
+        await page.unroute(pattern, intercept);
+      }
+    };
+    await page.route(pattern, intercept);
+  }
   let deliveredStatus: number | undefined;
-  await page.route(
-    `**${path}`,
-    async (route) => {
-      const response = await route.fetch();
-      deliveredStatus = response.status();
-      await route.abort("failed");
-    },
-    { times: 1 },
-  );
+  await dropNextComparison((status) => { deliveredStatus = status; });
   const sent = page.waitForRequest(isCompare);
   await page.getByRole("button", { name: "Compare reviewed postings" }).click();
   const browserRequest = await sent;
@@ -881,15 +892,7 @@ test("interview notes and learning activity preserve source ownership; the diges
     page.getByText("Review selected cohort before model comparison"),
   ).toBeVisible();
   let unresolvedStatus: number | undefined;
-  await page.route(
-    `**${path}`,
-    async (route) => {
-      const response = await route.fetch();
-      unresolvedStatus = response.status();
-      await route.abort("failed");
-    },
-    { times: 1 },
-  );
+  await dropNextComparison((status) => { unresolvedStatus = status; });
   const sentUnresolved = page.waitForRequest(isCompare);
   await page.getByRole("button", { name: "Compare reviewed postings" }).click();
   const unresolvedRequest = await sentUnresolved;
@@ -1432,7 +1435,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
   const settings = {
     queries: ["Synthetic Engineer"],
     locations: [{ location: "Madrid", remote: false }],
-    boards: ["linkedin"],
+    boards: ["indeed"],
     resultsPerSite: 5,
     hoursOld: 0,
     newJobLimit: 5,
@@ -1535,14 +1538,10 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
   const search = (await queued.json()) as { runId: string };
   const provider = await app.external.next();
   expect(provider.method).toBe("POST");
-  expect(provider.path).toBe("/discovery");
-  expect(provider.body["request"]).toMatchObject({
-    query: "Synthetic Engineer",
-    location: "Madrid",
-    remote_only: false,
-    sites: ["linkedin"],
-  });
-  provider.respond({
+  expect(provider.path).toBe("/jobstreaming/indeed");
+  expect(String(provider.body["query"])).toContain('what: "Synthetic Engineer"');
+  expect(String(provider.body["query"])).toContain('where: "Madrid"');
+  provider.respond(indeedPage({
     jobs: [
       {
         job_key: "synthetic-provider-job",
@@ -1555,7 +1554,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
     ],
     cursor: null,
     complete: true,
-  });
+  }));
   await completed(api, search.runId);
   await expect(page.locator(".discovery-runs-panel").getByRole("region", { name: "Job search progress", exact: true })).toContainText("Search completed");
   await expect(page.locator(".discovery-runs-panel").getByRole("region", { name: "Job search progress", exact: true })).toContainText("Initial fit assessment is unavailable in this application.");
@@ -1563,7 +1562,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
     sources: { sourceId: string; recommendedState: string }[];
   }>(api, "get", "/v1/discovery/sources");
   expect(sourceRegistry.sources).toContainEqual(
-    expect.objectContaining({ sourceId: "jobstreaming:linkedin" }),
+    expect.objectContaining({ sourceId: "jobstreaming:indeed" }),
   );
   const listing = await json<{ jobs: { job_id: string; title: string }[] }>(
     api,

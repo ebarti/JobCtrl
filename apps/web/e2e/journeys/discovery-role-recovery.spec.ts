@@ -1,3 +1,4 @@
+import { indeedPage } from "./indeed-data.js";
 import type { APIRequestContext } from "@playwright/test";
 import { action, completed, expect, json, modelCall, terminal, test, type ApplicationStack, type ExternalCall } from "../harness/fixtures.js";
 import { baseline, createBaseline } from "./core-data.js";
@@ -11,19 +12,19 @@ async function setup(api: APIRequestContext) {
   const policy = await json<{ revision: number }>(api, "get", "/v1/settings");
   await json(api, "patch", "/v1/settings", { expectedRevision: policy.revision, dailyBudgetUsd: 0 });
   const saved = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: saved.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 1 });
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: saved.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 1 });
   return { queries: [], locations: [], expectedProfileVersion: profile.profileVersion };
 }
 
 function listing(id: string) {
   return { job_key: id, title: "Synthetic position " + id, company: "Synthetic employer",
-    description: "Synthetic responsibilities for " + id, location: "Madrid", url: "https://example.com/jobs/" + id };
+    description: "Synthetic responsibilities for " + id, location: "Madrid", url: "https://www.indeed.com/viewjob?jk=" + id };
 }
 
 async function board(app: ApplicationStack, id: string) {
   const call = await app.external.next({ timeout: 50_000 });
-  expect(call.path).toBe("/discovery");
-  call.respond({ jobs: [listing(id)], cursor: null, complete: true });
+  expect(call.path).toBe("/jobstreaming/indeed");
+  call.respond(indeedPage({ jobs: [listing(id)], cursor: null, complete: true }));
 }
 
 function reply(call: ExternalCall) {

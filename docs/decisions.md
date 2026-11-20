@@ -3780,3 +3780,10 @@ mismatch are separate outcomes. Candidate career history enters the subsequent
 person Fit workflow. The frozen request, exact sources and model receipt bind
 the decision across worker recovery. Historical run admission, manual job
 capture and explicit exploratory query overrides retain their original scopes.
+
+
+## 2026-11-20 — JobStreaming owns automatic discovery
+
+**Accepted.** JobStreaming supplies the list of boards, their native query operations, pagination and posting details. JobCtrl stores the user’s selections, per-board state, run checkpoints and admitted jobs. A saved target search uses the source-bound role determination before admission and sends new jobs to person Fit.
+
+A workspace upgrade keeps its previous jobs, run receipts and board selections. An unfinished request that selected an active employer feed from an earlier version reports the retired source and requires a new search. **Import posting URL** belongs to Jobs and uses its durable request receipt when model capacity is occupied. The browser extension supports user-initiated capture and form assistance.

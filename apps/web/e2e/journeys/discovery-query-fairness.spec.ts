@@ -1,3 +1,4 @@
+import { indeedPage } from "./indeed-data.js";
 import { action, completed, expect, json, terminal, test, type ApplicationStack } from "../harness/fixtures.js";
 
 test.use({ discoveryTransport: "jobstreaming", features: "profile,jobs,discovery" });
@@ -95,8 +96,7 @@ test("board queries share new-job slots without retrying a rate-limited source f
   expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(3);
 });
 
-test.describe("controlled HTTP board pages", () => {
-  test.use({ discoveryTransport: "http" });
+test.describe("paged JobStreaming listings", () => {
 
   test("board queries share new-job slots across location rows and resume the exact partial page", async ({ api, app }) => {
     const queries = ["Synthetic Track A", "Synthetic Track B"];
@@ -105,11 +105,13 @@ test.describe("controlled HTTP board pages", () => {
     });
     async function page(query: string, location: string, cursor: string | null, keys: string[], next: string | null = null) {
       const call = await app.external.next();
-      expect(call.path).toBe("/discovery");
-      expect(call.body).toMatchObject({ request: { query, location }, cursor });
-      call.respond({ jobs: keys.map((key) => ({ job_key: key, source_native_id: key, source_id: "synthetic-board",
-        url: `https://example.com/jobs/${key}`, title: `Synthetic vacancy ${key}`, company: "Synthetic employer",
-        description: "Maintain test services.", location })), cursor: next, complete: next === null });
+      expect(call.path).toBe("/jobstreaming/indeed");
+      expect(String(call.body["query"])).toContain(`what: "${query}"`);
+      expect(String(call.body["query"])).toContain(`where: "${location}"`);
+      if (cursor) expect(String(call.body["query"])).toContain(cursor);
+      call.respond(indeedPage({ jobs: keys.map((key) => ({ job_key: key, source_native_id: key, source_id: "synthetic-board",
+        url: `https://www.indeed.com/viewjob?jk=${key}`, title: `Synthetic vacancy ${key}`, company: "Synthetic employer",
+        description: "Maintain test services.", location })), cursor: next, complete: next === null }));
     }
     await page(queries[0]!, "Madrid", null, ["A1", "A2"], "second-page");
     await page(queries[0]!, "Madrid", "second-page", ["A3", "A4", "A5"]);
@@ -120,7 +122,9 @@ test.describe("controlled HTTP board pages", () => {
     expect((await completed(api, started.runId)).result).toMatchObject({ status: "completed", failures: [], newJobs: 5, observedJobs: 6 });
     const after = await app.discoveryCheckpoint(started.runId);
     expect(after.receipts).toEqual({ accepted: 6 });
-    expect(after.receiptKeys.filter((row) => row.isNew).map((row) => row.jobKey).sort()).toEqual(["A1", "A2", "A3", "A4", "B1"]);
-    expect(app.external.calls.filter((call) => call.path === "/discovery")).toHaveLength(6);
+    expect(new Set(after.receiptKeys.filter((row) => row.isNew).map((row) => row.jobKey)).size).toBe(5);
+    const { jobs } = await json<{ jobs: { url: string }[] }>(api, "get", "/v1/jobs");
+    expect(jobs.map(({ url }) => new URL(url).searchParams.get("jk")).sort()).toEqual(["A1", "A2", "A3", "A4", "B1"]);
+    expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(6);
   });
 });

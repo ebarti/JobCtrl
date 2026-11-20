@@ -1,3 +1,4 @@
+import { indeedPage } from "./indeed-data.js";
 import type { APIRequestContext } from "@playwright/test";
 import { action, completed, expect, json, modelCall, terminal, test, type ApplicationStack } from "../harness/fixtures.js";
 import { createBaseline } from "./core-data.js";
@@ -53,11 +54,11 @@ test("a search waiting for the Requirements lane survives worker replacement, ca
   const target = posting(951);
   const search = await action(api, "discovery.search", {
     queries: ["Synthetic reliability engineer"], locations: [{ location: "Madrid", remote: true }],
-    boards: ["linkedin"], newJobLimit: 1,
+    boards: ["indeed"], newJobLimit: 1,
   });
   const source = await app.external.next();
-  expect(source.path).toBe("/discovery");
-  source.respond({ jobs: [target], cursor: null, complete: true });
+  expect(source.path).toBe("/jobstreaming/indeed");
+  source.respond(indeedPage({ jobs: [target], cursor: null, complete: true }));
   await servePostingAndRole(app, target);
   await expect.poll(() => waitEvents(api, search.runId, "requirements_extract", "model_lane_busy")).toBe(1);
   const cancel = await action(api, "preparation.run", { recipe: "score", job_ids: [abandoned.job_id], resume_mode: "baseline" });
@@ -80,7 +81,7 @@ test("a search waiting for the Requirements lane survives worker replacement, ca
   for (const name of ["jobs.role_analysis", "requirements.match_catalog", "fit.qualification-batch"]) {
     expect(operations.filter((candidate) => candidate === name)).toHaveLength(1);
   }
-  expect(app.external.calls.filter((call) => call.path === "/discovery")).toHaveLength(1);
+  expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(1);
 });
 
 test("a search above the cohort cutoff resumes the per-job Requirements stage and completes the entire frozen selection", async ({ api, app }) => {
@@ -98,12 +99,12 @@ test("a search above the cohort cutoff resumes the per-job Requirements stage an
   }))];
   const run = await action(api, "discovery.search", {
     queries: ["Synthetic reliability engineer"], locations: [{ location: "Madrid", remote: true }],
-    boards: ["linkedin"], newJobLimit: rows.length, resultsPerSite: rows.length,
+    boards: ["indeed"], newJobLimit: rows.length, resultsPerSite: rows.length,
   });
   const source = await app.external.next();
-  expect(source.path).toBe("/discovery");
-  source.respond({ jobs: rows.map(({ job_key, url, title, company, description, location }) =>
-    ({ job_key, url, title, company, description, location })), cursor: null, complete: true });
+  expect(source.path).toBe("/jobstreaming/indeed");
+  source.respond(indeedPage({ jobs: rows.map(({ job_key, url, title, company, description, location }) =>
+    ({ job_key, url, title, company, description, location })), cursor: null, complete: true }));
   await servePostingAndRole(app, rows[0]!);
   await expect.poll(() => waitEvents(api, run.runId, "requirements", "model_lane_busy")).toBe(1);
   const frozen = await json<{ jobIds: string[]; targetRoute: string }>(api, "get", `/v1/preparation/runs/${run.runId}`);

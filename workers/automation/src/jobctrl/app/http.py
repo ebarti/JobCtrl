@@ -272,7 +272,7 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
     if "jobs" in application.services:
         from jobctrl.extension_transport import build_extension_routes
         routes.extend(build_extension_routes(runtime, application.services["jobs"],
-                                            broker=application.extension_broker, application=application))
+                                            application=application))
     signatures = set()
     for route in routes:
         for method in getattr(route, "methods", ()) or ():

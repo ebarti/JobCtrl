@@ -8,8 +8,6 @@ import {
   expect,
   json,
   modelCall,
-  action,
-  terminal,
   type ApplicationStack,
   type ExternalCall,
 } from "../harness/fixtures.js";
@@ -24,13 +22,6 @@ const description =
 
 type Source = { source_id: string; text: string };
 type Pairing = { ok: true; token: string };
-type Bridge = {
-  installationBound: boolean;
-  connected: boolean;
-  lastSeenAt: string | null;
-  pendingTasks: number;
-  activeTasks: number;
-};
 type Acknowledgement = {
   ok: true;
   itemId: string;
@@ -155,120 +146,36 @@ async function pairingToken(api: APIRequestContext): Promise<Pairing> {
   return response.json() as Promise<Pairing>;
 }
 
-async function claim(client: APIRequestContext, installationId: string) {
-  return json(client, "post", "/v1/extension/discovery/claim", {
-    installationId,
-    extensionVersion: "synthetic-e2e",
-    replace: true,
-  });
-}
-
-async function dns(app: ApplicationStack, addresses = ["1.1.1.1"]) {
-  const request = await app.external.next();
-  expect(request.method).toBe("POST");
-  expect(request.path).toBe("/dns");
-  expect(request.body).toEqual({ hostname: "example.com" });
-  request.respond({ addresses });
-}
-
-test("extension pairing is local, first-party status works, and token rotation revokes the old installation", async ({
-  app,
-  api,
-  playwright,
-}) => {
-  const sameOrigin = await playwright.request.newContext({
-    baseURL: app.baseURL,
-    extraHTTPHeaders: { "Sec-Fetch-Site": "same-origin" },
-  });
+test("extension pairing authorizes capture and token rotation revokes the old token", async ({ app, api, playwright }) => {
+  const initial = await pairingToken(api);
   const unpaired = await extensionClient(playwright.request, app);
-  let paired: APIRequestContext | undefined;
+  const paired = await extensionClient(playwright.request, app, initial.token);
+  const hostile = await playwright.request.newContext({ baseURL: app.baseURL,
+    extraHTTPHeaders: { Origin: "https://untrusted.example", Authorization: `Bearer ${initial.token}` } });
   try {
-    // A real same-origin browser GET omits Origin and may omit Referer under
-    // the application's no-referrer policy. It still reads actual status.
-    const pairing = await json<Pairing>(
-      sameOrigin,
-      "get",
-      "/v1/extension/pairing-token",
-    );
-    const status = await json<Bridge>(
-      sameOrigin,
-      "get",
-      "/v1/discovery/browser-extension/status",
-    );
-    expect(status.installationBound).toBe(false);
-    const diagnostic = await app.cli(["doctor", "--json"]);
-    expect(diagnostic.exitCode, diagnostic.stderr).toBe(0);
-    const readiness = JSON.parse(diagnostic.stdout) as {
-      browserCapabilities: { id: string; status: string; detail: string }[];
-    };
-    const coreBrowser = readiness.browserCapabilities.find(
-      (capability) => capability.id === "core-browser",
-    );
-    expect(coreBrowser, JSON.stringify(readiness.browserCapabilities)).toBeDefined();
-    expect(coreBrowser?.status, coreBrowser?.detail).toBe("ready");
     expect((await unpaired.get("/v1/extension/auth/status")).status()).toBe(401);
-    expect((await unpaired.get("/v1/extension/pairing-token")).status()).toBeGreaterThanOrEqual(400);
-    const pairedClient = await extensionClient(playwright.request, app, pairing.token);
-    paired = pairedClient;
-    const auth = await json<{ authenticated: boolean; capabilities: string[] }>(
-      pairedClient,
-      "get",
-      "/v1/extension/auth/status",
-    );
-    expect(auth.authenticated).toBe(true);
-    expect(auth.capabilities).toContain("capture");
-    const installation = randomUUID();
-    await claim(pairedClient, installation);
-    expect(
-      (await json<Bridge>(sameOrigin, "get", "/v1/discovery/browser-extension/status"))
-        .installationBound,
-    ).toBe(true);
-    const hostile = await playwright.request.newContext({
-      baseURL: app.baseURL,
-      extraHTTPHeaders: {
-        Origin: "https://untrusted.example",
-        Authorization: `Bearer ${pairing.token}`,
-      },
-    });
-    try {
-      expect(
-        (await hostile.post("/v1/extension/discovery/claim", {
-          data: { installationId: randomUUID(), extensionVersion: "hostile", replace: true },
-        })).status(),
-      ).toBe(403);
-    } finally {
-      await hostile.dispose();
-    }
-    // Corrupt only an owned EXTERNAL capability-file boundary. A failed
-    // rotation must preserve the still-accepted installation and old bytes.
+    expect((await paired.get("/v1/extension/pairing-token")).status()).toBe(401);
+    expect((await hostile.post("/v1/extension/captures", { data: {} })).status()).toBe(403);
+    expect(await json(paired, "get", "/v1/extension/auth/status")).toMatchObject({ authenticated: true, capabilities: ["capture"] });
+    expect((await paired.post("/v1/extension/discovery/claim", { data: {} })).status()).toBe(404);
     const tokenPath = path.join(app.workspace, "extension-capability-token");
-    const retainedTokenPath = path.join(app.workspace, ".token-before-rotation");
-    await rename(tokenPath, retainedTokenPath);
+    const saved = path.join(app.workspace, ".token-before-rotation");
+    await rename(tokenPath, saved);
     await mkdir(tokenPath, { mode: 0o700 });
     try {
-      const refused = await api.post("/v1/extension/pairing-token/rotate", { headers: { "Sec-Fetch-Site": "same-origin" }, data: {} });
-      expect(refused.status()).toBe(503);
-      expect((await json<Bridge>(sameOrigin, "get", "/v1/discovery/browser-extension/status")).installationBound).toBe(true);
+      expect((await api.post("/v1/extension/pairing-token/rotate", { headers: { "Sec-Fetch-Site": "same-origin" }, data: {} })).status()).toBe(503);
     } finally {
       await rmdir(tokenPath);
-      await rename(retainedTokenPath, tokenPath);
+      await rename(saved, tokenPath);
     }
-    const rotating = await api.post("/v1/extension/pairing-token/rotate", { headers: { "Sec-Fetch-Site": "same-origin" }, data: {} });
-    expect(rotating.status(), await rotating.text()).toBe(200);
-    const rotated = await rotating.json() as Pairing;
-    expect(rotated.token).not.toBe(pairing.token);
-    expect((await pairedClient.get("/v1/extension/auth/status")).status()).toBe(401);
-    const disconnected = await json<Bridge>(
-      sameOrigin,
-      "get",
-      "/v1/discovery/browser-extension/status",
-    );
-    expect(disconnected.installationBound).toBe(false);
-    expect(disconnected.connected).toBe(false);
+    expect((await paired.get("/v1/extension/auth/status")).status()).toBe(200);
+    const rotation = await api.post("/v1/extension/pairing-token/rotate", { headers: { "Sec-Fetch-Site": "same-origin" }, data: {} });
+    expect(rotation.status()).toBe(200);
+    const rotated = await rotation.json() as Pairing;
+    expect(rotated.token).not.toBe(initial.token);
+    expect((await paired.get("/v1/extension/auth/status")).status()).toBe(401);
   } finally {
-    await paired?.dispose();
-    await unpaired.dispose();
-    await sameOrigin.dispose();
+    await Promise.all([unpaired.dispose(), paired.dispose(), hostile.dispose()]);
   }
 });
 
@@ -333,119 +240,5 @@ test("extension capture keeps canonical provenance and stable replay across work
     expect(app.external.calls).toHaveLength(calls);
   } finally {
     await client.dispose();
-  }
-});
-
-test("pending browser tasks survive HEAD, lease once, reject private DNS and fence cancellation", async ({
-  app,
-  api,
-  playwright,
-}) => {
-  const pairing = await pairingToken(api);
-  const extension = await extensionClient(playwright.request, app, pairing.token);
-  const worker = await playwright.request.newContext({
-    baseURL: app.baseURL,
-    extraHTTPHeaders: { Authorization: `Bearer ${pairing.token}` },
-  });
-  const installation = randomUUID();
-  const extensionHeaders = {
-    "x-jobctrl-extension-installation": installation,
-    "x-jobctrl-extension-version": "synthetic-e2e",
-  };
-  let held: ExternalCall | undefined;
-  let runId: string | undefined;
-  try {
-    await claim(extension, installation);
-    const fixture = captureFixture("active-browser-parent");
-    const submitted = await action(api, "jobs.capture_url", { url: fixture.url, html: fixture.html });
-    runId = submitted.runId;
-    held = await modelCall(app, "page_interpretation");
-    const running = await json<{ status: string; workflowId: string; temporalRunId: string }>(
-      api, "get", `/v1/action-runs/${runId}`,
-    );
-    expect(running.status).toBe("running");
-    expect(running.temporalRunId).toBeTruthy();
-    const envelope = {
-      runId,
-      workflowId: running.workflowId,
-      temporalRunId: running.temporalRunId,
-      sourceId: "synthetic-extension-source",
-      sourceFamily: "enrichment",
-      request: { mode: "rendered_page", url: fixture.url },
-      timeoutMs: 120_000,
-    };
-    // Only the local worker may administer tasks, even with a valid Chrome token.
-    expect((await extension.post("/v1/extension/discovery/tasks", {
-      data: { ...envelope, taskId: "forbidden:" + randomUUID() },
-    })).status()).toBe(403);
-    const rejected = worker.post("/v1/extension/discovery/tasks", {
-      data: { ...envelope, taskId: "private-dns:" + randomUUID() },
-    });
-    await dns(app, ["127.0.0.1"]);
-    expect((await rejected).status()).toBe(400);
-    const taskId = "browser:" + randomUUID();
-    const creating = worker.post("/v1/extension/discovery/tasks", {
-      data: { ...envelope, taskId },
-    });
-    await dns(app);
-    expect((await creating).status()).toBe(201);
-    const before = await json<Bridge>(api, "get", "/v1/discovery/browser-extension/status");
-    expect(before.pendingTasks).toBe(1);
-    const calls = app.external.calls.length;
-    for (let index = 0; index < 5; index += 1) {
-      const response = await extension.head("/v1/extension/discovery/tasks/next", { headers: extensionHeaders });
-      expect(response.status()).toBe(200);
-      expect((await response.body()).length).toBe(0);
-    }
-    const after = await json<Bridge>(api, "get", "/v1/discovery/browser-extension/status");
-    expect(after.lastSeenAt).toBe(before.lastSeenAt);
-    expect(after.pendingTasks).toBe(1);
-    expect(after.activeTasks).toBe(0);
-    expect(app.external.calls).toHaveLength(calls);
-    expect((await json<{ status: string }>(worker, "get", `/v1/extension/discovery/tasks/${taskId}`)).status).toBe("pending");
-    const polling = extension.get("/v1/extension/discovery/tasks/next", { headers: extensionHeaders });
-    await dns(app);
-    const leasedResponse = await polling;
-    expect(leasedResponse.status()).toBe(200);
-    const leased = await leasedResponse.json() as { status: string; taskId: string; leaseId: string };
-    expect(leased.status).toBe("task");
-    expect(leased.taskId).toBe(taskId);
-    const nextPoll = await extension.get("/v1/extension/discovery/tasks/next", { headers: extensionHeaders });
-    expect((await nextPoll.json()).status).toBe("idle");
-    const active = await extension.get(`/v1/extension/discovery/tasks/${taskId}/lease?leaseId=${leased.leaseId}`, { headers: extensionHeaders });
-    expect((await active.json()).active).toBe(true);
-    const delayedTaskId = "browser:dns-delay:" + randomUUID();
-    const delayedCreation = worker.post("/v1/extension/discovery/tasks", {
-      data: { ...envelope, taskId: delayedTaskId },
-    });
-    await dns(app);
-    expect((await delayedCreation).status()).toBe(201);
-    const delayedPoll = extension.get("/v1/extension/discovery/tasks/next", { headers: extensionHeaders });
-    const delayedDns = await app.external.next();
-    expect(delayedDns.method).toBe("POST");
-    expect(delayedDns.path).toBe("/dns");
-    expect(delayedDns.body).toEqual({ hostname: "example.com" });
-    await json(api, "post", `/v1/action-runs/${runId}/cancel`, {});
-    held.disconnect();
-    expect(delayedDns.closed).not.toBe(true);
-    delayedDns.respond({ addresses: ["1.1.1.1"] });
-    expect((await (await delayedPoll).json()).status).toBe("idle");
-    await terminal(api, runId);
-    expect((await json<{ status: string }>(worker, "get", `/v1/extension/discovery/tasks/${delayedTaskId}`)).status).toBe("failed");
-    const inactive = await extension.get(`/v1/extension/discovery/tasks/${taskId}/lease?leaseId=${leased.leaseId}`, { headers: extensionHeaders });
-    expect((await inactive.json()).active).toBe(false);
-    const late = await extension.post(`/v1/extension/discovery/tasks/${taskId}/result`, {
-      headers: extensionHeaders,
-      data: { leaseId: leased.leaseId, result: { status: "failed", errorCode: "request_failed", message: "Late result", retryable: false } },
-    });
-    expect(late.status()).toBe(409);
-    expect((await json<{ status: string }>(worker, "get", `/v1/extension/discovery/tasks/${taskId}`)).status).toBe("failed");
-  } finally {
-    if (runId) {
-      await api.post(`/v1/action-runs/${runId}/cancel`, { data: {} });
-    }
-    held?.disconnect();
-    await extension.dispose();
-    await worker.dispose();
   }
 });
