@@ -38,6 +38,11 @@ evidence can receive its own determination. Each result retains its field and
 receipt. Market comparisons bind the selected field so historical estimates
 can still resolve the evidence they originally used.
 
+Numeric citation checks support period-grouped thousands. The model selects
+the amount and cites the original text. An alternative number convention must
+account for every selected bound using complete tokens inside those citations.
+A single ambiguous token cannot establish two different endpoints.
+
 The provider adapters support Euro Top Tech, explicitly permitted Levels.fyi
 public pages and licensed feeds, permitted Glassdoor feeds, explicit manual
 imports, and dated ECB/Eurostat inputs. Direct benchmark inputs with a known

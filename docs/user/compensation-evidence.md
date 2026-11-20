@@ -13,6 +13,11 @@ market evidence or an extrapolated range as a direct observation.
 
 A configured model extracts what the posting states: amounts, currency, period and base/OTE/bonus/equity component, with verbatim citations and a rationale. Code checks exact numbers and quotes, then performs explicit annualization arithmetic. Missing or ambiguous pay remains visible; a nearby salary word or an annual-pay threshold cannot invent a period. The accepted fact cites its extraction determination.
 
+The numeric check accepts period-grouped amounts such as `55.000€` when the
+model's cited result identifies EUR 55,000. A decimal reading can also be
+verified when that is what the posting states. All bounds must fit one reading
+of the quoted numbers. Fractional amounts must match exactly.
+
 JobCtrl uses the first nonempty field among salary, enriched description, full
 description and short description, in that order. A listing with just a title
 uses the original title as its source.
