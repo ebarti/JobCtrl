@@ -1954,9 +1954,10 @@ test("automatic compensation refreshes only changed postings with source text", 
   });
   await capture("card-without-salary", "");
   const first = await capture("first-posting", "First public description.");
-  async function failedAttempt(jobId: string, checkConcurrentAdmission = false) {
+  async function failedAttempt(jobId: string, checkConcurrentAdmission = false, title?: string) {
     const pay = await modelCall(app, "compensation.posted_pay");
     expect(sources(pay.body)[0]!.source_id).toContain(jobId);
+    if (title) expect(sources(pay.body)).toEqual([{ source_id: `posting:${jobId}:1:title`, text: title }]);
     if (checkConcurrentAdmission) {
       const concurrent = await api.post("/v1/actions/compensation.refresh_stale", { data: { automatic: true } });
       expect(concurrent.status()).toBe(409);
@@ -1971,6 +1972,11 @@ test("automatic compensation refreshes only changed postings with source text", 
   await failedAttempt(first.job_id, true);
   const second = await capture("second-posting", "Second public description.");
   await failedAttempt(second.job_id);
+  const title = "Synthetic title-only card | €60K - €80K";
+  const titled = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/titled-pay", title, company: "Synthetic salary publisher",
+  });
+  await failedAttempt(titled.job_id, false, title);
 });
 
 test("interview preparation honors an explicit empty evidence selection and retains the accepted preparation on failure", async ({

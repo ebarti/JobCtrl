@@ -13,10 +13,14 @@ market evidence or an extrapolated range as a direct observation.
 
 A configured model extracts what the posting states: amounts, currency, period and base/OTE/bonus/equity component, with verbatim citations and a rationale. Code checks exact numbers and quotes, then performs explicit annualization arithmetic. Missing or ambiguous pay remains visible; a nearby salary word or an annual-pay threshold cannot invent a period. The accepted fact cites its extraction determination.
 
-JobCtrl chooses the salary field first, then a current enriched description,
-the full posting description, and finally the short description. If that
-preferred source changes while extraction is running, the refresh is rejected
-and the previously accepted posted fact remains available.
+JobCtrl uses the first nonempty field among salary, enriched description, full
+description and short description, in that order. A listing with just a title
+uses the original title as its source.
+When the model finds no posted pay in the preferred field, it can also assess
+numeric title text that field did not include. A stated range in the preferred
+field retains priority. Each assessment cites the exact field it used, and an
+unstated period or pay component stays unknown. If the posting changes during
+extraction, the previously accepted fact remains available.
 
 As soon as JobCtrl verifies the employer's figures and citations, the posted
 range appears in Jobs. Market research can continue or fail independently.
@@ -164,7 +168,8 @@ source conflict is a warning to inspect, not a hidden decision rule.
    network-free, and an absent preference is not consent.
 3. **Queue changed postings.** The worker collects new and changed posting
    events by job ID and starts one automatic compensation batch at a time.
-   Cards with an empty salary and no description wait for source text.
+   Title-only cards with a citable number can be assessed automatically. Other
+   title-only cards wait for further posting text and remain unassessed.
    An unchanged observation preserves the current evidence. The daily schedule
    checks the full active backlog for missing or expired evidence.
 4. **Parse posted evidence.** The worker records a model-backed posted-fact

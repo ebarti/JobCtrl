@@ -13,7 +13,7 @@ from .model import GatewayModel
 from .repository import CompensationRepository
 from .schema import SCHEMA
 from .source_authority import OfficialDataVerifier
-from .service import CompensationService
+from .service import CompensationService, has_automatic_posted_source
 
 
 def build_feature(runtime: Runtime, **ports) -> Feature:
@@ -60,8 +60,7 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
             changed = set(event_ids)
             snapshots = [snapshot for snapshot in snapshots if snapshot["job_id"] in changed]
         if automatic:
-            snapshots = [snapshot for snapshot in snapshots if any(snapshot.get(k) for k in
-                         ("salary", "enriched_description", "full_description", "description"))]
+            snapshots = [snapshot for snapshot in snapshots if has_automatic_posted_source(snapshot)]
         limit = payload.get("limit", 0)
         if limit:
             snapshots = snapshots[:limit]

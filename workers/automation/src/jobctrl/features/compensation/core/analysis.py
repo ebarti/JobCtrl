@@ -21,6 +21,11 @@ _NUMBER = re.compile(r"(?<![\w.,])(?:[A-Z]{3})?(?P<number>\d+(?:,\d{3})*(?:\.\d+
 _WARNINGS = frozenset({"ambiguous_multiple_amounts", "bonus_component", "broad_range", "commission_component", "equity_component", "hourly_period", "missing_currency", "missing_period", "monthly_period", "no_amount_found", "one_sided_range", "ote_component", "source_text_truncated"})
 
 
+def has_citable_number(text: str) -> bool:
+    """A numeric bound can only be published if this literal grammar can verify it."""
+    return _NUMBER.search(text) is not None
+
+
 def _numbers(text: str) -> set[Decimal]:
     values: set[Decimal] = set()
     for match in _NUMBER.finditer(text):

@@ -30,6 +30,14 @@ schema and model configuration. The source citations and amounts are verified
 again before publication. An unsettled call blocks another dispatch for that
 input. An explicit refresh after completion requests a fresh determination.
 
+When the saved title is the only posting text, a per-job refresh sends its
+exact bytes to the posted-pay model. Automatic refresh can admit a title-only
+card containing a citable number. If the selected salary or description field
+has a confirmed `missing` determination, a title with additional numeric
+evidence can receive its own determination. Each result retains its field and
+receipt. Market comparisons bind the selected field so historical estimates
+can still resolve the evidence they originally used.
+
 The provider adapters support Euro Top Tech, explicitly permitted Levels.fyi
 public pages and licensed feeds, permitted Glassdoor feeds, explicit manual
 imports, and dated ECB/Eurostat inputs. Direct benchmark inputs with a known

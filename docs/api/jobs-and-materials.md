@@ -445,6 +445,10 @@ After a refresh verifies posted pay, `GET /v1/jobs/{id}/compensation/posted`
 returns the cited fact while market research continues. A failed market
 refresh leaves the latest accepted estimate available at
 `GET /v1/jobs/{id}/compensation/market` with its own source revision.
+For a title-sourced determination the posted fact's `sourceField` is `title`
+and its receipt binds the exact saved title, posting ID and revision. The
+structured amount, currency, period and component are the model's verified
+result. Each market comparison retains the posted source it used.
 
 For `GET /v1/jobs/query`, `posted_known=source_known` selects current
 employer-posted facts with at least one numeric bound in the source currency

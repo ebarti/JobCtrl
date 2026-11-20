@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from jobctrl.app.errors import AppError, ConflictError
 
-from .core.analysis import EvidenceError, annualize, direct_benchmark, estimate_market, extrapolate, posted_from_judgment, validate_classification, validate_source_date
+from .core.analysis import EvidenceError, annualize, direct_benchmark, estimate_market, extrapolate, has_citable_number, posted_from_judgment, validate_classification, validate_source_date
 from .core.ports import Observation, Source
 from .geography import CompanyMatch, company_identity_source, extrapolate_for_target, validate_company_match
 from .policy import PolicyInput, registry
@@ -30,17 +30,30 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def _pay_source(reference: str, snapshot: dict, as_of, url) -> tuple[Source, str]:
-    for field in ("salary", "enriched_description", "full_description", "description"):
+_PRIMARY_PAY_FIELDS = ("salary", "enriched_description", "full_description", "description")
+
+
+def _title_adds_numeric_source(snapshot: dict, reviewed_text: str) -> bool:
+    title = snapshot.get("title") or ""
+    return bool(title and title not in reviewed_text and has_citable_number(title))
+
+
+def has_automatic_posted_source(snapshot: dict) -> bool:
+    """Only the model can determine whether an eligible numeric title describes pay."""
+    return any(snapshot.get(field) for field in _PRIMARY_PAY_FIELDS) or _title_adds_numeric_source(snapshot, "")
+
+
+def _pay_source(reference: str, snapshot: dict, as_of, url, *, fields) -> tuple[Source, str]:
+    for field in fields:
         value = snapshot.get(field)
         if isinstance(value, str) and value.strip():
             return Source(reference=f"{reference}:{field}", text=value, as_of=as_of, url=url), field
     return Source(reference=f"{reference}:missing", text="", as_of=as_of, url=url), "missing"
 
 
-def _posting_source(snapshot: dict) -> tuple[Source, str]:
+def _posting_source(snapshot: dict, *, fields=(*_PRIMARY_PAY_FIELDS, "title")) -> tuple[Source, str]:
     return _pay_source(f"posting:{snapshot['job_id']}:{snapshot['revision']}", snapshot,
-                       snapshot.get("observed_at"), snapshot.get("url"))
+                       snapshot.get("observed_at"), snapshot.get("url"), fields=fields)
 
 
 def _target_source(snapshot: dict) -> Source:
@@ -169,7 +182,7 @@ def _posted_response(job_id: str, stored: dict) -> dict:
         confidence = "low"
     fact = {"tenantId": "local", "jobKey": job_id, "sourceField": stored["sourceField"],
             "sourceText": excerpt[:280] if excerpt is not None else None,
-            "legacyRawSalary": source["text"][:280] or None, "parseState": result["parse_state"],
+            "legacyRawSalary": None if stored["sourceField"] == "title" else source["text"][:280] or None, "parseState": result["parse_state"],
             "parserVersion": "posted-compensation-v5-determination", "sourceHash": result["determination"]["source_hash"],
             "parsedAt": stored["updatedAt"], "confidence": confidence,
             "warnings": [_warning(c) for c in dict.fromkeys([*result["warnings"], *(["source_text_truncated"] if excerpt and len(excerpt) > 280 else [])])]}
@@ -378,6 +391,11 @@ class CompensationService:
         now = datetime.now(timezone.utc)
         if state and state["status"] == "running" and state["lease_expires_at"] and state["lease_expires_at"] > _now():
             return False
+        if posted:
+            fact = posted["record"].get("fact") or {}
+            if ((fact.get("judgment") or {}).get("parse_state") == "missing"
+                    and _title_adds_numeric_source(snapshot, (fact.get("source") or {}).get("text") or "")):
+                return True
         if (state and state["status"] == "failed" and state["failure_code"] == "compensation_source_unavailable"
                 and posted and posted["posting_revision"] == snapshot["revision"] and posted["posting_hash"] == snapshot["source_hash"]):
             try:
@@ -470,7 +488,13 @@ class CompensationService:
         reference, suffix = target_source.reference.rsplit(":", 1)
         if suffix != "classification":
             raise EvidenceError("target_determination_binding_invalid")
-        pay_source, _ = _pay_source(reference, json.loads(target_source.text), target_source.as_of, target_source.url)
+        # Older estimates used the salary/description policy even when the title contained a range.
+        # Rebuild their exact historical input before checking the pinned receipt.
+        posted_field = stored.get("postedSourceField")
+        fields = ("title",) if posted_field == "title" else _PRIMARY_PAY_FIELDS
+        pay_source, field = _pay_source(reference, json.loads(target_source.text), target_source.as_of, target_source.url, fields=fields)
+        if posted_field is not None and posted_field != field:
+            raise EvidenceError("posted_determination_binding_invalid")
         receipt_id = stored.get("postedReceiptId")
         if receipt_id is None:
             # Older market estimates were published atomically with the posted
@@ -744,9 +768,15 @@ class CompensationService:
                     automation_guard(unit)
                     cancellation_guard()
 
-            judgment = await self.model.posted_pay(source, recover=automatic or prior_status != "succeeded",
-                                                   on_admitted=guard_pay_admission)
-            posted = posted_from_judgment(source, judgment)
+            async def determine_pay(selected: Source):
+                judgment = await self.model.posted_pay(selected, recover=automatic or prior_status != "succeeded",
+                                                       on_admitted=guard_pay_admission)
+                return posted_from_judgment(selected, judgment)
+
+            posted = await determine_pay(source)
+            if posted.judgment.parse_state == "missing" and _title_adds_numeric_source(snapshot, source.text):
+                source, source_field = _posting_source(snapshot, fields=("title",))
+                posted = await determine_pay(source)
             automation_guard()
             if context and context.cancelled():
                 raise AppError("cancelled", "Compensation refresh cancelled.", 409)
@@ -1048,7 +1078,7 @@ class CompensationService:
                     source_expiries.append(input_freshness[fact.exchange_rate.source.reference]["fresh_until"])
             evidence_expiry = geography.fresh_until if geography and geography.status == "estimated" else min(source_expiries, default=current_expiry)
             market_record = {"jobId": job_id, "estimate": asdict(estimate), "target": asdict(target), "updatedAt": _now(),
-                             "postedReceiptId": posted.judgment.determination.reference,
+                             "postedReceiptId": posted.judgment.determination.reference, "postedSourceField": source_field,
                              "evidenceFreshUntil": evidence_expiry,
                              "company": snapshot.get("company"), "title": snapshot.get("title"),
                              "targetSource": asdict(target_source), "allEvidence": [asdict(row) for row in rows],
