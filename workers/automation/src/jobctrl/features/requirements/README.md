@@ -144,23 +144,31 @@ authority. There is no top-k selection, paging, chunking, lexical fallback or
 separate novelty judgment. Existing-only repair and every semantic ingestion or
 correction use this mandatory gate.
 
-New single-job refreshes use `requirements-capability-demand-partition-v8-sources`.
-The provider receives repeated exact source strings and citation path descriptors
-through request-local dictionaries. Expansion verifies the complete original
-context, the catalog of citation segments and every source document against
-their fingerprints. The response uses v6's exhaustive assignment slots, full
-definitions and citation binding. Its `reuse_requirement_id` field accepts
-only a retained capability ID or null. With an empty retained catalog it
-requires null. The owner still verifies that the model assigned that retained
-member to the group and reproduced its exact meaning. The complete serialized request
-still has to fit the gateway's 1 MiB limit and the selected provider's context.
+New single-job refreshes use `requirements-capability-demand-partition-v9-tables`.
+The request supplies named column lists for repeated object shapes, a dictionary
+of repeated whole strings across context and sources, and shared citation path
+layouts. Each source retains its own ID and its explicitly offered segment IDs.
+The owner reconstructs the complete context and each canonical source before
+dispatch and again for binding. It checks the whole context, source and citation
+hashes. Every member, occurrence and group handle remains an individually
+required property in the response schema, with shared JSON Schema definitions
+for their slot types. A capability group can reuse only an assigned retained
+capability whose category, name and definition agree verbatim. With no retained
+capability the only permitted reuse choice is null.
 
-The durable `requirements.refresh` action records its transport in the original
+The complete serialized request must fit the gateway's 1 MiB limit and the
+selected provider's context. Capacity depends on the number of distinct
+requirements, original postings, and source text as well as the number of jobs.
+A refusal preserves the accepted snapshot without truncating, splitting or
+automatically resending the request.
+
+The durable `requirements.refresh` action records its transport in its original
 admission transaction. Searches record it in their initial preparation request
-and carry that request into retries. Missing admissions from older actions
-select v6, including unstarted jobs in a frozen search. Previously paid requests
-retain their exact receipt fingerprints and one-call allowance. Synchronous
-single-job refresh starts on v8. Explicit catalog repair, corrections and
+and carry that request into retries. A missing marker selects v6, including
+unstarted jobs in a frozen search. A recorded v8 uses its original source
+string and citation path dictionaries. Previously paid requests retain their
+exact fingerprints and one-call allowance. Synchronous single-job refresh and
+new durable refreshes select v9. Explicit catalog repair, corrections and
 separately started selected Preparation recipes use v6. The shared initial-search cohort uses v7.
 
 The v6 immutable model result, `CatalogNormalizationSlots`, contains `status`, exact
@@ -471,6 +479,10 @@ after purge cannot reuse a deleted ID/revision and revive old provenance.
 Errors expose safe codes without posting/model prose. Source/schema failures
 are 422, contract/revision/cancellation conflicts are 409, and complete-input
 catalog refusal is 503 `requirements_catalog_unavailable` with safe metadata.
+The attempt stores these details transactionally under its exact completion.
+`GET /v1/jobs/{job_id}/requirements/attempts/latest` reports them for first-use
+and refresh failures, including the gateway receipt ID when available. A
+legacy attempt without recorded details keeps its original failure code.
 
 ## Verification
 

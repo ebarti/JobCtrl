@@ -85,3 +85,13 @@ CREATE TABLE IF NOT EXISTS requirements_model_cache (
 );
 CREATE INDEX IF NOT EXISTS requirements_model_cache_job ON requirements_model_cache(job_id);
 """
+
+# Separate registration preserves the byte identity of historical feature schemas.
+ATTEMPT_REFUSAL_SCHEMA = """
+CREATE TABLE IF NOT EXISTS requirements_attempt_refusals (
+    attempt_id TEXT NOT NULL REFERENCES requirements_attempts(attempt_id) ON DELETE CASCADE,
+    completed_at TEXT NOT NULL,
+    details_json TEXT NOT NULL,
+    PRIMARY KEY(attempt_id, completed_at)
+);
+"""

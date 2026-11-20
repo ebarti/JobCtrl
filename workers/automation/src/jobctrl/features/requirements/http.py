@@ -101,6 +101,9 @@ def routes(service):
         except RequirementError as failure:
             raise_application_error(failure)
 
+    async def latest_attempt(request):
+        return JSONResponse(service.latest_job_attempt(request.path_params["job_id"]))
+
     async def job_requirements(request):
         if request.method in {"GET", "HEAD"}:
             return JSONResponse(service.find_job_requirements(request.path_params["job_id"]))
@@ -176,6 +179,7 @@ def routes(service):
 
     return (
         Route("/v1/jobs/{job_id}/requirements", job_requirements, methods=["GET", "POST"]),
+        Route("/v1/jobs/{job_id}/requirements/attempts/latest", latest_attempt, methods=["GET"]),
         Route("/v1/jobs/{job_id}/requirements/corrections", correct_occurrences, methods=["POST"]),
         Route("/v1/jobs/{job_id}/requirements/{occurrence_id}/binding", correct_binding, methods=["POST"]),
         Route("/v1/requirements", catalog, methods=["GET"]),

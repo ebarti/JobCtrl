@@ -117,13 +117,19 @@ It also observes distinct live model lanes overlapping while preserving the
 configured single-lane capacities.
 
 The [single-job refresh journey](../../../apps/web/e2e/journeys/requirements-reuse.spec.ts)
-checks every expanded source against its recorded hash. It upgrades a real v6
-workspace, rereads an accepted action and refuses an interrupted paid comparison
-before a fresh action uses v8. The [payload boundary case](../../../apps/web/e2e/journeys/requirements.spec.ts)
+independently reconstructs v9 rows, strings and per-source citation layouts
+from the actual provider request and verifies their complete context and source
+fingerprints. It upgrades real v6 and v8 workspaces, rereads an accepted
+action and refuses an interrupted paid comparison before a new v9 refresh.
+It also builds a complete catalog through 100 real single-job refreshes in an
+owned synthetic workspace and verifies every posting and occurrence on the final call.
+The [payload boundary case](../../../apps/web/e2e/journeys/requirements.spec.ts)
 sends a complete synthetic catalog whose original source documents exceed
-1 MiB, then verifies a second catalog still exceeds the gateway limit after
-packing. Both refusals preserve the accepted snapshot and PDF. Offering an
-incoming ID as a retained capability fails the v8 structured schema.
+1 MiB and admits 100 distinct incoming definitions with their complete source
+notes. It also checks that additional original posting text can exceed the same
+gateway limit after packing. Its latest-attempt reads cover both preserved acceptance and a
+first-time refusal with no accepted snapshot. The accepted PDF stays readable. Offering an
+incoming ID as a retained capability fails the strict structured schema.
 
 Additional cases refuse missing or foreign normalization members, qualification
 rows and citations without partial authority; skip an unsupported-language job;

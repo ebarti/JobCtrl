@@ -387,9 +387,17 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
             with self.database.connect() as connection:
                 return self.latest_attempt(job_id, connection)
         row = connection.execute(
-            "SELECT * FROM requirements_attempts WHERE job_id=? ORDER BY started_at DESC,attempt_id DESC LIMIT 1", (job_id,),
+            "SELECT a.*,r.details_json FROM requirements_attempts a LEFT JOIN requirements_attempt_refusals r "
+            "ON r.attempt_id=a.attempt_id AND r.completed_at=a.completed_at "
+            "WHERE a.job_id=? ORDER BY a.started_at DESC,a.attempt_id DESC LIMIT 1", (job_id,),
         ).fetchone()
-        return dict(row) if row else None
+        if row is None:
+            return None
+        attempt = dict(row)
+        details = attempt.pop("details_json")
+        if details is not None:
+            attempt["failure_details"] = json.loads(details)
+        return attempt
 
     def attempt_fingerprint(self, attempt_id):
         with self.database.connect() as conn:
@@ -443,12 +451,16 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
                 raise RequirementError("requirements_contract_changed")
             return {**meaning, "stale": head["revision"] != meaning["revision"], "reused_action": True}
 
-    def finish_attempt(self, attempt_id, state, failure_code=None):
+    def finish_attempt(self, attempt_id, state, failure_code=None, *, details=None):
+        completed_at = now()
         with self.database.transaction() as connection:
-            connection.execute(
+            changed = connection.execute(
                 "UPDATE requirements_attempts SET state=?,failure_code=?,completed_at=? "
-                "WHERE attempt_id=? AND state='running'", (state, failure_code, now(), attempt_id),
-            )
+                "WHERE attempt_id=? AND state='running'", (state, failure_code, completed_at, attempt_id),
+            ).rowcount
+            if changed and details:
+                connection.execute("INSERT INTO requirements_attempt_refusals VALUES (?,?,?)",
+                                   (attempt_id, completed_at, canonical_json(details)))
 
     def revise_meaning(self, **kwargs):
         raise RequirementError("requirements_consolidation_required")

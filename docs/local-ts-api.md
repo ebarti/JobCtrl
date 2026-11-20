@@ -67,6 +67,10 @@ Transient lane or monetary serialization is visible as `waiting_for_capacity`.
 The synchronous `POST /v1/jobs/import-url` returns a captured posting or an
 immediate error for clients that explicitly use it.
 
+`GET /v1/jobs/{job_id}/requirements/attempts/latest` reads the latest attempt
+and any recorded refusal details, even before a job has accepted Requirements.
+The snapshot read still returns null until an accepted revision exists.
+
 The reusable requirement library reads `/v1/requirements`,
 `/v1/requirements/{id}` and bounded `/v1/requirements/{id}/history` pages
 (`kind=revisions|occurrences`, `limit` up to 200, `offset`). Original posting

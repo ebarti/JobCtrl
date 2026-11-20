@@ -1,7 +1,7 @@
 import { test, expect, json, modelCall, action, completed, terminal, type ExternalCall } from "../harness/fixtures.js";
 import { captureReusePosting, acceptReuseRequirements, reusableModelCatalog, type CapturedPosting, type RequirementSnapshot } from "./reuse-data.js";
-import { catalogMatching, catalogSource, citeSources, modelSources, EXTRACTION_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION,
-  REFRESH_NORMALIZATION_PROMPT_VERSION, typedExtraction, type CatalogContext } from "./requirements-data.js";
+import { catalogContext, catalogMatching, catalogSource, citeSources, modelSources, EXTRACTION_PROMPT_VERSION, NORMALIZATION_PROMPT_VERSION,
+  REFRESH_NORMALIZATION_PROMPT_VERSION, SOURCE_DICTIONARY_PROMPT_VERSION, typedExtraction } from "./requirements-data.js";
 
 const requirement = [{ localId: "recovery", text: "Implement durable workflow recovery." }];
 const body = requirement[0]!.text;
@@ -23,13 +23,15 @@ function assertDestination(snapshot: RequirementSnapshot, posting: CapturedPosti
 }
 
 function assertNormalizationDestination(call: ExternalCall, posting: CapturedPosting) {
-  const context = call.body["context"] as CatalogContext;
+  const context = catalogContext(call);
   expect(context.incoming).toEqual([expect.objectContaining({ job_id: posting.job_id })]);
   expect(context.occurrences.filter((row) => row.job_id === posting.job_id)).toHaveLength(1);
   const reference = context.posting_sources.find((row) => row.job_id === posting.job_id)!;
   expect(reference).toMatchObject({ job_id: posting.job_id, revision: posting.revision, source_hash: posting.source_hash });
-  expect(context.cohort_segment_paths).toBeDefined();
-  expect(Object.values(context.cohort_texts!)).toContain(posting.source_hash);
+  expect(call.body["context"]).toMatchObject({ catalog_tables: {
+    strings: expect.arrayContaining([posting.source_hash]), row_fields: expect.any(Array),
+    segment_paths: expect.any(Array), segment_layouts: expect.any(Array),
+  } });
   for (const source of modelSources(call)) catalogSource(call, source.source_id);
   expect(catalogSource(call, reference.source_id)).toMatchObject({ job_id: posting.job_id, revision: posting.revision,
     source_id: posting.source_id, source_revision: posting.source_revision, source_hash: posting.source_hash });
@@ -73,11 +75,15 @@ test("Requirements exact content reuse keeps extraction destination bindings and
   assertDestination(exact.snapshot, third, semanticSourceId);
   assertNormalizationDestination(exact.matching!, third);
 
-  const differentBody = `${body}\nAuthored source context.`;
+  const differentBody = `~r0\n${body}\n~~ Literal source context with ~7.`;
   const changedBody = await captureReusePosting(api, "reuse-exact-context", differentBody);
   expect(changedBody.description).toBe(differentBody);
   const beforeBody = app.external.calls.length;
-  const changed = await acceptReuseRequirements(api, app, changedBody, requirement, equivalent);
+  const literalReferences = requirement.map(row => ({ ...row, sourceNote: "~r0", rationale: "~~7" }));
+  const changed = await acceptReuseRequirements(api, app, changedBody, literalReferences, equivalent);
+  const changedCall = changed.matching!;
+  expect(catalogSource(changedCall, catalogContext(changedCall).incoming[0]!.model_source_id))
+    .toMatchObject({ source_note: "~r0", rationale: "~~7" });
   expect(app.external.calls.slice(beforeBody).map((call) => call.body["operation"])).toEqual(["requirements.extract", "requirements.match_catalog"]);
   expect(changed.snapshot.requirements[0]!.extraction_determination_id).not.toBe(accepted.snapshot.requirements[0]!.extraction_determination_id);
   expect((changed.extraction!.body["sources"] as { source_id: string; text: string }[])[0]!).toMatchObject({ text: differentBody });
@@ -90,7 +96,7 @@ test("Requirements exact content reuse keeps extraction destination bindings and
   const beforeCatalog = app.external.calls.length;
   const rematched = await acceptReuseRequirements(api, app, afterCatalog, requirement, equivalent, { extract: false });
   expect(app.external.calls.slice(beforeCatalog).map((call) => call.body["operation"])).toEqual(["requirements.match_catalog"]);
-  const matchingContext = rematched.matching!.body["context"] as { candidates: unknown[]; incoming: unknown[]; catalog_revision: number };
+  const matchingContext = catalogContext(rematched.matching!);
   expect(matchingContext.candidates).toHaveLength(2);
   expect(matchingContext.incoming).toHaveLength(1);
   expect(rematched.snapshot.requirements[0]!.extraction_determination_id).toBe(accepted.snapshot.requirements[0]!.extraction_determination_id);
@@ -117,10 +123,49 @@ test("Requirements exact content reuse keeps extraction destination bindings and
   assertDestination(effort.snapshot, differentEffort, semanticSourceId);
 });
 
-test.describe("single-job catalog transport upgrade", () => {
-  test.use({ sourceRevision: "38ef94613ebb7c0413d8d5ee89987ef860f53b13" });
+test("one complete single-job comparison binds all 100 original postings and every occurrence slot", async ({ api, app }, info) => {
+  test.setTimeout(240_000);
+  const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
+  const postings = new Map<string, CapturedPosting>();
+  let canonicalId: string | undefined;
+  for (let index = 1; index <= 100; index++) {
+    const note = `Synthetic division ${index} reviews its own source evidence and retains the service details. `;
+    const posting = await captureReusePosting(api, `tables-division-${index}`, `${body}\n${note.repeat(12)}`);
+    postings.set(posting.job_id, posting);
+    const before = app.external.calls.length;
+    const result = await acceptReuseRequirements(api, app, posting, requirement, { recovery:
+      canonicalId ? { verdict: "equivalent", requirementId: canonicalId } : { verdict: "new" } });
+    canonicalId ??= result.snapshot.requirements[0]!.requirement_id;
+    expect(result.snapshot.requirements[0]!.requirement_id).toBe(canonicalId);
+    if (index !== 100) continue;
+    const call = result.matching!;
+    const context = catalogContext(call);
+    expect(app.external.calls.slice(before).map(row => row.body["operation"])).toEqual(["requirements.extract", "requirements.match_catalog"]);
+    expect(context.posting_sources.map(row => row.job_id).sort()).toEqual([...postings.keys()].sort());
+    for (const row of context.posting_sources) {
+      const original = postings.get(row.job_id)!;
+      expect(catalogSource(call, row.source_id)).toMatchObject({ job_id: original.job_id, source_hash: original.source_hash, text: original.description });
+    }
+    const schema = call.body["response_schema"] as { $defs: { OccurrenceSlots: { properties: Record<string, unknown>; required: string[] } } };
+    expect(context.occurrences).toHaveLength(100);
+    expect(schema.$defs.OccurrenceSlots.required.slice().sort()).toEqual(context.occurrences.map(row => row.occurrence_id).sort());
+    expect(new Set(Object.values(schema.$defs.OccurrenceSlots.properties).map(value => JSON.stringify(value))).size).toBe(1);
+    const sentBytes = Buffer.byteLength(JSON.stringify(call.body));
+    expect(sentBytes).toBeLessThan(1024 * 1024);
+    await info.attach("100-posting-comparison", { contentType: "application/json", body: JSON.stringify({
+      postingCount: context.posting_sources.length, occurrenceCount: context.occurrences.length, sentBytes,
+    }) });
+  }
+});
 
-  test("a versioned single-job catalog keeps predecessor receipts and refuses an interrupted paid comparison before a new refresh uses the dictionary", async ({ api, app }) => {
+for (const [version, sourceRevision, prompt] of [
+  ["v6", "38ef94613ebb7c0413d8d5ee89987ef860f53b13", NORMALIZATION_PROMPT_VERSION],
+  ["v8", "e41c55189285697549ea35d40bb62b4070c9462b", SOURCE_DICTIONARY_PROMPT_VERSION],
+] as const) test.describe(`single-job catalog transport upgrade from ${version}`, () => {
+  test.use({ sourceRevision });
+
+  test("a versioned single-job catalog keeps predecessor receipts and refuses an interrupted paid comparison before a new refresh uses the table format", async ({ api, app }) => {
     test.setTimeout(120_000);
     const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
     await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
@@ -133,19 +178,27 @@ test.describe("single-job catalog transport upgrade", () => {
     const extraction = await modelCall(app, "requirements.extract");
     extraction.reply(typedExtraction(extraction, { requirements: requirement }));
     const comparison = await modelCall(app, "requirements.match_catalog");
-    expect(comparison.body["prompt_version"]).toBe(NORMALIZATION_PROMPT_VERSION);
+    expect(comparison.body["prompt_version"]).toBe(prompt);
     comparison.reply(catalogMatching(comparison, { recovery: { verdict: "new" } }));
     await completed(api, original);
     const snapshot = () => json<RequirementSnapshot>(api, "get", `/v1/jobs/${posting.job_id}/requirements`);
     const accepted = await snapshot();
+
+    const priorJob = await captureReusePosting(api, "single-catalog-prior-refusal", `${body}\nPredecessor source.`);
+    const prior = api.post(`/v1/jobs/${priorJob.job_id}/requirements`, { data: { expected_revision: 0, expected_posting_revision: priorJob.revision } });
+    const priorExtraction = await modelCall(app, "requirements.extract");
+    priorExtraction.reply({ unexpected: true });
+    expect((await prior).status()).toBe(502);
 
     const force = { ...payload, expected_revision: accepted.revision, force: true };
     const interrupted = await action(api, "requirements.refresh", force);
     const oldExtraction = await modelCall(app, "requirements.extract");
     oldExtraction.reply(typedExtraction(oldExtraction, { requirements: requirement }));
     const held = await modelCall(app, "requirements.match_catalog");
-    expect(held.body["prompt_version"]).toBe(NORMALIZATION_PROMPT_VERSION);
-    expect(held.body["context"]).not.toHaveProperty("cohort_texts");
+    expect(held.body["prompt_version"]).toBe(prompt);
+    expect(held.body["context"]).not.toHaveProperty("catalog_tables");
+    if (version === "v8") expect(held.body["context"]).toHaveProperty("cohort_texts");
+    else expect(held.body["context"]).not.toHaveProperty("cohort_texts");
     const count = app.external.calls.length;
     await app.upgradeSource();
     expect(await terminal(api, interrupted.runId)).toMatchObject({ status: "failed", errorCode: "requirements_consolidation_call_unsettled" });
@@ -153,6 +206,10 @@ test.describe("single-job catalog transport upgrade", () => {
     expect(replay.ok()).toBe(true);
     expect(await replay.json()).toMatchObject({ runId: original, status: "succeeded" });
     expect(app.external.calls).toHaveLength(count);
+    const historical = await json(api, "get", `/v1/jobs/${priorJob.job_id}/requirements/attempts/latest`);
+    expect(historical).toMatchObject({ state: "blocked", failure_code: "model_schema_violation" });
+    expect(historical).not.toHaveProperty("failure_details");
+    expect(await json(api, "get", `/v1/jobs/${priorJob.job_id}/requirements`)).toBeNull();
     expect((await snapshot()).requirements).toEqual(accepted.requirements);
 
     const fresh = await action(api, "requirements.refresh", force);

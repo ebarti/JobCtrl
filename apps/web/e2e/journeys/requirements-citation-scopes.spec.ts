@@ -1,6 +1,6 @@
 import { test, expect, json, modelCall } from "../harness/fixtures.js";
 import { captureReusePosting } from "./reuse-data.js";
-import { catalogMatching, citationSelections, occurrenceRoots, typedExtraction, type CatalogContext } from "./requirements-data.js";
+import { catalogContext, catalogMatching, citationSelections, occurrenceRoots, typedExtraction } from "./requirements-data.js";
 import { readCatalog, requirementsPath, type NormalizedSnapshot } from "./consolidation-data.js";
 
 test("demand evidence excludes offered prior definitions while exact reuse and cross-job bindings remain valid", async ({ api, app }) => {
@@ -26,7 +26,7 @@ test("demand evidence excludes offered prior definitions while exact reuse and c
   const secondExtraction = await modelCall(app, "requirements.extract");
   secondExtraction.reply(typedExtraction(secondExtraction, { requirements: [{ localId: "peer", text: definition }] }));
   const invalidCall = await modelCall(app, "requirements.match_catalog");
-  const context = invalidCall.body["context"] as CatalogContext;
+  const context = catalogContext(invalidCall);
   const prior = context.accepted_demands.find((row) => row.demand_fingerprint === fingerprint)!;
   expect(prior).toBeTruthy();
   const schema = invalidCall.body["response_schema"] as { $defs: Record<string, { enum?: string[]; properties?: Record<string, unknown> }> };

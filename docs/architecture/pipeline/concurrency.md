@@ -25,8 +25,11 @@ size limit reports the refusal through its recorded stage outcome.
 New searches record the single-job Requirements input format when their action
 is admitted. Searches already in the queue and retries of those searches use
 their original format for every target. On the per-job route, the current
-format shares repeated verbatim strings and citation paths within each complete
-catalog comparison. The worker still settles each comparison before the next.
+format shares repeated field lists, verbatim strings and citation path layouts
+within each complete catalog comparison. It preserves the exact source and
+segment identities and every required assignment. The worker still settles each
+comparison before the next. Distinct source material can exhaust the 1 MiB
+request bound before the last target in a large search.
 
 Enrichment, role analysis, Requirements and Fit scoring wait when an active
 model call holds their lane or a finite monetary policy serializes provider

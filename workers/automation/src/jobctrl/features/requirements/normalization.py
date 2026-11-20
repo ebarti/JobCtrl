@@ -15,17 +15,19 @@ from .normalization_domain import (
     demand_fingerprint, validate_normalization,
 )
 from .normalization_citations import citation_binding_report, citation_binding_summary, citation_segment_catalog, citation_source_context
-from .normalization_partitions import (cohort_partition_schema, refresh_partition_schema, partition_binding_summary, partition_group_handles,
+from .normalization_partitions import (cohort_partition_schema, refresh_partition_schema, table_partition_schema, partition_binding_summary, partition_group_handles,
                                        partition_selection_schema, partition_selection_schema_v5)
 from .normalization_partitions_v4 import partition_selection_schema as partition_selection_schema_v4
 from .cohort_transport import (
     COHORT_INSTRUCTIONS, COHORT_PROMPT_VERSION, REFRESH_CATALOG_INSTRUCTIONS, REFRESH_CATALOG_PROMPT_VERSION,
     expand_catalog_sources, pack_catalog_sources,
 )
+from .catalog_transport import TABLE_CATALOG_INSTRUCTIONS, TABLE_CATALOG_PROMPT_VERSION, expand_catalog_tables, pack_catalog_tables
 
 
 PARTITION_SCHEMAS = {NORMALIZATION_PROMPT_VERSION: partition_selection_schema,
                      REFRESH_CATALOG_PROMPT_VERSION: refresh_partition_schema,
+                     TABLE_CATALOG_PROMPT_VERSION: table_partition_schema,
                      NORMALIZATION_PARTITION_V5_PROMPT_VERSION: partition_selection_schema_v5,
                      NORMALIZATION_PARTITION_V4_PROMPT_VERSION: partition_selection_schema_v4,
                      COHORT_PROMPT_VERSION: cohort_partition_schema}
@@ -35,9 +37,11 @@ def _catalog_sources(prepared):
     sources = {row["source_id"]: row["text"] for row in prepared["sources"]}
     if len(sources) != len(prepared["sources"]):
         raise RequirementError("catalog_snapshot_invalid")
-    if prepared["prompt_version"] in (COHORT_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION):
+    if prepared["prompt_version"] in (COHORT_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION, TABLE_CATALOG_PROMPT_VERSION):
         if prepared["context"].get("normalization_prompt_version") != prepared["prompt_version"]:
             raise RequirementError("requirements_citation_wire_changed")
+        if prepared["prompt_version"] == TABLE_CATALOG_PROMPT_VERSION:
+            return expand_catalog_tables(prepared["context"], sources)
         return expand_catalog_sources(prepared["context"], sources)
     return prepared["context"], sources
 
@@ -283,7 +287,7 @@ class CatalogNormalizationService:
         """
         context, sources, _ = cls._normalization_input(captured, proposals or {}, incoming or [], postings, guidance)
         context["operation_id"] = operation_id
-        if prompt_version not in (NORMALIZATION_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION) or (
+        if prompt_version not in (NORMALIZATION_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION, TABLE_CATALOG_PROMPT_VERSION) or (
             cohort and prompt_version != NORMALIZATION_PROMPT_VERSION
         ):
             raise RequirementError("requirements_citation_wire_changed")
@@ -297,7 +301,10 @@ class CatalogNormalizationService:
         context["citation_source_context_fingerprint"] = fingerprint(citation_source_context(context, sources))
         schema = PARTITION_SCHEMAS[version](context).model_json_schema()
         instructions = NORMALIZATION_INSTRUCTION
-        if version in (COHORT_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION):
+        if version == TABLE_CATALOG_PROMPT_VERSION:
+            context, sources = pack_catalog_tables(context, sources)
+            instructions += TABLE_CATALOG_INSTRUCTIONS
+        elif version in (COHORT_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION):
             context, sources = pack_catalog_sources(context, sources)
             instructions += COHORT_INSTRUCTIONS if cohort else REFRESH_CATALOG_INSTRUCTIONS
         return {"operation": "requirements.match_catalog", "prompt_version": version,

@@ -10,7 +10,7 @@ from .domain import CONTRACT_VERSION, RequirementError
 from .http import ConsolidateRequest, CorrectionRequest, OccurrenceCorrectionsRequest, RefreshRequest, RevisionRequest, raise_application_error, routes
 from .model import RequirementModelAdapter
 from .repository import SqliteRequirementStore
-from .schema import SCHEMA
+from .schema import ATTEMPT_REFUSAL_SCHEMA, SCHEMA
 from .normalization_schema import REFRESH_TRANSPORT_SCHEMA, SCHEMA as NORMALIZATION_SCHEMA
 from .cohort_storage import SCHEMA as COHORT_SCHEMA
 from .normalization_domain import NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION
@@ -22,6 +22,7 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
     if jobs is None:
         raise AppError("requirements_jobs_required", "Requirements requires the public Jobs service.", 500)
     runtime.database.initialize_feature("requirements", SCHEMA)
+    runtime.database.initialize_feature("requirements_attempt_refusals_v1", ATTEMPT_REFUSAL_SCHEMA)
     runtime.database.initialize_feature("requirements_normalization_v1", NORMALIZATION_SCHEMA)
     runtime.database.initialize_feature("requirements_refresh_transport_v1", REFRESH_TRANSPORT_SCHEMA)
     runtime.database.initialize_feature("requirements_initial_cohort_v1", COHORT_SCHEMA)

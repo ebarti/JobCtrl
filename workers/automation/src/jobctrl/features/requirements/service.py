@@ -19,6 +19,7 @@ from .ports import PostingReader, RequirementModel, RequirementStore
 from .normalization import CatalogNormalizationService
 from .cohort import RequirementsCohortService
 from .cohort_transport import REFRESH_CATALOG_PROMPT_VERSION
+from .catalog_transport import TABLE_CATALOG_PROMPT_VERSION
 from .extraction_wire import EXTRACTION_VERSION, LEGACY_EXTRACTION_VERSION, extraction_wire
 from .normalization_domain import NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION
 
@@ -32,7 +33,7 @@ def _never_cancelled() -> bool:
 
 
 class RequirementsService(RequirementsCohortService, CatalogNormalizationService):
-    refresh_catalog_prompt_version = REFRESH_CATALOG_PROMPT_VERSION
+    refresh_catalog_prompt_version = TABLE_CATALOG_PROMPT_VERSION
 
     def __init__(self, store: RequirementStore, jobs: PostingReader, model: RequirementModel):
         self.store = store
@@ -57,6 +58,22 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         if self.store.current_snapshot(job_id, connection) is None:
             return None
         return self.get_job_requirements(job_id, connection)
+
+    def _block_attempt(self, attempt_id, failure, default_code):
+        code = getattr(failure, "code", default_code)
+        details = None
+        if isinstance(failure, RequirementError) and code == "requirements_catalog_unavailable":
+            # The Requirements owner provides only accounting and catalog-shape metadata.
+            details = failure.details
+        elif isinstance(failure, AppError) and failure.details and failure.details.get("receiptId"):
+            # Preserve the exact gateway refusal reference, never provider messages.
+            details = {"receiptId": failure.details["receiptId"]}
+        self.store.finish_attempt(attempt_id, "cancelled" if code == "cancelled" else "blocked", code, details=details)
+
+    def latest_job_attempt(self, job_id: str) -> dict | None:
+        with self.store.read_session() as connection:
+            self.jobs.get_posting_snapshot(job_id, connection=connection)
+            return self.store.latest_attempt(job_id, connection)
 
     def get_job_requirements(self, job_id: str, connection=None) -> dict:
         if connection is None:
@@ -369,8 +386,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
             self.store.finish_attempt(attempt_id, "cancelled", "cancelled")
             raise
         except Exception as failure:
-            code = getattr(failure, "code", "requirements_correction_failed")
-            self.store.finish_attempt(attempt_id, "cancelled" if code == "cancelled" else "blocked", code)
+            self._block_attempt(attempt_id, failure, "requirements_correction_failed")
             raise
 
     async def correct_binding(
@@ -433,8 +449,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
             self.store.finish_attempt(attempt_id, "cancelled", "cancelled")
             raise
         except Exception as failure:
-            code = getattr(failure, "code", "requirements_correction_failed")
-            self.store.finish_attempt(attempt_id, "cancelled" if code == "cancelled" else "blocked", code)
+            self._block_attempt(attempt_id, failure, "requirements_correction_failed")
             raise
 
     async def revise_requirement(
@@ -551,7 +566,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         self, job_id: str, *, expected_posting_revision: int, expected_revision: int,
         force: bool = False, cancelled: Callable[[], bool] = _never_cancelled,
         heartbeat: Callable[[dict], object] | None = None,
-        operation_id: str | None = None, catalog_prompt_version: str | None = REFRESH_CATALOG_PROMPT_VERSION,
+        operation_id: str | None = None, catalog_prompt_version: str | None = TABLE_CATALOG_PROMPT_VERSION,
     ) -> dict:
         self._validate_versions(expected_posting_revision, expected_revision)
         if type(force) is not bool:
@@ -560,7 +575,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         # Queued predecessor actions and preparation runs have no catalog transport pin.
         if catalog_prompt_version is None:
             catalog_prompt_version = NORMALIZATION_PROMPT_VERSION
-        if catalog_prompt_version not in (NORMALIZATION_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION):
+        if catalog_prompt_version not in (NORMALIZATION_PROMPT_VERSION, REFRESH_CATALOG_PROMPT_VERSION, TABLE_CATALOG_PROMPT_VERSION):
             raise RequirementError("requirements_citation_wire_changed")
         request = {
             "contract_version": CONTRACT_VERSION, "normalization_version": NORMALIZATION_VERSION, "normalization_prompt_version": catalog_prompt_version, "operation": "refresh", "job_id": job_id, "expected_posting_revision": expected_posting_revision,
@@ -624,9 +639,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
             self.store.finish_attempt(attempt_id, "cancelled", "cancelled")
             raise
         except Exception as failure:
-            code = getattr(failure, "code", "requirements_refresh_failed")
-            state = "cancelled" if code == "cancelled" else "blocked"
-            self.store.finish_attempt(attempt_id, state, code)
+            self._block_attempt(attempt_id, failure, "requirements_refresh_failed")
             raise
 
     @classmethod

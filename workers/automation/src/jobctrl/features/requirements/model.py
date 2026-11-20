@@ -177,6 +177,7 @@ class RequirementModelAdapter:
             return
         raise RequirementError("requirements_catalog_unavailable", details={
             "reason": reasons[failure.code], "model_failure_code": failure.code,
+            **({"receiptId": failure.details["receiptId"]} if failure.details and failure.details.get("receiptId") else {}),
             "catalog_revision": context["catalog_revision"],
             "candidate_count": len(context["candidates"]), "incoming_count": len(context["incoming"]),
         }) from None

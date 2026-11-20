@@ -228,13 +228,28 @@ aliases. Exact historical revision reads preserve their original identity;
 current navigation may follow a recorded alias. Old typed job snapshots report
 `consolidation_required` staleness and cannot supply new assessment authority.
 
+The read-only `GET /v1/jobs/{job_id}/requirements/attempts/latest` returns the
+latest attempt for an existing job, or null before its first attempt. It also
+works before the first accepted snapshot. `failure_code` identifies a refusal.
+Where recorded, `failure_details` preserves the source-free counts, catalog
+revision, reason and model error from a complete-input refusal, or the gateway
+receipt ID for a dispatched provider failure. Historical attempts report only
+the fields that were recorded. The original Requirements read remains an
+optional accepted snapshot.
+
 Consolidation uses semantic policy `requirements-capability-demand-v2`. Explicit
 catalog repair and corrections use `requirements-capability-demand-partition-v6`.
 New single-job refreshes and new searches on the per-job route use
-`requirements-capability-demand-partition-v8-sources`, which encodes repeated
-exact source fields and citation paths in dictionaries. Its `reuse_requirement_id`
-offers only retained capability IDs and requires null when none exist.
-Both versions use `CatalogNormalizationSlots`, which requires a property for every supplied member
+`requirements-capability-demand-partition-v9-tables`. Named columns identify
+the exact fields in each repeated row. References select whole source strings
+and each source explicitly lists its available segment IDs beside its citation
+path layout. The owner verifies the reconstructed context and original source
+documents before dispatch and when binding the response. Groups can select
+only a retained capability ID for `reuse_requirement_id`. With no retained
+capabilities this field requires null. Previously admitted work keeps its
+original v6 or v8 format through retry. The complete input must fit the existing
+1 MiB gateway bound and the selected provider's context.
+All three versions use `CatalogNormalizationSlots`, which requires a property for every supplied member
 in `member_slots` and every occurrence in `occurrence_slots`. Each slot is assigned
 to an independent pre-offered capability/demand group handle or explicitly
 unresolved. `capability_groups` and `demand_groups` require every offered handle:

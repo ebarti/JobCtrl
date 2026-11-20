@@ -3,7 +3,7 @@ import { action, completed, expect, json, modelCall, terminal, test, type Applic
 import { createBaseline } from "./core-data.js";
 import { authoredPartition } from "./consolidation-data.js";
 import { COMMON_DEMAND, posting, respondProducer, type CohortPosting } from "./preparation-cohort-data.js";
-import { COHORT_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION, type CatalogContext, typedExtraction } from "./requirements-data.js";
+import { catalogContext, COHORT_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION, typedExtraction } from "./requirements-data.js";
 import { serveQualification } from "./search-assessment-data.js";
 
 async function capturePosting(api: APIRequestContext, index: number, description?: string) {
@@ -30,7 +30,7 @@ async function servePostingAndRole(app: ApplicationStack, target: CohortPosting)
 async function publishSingleDemand(app: ApplicationStack, prompt: string) {
   const matching = await modelCall(app, "requirements.match_catalog");
   expect(matching.body["prompt_version"]).toBe(prompt);
-  const input = matching.body["context"] as CatalogContext;
+  const input = catalogContext(matching);
   expect(input.incoming).toHaveLength(1);
   const member = input.incoming[0]!;
   matching.reply(authoredPartition(matching, [{ groupId: "recovery", memberIds: [member.member_id],

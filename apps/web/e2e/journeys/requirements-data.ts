@@ -4,7 +4,8 @@ import { expect, type ExternalCall } from "../harness/fixtures.js";
 export type ModelSource = { source_id: string; text: string };
 export const EXTRACTION_PROMPT_VERSION = "requirements-v2-extract-v6-inference-rationale";
 export const NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v6";
-export const REFRESH_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v8-sources";
+export const SOURCE_DICTIONARY_PROMPT_VERSION = "requirements-capability-demand-partition-v8-sources";
+export const REFRESH_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v9-tables";
 export const COHORT_NORMALIZATION_PROMPT_VERSION = "requirements-capability-demand-partition-v7-cohort";
 export const PARTITION_V5_PROMPT_VERSION = "requirements-capability-demand-partition-v5";
 export const PARTITION_V4_PROMPT_VERSION = "requirements-capability-demand-partition-v4";
@@ -144,7 +145,7 @@ type CitationReference = { sourceId: string; valuePath?: (string | number)[] };
 /** Select only owner-supplied references at explicitly authored DTO paths.
  * The helper neither invents quote text/ranges nor searches prose for meaning. */
 export function citationSelections(call: ExternalCall, references: CitationReference[]): CitationSelection[] {
-  const context = call.body["context"] as CatalogContext;
+  const context = catalogContext(call);
   const segments = Object.fromEntries(Object.entries(context.citation_segments).map(([sourceId, catalog]) => [sourceId,
     Object.fromEntries(Object.entries(catalog).map(([segmentId, descriptor]) => {
       if (typeof descriptor !== "string") return [segmentId, descriptor];
@@ -174,6 +175,55 @@ const canonicalValue = (value: unknown): unknown => Array.isArray(value) ? value
   : value !== null && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([key, item]) => [key, canonicalValue(item)])) : value;
 export const normalizationFingerprint = (value: unknown) => createHash("sha256").update(JSON.stringify(canonicalValue(value))).digest("hex");
 
+type CatalogTables = { row_fields: string[][]; strings: string[]; segment_layouts: number[][]; segment_paths: CitationSegment[];
+  expanded_context_fingerprint: string };
+const tableRequests = new WeakMap<ExternalCall, { context: CatalogContext; sources: Map<string, unknown> }>();
+
+/** Decode only the live wire's explicit row/column and source/segment joins. */
+function tableRequest(call: ExternalCall) {
+  const prior = tableRequests.get(call);
+  if (prior) return prior;
+  const { catalog_tables: tables, citation_segments: offers, ...header } = call.body["context"] as
+    Record<string, unknown> & { catalog_tables: CatalogTables; citation_segments: Record<string, [number, string]> };
+  const decode = (value: unknown): unknown => {
+    if (Array.isArray(value)) {
+      const first = value[0];
+      if (typeof first === "string" && /^~r\d+$/.test(first)) {
+        const fields = tables.row_fields[Number(first.slice(2))]!;
+        if (value.length !== fields.length + 1) throw new Error("Incomplete catalog row");
+        return Object.fromEntries(fields.map((name, i) => [name, decode(value[i + 1])]));
+      }
+      return value.map(decode);
+    }
+    if (value !== null && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value).map(([key, field]) => [key, decode(field)]));
+    }
+    if (typeof value === "string" && value.startsWith("~~")) return value.slice(1);
+    if (typeof value === "string" && /^~\d+$/.test(value)) return tables.strings[Number(value.slice(1))];
+    return value;
+  };
+  const sources = new Map(modelSources(call).map(row => [row.source_id, decode(JSON.parse(row.text))]));
+  const context = Object.fromEntries(Object.entries(header).map(([key, value]) =>
+    [key, value !== null && typeof value === "object" ? decode(value) : value])) as CatalogContext;
+  context.citation_segments = Object.fromEntries(Object.entries(offers).map(([source, [layout, identifiers]]) => {
+    const paths = tables.segment_layouts[layout]!;
+    const ids = identifiers.split(" ");
+    if (ids.length !== paths.length) throw new Error("Incomplete citation layout");
+    return [source, Object.fromEntries(ids.map((id, i) => [id, tables.segment_paths[paths[i]!]!]))];
+  }));
+  context.citation_source_fingerprints = Object.fromEntries([...sources].map(([key, value]) =>
+    [key, normalizationFingerprint(JSON.stringify(canonicalValue(value)))]));
+  expect(normalizationFingerprint(context)).toBe(tables.expanded_context_fingerprint);
+  expect(normalizationFingerprint(context.citation_segments)).toBe(context.citation_catalog_fingerprint);
+  const result = { context, sources };
+  tableRequests.set(call, result);
+  return result;
+}
+
+export function catalogContext(call: ExternalCall): CatalogContext {
+  return call.body["prompt_version"] === REFRESH_NORMALIZATION_PROMPT_VERSION ? tableRequest(call).context : call.body["context"] as CatalogContext;
+}
+
 type CatalogMeaning = { category: "skill" | "professional_experience"; name: string; definition: string };
 type OccurrenceEvidence = Omit<CatalogContext["occurrences"][number],
   "correction_determination_id" | "previous_occurrence_id" | "resolution_determination_ids"> & {
@@ -185,9 +235,14 @@ type OccurrenceEvidence = Omit<CatalogContext["occurrences"][number],
 /** The current wire carries structural references. Meanings are read from the
  * referenced live source DTOs, never reconstructed from names or identifiers. */
 export function catalogSource<T>(call: ExternalCall, sourceId: string): T {
+  if (call.body["prompt_version"] === REFRESH_NORMALIZATION_PROMPT_VERSION) {
+    const { sources } = tableRequest(call);
+    expect(sources.has(sourceId)).toBe(true);
+    return sources.get(sourceId) as T;
+  }
   const source = modelSources(call).find((row) => row.source_id === sourceId);
   expect(source, `The actual request owns source ${sourceId}`).toBeTruthy();
-  const context = call.body["context"] as CatalogContext;
+  const context = catalogContext(call);
   const expand = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(expand);
     if (value !== null && typeof value === "object") {
@@ -210,7 +265,7 @@ export function catalogSource<T>(call: ExternalCall, sourceId: string): T {
 }
 
 export function catalogMemberMeaning(call: ExternalCall, memberId: string): CatalogMeaning {
-  const member = (call.body["context"] as CatalogContext).members.find((row) => row.member_id === memberId);
+  const member = catalogContext(call).members.find((row) => row.member_id === memberId);
   expect(member).toBeTruthy();
   let meaning: CatalogMeaning;
   if (member!.requirement_id === null) {
@@ -227,7 +282,7 @@ export function catalogMemberMeaning(call: ExternalCall, memberId: string): Cata
 }
 
 export function catalogOccurrenceEvidence(call: ExternalCall, occurrenceId: string): OccurrenceEvidence {
-  const occurrence = (call.body["context"] as CatalogContext).occurrences.find((row) => row.occurrence_id === occurrenceId);
+  const occurrence = catalogContext(call).occurrences.find((row) => row.occurrence_id === occurrenceId);
   expect(occurrence).toBeTruthy();
   const source = catalogSource<OccurrenceEvidence>(call, occurrence!.source_id);
   // These lineage fields belong to context and its persisted source_context;
@@ -238,7 +293,7 @@ export function catalogOccurrenceEvidence(call: ExternalCall, occurrenceId: stri
 }
 
 function catalogAcceptedDemand(call: ExternalCall, fingerprint: string) {
-  const demand = (call.body["context"] as CatalogContext).accepted_demands.find((row) => row.demand_fingerprint === fingerprint);
+  const demand = catalogContext(call).accepted_demands.find((row) => row.demand_fingerprint === fingerprint);
   expect(demand).toBeTruthy();
   const source = catalogSource<{ definition: string; demand_fingerprint: string; normalization_version: string }>(call, demand!.source_id);
   expect(source).toMatchObject({ demand_fingerprint: fingerprint, normalization_version: demand!.normalization_version });
@@ -286,7 +341,7 @@ export const occurrenceRoots = (value: CatalogSlots) => Object.entries(value.dem
  * independent handles and verbatim citation selections are joined here. */
 export function catalogNormalization(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[]): CatalogSlots {
   const prompt = call.body["prompt_version"];
-  if (prompt !== NORMALIZATION_PROMPT_VERSION && prompt !== REFRESH_NORMALIZATION_PROMPT_VERSION
+  if (prompt !== NORMALIZATION_PROMPT_VERSION && prompt !== REFRESH_NORMALIZATION_PROMPT_VERSION && prompt !== SOURCE_DICTIONARY_PROMPT_VERSION
       && prompt !== COHORT_NORMALIZATION_PROMPT_VERSION) throw new Error("Unexpected catalog partition version");
   return normalizationSlots(call, capabilities, demands, prompt);
 }
@@ -299,7 +354,7 @@ export function legacyCatalogNormalizationV5(call: ExternalCall, capabilities: C
 function normalizationSlots(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[], prompt: string): CatalogSlots {
   expect(call.body["operation"]).toBe("requirements.match_catalog");
   expect(call.body["prompt_version"]).toBe(prompt);
-  const context = call.body["context"] as CatalogContext;
+  const context = catalogContext(call);
   const handles = context.partition_group_handles;
   expect(handles.capabilities).toHaveLength(context.members.length);
   expect(handles.demands).toHaveLength(context.occurrences.length);
@@ -367,7 +422,7 @@ export function legacyCatalogNormalizationV2(call: ExternalCall, capabilities: C
 
 function normalizationResponse<Citation>(call: ExternalCall, capabilities: CapabilityChoice[], demands: DemandChoice[],
   citations: (references: CitationReference[]) => Citation[]) {
-  const context = call.body["context"] as CatalogContext;
+  const context = catalogContext(call);
   const members = capabilities.flatMap((group) => group.memberIds);
   expect(members.length).toBe(new Set(members).size);
   expect([...members].sort()).toEqual(context.members.map((row) => row.member_id).sort());
@@ -415,7 +470,7 @@ export function legacyCatalogMatchingV5(call: ExternalCall, choices: Record<stri
 }
 
 function matchingSlots(call: ExternalCall, choices: Record<string, CatalogChoice>, normalize: typeof catalogNormalization) {
-  const context = call.body["context"] as CatalogContext;
+  const context = catalogContext(call);
   expect(Object.keys(choices).sort()).toEqual(context.incoming.map((row) => row.local_id).sort());
   const groups: CapabilityChoice[] = context.candidates.map((candidate, index) => {
     const member = context.members.find((row) => row.member_id === candidate.requirement_id)!;
@@ -515,7 +570,7 @@ export function legacyCatalogMatching(
   call: ExternalCall,
   choices: Record<string, CatalogChoice>,
 ) {
-  const context = call.body["context"] as CatalogContext;
+  const context = catalogContext(call);
   expect(Object.keys(choices).sort()).toEqual(
     context.incoming.map((row) => row.local_id).sort(),
   );

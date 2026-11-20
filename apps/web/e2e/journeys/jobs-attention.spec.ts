@@ -4,7 +4,7 @@ import { observeSharedWorkerEventSource, sharedEventStreamTargets } from "../har
 import { createScoredFit, type FitState } from "./fit-data.js";
 import { createBaseline, type Profile } from "./core-data.js";
 import { authoredPartition, readCatalog, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
-import { typedExtraction, type CatalogContext } from "./requirements-data.js";
+import { catalogContext, typedExtraction } from "./requirements-data.js";
 import { qualificationBatchDecision } from "./qualification-data.js";
 import { acceptReuseRequirements, captureReusePosting } from "./reuse-data.js";
 
@@ -81,7 +81,7 @@ test("Fit flags accepted demand and evidence changes without treating catalog re
   }));
   const matching = await modelCall(app, "requirements.match_catalog");
   const retained = retainedCapability(matching, original.requirement_id, "recovery");
-  retained.memberIds.push(...(matching.body["context"] as CatalogContext).incoming.map((row) => row.member_id));
+  retained.memberIds.push(...catalogContext(matching).incoming.map((row) => row.member_id));
   matching.reply(authoredPartition(matching, [retained],
     [{ groupId: retained.groupId, definition: original.normalized_demand.definition, jobIds: [posting.job_id] }]));
   const accepted = await extracting;

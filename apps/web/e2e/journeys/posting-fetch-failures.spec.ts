@@ -5,7 +5,7 @@ import { citeSources } from "./requirements-data.js";
 test.use({ features: "jobs" });
 
 test.describe("URL import action before capacity queues", () => {
-  test.use({ sourceRevision: "421c0a0dcd337c4a9070e0ba28e2fa99b84cee39" });
+  test.use({ sourceRevision: "17f9ce5be1de2f21735fb27d5dfe8f6d1b7c8118" });
   test("Jobs uses native URL import receipts on the predecessor and never requests the missing queue", async ({ api, app, page }) => {
     const [holder, refused, available] = [911, 912, 913].map(posting);
     let historyReads = 0;

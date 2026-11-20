@@ -1,6 +1,6 @@
 import type { APIRequestContext } from "@playwright/test";
 import { expect, json, modelCall, type ApplicationStack, type ExternalCall } from "../harness/fixtures.js";
-import { catalogNormalization, catalogMemberMeaning, legacyCatalogMatching, legacyCatalogNormalizationV2, legacyCatalogNormalizationV3, legacyCatalogNormalizationV4, legacyCatalogNormalizationV5, typedExtraction,
+import { catalogContext, catalogNormalization, catalogMemberMeaning, legacyCatalogMatching, legacyCatalogNormalizationV2, legacyCatalogNormalizationV3, legacyCatalogNormalizationV4, legacyCatalogNormalizationV5, typedExtraction,
   type CapabilityChoice, type CatalogChoice, type CatalogContext, type BoundCorrectionWitness, type DemandChoice, type ReusableDemand } from "./requirements-data.js";
 import type { CapturedPosting, RequirementSnapshot } from "./reuse-data.js";
 
@@ -64,7 +64,7 @@ export async function acceptLegacyRequirements(api: APIRequestContext, app: Appl
 }
 
 export function retainedCapability(call: ExternalCall, id: string, groupId: string): CapabilityChoice {
-  const member = (call.body["context"] as CatalogContext).members.find((row) => row.member_id === id);
+  const member = catalogContext(call).members.find((row) => row.member_id === id);
   expect(member).toBeTruthy();
   const meaning = catalogMemberMeaning(call, id);
   return { groupId, memberIds: [id], category: meaning.category, name: meaning.name,
@@ -110,7 +110,7 @@ export function legacyAuthoredPartitionV5(call: ExternalCall, groups: Capability
 function authoredDemandBindings(call: ExternalCall, groups: CapabilityChoice[], demands: {
   groupId: string; definition: string; jobIds: string[]; reuseDemandFingerprint?: string;
 }[]): DemandChoice[] {
-  const context = call.body["context"] as CatalogContext;
+  const context = catalogContext(call);
   return demands.map((demand) => {
     const group = groups.find((row) => row.groupId === demand.groupId)!;
     expect(group).toBeTruthy();
