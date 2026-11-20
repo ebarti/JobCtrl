@@ -179,8 +179,11 @@ the same table query and survive opening a job and returning.
 
 A fresh built-in **Default** view starts with Title, Company, Location, Posted
 pay, Fit and Apply, plus selection. Posted pay uses its recorded display range,
-currency and unit. Granular/source fields remain available in **Columns**, and
-existing custom or persisted layouts keep their saved choices.
+currency and unit. **Posted pay → Known** finds current employer-stated
+amounts in any currency, including ranges with an unspecified pay period.
+**Known annual EUR** and the salary minimum and maximum filters require a
+comparable amount in euros per year. Granular/source fields remain available in
+**Columns**, and existing custom or persisted layouts keep their saved choices.
 
 Open a job for its nearby task workspace. Return to the same comparison state
 when finished, including after full-size resume editing. Within the job, inspect

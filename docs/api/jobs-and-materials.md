@@ -429,6 +429,13 @@ returns the cited fact while market research continues. A failed market
 refresh leaves the latest accepted estimate available at
 `GET /v1/jobs/{id}/compensation/market` with its own source revision.
 
+For `GET /v1/jobs/query`, `posted_known=source_known` selects current
+employer-posted facts with at least one numeric bound in the source currency
+and period. `source_unknown` selects its complement, including stale and
+unassessed facts. Clients can discover these modes in
+`capabilities.posted_pay_filters`. Existing `known` and `unknown` values and
+the `posted_min_eur` and `posted_max_eur` filters use annual EUR bounds.
+
 ## Actual Offers
 
 Offers owns terms, scenarios, decisions and correction history separately from

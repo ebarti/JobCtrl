@@ -1,4 +1,5 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
+import { PostedPayFilterSchema } from "@jobctrl/contracts";
 import { z } from "zod";
 
 import type { HttpRequestOptions } from "../shared/ports/HttpPort.js";
@@ -20,7 +21,7 @@ const querySchema = z.object({
   stage: z.string().default(""), state: z.string().default(""), apply_status: z.string().default(""), resume_template: z.string().default(""),
   discovered_since: z.string().optional(), scored_since: z.string().optional(),
   posted_min_eur: z.coerce.number().min(0).optional(), posted_max_eur: z.coerce.number().min(0).optional(), market_min_eur: z.coerce.number().min(0).optional(), market_max_eur: z.coerce.number().min(0).optional(),
-  posted_known: z.enum(["all", "known", "unknown"]).default("all"), market_known: z.enum(["all", "known", "unknown"]).default("all"),
+  posted_known: PostedPayFilterSchema.default("all"), market_known: z.enum(["all", "known", "unknown"]).default("all"),
   compensation_confidence: z.string().default(""), compensation_warnings: z.enum(["all", "present", "none"]).default("all"),
   column_filters: z.record(z.string(), column).default({}), sort: z.enum(fields).default("discovered_at"), direction: z.enum(["asc", "desc"]).default("desc"),
   offset: z.coerce.number().int().min(0).default(0), limit: z.coerce.number().int().min(1).max(200).default(50), query_revision: z.string().optional(),
@@ -39,7 +40,7 @@ const textCompare = (left: string, right: string): number => {
   return Math.sign(a.length - b.length);
 };
 
-function scalars(row: DemoJobQueryRow) {
+function scalars(row: DemoJobQueryRow, filterSourcePay: boolean) {
   const { job, fit, preparation, compensation, application, resume } = row;
   const state = job.hidden === true ? "hidden" : job.deleted === true ? "deleted" : ["closed", "expired", "removed", "location_incompatible"].includes(String(job.active_state)) ? "closed" : "active";
   const score = data(fit?.score); const summary = data(compensation?.summary); const audit = data(compensation?.audit);
@@ -64,6 +65,7 @@ function scalars(row: DemoJobQueryRow) {
     apply_status: string(application?.apply_status), resume_template: string(template.name) ?? string(template.templateName) ?? string(template.template_name) ?? string(effective.templateName),
   };
   return { values, extra: { market_min: mMin, market_max: mMax, confidence_score: marketCurrent ? numeric(market.confidenceScore) : null,
+    ...(filterSourcePay ? { source_pay_known: numeric(postedRange.minimumAmount) !== null || numeric(postedRange.maximumAmount) !== null } : {}),
     fit_current: fit?.current === true, keywords: Array.isArray(fit?.normalized_keywords) ? fit.normalized_keywords : [], url: string(job.url) ?? "" } };
 }
 type Candidate = ReturnType<typeof scalars> & { row: DemoJobQueryRow; id: string; revisions: Data };
@@ -85,6 +87,7 @@ function matches(query: Query, candidate: Candidate, columns = true): boolean {
   for (const [value, minimum, maximum] of ranges) {
     if (minimum !== undefined && (typeof value !== "number" || value < minimum) || maximum !== undefined && (typeof value !== "number" || value > maximum)) return false;
   }
+  if (extra.source_pay_known !== undefined && extra.source_pay_known !== (query.posted_known === "source_known")) return false;
   for (const [known, low, high] of [[query.posted_known, values.compensation_min_eur, values.compensation_max_eur], [query.market_known, extra.market_min, extra.market_max]]) {
     const present = low !== null || high !== null;
     if (known === "known" && !present || known === "unknown" && present) return false;
@@ -105,7 +108,8 @@ export async function evaluateDemoJobQuery(rows: DemoJobQueryRow[], raw: HttpReq
   const parsed = querySchema.safeParse(input); if (!parsed.success) throw invalid(); const query = parsed.data;
   if (!choices(query.job_state).length || choices(query.job_state).some((state) => !["active", "closed", "hidden", "deleted", "all"].includes(state)) || Object.keys(query.column_filters).some((field) => !fields.includes(field as typeof fields[number])) || choices(query.compensation_confidence).some((value) => !["none", "low", "medium", "high"].includes(value)) || [query.discovered_since, query.scored_since].some((value) => value !== undefined && instant(value) === null) || query.min_fit_score !== undefined && query.max_fit_score !== undefined && query.min_fit_score > query.max_fit_score) throw invalid();
   const modules = Object.fromEntries(["fit", "preparation", "compensation", "applications", "resumes"].map((owner) => [owner, { enabled: true, available: true }]));
-  const candidates: Candidate[] = await Promise.all(rows.map(async (row) => ({ row, id: String(row.job.job_id), ...scalars(row),
+  const filterSourcePay = query.posted_known === "source_known" || query.posted_known === "source_unknown";
+  const candidates: Candidate[] = await Promise.all(rows.map(async (row) => ({ row, id: String(row.job.job_id), ...scalars(row, filterSourcePay),
     revisions: { jobs: { revision: row.job.revision, state_revision: row.job.state_revision, source_hash: row.job.source_hash },
       ...Object.fromEntries(await Promise.all(["fit", "preparation", "compensation", "application", "resume"].map(async (field) => [field, await digest(row[field as "fit"])]))) } })));
   const { offset: _offset, limit: _limit, query_revision: _revision, ...identity } = query;
@@ -127,7 +131,7 @@ export async function evaluateDemoJobQuery(rows: DemoJobQueryRow[], raw: HttpReq
   });
   return { rows: sorted.slice(query.offset, query.offset + query.limit).map((candidate) => ({ ...candidate.row, scalars: candidate.values, revisions: candidate.revisions })),
     total: sorted.length, offset: query.offset, limit: query.limit, query_revision: revision, modules,
-    capabilities: { sortable_fields: [...fields], filterable_fields: [...fields] }, facets };
+    capabilities: { sortable_fields: [...fields], filterable_fields: [...fields], posted_pay_filters: PostedPayFilterSchema.options }, facets };
 }
 function invalid() { return new JobCtrlApiError(422, "Invalid Query", "The Jobs query contains invalid literal filters, sorting or pagination."); }
 async function digest(value: unknown): Promise<string> {

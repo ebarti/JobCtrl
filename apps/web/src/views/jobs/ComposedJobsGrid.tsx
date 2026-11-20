@@ -151,6 +151,7 @@ export function ComposedJobsGrid(props: ComposedJobsGridProps) {
         filterSummary: jobColumnFilterSummary(id, props.criteria),
         onClearFilter: () => props.onCriteriaChange(clearJobColumnCriteria(id, props.criteria), { ...props.filters, [id]: undefined }),
         renderFilter: ({ filter, defaultContent, predicateContent }) => <JobColumnFilter key={JSON.stringify(props.criteria)} columnId={id} criteria={props.criteria} filter={filter} literalContent={defaultContent} literalPredicate={predicateContent}
+          postedPayFilters={filterMetadata?.capabilities.posted_pay_filters ?? []}
           unavailable={id === "fit_score" || id === "scored_at" ? moduleLabel(data, "fit") : id === "posted_compensation" || id.startsWith("compensation_") ? moduleLabel(data, "compensation") : null}
           onApply={(next, literal) => props.onCriteriaChange(next, literal ? { ...props.filters, [id]: literal } : props.filters)}
           onClear={() => props.onCriteriaChange(clearJobColumnCriteria(id, props.criteria), { ...props.filters, [id]: undefined })}

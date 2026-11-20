@@ -1,3 +1,4 @@
+import type { PostedPayFilter } from "@jobctrl/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
@@ -10,7 +11,7 @@ export interface JobGridQuery {
   source?: string; company?: string; min_fit_score?: number; max_fit_score?: number; fit_state?: "all" | "current" | "stale" | "unassessed";
   stage?: string; state?: string; discovered_since?: string; scored_since?: string;
   posted_min_eur?: number; posted_max_eur?: number; market_min_eur?: number; market_max_eur?: number;
-  posted_known?: "all" | "known" | "unknown"; market_known?: "all" | "known" | "unknown"; compensation_confidence?: string; compensation_warnings?: "all" | "present" | "none";
+  posted_known?: PostedPayFilter; market_known?: "all" | "known" | "unknown"; compensation_confidence?: string; compensation_warnings?: "all" | "present" | "none";
   query_revision?: string;
   column_filters?: Record<string, JobGridTextFilter | undefined>;
 }
@@ -36,7 +37,7 @@ const response = z.object({ rows: z.array(z.object({ job, fit: fit.nullable(), p
   compensation: compensation.nullable(), scalars: z.record(z.string(), z.unknown()), revisions: z.record(z.string(), z.unknown()) }).passthrough()),
   total: z.number().int().nonnegative(), offset: z.number().int().nonnegative(), limit: z.number().int().positive(), query_revision: z.string(),
   modules: z.object({ fit: feature, preparation: feature, compensation: feature, applications: feature.optional(), resumes: feature.optional() }).passthrough(),
-  capabilities: z.object({ sortable_fields: z.array(z.string()), filterable_fields: z.array(z.string()) }).passthrough(),
+  capabilities: z.object({ sortable_fields: z.array(z.string()), filterable_fields: z.array(z.string()), posted_pay_filters: z.array(z.string()).optional() }).passthrough(),
   facets: z.record(z.string(), z.object({ values: z.array(z.string()), complete: z.boolean() }).passthrough()),
 }).passthrough();
 export type ComposedJobsResponse = z.infer<typeof response>;

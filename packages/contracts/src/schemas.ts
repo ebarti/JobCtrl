@@ -170,6 +170,9 @@ export const SavedTableViewGridFiltersSchema = z.record(
 );
 export type SavedTableViewGridFilters = z.infer<typeof SavedTableViewGridFiltersSchema>;
 
+export const PostedPayFilterSchema = z.enum(["all", "known", "unknown", "source_known", "source_unknown"]);
+export type PostedPayFilter = z.infer<typeof PostedPayFilterSchema>;
+
 /** Server-composed Jobs query criteria that are not represented by column filters. */
 export const SavedJobGridFiltersSchema = z.object({
   jobState: z.string().trim().min(1).max(200).optional(),
@@ -178,7 +181,7 @@ export const SavedJobGridFiltersSchema = z.object({
   postedMaxEur: z.number().finite().nonnegative().optional(),
   marketMinEur: z.number().finite().nonnegative().optional(),
   marketMaxEur: z.number().finite().nonnegative().optional(),
-  postedKnown: z.enum(["all", "known", "unknown"]).optional(),
+  postedKnown: PostedPayFilterSchema.optional(),
   marketKnown: z.enum(["all", "known", "unknown"]).optional(),
   compensationConfidence: z.string().max(200).optional(),
   compensationWarnings: z.enum(["all", "present", "none"]).optional(),

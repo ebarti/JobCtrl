@@ -24,6 +24,7 @@ from jobctrl.app.errors import AppError, ConflictError
 
 BATCH_SIZE = 200
 FACET_LIMIT = 200
+SOURCE_PAY_FILTERS = ("source_known", "source_unknown")
 FIELDS = (
     "title", "company", "location", "source", "job_state", "fit_score", "current_stage", "current_state",
     "discovered_at", "scored_at", "compensation_min_eur", "compensation_max_eur", "compensation_posted",
@@ -98,7 +99,7 @@ class JobListQuery(Value):
     posted_max_eur: float | None = Field(default=None, ge=0)
     market_min_eur: float | None = Field(default=None, ge=0)
     market_max_eur: float | None = Field(default=None, ge=0)
-    posted_known: Literal["all", "known", "unknown"] = "all"
+    posted_known: Literal["all", "known", "unknown", "source_known", "source_unknown"] = "all"
     market_known: Literal["all", "known", "unknown"] = "all"
     compensation_confidence: str = Field(default="", max_length=100)
     compensation_warnings: Literal["all", "present", "none"] = "all"
@@ -260,7 +261,7 @@ class JobQueries:
         return result
 
     @staticmethod
-    def _scalars(job, fit, prep, compensation, application, resume):
+    def _scalars(job, fit, prep, compensation, application, resume, *, filter_source_pay):
         state = "hidden" if job["hidden"] else "deleted" if job["deleted"] else (
             "closed" if job.get("active_state") in {"closed", "expired", "removed", "location_incompatible"} else "active")
         score = (fit or {}).get("score") or {}
@@ -306,6 +307,9 @@ class JobQueries:
                   "fit_current": (fit or {}).get("current", False),
                   "keywords": (fit or {}).get("normalized_keywords", []),
                   "url": job.get("url", "")}
+        # Preserve the revision of existing annual-EUR queries with the same source data.
+        if filter_source_pay:
+            extras["source_pay_known"] = any(number(p_range.get(key)) is not None for key in ("minimumAmount", "maximumAmount"))
         return scalars, extras
 
     @staticmethod
@@ -351,6 +355,8 @@ class JobQueries:
                                         (extra["market_max"], None, query.market_max_eur)):
             if minimum is not None and (value is None or value < minimum) or maximum is not None and (value is None or value > maximum):
                 return False
+        if query.posted_known in SOURCE_PAY_FILTERS and extra["source_pay_known"] != (query.posted_known == "source_known"):
+            return False
         for known, low, high in ((query.posted_known, values["compensation_min_eur"], values["compensation_max_eur"]),
                                   (query.market_known, extra["market_min"], extra["market_max"])):
             present = low is not None or high is not None
@@ -398,6 +404,7 @@ class JobQueries:
             raise AppError("query_feature_unavailable", "Selected Jobs criteria require an unavailable feature.", 409,
                            {"fields": unavailable, "modules": modules})
         candidates = []
+        filter_source_pay = query.posted_known in SOURCE_PAY_FILTERS
         with self.database.connect() as connection:
             connection.execute("BEGIN")
             offset = 0
@@ -410,7 +417,8 @@ class JobQueries:
                 data = self._bulk(ids, connection, postings=jobs)
                 for ident in ids:
                     job = jobs[ident]
-                    scalars, extra = self._scalars(job, *[data[name].get(ident) for name in self.owners])
+                    scalars, extra = self._scalars(job, *[data[name].get(ident) for name in self.owners],
+                                                   filter_source_pay=filter_source_pay)
                     revisions = self._revisions(job, data, ident)
                     candidates.append({"job_id": ident, "scalars": scalars, "extra": extra, "revisions": revisions})
                 offset += len(ids)
@@ -440,7 +448,8 @@ class JobQueries:
             available = [field for field in FIELDS if self._field_available(field, modules)]
             return JobQueryResult(rows=rows, total=len(matches), offset=query.offset, limit=query.limit,
                 query_revision=revision, modules=modules,
-                capabilities={"sortable_fields": available, "filterable_fields": available}, facets=facets).model_dump()
+                capabilities={"sortable_fields": available, "filterable_fields": available,
+                              "posted_pay_filters": ["all", "known", "unknown", *SOURCE_PAY_FILTERS]}, facets=facets).model_dump()
 
 
 def build_job_query_routes(application) -> tuple[Route, ...]:
