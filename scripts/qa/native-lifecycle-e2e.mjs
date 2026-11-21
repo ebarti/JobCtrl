@@ -113,6 +113,42 @@ async function payload(sequence){
  return {buildId,out,payload};
 }
 async function install(release,{stage=false,commandEnv=env}={}){return run(installer,['--allow-unsigned-local','--home',runtime,'--descriptor-file',path.join(release.out,'descriptor.json'),'--signature-file',path.join(release.out,'descriptor.sig'),'--archive-file',path.join(release.out,'payload.zip'),'--json',...(stage?['--stage-only']:[])],{commandEnv});}
+async function verifyCurlReinstall(candidate) {
+  const directory = path.join(root, 'curl-reinstall');
+  const user = path.join(directory, 'user');
+  const store = path.join(directory, 'runtime');
+  const bin = path.join(user, '.local/bin');
+  const profile = path.join(user, '.zprofile');
+  const command = path.join(bin, 'jobctrl');
+  const contract = path.join(directory, 'local-fixture.contract');
+  const acquisition = path.join(store, 'acquisition.json');
+  const commandEnv = { ...env, HOME: user, SHELL: '/bin/zsh', JOBCTRL_RUNTIME_HOME: store, JOBCTRL_DIR: path.join(directory, 'workspace') };
+  await put(profile, '# User profile\n');
+  await put(contract, [
+    'MODE=local-fixture', 'PLATFORM=darwin-arm64', 'INSTALLER_VERSION=2.0.0',
+    'INSTALLER_URL=' + pathToFileURL(installer).href, 'INSTALLER_SHA256=' + digest(await readFile(installer)),
+    'DESCRIPTOR_FILE=' + path.join(candidate.out, 'descriptor.json'), 'SIGNATURE_FILE=' + path.join(candidate.out, 'descriptor.sig'),
+    'ARCHIVE_FILE=' + path.join(candidate.out, 'payload.zip'), '',
+  ].join('\n'));
+  const get = path.join(repo, 'scripts/get');
+  const args = ['--local-fixture-contract', contract];
+  await run(get, args, { commandEnv });
+  const before = await readFile(acquisition);
+  const initialProfile = await readFile(profile);
+  const target = await readlink(command);
+  assert.equal(JSON.parse(before).profile, profile);
+  await run('/bin/zsh', ['-c', 'source "$1"; shift; exec "$@"', 'test', profile, get, ...args], { commandEnv });
+  assert.deepEqual(await readFile(acquisition), before);
+  assert.deepEqual(await readFile(profile), initialProfile);
+  const refused = await run(get, [...args, '--bin-dir', path.join(directory, 'other')], { commandEnv, acceptFailure: true });
+  assert.notEqual(refused.code, 0);
+  assert.deepEqual(await readFile(acquisition), before);
+  assert.equal(await readlink(command), target);
+  await run(command, ['uninstall'], { commandEnv });
+  await assert.rejects(readlink(command), { code: 'ENOENT' });
+  assert.equal((await readFile(profile, 'utf8')).trim(), '# User profile');
+  passed('fresh-shell-reinstall-preserves-owned-exposure-until-uninstall');
+}
 async function stop(){const result=await run(selector,['stop'],{acceptFailure:true});assert.equal(result.code,0,result.stderr);for(const pid of await childPids())await dead(pid);}
 
 async function liveAuthority(){
@@ -302,6 +338,7 @@ try{
  if(custodySelected)await put(path.join(workspace,'.qa-custody'),'owned native process control\n',0o600);
  control=spawn('/bin/sleep',['3600'],{env:{},stdio:'ignore'});
  const first=await payload(1);
+ if(lifecycleSelected)await verifyCurlReinstall(first);
  await install(first);installed=true;
  await run(selector,['start','--no-open']);
  const health=await api('/v1/health');assert.equal(health.application,'jobctrl-python');assert.equal(health.worker.status,'healthy');

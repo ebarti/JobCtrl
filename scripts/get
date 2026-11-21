@@ -85,8 +85,7 @@ profile_mode() {
   /usr/bin/printf '%s' "$mode"
 }
 append_managed_path() {
-  local bin_dir="$1" profile mode temporary line
-  profile="$(login_profile)"
+  local bin_dir="$1" profile="$2" mode temporary line
   require_safe_profile_path "$profile" "login profile"
   line="export PATH=\"$bin_dir:\$PATH\" # JobCtrl managed path"
   if [[ -L "$profile" ]]; then fail "refusing to modify symlinked login profile $profile"; fi
@@ -125,24 +124,51 @@ expose_command() {
   elif [[ "$NO_MODIFY_PATH" -eq 1 ]]; then
     /usr/bin/printf 'JobCtrl installed at %s. For this terminal run: export PATH=\"%s:$PATH\"; then run jobctrl.\n' "$link" "$bin_dir"
   else
-    append_managed_path "$bin_dir"
+    append_managed_path "$bin_dir" "$EXPOSURE_PROFILE"
   fi
 }
-persist_curl_acquisition() {
-  local release_home="$1" bin_dir="$2" profile encoded_line record temporary
-  profile=""
-  encoded_line=""
+prepare_curl_acquisition() {
+  local release_home="$1" bin_dir="$2" record previous_profile previous_line line encoded_line
+  record="$release_home/acquisition.json"
+  EXPOSURE_PROFILE="$(login_profile)"
+  require_safe_profile_path "$EXPOSURE_PROFILE" "login profile"
+  line="export PATH=\"$bin_dir:\$PATH\" # JobCtrl managed path"
+  previous_profile=""
+  if [[ -e "$record" || -L "$record" ]]; then
+    [[ -f "$record" && ! -L "$record" ]] || fail "invalid acquisition record $record"
+    # A reinstall can only take responsibility for the same public command.
+    [[ "$(/usr/bin/plutil -extract schemaVersion raw -expect integer "$record")" == 1 &&
+       "$(/usr/bin/plutil -extract source raw -expect string "$record")" == curl &&
+       "$(/usr/bin/plutil -extract selector raw -expect string "$record")" == "$release_home/bin/jobctrl" &&
+       "$(/usr/bin/plutil -extract publicLink raw -expect string "$record")" == "$bin_dir/jobctrl" ]] ||
+      fail "acquisition record does not match this installation; use its original --bin-dir"
+    previous_profile="$(/usr/bin/plutil -extract profile raw -expect string "$record")" || fail "invalid recorded profile"
+    previous_line="$(/usr/bin/plutil -extract pathLine raw -expect string "$record")" || fail "invalid recorded PATH entry"
+    if [[ -n "$previous_profile" ]]; then
+      [[ ( "$previous_profile" == "$HOME/.zprofile" || "$previous_profile" == "$HOME/.bash_profile" ) &&
+         "$previous_line" == "$line" ]] || fail "unrecognized managed PATH entry"
+      [[ ! -L "$previous_profile" && ( ! -e "$previous_profile" || -f "$previous_profile" ) ]] || fail "invalid recorded login profile"
+      EXPOSURE_PROFILE="$previous_profile"
+    else
+      [[ -z "$previous_line" ]] || fail "incomplete managed PATH entry"
+    fi
+  fi
+
+  local owned_profile="$previous_profile"
   if [[ "$NO_MODIFY_PATH" -eq 0 ]] && ! path_contains "$bin_dir"; then
-    profile="$(login_profile)"
-    require_safe_profile_path "$profile" "login profile"
+    [[ ! -L "$EXPOSURE_PROFILE" && ( ! -e "$EXPOSURE_PROFILE" || -f "$EXPOSURE_PROFILE" ) ]] ||
+      fail "refusing to modify unsafe login profile $EXPOSURE_PROFILE"
+    if [[ ! -f "$EXPOSURE_PROFILE" ]] || ! /usr/bin/grep -Fqx "$line" "$EXPOSURE_PROFILE"; then
+      owned_profile="$EXPOSURE_PROFILE"
+    fi
+  fi
+  encoded_line=""
+  if [[ -n "$owned_profile" ]]; then
     encoded_line="export PATH=\\\"$bin_dir:\$PATH\\\" # JobCtrl managed path"
   fi
-  record="$release_home/acquisition.json"
-  [[ ! -L "$record" ]] || fail "refusing symlinked acquisition record $record"
-  temporary="$(/usr/bin/mktemp "$release_home/.acquisition.XXXXXX")"
-  /usr/bin/printf '{"schemaVersion":1,"source":"curl","publicLink":"%s/jobctrl","selector":"%s/bin/jobctrl","profile":"%s","pathLine":"%s"}\n' "$bin_dir" "$release_home" "$profile" "$encoded_line" > "$temporary" || { /bin/rm -f "$temporary"; fail "could not write acquisition record"; }
-  /bin/chmod 0600 "$temporary"
-  /bin/mv -f "$temporary" "$record" || { /bin/rm -f "$temporary"; fail "could not commit acquisition record"; }
+  ACQUISITION_TEMP="$(/usr/bin/mktemp "$release_home/.acquisition.XXXXXX")"
+  /usr/bin/printf '{"schemaVersion":1,"source":"curl","publicLink":"%s/jobctrl","selector":"%s/bin/jobctrl","profile":"%s","pathLine":"%s"}\n' "$bin_dir" "$release_home" "$owned_profile" "$encoded_line" > "$ACQUISITION_TEMP"
+  /bin/chmod 0600 "$ACQUISITION_TEMP"
 }
 
 HOME_OVERRIDE=""
@@ -164,7 +190,9 @@ done
 
 require_darwin_arm64
 TMP_ROOT="$(/usr/bin/mktemp -d "${TMPDIR:-/tmp}/jobctrl-get.XXXXXX")"
-trap '/bin/rm -rf "$TMP_ROOT"' EXIT HUP INT TERM
+ACQUISITION_TEMP=""
+trap '/bin/rm -rf "$TMP_ROOT"; if [[ -n "$ACQUISITION_TEMP" ]]; then /bin/rm -f "$ACQUISITION_TEMP"; fi' EXIT
+trap 'exit 1' HUP INT TERM
 INSTALLER_PATH="$TMP_ROOT/jobctrl-installer"
 if [[ -n "$FIXTURE_CONTRACT" ]]; then
   [[ -z "$RELEASE_URL" ]] || fail "local fixture mode cannot use --release-url"
@@ -200,5 +228,19 @@ else
   [[ -n "$RELEASE_URL" ]] && installer_args+=(--release-url "$RELEASE_URL")
   "$INSTALLER_PATH" ${installer_args[@]+"${installer_args[@]}"}
 fi
-persist_curl_acquisition "$RELEASE_HOME" "$BIN_DIR"
+# Serialize command exposure with other installers and native uninstall. The
+# parent shell retains the same open descriptor until publication is complete.
+lock="$RELEASE_HOME/transition.lock"
+[[ -f "$lock" && ! -L "$lock" ]] || fail "missing or unsafe lifecycle lock"
+exec 9<"$lock"
+/usr/bin/perl -MFcntl=:flock -e '
+  open my $lock, "<&", 9 or die $!;
+  flock($lock, LOCK_EX) or die $!;
+  my @held = stat($lock);
+  my @current = lstat($ARGV[0]);
+  die "lifecycle lock changed" unless @held && @current && -f _ && $held[0] == $current[0] && $held[1] == $current[1];
+' "$lock" || fail "could not acquire the current lifecycle lock"
+prepare_curl_acquisition "$RELEASE_HOME" "$BIN_DIR"
 expose_command "$RELEASE_HOME" "$BIN_DIR"
+/bin/mv -f "$ACQUISITION_TEMP" "$RELEASE_HOME/acquisition.json"
+ACQUISITION_TEMP=""
