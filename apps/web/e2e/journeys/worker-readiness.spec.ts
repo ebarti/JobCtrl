@@ -7,11 +7,13 @@ type Health = {
   worker: { healthy: boolean; pid: number; build: string; heartbeatAt: string; reason?: string };
 };
 
-test("workspace identity survives a worker restart and refuses a mismatched history before writing", async ({ app, api }) => {
+test("workspace identity survives a worker restart and refuses a mismatched history before writing", async ({ app, api, page }) => {
   const original = await json<Health>(api, "get", "/v1/health");
   expect(original.runtimeIdentity.workspace).toBe(app.workspace);
   expect(original.runtimeIdentity.build).toMatch(/^[a-f0-9]{64}$/);
   expect(original.worker).toMatchObject({ healthy: true, build: original.runtimeIdentity.build });
+  await page.goto("/jobs");
+  await expect(page.getByText("Workspace workspace", { exact: true })).toHaveAttribute("title", app.workspace);
   const saved = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", posting(158));
   const alternate = await app.alternateNamespaceApi("wrong-namespace");
   const mismatch = await (await api.get(`${alternate}/v1/health`)).json();

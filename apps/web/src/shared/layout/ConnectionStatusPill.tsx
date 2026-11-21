@@ -42,7 +42,7 @@ export function ConnectionStatusPill() {
             : `LLM $${spend.costUsd.toFixed(2)}${spend.costAuthority === "includes_estimates" ? " (includes estimates)" : ""}`;
   return <div className="connection-pill-group">
     <span className="connection-pill" data-status={databaseProblem || workspaceChanged || healthUnavailable || workerUnhealthy || lostForLong ? "lost" : status} aria-live="polite" data-typography="status">{label}</span>
-    {health.data?.runtimeIdentity ? <span className="connection-spend" data-typography="metadata" title={health.data.runtimeIdentity.workspace}>Workspace {health.data.runtimeIdentity.workspace.split("/").filter(Boolean).at(-1)}</span> : null}
+    {health.data?.runtimeIdentity ? <span className="connection-workspace" data-typography="metadata" title={health.data.runtimeIdentity.workspace}>Workspace {health.data.runtimeIdentity.workspace.split("/").filter(Boolean).at(-1)}</span> : null}
     {spend ? <span className="connection-spend" title={spendDetails || undefined} data-status={active ? "pending" : accountingBlocked ? "incomplete" : "ok"} aria-live="polite" data-typography="metadata">
       {spendLabel}
     </span> : null}
