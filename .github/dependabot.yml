@@ -53,10 +53,11 @@ updates:
       timezone: "Europe/Madrid"
     open-pull-requests-limit: 3
     rebase-strategy: "disabled"
+    # Keep routine Python updates outside the local eight-day package age gate.
     cooldown:
       semver-major-days: 30
-      semver-minor-days: 7
-      semver-patch-days: 3
+      semver-minor-days: 8
+      semver-patch-days: 8
     # Match the manifest's reviewed cutoffs. Type-only ignores preserve
     # security update attempts; cutoff and lock maintenance stays explicit.
     ignore:
