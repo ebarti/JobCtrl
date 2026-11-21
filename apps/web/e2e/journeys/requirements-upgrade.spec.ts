@@ -80,13 +80,15 @@ test("a real predecessor upgrade preserves history and accepted bytes, starts an
   const normalizationTables = ["requirements_aliases", "requirements_reconciliations", "requirements_reconciliation_certificate", "requirements_normalization_cache", "requirements_normalization_intents", "requirements_refresh_transport"];
   const cohortTables = ["requirements_cohort_operations", "fit_initial_cohort_operations"];
   const recoveryTables = ["jobs_url_imports", "jobs_url_import_calls", "requirements_attempt_refusals"];
-  const expectedTables = [...normalizationTables, ...cohortTables, ...recoveryTables].sort();
+  const workerTables = ["app_worker_registrations", "app_workflow_history"];
+  const expectedTables = [...normalizationTables, ...cohortTables, ...recoveryTables, ...workerTables].sort();
   expect(additions.filter((row) => row.type === "table").map(({ name, table }) => ({ name, table })))
     .toEqual(expectedTables.map((table) => ({ name: table, table })));
-  // The certificate's INTEGER PRIMARY KEY is the rowid. Each of the other
+  // The two singleton INTEGER PRIMARY KEYs are the rowids. Each of the other
   // tables has a single SQLite autoindex for its primary key.
+  const rowidTables = new Set(["requirements_reconciliation_certificate", "app_workflow_history"]);
   expect(additions.filter((row) => row.type !== "table")).toEqual(
-    expectedTables.filter((table) => table !== "requirements_reconciliation_certificate")
+    expectedTables.filter((table) => !rowidTables.has(table))
       .map((table) => ({ type: "index", name: `sqlite_autoindex_${table}_1`, table, sql: null })),
   );
   for (const table of cohortTables) {
@@ -94,6 +96,12 @@ test("a real predecessor upgrade preserves history and accepted bytes, starts an
       `CREATE TABLE ${table} ( operation_id TEXT PRIMARY KEY, input_fingerprint TEXT NOT NULL, state_json TEXT NOT NULL )`,
     );
   }
+  expect(additions.find((row) => row.name === "app_worker_registrations")?.sql?.replace(/\s+/g, " ")).toBe(
+    "CREATE TABLE app_worker_registrations ( worker_id TEXT PRIMARY KEY REFERENCES app_worker_heartbeats(worker_id), identity_json TEXT NOT NULL, actions_json TEXT NOT NULL )",
+  );
+  expect(additions.find((row) => row.name === "app_workflow_history")?.sql?.replace(/\s+/g, " ")).toBe(
+    "CREATE TABLE app_workflow_history ( singleton INTEGER PRIMARY KEY CHECK(singleton=1), history TEXT NOT NULL, namespace TEXT NOT NULL, namespace_id TEXT NOT NULL )",
+  );
   const currentProfile = await json<Profile>(api, "get", "/v1/profile");
   expect(currentProfile).toMatchObject({ profileVersion: oldProfile.profileVersion, profile: { resume: { language_entries: [] } } });
   const noOp = await json<Profile>(api, "patch", "/v1/profile", { expectedProfileVersion: currentProfile.profileVersion, profile: currentProfile.profile });
