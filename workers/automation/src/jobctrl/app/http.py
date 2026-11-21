@@ -82,7 +82,7 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
             "ok": True, "application": "jobctrl-python", "schemaVersion": SCHEMA_VERSION,
             "workspaceId": hashlib.sha256(str(runtime.workspace).encode()).hexdigest(),
             "databaseInstanceId": runtime.database.instance_id, "runtimeIdentity": application.identity,
-            "features": list(application.features), "capabilities": capabilities, "worker": application.worker_status(),
+            "features": list(application.features), "capabilities": capabilities, "worker": await application.dispatch_readiness(),
             "llmSpend": runtime.model.spend(),
             "temporal": temporal_metadata(),
         })

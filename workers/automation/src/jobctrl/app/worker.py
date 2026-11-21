@@ -55,6 +55,10 @@ class Actions:
         info = activity.info()
         run_id = value.get("run_id") or str(uuid.uuid5(uuid.NAMESPACE_URL, info.workflow_id))
         request_id = value.get("request_id") or run_id
+        if value.get("run_id"):
+            admitted = self.application.workflow_run(info.workflow_id)
+            if not admitted or admitted["runId"] != run_id or admitted["action"] != value["action"]:
+                raise ApplicationError("This workspace does not own this action.", type="worker_workspace_mismatch")
 
         def cancelled():
             try:
@@ -132,7 +136,7 @@ async def run_worker(workspace: Path, *, enabled_features=None):
                 pass
 
     try:
-        async with Worker(client, task_queue=queue, workflows=[ActionWorkflow], activities=[Actions(application).execute],
+        async with Worker(client, task_queue=queue, identity=worker_id, workflows=[ActionWorkflow], activities=[Actions(application).execute],
                           max_concurrent_activities=application.runtime.settings.get("workerActivitySlots", 4),
                           graceful_shutdown_timeout=timedelta(seconds=10)):
             pulse_task = asyncio.create_task(pulse())

@@ -46,7 +46,7 @@ export type ApplicationStack = {
     request: { fingerprint: string; sourceFetchPolicy?: string; settings: { resultsPerSite: number; newJobLimit: number } };
     units: { unitId: string; status: string; resultsPerSite: number | null; sdkFingerprint: string; sdkResultsWanted: number | null; sdkMaxPages: number; result: { termination?: string; sourceTerminations?: Record<string, string> } | null }[];
   }>;
-  restartWorker(): Promise<{ previous: number; current: number }>;
+  restartWorker(features?: string): Promise<{ previous: number; current: number }>;
   alternateNamespaceApi(namespace: string): Promise<string>;
   upgradeSource(): Promise<{ previous: number; current: number; backup: string; candidateOrigin: string; mode: "source" | "installed" }>;
   armFitRecoveryPause(operation: "fit.catalog-impact" | "fit.qualification-batch"): Promise<void>;
@@ -84,6 +84,8 @@ export type ApplicationStack = {
 type WorkerFixtures = {
   temporal: {
     address: string;
+    pause(): Promise<void>;
+    resume(): Promise<void>;
     retainForDiagnosis(): void;
     close(): Promise<void>;
   };

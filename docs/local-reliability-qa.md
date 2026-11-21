@@ -31,6 +31,9 @@ ledger in [Python application journeys](developer/qa/python-journeys.md).
 The workspace identity journey opens the same disposable database with a second
 API configured for a different workflow namespace. It verifies a write refusal,
 restarts the original worker and reads the saved job through the original API.
+The dispatch journey stops the owned Temporal server while the worker keeps
+heartbeating. It checks public status, refused admission and earlier receipts,
+then restores the same history and retries through the actions endpoint.
 
 Hosted Browser CI schedules that same inventory in six fixed, disjoint
 Playwright shards, `--shard=1/6` through `--shard=6/6`, on separate

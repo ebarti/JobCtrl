@@ -23,7 +23,7 @@ export function useSearchReadiness({ preferences, settings, runtime, preferences
   let disabledReason: string | undefined;
   if (isDemo) disabledReason = "Live job searches are unavailable in the demo. You can edit these local synthetic preferences and browse the sample jobs.";
   else if (runtime.isPending) disabledReason = "Checking the search connection…";
-  else if (runtime.error || !runtime.data?.worker.healthy) disabledReason = "The search service is unavailable. Review connections, then return here to start your search.";
+  else if (runtime.error || !runtime.data?.worker.healthy) disabledReason = runtime.data?.worker.message ?? "The search service is unavailable. Review connections, then return here to start your search.";
   else if (preferencesLoading || settingsLoading) disabledReason = "Checking saved Search preferences…";
   else if (preferencesError || settingsError) disabledReason = "Saved Search preferences could not be checked. Retry before starting a search.";
   else if (!preferences.ready) disabledReason = "Save your first role in My profile before searching with Search preferences.";

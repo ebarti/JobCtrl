@@ -43,9 +43,11 @@ adds a worker-only admission check. Tokens and credentials never enter ordinary
 settings, event payloads or application logs.
 
 `GET /v1/health` reports the workspace identity, selected features, database
-schema, model accounting and actual worker heartbeat. A worker is healthy only
-when the recorded PID is live, its heartbeat is recent and its task queue matches
-this workspace. Native lifecycle admission additionally verifies process
+schema, model accounting and worker dispatch readiness. The API matches the
+local live worker, its startup identity and its recent heartbeat against the
+workflow and activity pollers reported by the paired Temporal namespace. Action
+admission also checks the specific operation was registered. A two-second probe
+bounds an unavailable workflow service. Native lifecycle admission additionally verifies process
 ownership. `GET /v1/setup/status` composes public Profile, provider, browser,
 Temporal and policy diagnostics. Configuration presence and successful live
 checks remain distinct facts.

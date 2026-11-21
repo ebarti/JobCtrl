@@ -258,50 +258,61 @@ export async function temporalStack() {
   const home = path.join(directory, "home");
   await mkdir(home, { mode: 0o700 });
   const address = `127.0.0.1:${await port()}`;
-  const service = await launch(
-    "temporal",
-    temporal,
-    [
-      "server",
-      "start-dev",
-      "--ip",
-      "127.0.0.1",
-      "--port",
-      address.split(":")[1],
-      "--headless",
-      "--db-filename",
-      path.join(directory, "history.db"),
-      "--log-level",
-      "error",
-    ],
-    { directory, env: environment(home) },
-  );
-  try {
-    await waitFor(
-      async () => {
-        service.assertRunning();
-        const { stdout } = await execFile(
-          temporal,
-          ["operator", "cluster", "health", "--address", address],
-          { timeout: 3_000, env: environment(home) },
-        );
-        return stdout.includes("SERVING");
-      },
-      "real Temporal health",
-      { timeout: 40_000 },
+  async function start() {
+    const service = await launch(
+      "temporal",
+      temporal,
+      [
+        "server",
+        "start-dev",
+        "--ip",
+        "127.0.0.1",
+        "--port",
+        address.split(":")[1],
+        "--headless",
+        "--db-filename",
+        path.join(directory, "history.db"),
+        "--log-level",
+        "error",
+      ],
+      { directory, env: environment(home) },
     );
-  } catch (error) {
-    await service.stop();
-    throw error;
+    try {
+      await waitFor(
+        async () => {
+          service.assertRunning();
+          const { stdout } = await execFile(
+            temporal,
+            ["operator", "cluster", "health", "--address", address],
+            { timeout: 3_000, env: environment(home) },
+          );
+          return stdout.includes("SERVING");
+        },
+        "real Temporal health",
+        { timeout: 40_000 },
+      );
+    } catch (error) {
+      await service.stop();
+      throw error;
+    }
+    return service;
   }
+  let service = await start();
   let retainState = false;
   return {
     address,
+    async pause() {
+      await service.stop();
+      service = null;
+    },
+    async resume() {
+      service = await start();
+    },
     retainForDiagnosis() {
       retainState = true;
     },
     async close() {
-      await service.stop();
+      await service?.stop();
       if (!retainState) await removeAllocated(directory, identity);
     },
   };
@@ -390,7 +401,7 @@ export async function applicationStack(
   const recoveryPaused = path.join(directory, "fit-recovery-paused.json");
   const cohortArm = path.join(directory, "cohort-boundary-arm");
   const cohortPaused = path.join(directory, "cohort-boundary-paused.json");
-  async function startWorker() {
+  async function startWorker(workerFeatures) {
     worker = await launch(
       `worker-${++workerGeneration}`,
       pythonExecutable,
@@ -403,7 +414,7 @@ export async function applicationStack(
         "--temporal-address",
         temporalAddress,
       ],
-      { directory, env },
+      { directory, env: workerFeatures === undefined ? env : { ...env, JOBCTRL_FEATURES: workerFeatures } },
     );
     services.push(worker);
     return worker.pid;
@@ -819,12 +830,12 @@ print(json.dumps({"adapters": adapters, "receipts": receipts, "receiptKeys": rec
 `, workspace, runId], { env, timeout: 5000, maxBuffer: 100_000 });
         return JSON.parse(inspected.stdout);
       },
-      async restartWorker() {
+      async restartWorker(workerFeatures) {
         const previous = worker;
         previous.crash();
         await previous.stop();
         services.splice(services.indexOf(previous), 1);
-        const next = await startWorker();
+        const next = await startWorker(workerFeatures);
         if (next === previous.pid)
           throw new Error("Worker restart did not change process identity");
         await waitFor(async () => {

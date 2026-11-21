@@ -4,6 +4,7 @@ import { useRuntimeHealth } from "../../contexts/runtime/index.js";
 import { useEventStreamStatus } from "../providers/EventStreamProvider.js";
 import { databaseStartupProblem } from "../lib/databaseStartupProblem.js";
 import { modelActivityBeforeToday } from "../lib/model-activity.js";
+import { Button } from "../ui/button.js";
 import type { EventStreamStatus } from "../ports/EventStreamPort.js";
 
 const STATUS_LABEL: Record<EventStreamStatus, string> = {
@@ -49,7 +50,10 @@ export function ConnectionStatusPill() {
     {databaseProblem ? <div className="connection-banner" data-state="error" role="alert">{databaseProblem.message}</div>
       : workspaceChanged ? <div className="connection-banner" data-state="error" role="alert">The workspace database changed. Stop JobCtrl, inspect the workspace, restart JobCtrl, and reload this page.</div>
         : healthUnavailable ? <div className="connection-banner" data-state="warning" role="status">Application health is unavailable; retrying.</div>
-          : workerUnhealthy ? <div className="connection-banner" data-state="error" role="alert">{health.data?.worker.message ?? "Start the automation worker, then retry."}</div>
+          : workerUnhealthy ? <div className="connection-banner" data-state="error" role="alert">
+            {health.data?.worker.message ?? "Start the automation worker, then retry."}{" "}
+            <Button type="button" variant="outline" size="sm" disabled={health.isFetching} onClick={() => void health.refetch()}>Check again</Button>
+          </div>
             : lostForLong ? <div className="connection-banner" data-state="warning" role="status">Connection lost — events paused; data will refresh when reconnected.</div> : null}
   </div>;
 }
