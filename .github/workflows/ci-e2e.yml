@@ -6,13 +6,13 @@ permissions:
   contents: read
 jobs:
   shards:
-    name: Journeys (shard ${{ matrix.shard }}/4)
+    name: Journeys (shard ${{ matrix.shard }}/6)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     env:
       UV_PYTHON: '3.12'
       UV_LOCKED: '1'
@@ -81,7 +81,7 @@ jobs:
       - name: Build once and run this shard of real application journeys
         # Reserve two minutes beyond the suite ceiling for build and owned cleanup.
         timeout-minutes: 14
-        run: corepack pnpm e2e -- --shard=${{ matrix.shard }}/4 --workers=2
+        run: corepack pnpm e2e -- --shard=${{ matrix.shard }}/6 --workers=2
       - name: Require unchanged dependency locks
         if: always()
         run: git diff --exit-code -- pnpm-lock.yaml workers/automation/uv.lock
@@ -94,7 +94,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: python-application-journeys-shard-${{ matrix.shard }}-of-4-${{ github.run_attempt }}
+          name: python-application-journeys-shard-${{ matrix.shard }}-of-6-${{ github.run_attempt }}
           path: |
             /tmp/jobctrl-transform-1428/e2e-*/timings.json
             /tmp/jobctrl-transform-1428/e2e-*/junit.xml

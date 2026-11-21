@@ -58,15 +58,15 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **178 journeys in 49 project-file groups**.
-It includes **177 Chromium cases in 48 spec files** and **one demo case in one file**.
+The current configured inventory is **224 journeys in 63 project-file groups**.
+It includes **223 Chromium cases in 62 spec files** and **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts, keyboard-driven Profile saves, posting-fetch refusals and the
 actual terminal-root v4 and terminal-group v5 predecessor upgrades, demand-citation
 role refusals, Fit schema refusals, rediscovery recovery and accepted-score
-currentness. The four hosted shard listings contain 48 / 53 / 34 / 43 cases
-and match the unsharded inventory exactly once.
+currentness. The six hosted shard listings contain 50 / 26 / 37 / 43 / 41 / 27
+cases and match the unsharded inventory exactly once.
 Listing these scenarios is not evidence that the complete current candidate passed.
 
 ### Accepted postings and Fit currentness
@@ -454,16 +454,16 @@ ceiling in shard 1: 35 passed and 12 did not run. Shards 2 and 3 passed 41 and
 40 cases in 695.694 s and 567.385 s, respectively. This is **116 passed and 12
 unrun**, with no individual assertion failure; it is not a complete suite pass.
 
-The hosted matrix now uses four standard Playwright shards. Native JSON
+The hosted matrix then moved to four standard Playwright shards. Native JSON
 listings measured **34 / 33 / 37 / 24 cases** in **11 / 9 / 12 / 10 project-file
 groups**. Their disjoint union equals the complete 128-case, 42-group inventory,
 with no missing, duplicate or extra case. That configuration used one worker,
 zero retries, a 90-second ordinary case limit and a 720-second suite limit. The
-stable Browser aggregate requires all four jobs.
+stable Browser aggregate required all four jobs at that point.
 
 On `6f46b0ba5`, the four shards assigned 37 / 33 / 44 / 24 cases. Shards 1 and
 3 reached the unchanged suite deadline with 36 and 39 passes respectively;
-shards 2 and 4 passed. The hosted invocation now uses two Playwright workers per
+shards 2 and 4 passed. The hosted invocation moved to two Playwright workers per
 shard while retaining the four shards, zero retries, existing case deadlines and
 720-second suite limit. Each worker owns its Temporal service and each journey
 its application workspace. The ordinary local invocation still defaults to one
