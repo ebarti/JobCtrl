@@ -53,6 +53,7 @@ const (
 )
 
 var (
+	errArchiveMismatch  = errors.New("archive contents do not match the signed descriptor")
 	sha256Pattern       = regexp.MustCompile(`^[a-f0-9]{64}$`)
 	buildIDPattern      = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]{7,127}$`)
 	semverPattern       = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`)
@@ -804,7 +805,7 @@ func downloadArchiveToStageWithStallTimeout(client *http.Client, rawURL string, 
 		if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 			return "", errors.New("descriptor-bound archive cache is not a regular file")
 		}
-		if err := verifyArchiveFile(final, expectedSize, expectedSHA256); err != nil {
+		if err := verifyStagedArchive(final, expectedSize, expectedSHA256); err != nil {
 			return "", fmt.Errorf("cached archive does not match signed release descriptor: %w", err)
 		}
 		return final, nil
@@ -818,11 +819,8 @@ func downloadArchiveToStageWithStallTimeout(client *http.Client, rawURL string, 
 			return "", errors.New("descriptor-bound partial archive is not a regular file")
 		}
 		offset = info.Size()
-		if offset > expectedSize {
-			return "", fmt.Errorf("partial archive size %d exceeds signed size %d", offset, expectedSize)
-		}
-		if offset == expectedSize {
-			if err := verifyArchiveFile(partial, expectedSize, expectedSHA256); err != nil {
+		if offset >= expectedSize {
+			if err := verifyStagedArchive(partial, expectedSize, expectedSHA256); err != nil {
 				return "", fmt.Errorf("partial archive does not match signed release descriptor: %w", err)
 			}
 			if err := finalizeArchiveCache(partial, final, stage); err != nil {
@@ -873,7 +871,7 @@ func downloadArchiveToStageWithStallTimeout(client *http.Client, rawURL string, 
 	if err := writeArchiveResponse(partial, response.Body, offset, expectedSize, appendToPartial, stallTimeout, cancel); err != nil {
 		return "", err
 	}
-	if err := verifyArchiveFile(partial, expectedSize, expectedSHA256); err != nil {
+	if err := verifyStagedArchive(partial, expectedSize, expectedSHA256); err != nil {
 		return "", fmt.Errorf("archive size or SHA-256 does not match signed release descriptor: %w", err)
 	}
 	if err := finalizeArchiveCache(partial, final, stage); err != nil {
@@ -944,6 +942,30 @@ func writeArchiveResponse(path string, body io.Reader, offset, expectedSize int6
 	return nil
 }
 
+// The caller holds the store transition lock and verified the descriptor stage.
+func verifyStagedArchive(path string, expectedSize int64, expectedSHA256 string) error {
+	before, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	err = verifyArchiveFile(path, expectedSize, expectedSHA256)
+	if !errors.Is(err, errArchiveMismatch) {
+		return err
+	}
+	current, statErr := os.Lstat(path)
+	owner, ok := before.Sys().(*syscall.Stat_t)
+	if statErr != nil || !before.Mode().IsRegular() || !os.SameFile(before, current) || !ok || int(owner.Uid) != os.Geteuid() {
+		return fmt.Errorf("cannot establish ownership of invalid cached archive: %w", err)
+	}
+	if removeErr := os.Remove(path); removeErr != nil {
+		return fmt.Errorf("could not discard invalid cached archive: %w", removeErr)
+	}
+	if syncErr := syncDirectory(filepath.Dir(path)); syncErr != nil {
+		return syncErr
+	}
+	return fmt.Errorf("%w; invalid cache discarded, rerun the same install command to download again", err)
+}
+
 func verifyArchiveFile(path string, expectedSize int64, expectedSHA256 string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -953,14 +975,14 @@ func verifyArchiveFile(path string, expectedSize int64, expectedSHA256 string) e
 		return errors.New("archive cache is not a regular file")
 	}
 	if info.Size() != expectedSize {
-		return fmt.Errorf("archive size mismatch: expected %d, received %d", expectedSize, info.Size())
+		return fmt.Errorf("%w: expected %d bytes, received %d", errArchiveMismatch, expectedSize, info.Size())
 	}
 	digest, err := digestFile(path)
 	if err != nil {
 		return err
 	}
 	if digest != expectedSHA256 {
-		return errors.New("archive SHA-256 mismatch")
+		return fmt.Errorf("%w: SHA-256 mismatch", errArchiveMismatch)
 	}
 	return nil
 }
