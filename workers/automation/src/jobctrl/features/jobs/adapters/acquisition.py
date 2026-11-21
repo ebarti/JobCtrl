@@ -354,6 +354,7 @@ class SourceBoundPostingAcquirer:
             "provenance": {
                 **posting.get("provenance", {}),
                 "availability": {
+                    "state": state,
                     "observedAt": observed_at,
                     "metadata": metadata,
                     "value": result.model_dump(),

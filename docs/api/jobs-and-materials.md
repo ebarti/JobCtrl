@@ -380,8 +380,10 @@ the occurrence's freshness explicit. See the
 
 ## Saved Posting Availability
 
-Checks preserve source and timing provenance. Failure or inability to fetch is
-not a confirmed closed posting. See [jobs lifecycle](complete-contract.md#jobs-read-model-and-lifecycle).
+`GET /v1/jobs/{job_id}/availability` reads the last confirmed state and time
+(`last_confirmed`) and latest attempt (`last_attempt`) for the saved URL. Either
+can be null. `POST` requests a manual check. The UI warns at 24 hours. Failed
+and inconclusive attempts preserve the previous confirmation. See [jobs lifecycle](complete-contract.md#jobs-read-model-and-lifecycle).
 
 ## Artifacts and Resume Templates
 

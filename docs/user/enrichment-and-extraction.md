@@ -193,37 +193,17 @@ code, message, method, and retry policy.
 
 ## Saved Posting Availability
 
-Job Detail shows **Posting availability**, with **Check availability** and
-**Inspect employer posting** actions. The latest attempt, last successful
-verification, next due time, reason, acquisition method and evidence remain
-separate. A recent successful check does not hide a later unknown result.
-Reading Jobs does not contact employers.
+Open Job Detail to see **Posting availability** and the time of the last
+confirmed observation for that posting URL. After 24 hours the view shows a
+stale warning. An unverified posting offers the same **Check availability**
+button. Opening Jobs, starting JobCtrl and reconnecting read saved information
+without contacting the employer. Use the button or the CLI below to recheck.
 
-While the local worker runs, visible saved postings are checked every 24
-hours when active and every seven days when unavailable. Unavailable jobs stay
-saved and can become active again. The first check is due immediately; startup
-and reconnect catch up in groups of at most 25. Hidden/deleted jobs, running
-applications and terminal application outcomes are excluded from automatic
-checks. Manual checks remain available for saved, inspectable jobs.
-
-A sweep checks its selected postings sequentially and is admitted at most once
-per minute. It stops claiming jobs when its automatic quota is exhausted and
-has a 20-minute work budget within the 30-minute activity limit. Cancellation
-stops the current acquisition and prevents later jobs from starting. Independent
-jobs can be checked concurrently. All checks share a
-limit of 100 posting acquisitions per hour per workspace; automatic sweeps may
-use at most 80, reserving 20 for foreground checks and preparation. Each check
-is charged once, including its bounded browser resources. Requests retain at
-least two seconds between starts and one in flight per actual host. Repeated
-clicks coalesce, and a job starts at most once a minute. Unknown employer
-observations retry automatically after five minutes, with increasing delays
-capped at 24 hours. An explicit check can retry after the one-minute job limit,
-but cannot bypass quotas, safety checks or host cooldowns. Local quota, pacing
-and contention refusals do not create unknown observations or increase evidence
-backoff. Only explicit commands record deferred request feedback, with unchanged
-refusals coalesced. Refusals preserve attempt and successful-verification clocks.
-Sleep, an offline machine or a stopped worker leaves the recorded times intact
-and can make a check overdue.
+A successful observation refreshes the verification time, including when the
+verdict is unchanged. An inconclusive or failed manual check is shown separately
+from the last confirmed state and can be retried explicitly. Closed postings
+remain available to inspect. Scheduled searches for new jobs have their own
+setting in [Discovery](discovery.md).
 
 Greenhouse and Lever (including Lever EU) are checked through exact posting
 APIs. Ashby contributes only a matching positive posting, including unlisted
@@ -260,8 +240,7 @@ enrichment. Stale, quarantined, changed or unbound captures use the normal check
 known closure and deletion still prevent preparation. Capture freshness uses its
 actual capture time, never a later metadata update.
 An unknown observation or captured availability verdict can be reused for
-preparation without another foreground request; it stays unknown, and its
-background retry schedule remains unchanged. Capture reuse creates no new
+preparation without another foreground request. It stays unknown. Capture reuse creates no new
 availability observation and does not satisfy unattended Apply's separate gate.
 Preparation can proceed with usable content while availability stays unknown. Unknown is shown honestly and remains retryable; confirmed
 unavailable postings stop preparation. Dry-run rehearsals and human-reviewed

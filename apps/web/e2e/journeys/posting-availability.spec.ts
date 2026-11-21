@@ -1,0 +1,31 @@
+import { test, expect, json, modelCall } from "../harness/fixtures.js";
+import { posting, respondProducer } from "./preparation-cohort-data.js";
+import { citeSources } from "./requirements-data.js";
+
+test("saved posting availability warns after 24 hours and only rechecks on demand", async ({ api, app, page }) => {
+  const source = posting(193);
+  const saved = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", source);
+  await page.goto(`/jobs/${saved.job_id}`);
+  const panel = page.getByRole("region", { name: "Posting availability" });
+  await expect(panel).toContainText("Availability is unverified.");
+  expect(app.external.calls.filter(call => call.path === "/posting-page")).toHaveLength(0);
+  await panel.getByRole("button", { name: "Check availability" }).click();
+  respondProducer(await app.external.next(), [source]);
+  const check = await modelCall(app, "posting_availability");
+  const field = (value: string) => ({ value, citations: citeSources(check, ["rendered_page"]), rationale: "Explicit determination for this captured page." });
+  check.reply({ availability: field("active"), page_kind: field("posting"), access_state: field("clear"), apply_control: field("available") });
+  await expect(panel).toContainText("Last confirmed active");
+  const result = await json<{ last_confirmed: { at: string; state: string } }>(api, "get", `/v1/jobs/${saved.job_id}/availability`);
+  await page.clock.setFixedTime(new Date(Date.parse(result.last_confirmed.at) + 24 * 60 * 60 * 1000));
+  await page.reload();
+  await expect(panel).toContainText("This check is stale.");
+  expect(app.external.calls.filter(call => call.path === "/posting-page")).toHaveLength(1);
+  const failed = api.post(`/v1/jobs/${saved.job_id}/availability`, { data: {} });
+  (await app.external.next()).respond({ error: "Unavailable" }, 503);
+  expect((await failed).ok()).toBe(false);
+  await page.reload();
+  await expect(panel).toContainText("Last confirmed active");
+  await expect(panel).toContainText("was inconclusive");
+  expect((await json<typeof result>(api, "get", `/v1/jobs/${saved.job_id}/availability`)).last_confirmed).toEqual(result.last_confirmed);
+  expect(app.external.calls.filter(call => call.path === "/posting-page")).toHaveLength(2);
+});

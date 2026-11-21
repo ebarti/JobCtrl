@@ -368,10 +368,45 @@ class SqliteJobsRepository:
                 if row
                 else current.get("provenance", {}).get("availability")
             )
+            # Read actual captures of this URL. Profile edits, imported listing guesses,
+            # and copies of an earlier observation do not renew its verification time.
+            observations = conn.execute(
+                """SELECT o.observed_at,
+                          COALESCE(json_extract(o.provenance_json, '$.availability.state'),
+                                   json_extract(p.data_json, '$.active_state')) AS verdict
+                   FROM jobs_observations o JOIN jobs_postings p
+                     ON p.job_id=o.job_id AND p.revision=o.posting_revision
+                   WHERE o.job_id=? AND o.observed_url=? AND (
+                     (json_extract(o.provenance_json,'$.availability.metadata.requested_url')=o.observed_url
+                      AND julianday(json_extract(o.provenance_json,'$.availability.observedAt'))=julianday(o.observed_at))
+                     OR (json_type(o.provenance_json,'$.availability') IS NULL
+                         AND json_extract(o.provenance_json,'$.authority')='source_bound_model'
+                         AND json_type(o.provenance_json,'$.pageInterpretation')='object'
+                         AND p.observed_at=o.observed_at))
+                   ORDER BY julianday(o.observed_at) DESC, o.rowid DESC""",
+                (job_id, current["url"]),
+            )
+            failure = conn.execute(
+                """SELECT started_at FROM jobs_capture_attempts WHERE job_id=? AND url=?
+                   AND json_extract(data_json,'$.operation')='availability'
+                   ORDER BY julianday(started_at) DESC, rowid DESC LIMIT 1""",
+                (job_id, current["url"]),
+            ).fetchone()
+            last_attempt = {"at": failure["started_at"], "outcome": "failed"} if failure else None
+            last_confirmed = None
+            for observed in observations:
+                outcome = observed["verdict"] or "unknown"
+                if last_attempt is None or datetime.fromisoformat(observed["observed_at"]) > datetime.fromisoformat(last_attempt["at"]):
+                    last_attempt = {"at": observed["observed_at"], "outcome": outcome}
+                if outcome != "unknown":
+                    last_confirmed = {"at": observed["observed_at"], "state": outcome}
+                    break
             return {
                 "job_id": job_id,
                 "revision": current["revision"],
                 "active_state": current["active_state"],
+                "last_confirmed": last_confirmed,
+                "last_attempt": last_attempt,
                 "observation_id": row["observation_id"] if row else None,
                 "checked_at": row["observed_at"] if row else None,
                 "availability": availability,
