@@ -1,9 +1,8 @@
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { invalidateQueriesWithOptimisticOwnership } from "../../../shared/lib/createOptimisticMutation.js";
 import { createUnconfirmedWriteError } from "../../../shared/lib/unconfirmed-write.js";
-import type { DomainEventEnvelope } from "../../../shared/ports/EventStreamPort.js";
+import type { FeatureEventHandler } from "../../../shared/ports/FeatureEvents.js";
 import type { HttpPort } from "../../../shared/ports/HttpPort.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
@@ -46,7 +45,7 @@ export function useProfileSourceActions() {
   }), onSuccess: save });
   return { add, decide };
 }
-export const profileSourcesInvalidation = {
+export const profileSourcesInvalidation: FeatureEventHandler = {
   eventTypes: ["ProfileUpdated", "ProfileSourceUpdated"] as const,
-  handle(event: DomainEventEnvelope, client: QueryClient) { void invalidateQueriesWithOptimisticOwnership(client, profileSourceKeys.all(event.tenantId)); },
+  handle(event, invalidate) { invalidate(profileSourceKeys.all(event.tenantId)); },
 };

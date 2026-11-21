@@ -61,6 +61,7 @@ class FrontendFiles(StaticFiles):
 def create_http_app(application: Application, *, static_dir: Path | None = None, port: int = 8787,
                     credential_service=None) -> Starlette:
     runtime = application.runtime
+    capabilities = sorted({name for feature in application.features.values() for name in feature.capabilities})
 
     def temporal_metadata():
         configured = os.environ.get("JOBCTRL_TEMPORAL_UI_URL", "")
@@ -81,7 +82,7 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
             "ok": True, "application": "jobctrl-python", "schemaVersion": SCHEMA_VERSION,
             "workspaceId": hashlib.sha256(str(runtime.workspace).encode()).hexdigest(),
             "databaseInstanceId": runtime.database.instance_id,
-            "features": list(application.features), "worker": application.worker_status(),
+            "features": list(application.features), "capabilities": capabilities, "worker": application.worker_status(),
             "llmSpend": runtime.model.spend(),
             "temporal": temporal_metadata(),
         })
@@ -271,7 +272,7 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
     if "jobs" in application.services:
         from jobctrl.extension_transport import build_extension_routes
         routes.extend(build_extension_routes(runtime, application.services["jobs"],
-                                            broker=application.extension_broker, application=application))
+                                            application=application))
     signatures = set()
     for route in routes:
         for method in getattr(route, "methods", ()) or ():

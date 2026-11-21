@@ -41,7 +41,7 @@ export function ensureActionRun(context: HttpLoaderReadContext, runId: string) {
 }
 export const actionRunEvents: FeatureEventHandler = {
   eventTypes: ["ActionQueued", "ActionStarted", "ActionFailed", "ActionCompleted", "ActionCancellationRequested"],
-  handle(event, client) { void invalidateQueriesWithOptimisticOwnership(client, actionRunKeys.all(event.tenantId)); },
+  handle(event, invalidate) { invalidate(actionRunKeys.all(event.tenantId)); },
 };
 
 export function useActionRunSummary() {

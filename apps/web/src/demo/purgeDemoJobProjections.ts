@@ -274,10 +274,6 @@ function purgeDiscoveryReferences(
       entry.jobId !== jobKey &&
       !matchesJobReference(entry.postingUrl),
   );
-  discovery.locatorCandidates.candidates =
-    discovery.locatorCandidates.candidates.filter(
-      (candidate) => !matchesJobReference(candidate.candidateUrl),
-    );
   discovery.manualCapture.items = discovery.manualCapture.items.filter(
     (item) => !matchesJobReference(item.originatingUrl),
   );

@@ -1,0 +1,112 @@
+"""Durable URL-import progress and custody of each admitted model call."""
+
+from jobctrl.app.errors import AppError
+from jobctrl.app.model import ModelResult
+from jobctrl.app.model_capacity import wait_for_model_capacity
+from jobctrl.features.jobs.domain.postings import digest, normalize_url, posting_url
+
+
+SCHEMA = """
+CREATE TABLE jobs_url_imports (
+    run_id TEXT PRIMARY KEY, url TEXT NOT NULL, wait_reason TEXT, finished INTEGER NOT NULL DEFAULT 0,
+    job_id TEXT REFERENCES jobs_jobs(job_id) ON DELETE CASCADE
+);
+CREATE TABLE jobs_url_import_calls (
+    run_id TEXT NOT NULL REFERENCES jobs_url_imports(run_id) ON DELETE CASCADE,
+    operation TEXT NOT NULL, fingerprint TEXT NOT NULL, receipt_id TEXT NOT NULL,
+    PRIMARY KEY(run_id, operation)
+);
+"""
+
+
+class UrlImports:
+    def __init__(self, database):
+        self.database = database
+
+    @staticmethod
+    def scope(payload):
+        if set(payload) <= {"url", "postingUrl", "captureId", "receiptKey", "receipt_key"}:
+            try:
+                return "url:" + normalize_url(payload.get("url") or payload.get("postingUrl") or "")
+            except (TypeError, ValueError):
+                pass  # Reject invalid new inputs at admission. Old action rows remain readable.
+        return "capture:" + digest(payload)
+
+    @staticmethod
+    def admit(run_id, payload, connection):
+        try:
+            url = posting_url(payload.get("url") or payload.get("postingUrl") or "")
+        except (TypeError, ValueError):
+            raise AppError("invalid_posting_url", "Supply a public HTTP(S) posting URL.") from None
+        connection.execute("INSERT OR IGNORE INTO jobs_url_imports(run_id,url) VALUES(?,?)", (run_id, url))
+
+    @staticmethod
+    def finish(run_id, status, error_code, connection):
+        connection.execute("UPDATE jobs_url_imports SET finished=1,wait_reason=NULL WHERE run_id=?", (run_id,))
+
+    def recent(self, read_run):
+        with self.database.connect() as conn:
+            conn.execute("BEGIN")
+            rows = conn.execute("""
+                SELECT run_id,url,wait_reason,job_id FROM jobs_url_imports
+                WHERE finished=0 OR run_id IN (
+                    SELECT run_id FROM jobs_url_imports WHERE finished=1 ORDER BY rowid DESC LIMIT 5
+                ) ORDER BY finished,rowid DESC
+            """).fetchall()
+            result = []
+            for row in rows:
+                run = read_run(row["run_id"], connection=conn)
+                waiting = run["status"] == "running" and row["wait_reason"]
+                result.append({"runId": run["runId"], "url": row["url"],
+                               "status": "waiting_for_capacity" if waiting else run["status"],
+                               "cancellationRequested": run["cancellationRequested"], "errorCode": run["errorCode"],
+                               "jobId": row["job_id"] if run["status"] == "succeeded" else None})
+            return result
+
+    def capture(self, context, payload):
+        # Actions admitted by an earlier worker may predate the progress table.
+        with self.database.transaction() as conn:
+            self.admit(context.run_id, payload, conn)
+        return ImportCalls(self.database, context)
+
+
+class ImportCalls:
+    def __init__(self, database, context):
+        self.database = database
+        self.context = context
+
+    def link_job(self, job_id):
+        # A recovered action can return an existing capture receipt without invoking acquisition.
+        with self.database.transaction() as conn:
+            if conn.execute("SELECT 1 FROM jobs_jobs WHERE job_id=?", (job_id,)).fetchone():
+                conn.execute("UPDATE jobs_url_imports SET job_id=? WHERE run_id=?", (job_id, self.context.run_id))
+            else:
+                conn.execute("DELETE FROM jobs_url_imports WHERE run_id=?", (self.context.run_id,))
+
+    async def determine(self, model, **request):
+        run_id = self.context.run_id
+        operation = request["operation"]
+        execution = model.freeze_execution()
+        fingerprint = model.fingerprint(**request, execution=execution)
+        with self.database.connect() as conn:
+            prior = conn.execute("SELECT fingerprint,receipt_id FROM jobs_url_import_calls WHERE run_id=? AND operation=?",
+                                 (run_id, operation)).fetchone()
+            if prior:
+                if prior["fingerprint"] != fingerprint:
+                    raise AppError("import_source_changed", "The source or model changed after an earlier import step. Review the posting before retrying.", 409)
+                receipt = model.receipt(prior["receipt_id"], conn)
+                if receipt["status"] != "succeeded" or receipt["input_fingerprint"] != fingerprint:
+                    raise AppError("import_call_unsettled", "An earlier import model call did not finish successfully. Inspect the recorded attempt before retrying.", 409)
+                return ModelResult(receipt["value"], {k: receipt[k] for k in (
+                    "receipt_id", "provider", "model", "lane", "prompt_version", "input_fingerprint", "created_at")})
+
+        def admitted(conn, receipt_id):
+            conn.execute("INSERT INTO jobs_url_import_calls VALUES(?,?,?,?)", (run_id, operation, fingerprint, receipt_id))
+            conn.execute("UPDATE jobs_url_imports SET wait_reason=NULL WHERE run_id=?", (run_id,))
+
+        def record_wait(code):
+            with self.database.transaction() as conn:
+                conn.execute("UPDATE jobs_url_imports SET wait_reason=? WHERE run_id=?", (code, run_id))
+
+        with wait_for_model_capacity(self.context.cancelled, on_wait=record_wait):
+            return await model.determine(**request, execution=execution, on_admitted=admitted)

@@ -45,6 +45,19 @@ certifications and licenses, job conditions and detailed tenure analysis are
 excluded from this iteration; structured certification support is tracked in
 [#1476](https://github.com/ebarti/JobCtrl/issues/1476).
 
+When a posting accepts prior work in any of several fields, one Professional
+Experience requirement can preserve the full choice. Fit can assess it once
+using factual role or achievement evidence for an accepted field. A posting
+that instead requests a technical practice can list example tools under that
+skill. If the posting leaves eligibility unclear, its Requirements attempt
+can remain unresolved.
+
+When a new posting joins the library, Requirements compares its wording with
+the exact demands already saved. It can keep the demand associated with the
+posting evidence, select a specific saved demand shared by the relevant jobs,
+or write a new definition from the posting. If the choice is ambiguous, the
+last accepted requirements remain available.
+
 This guide describes the Original redesign source candidate. The
 [active acceptance ledger](../plans/2026-11-11-original-app-redesign.md) separates
 implementation and verification. The

@@ -37,10 +37,10 @@ class PostingRepository(Protocol):
 
 class PostingAcquirer(Protocol):
     def bind_crawler_settings(self, provider): ...
-    async def acquire(self, payload: dict, *, cancelled=None) -> dict: ...
+    async def acquire(self, payload: dict, *, cancelled=None, import_calls=None) -> dict: ...
     async def source_page(self, url, *, session=None, captured=None, cancelled=None): ...
     async def availability(self, posting, *, cancelled=None): ...
-    async def verify_refresh_identity(self, previous, candidate): ...
+    async def verify_refresh_identity(self, previous, candidate, *, import_calls=None): ...
 
 
 def _capture_failure_evidence(error):
@@ -102,9 +102,9 @@ class JobsService:
     def register_post_commit_deletion_port(self, callback, feature=None):
         self.repository.register_post_commit_deletion_port(callback, feature)
 
-    async def acquire_posting(self, payload, *, cancelled=None):
+    async def acquire_posting(self, payload, *, cancelled=None, import_calls=None):
         try:
-            return await self.acquirer.acquire(payload, cancelled=cancelled)
+            return await self.acquirer.acquire(payload, cancelled=cancelled, import_calls=import_calls)
         except DeterminationFailure as error:
             raise AppError(error.code, "The posting determination is not bound to its captured sources.", 409) from None
 
@@ -281,7 +281,7 @@ class JobsService:
         )
 
     async def capture_external(
-        self, payload: dict, *, cancelled=None, guard=None, receipt_fingerprint=None, on_accepted=None
+        self, payload: dict, *, cancelled=None, guard=None, receipt_fingerprint=None, on_accepted=None, import_calls=None
     ) -> dict:
         if not isinstance(payload, dict):
             raise AppError("invalid_posting", "The capture must be a JSON object.")
@@ -302,9 +302,9 @@ class JobsService:
         if existing and expected is None:
             expected = existing["revision"]
         try:
-            posting = await self.acquire_posting(payload, cancelled=cancelled)
+            posting = await self.acquire_posting(payload, cancelled=cancelled, import_calls=import_calls)
             if existing is not None:
-                posting = await self.acquirer.verify_refresh_identity(existing, posting)
+                posting = await self.acquirer.verify_refresh_identity(existing, posting, import_calls=import_calls)
             if cancelled and cancelled():
                 raise AppError("action_cancelled", "Capture was cancelled.", 409)
             if posting.pop("quarantine", False):

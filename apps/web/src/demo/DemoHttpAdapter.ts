@@ -32,7 +32,6 @@ const routes: readonly Route[] = [
   route("GET", "/v1/discovery/settings", "discoverySettings"),
   route("PATCH", "/v1/discovery/settings", "updateDiscoverySettings", "$body"),
   route("GET", "/v1/discovery/sources", "discoverySources"),
-  route("POST", "/v1/discovery/sources", "upsertDiscoverySource", "$body"),
   route(
     "PATCH",
     "/v1/discovery/sources/:sourceId/state",
@@ -45,25 +44,6 @@ const routes: readonly Route[] = [
     "/v1/discovery/sources/:sourceId/preview",
     "discoverySourcePreview",
     "sourceId",
-  ),
-  route(
-    "GET",
-    "/v1/discovery/locator-candidates",
-    "discoveryLocatorCandidates",
-  ),
-  route(
-    "POST",
-    "/v1/discovery/locator-candidates/:candidateId/promote",
-    "promoteSourceLocatorCandidate",
-    "candidateId",
-    "$body",
-  ),
-  route(
-    "POST",
-    "/v1/discovery/locator-candidates/:candidateId/reject",
-    "rejectSourceLocatorCandidate",
-    "candidateId",
-    "$body",
   ),
   route("GET", "/v1/discovery/quarantine", "discoveryQuarantine"),
   route(
@@ -357,11 +337,6 @@ const routes: readonly Route[] = [
     "POST",
     "/v1/extension/pairing-token/rotate",
     "rotateExtensionCapabilityToken",
-  ),
-  route(
-    "GET",
-    "/v1/discovery/browser-extension/status",
-    "discoveryBrowserBridgeStatus",
   ),
   route("GET", "/v1/providers/models", "providerModels"),
   route("GET", "/v1/providers/status", "providerStatus"),

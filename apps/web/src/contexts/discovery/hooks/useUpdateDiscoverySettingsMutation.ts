@@ -68,10 +68,6 @@ function patchDiscoverySettings(
       body.schedulingEnabled,
     ),
     scheduleCron: persistedValue(current.effectiveSettings.scheduleCron, body.scheduleCron),
-    maxParallelFamilies: persistedValue(
-      current.effectiveSettings.maxParallelFamilies,
-      body.maxParallelFamilies,
-    ),
     useBrowserHeaders: persistedValue(
       current.effectiveSettings.useBrowserHeaders,
       body.useBrowserHeaders,
@@ -99,9 +95,6 @@ function patchDiscoverySettings(
         ? { schedulingEnabled: body.schedulingEnabled }
         : {}),
       ...(body.scheduleCron !== undefined ? { scheduleCron: body.scheduleCron } : {}),
-      ...(body.maxParallelFamilies !== undefined
-        ? { maxParallelFamilies: body.maxParallelFamilies }
-        : {}),
       ...(body.useBrowserHeaders !== undefined ? { useBrowserHeaders: body.useBrowserHeaders } : {}),
       ...(body.crawlUserAgentProduct !== undefined
         ? { crawlUserAgentProduct: body.crawlUserAgentProduct }

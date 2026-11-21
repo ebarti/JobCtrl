@@ -17,7 +17,7 @@ from jobctrl.app.errors import AppError
 
 MAX_REQUEST_BYTES = 20 * 1024 * 1024
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-EXTENSION_PREFIXES = ("/v1/extension/", "/v1/discovery/browser-extension/")
+EXTENSION_PREFIXES = ("/v1/extension/",)
 
 
 def is_loopback(value: str) -> bool:
@@ -151,16 +151,12 @@ class LocalSecurity:
         )
         same_origin_read = (scope["method"] in {"GET", "HEAD"} and not origin and not referer
                             and one("sec-fetch-site") == "same-origin")
-        first_party_status = (scope["path"] == "/v1/discovery/browser-extension/status"
-                              and scope["method"] in {"GET", "HEAD"} and not extension
-                              and (source_ok or same_origin_read)
-                              and one("sec-fetch-site") in {"", "same-origin", "same-site", "none"})
         if scope["method"] in UNSAFE_METHODS and not local_token:
             if not source_ok or one("sec-fetch-site") not in {"", "same-origin", "same-site", "none"}:
                 error = error or AppError("cross_site_request", "A first-party local origin or capability token is required.", 403)
         if extension and (not extension_path or pairing or not token_ok) and scope["method"] != "OPTIONS":
             error = error or AppError("invalid_extension_capability_token", "This extension request is not authorized.", 401)
-        if extension_path and not pairing and not first_party_status and scope["method"] != "OPTIONS" and not token_ok:
+        if extension_path and not pairing and scope["method"] != "OPTIONS" and not token_ok:
             error = error or AppError("invalid_extension_capability_token", "A valid local capability token is required.", 401)
         if pairing and metadata and (not (source_ok or same_origin_read) or one("sec-fetch-site") not in {"same-origin", "same-site", "none"}):
             error = error or AppError("cross_site_request", "Pairing requires a first-party request.", 403)

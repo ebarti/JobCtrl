@@ -1,3 +1,4 @@
+import { useJobStreamingBoardOptions } from "../hooks/useDiscoveryProductControlsQuery.js";
 import {
   DiscoverySettingsUpdateRequestSchema,
   type DiscoverySettings,
@@ -33,17 +34,9 @@ import {
   type DiscoverySettingHelpContent,
 } from "./DiscoverySettingHelp.js";
 
-const BOARD_OPTIONS: Array<{ value: DiscoverySettings["boards"][number]; label: string }> = [
-  { value: "indeed", label: "Indeed" },
-  { value: "linkedin", label: "LinkedIn" },
-  { value: "zip_recruiter", label: "ZipRecruiter" },
-  { value: "glassdoor", label: "Glassdoor" },
-];
-
 const RUNTIME_FIELDS = [
   "boards",
   "hoursOld",
-  "maxParallelFamilies",
   "useBrowserHeaders",
   "schedulingEnabled",
   "scheduleCron",
@@ -53,7 +46,6 @@ type RuntimeSettingsValues = Pick<DiscoverySettingsUpdateRequest, typeof RUNTIME
 const runtimeSettingsSchema = DiscoverySettingsUpdateRequestSchema.pick({
   boards: true,
   hoursOld: true,
-  maxParallelFamilies: true,
   useBrowserHeaders: true,
   schedulingEnabled: true,
   scheduleCron: true,
@@ -73,12 +65,6 @@ const RUNTIME_SETTING_HELP = {
     description:
       "Set the posting-age cutoff in hours. When a board needs a broader request, JobCtrl keeps only dates confirmed inside this window; uncertain dates are excluded. Use 0 for no cutoff. Source failures do not stop compatible boards.",
     href: `${DISCOVERY_GUIDE_URL}#runtime-setting-posting-lookback-hours`,
-  },
-  maxParallelFamilies: {
-    title: "Parallel source families",
-    description:
-      "Limit how many source families may crawl concurrently in a Discover run. JobCtrl caps the value at four and at available worker activity slots. The next run snapshots it.",
-    href: `${DISCOVERY_GUIDE_URL}#runtime-setting-parallel-source-families`,
   },
   useBrowserHeaders: {
     title: "Use browser headers",
@@ -108,14 +94,7 @@ function toFormValues(response: DiscoverySettingsResponse): RuntimeSettingsValue
     schedulingEnabled: settings.schedulingEnabled,
     scheduleCron: settings.scheduleCron,
   };
-  for (const field of [
-    "maxParallelFamilies",
-    "useBrowserHeaders",
-  ] as const) {
-    if (effectiveSettings[field].editable) {
-      Object.assign(values, { [field]: settings[field] });
-    }
-  }
+  if (effectiveSettings.useBrowserHeaders.editable) values.useBrowserHeaders = settings.useBrowserHeaders;
   return values;
 }
 
@@ -145,6 +124,7 @@ export function DiscoveryRuntimeSettingsPanel({ defaultOpen = true, includeSearc
 }
 
 export function DiscoveryRuntimeSettingsForm({ initial, includeSearchSettings = true }: { initial: DiscoverySettingsResponse; readonly includeSearchSettings?: boolean }) {
+  const boardOptions = useJobStreamingBoardOptions();
   const updateSettings = useUpdateDiscoverySettingsMutation();
   const tenantId = useTenantId();
   const [statusMessage, setStatusMessage] = useState("");
@@ -242,7 +222,7 @@ export function DiscoveryRuntimeSettingsForm({ initial, includeSearchSettings = 
                   </DiscoverySettingLegend>
                 </FieldLegend>
                 <FieldGroup className="checkbox-options discovery-board-options">
-                  {BOARD_OPTIONS.map((option) => (
+                  {boardOptions.map((option) => (
                     <Field
                       className="choice target-choice"
                       key={option.value}
@@ -255,7 +235,7 @@ export function DiscoveryRuntimeSettingsForm({ initial, includeSearchSettings = 
                           const next = new Set(selected);
                           checked ? next.add(option.value) : next.delete(option.value);
                           field.handleChange(
-                            BOARD_OPTIONS.map(({ value }) => value).filter((value) => next.has(value)),
+                            [...next],
                           );
                         }}
                       />
@@ -273,9 +253,6 @@ export function DiscoveryRuntimeSettingsForm({ initial, includeSearchSettings = 
           {(field) => <NumberControl help={RUNTIME_SETTING_HELP.hoursOld} id="discovery-lookback" name="hoursOld" label="Posting lookback hours" min={0} max={8760} value={field.state.value ?? 72} metadata={effective.hoursOld} onChange={field.handleChange} />}
         </form.Field>
         </> : null}
-        <form.Field name="maxParallelFamilies">
-          {(field) => <NumberControl help={RUNTIME_SETTING_HELP.maxParallelFamilies} id="discovery-max-parallel" name="maxParallelFamilies" label="Parallel source families" min={1} max={4} value={field.state.value ?? initial.settings.maxParallelFamilies} metadata={effective.maxParallelFamilies} onChange={field.handleChange} />}
-        </form.Field>
         <form.Field name="useBrowserHeaders">
           {(field) => (
             <Field className="field check" orientation="horizontal">
@@ -412,7 +389,7 @@ function DiscoverySettingLegend({
 
 function NumberControl({ help, name, id, label, min, max, metadata, value, onChange }: {
   help: DiscoverySettingHelpContent;
-  name: "hoursOld" | "maxParallelFamilies";
+  name: "hoursOld";
   id: string;
   label: string;
   min: number;

@@ -151,6 +151,11 @@ bypasses accepted authority or refresh admission.
 
 ## Initial Search cohort
 
+Durable Fit assessment and Preparation wait for model capacity. Initial
+qualification records its attempt together with the gateway receipt in the
+admission transaction. A worker can resume a capacity wait, while recovery of
+an already admitted call requires its settled authority.
+
 `qualify_cohort` receives the complete frozen job list, posting and Requirements
 revisions and hashes, and each job's original score revision. It captures the
 Profile, scoring guidance and current and historical qualification heads.
@@ -282,6 +287,31 @@ does not acquire scoped transport provenance. With no retained qualification
 call, the current transport is atomically pinned before its first reservation.
 Existing batch checkpoints, qualification versions and accepted currentness stay
 unchanged. These wire pins are per operation, not a global semantic invalidation.
+
+A new manual qualification stores the exact gateway receipt ID, request
+fingerprint and non-secret execution identity in the transaction that admits
+the provider call. If the frozen workspace changes after the provider returns,
+the original operation retains its source conflict and publishes no score.
+A separately admitted manual refresh for the same Profile and selected jobs
+may adopt the one settled qualification receipt for its exact source arguments,
+schema, prompt, provider, model, effort and configuration. The earlier manual
+operation must have reached qualification and encountered a revision conflict
+before factual publication. A historical completed call supplies its saved
+gateway receipt. A historical started call has only its original argument key.
+In that case the gateway must show one qualification admitted and settled
+strictly within that stale operation's lifetime, with an exact matching input.
+A matching receipt from before the stale operation cannot serve as its witness.
+Ambiguous admissions, unresolved timestamp boundaries, multiple eligible
+receipts and unsettled calls refuse adoption.
+A previous cancellation or provider failure cannot supply a reused decision.
+An explicitly requested retry of a settled failed call still undergoes normal
+admission. A known outstanding or uncertain effect prevents another exact
+dispatch.
+The current operation verifies the complete returned partition, citations,
+permitted facts, achievements and source heads before publishing its score.
+Operation counters record one `qualification_receipts_reused` for an adoption.
+`model_calls` counts new external calls. Historical operations preserve their
+original checkpoint and interruption behavior.
 
 Reservations precede external I/O and counters/checkpoints survive restart. A lost
 external acknowledgement cannot spend a fresh allowance. Input/catalog/posting/

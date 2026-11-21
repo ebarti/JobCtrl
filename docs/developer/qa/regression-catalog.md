@@ -247,3 +247,8 @@ Offer decisions/corrections preserve full history and stale-version drafts.
 Demo storage, extension transport and installed CLI are real separate entrypoints
 and require their own product proof; normal application browser tests do not
 establish them automatically.
+
+
+### Discovery provider and URL import
+
+Verify automatic search against the installed JobStreaming SDK at an owned provider boundary. Upgrade a workspace with a previously enabled employer feed and show that historical jobs and board selections survive. For a concurrent URL import, bind the waiting receipt, final job identity and completion to the same request while the search assesses its own new jobs.

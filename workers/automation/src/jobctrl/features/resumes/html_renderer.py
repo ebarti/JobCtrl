@@ -725,6 +725,31 @@ def _render_resume_pdf_playwright(
             page.set_content(html_content, wait_until="load")
             page.evaluate("() => document.fonts.ready")
             page.emulate_media(media="print")
+            # A physical break after a literal hyphen becomes whitespace when
+            # copied from Chromium's PDF. Keep compounds that fit on one line
+            # intact before measuring and printing the same document.
+            page.evaluate(r"""() => {
+              const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+              const compound = /\S[-\u2010]\S/u;
+              const leaves = [];
+              while (walker.nextNode()) {
+                if (compound.test(walker.currentNode.data)) leaves.push(walker.currentNode);
+              }
+              for (const leaf of leaves) {
+                const fragment = document.createDocumentFragment();
+                for (const token of leaf.data.split(/(\s+)/u)) {
+                  if (compound.test(token)) {
+                    const word = document.createElement('span');
+                    word.style.cssText = 'display:inline-block;max-inline-size:100%;overflow-wrap:anywhere';
+                    word.textContent = token;
+                    fragment.append(word);
+                  } else {
+                    fragment.append(token);
+                  }
+                }
+                leaf.replaceWith(fragment);
+              }
+            }""")
             layout_boxes = page.evaluate(
                 """() => Array.from(document.querySelectorAll('[data-resume-layout-target]')).map((node) => {
   const pageNode = node.closest('[data-resume-page]');

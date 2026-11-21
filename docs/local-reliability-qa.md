@@ -28,18 +28,16 @@ retries. The run reports build, journey and total elapsed time; the hosted job
 also measures dependency preparation. See the exact scenario and coverage
 ledger in [Python application journeys](developer/qa/python-journeys.md).
 
-Hosted Browser CI schedules that same inventory in four fixed, disjoint
-Playwright shards, `--shard=1/4` through `--shard=4/4`, on separate
+Hosted Browser CI schedules that same inventory in six fixed, disjoint
+Playwright shards, `--shard=1/6` through `--shard=6/6`, on separate
 runners. Each hosted invocation uses two Playwright workers, zero retries, the
 existing case deadlines and the 720-second global deadline; the ordinary
 unsharded local command retains its one-worker default. Each shard builds once,
 each worker owns its Temporal service, and each journey owns its application
 workspace. Shards retain separately named evidence. Matrix fail-fast is disabled so a failed shard does
 not cancel its peers. The stable **Browser / UI checks** result passes only when
-all four shard jobs succeed; failure, cancellation or a skipped shard cannot
-qualify the complete inventory. A shard pass alone is partial proof. Record
-all four results and their exact candidate before claiming complete hosted
-coverage.
+all six shard jobs succeed. Record the result of every shard and the candidate
+revision to establish complete hosted coverage.
 
 Hosted Ubuntu transport recovery may prefer only the fixed Ubuntu-listed,
 operator-verified HTTPS candidate after all three completed original mirror

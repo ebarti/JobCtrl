@@ -1,6 +1,6 @@
 import { test, expect, json, modelCall } from "../harness/fixtures.js";
 import { captureReusePosting } from "./reuse-data.js";
-import { catalogMatching, citationSelections, occurrenceRoots, typedExtraction, type CatalogContext } from "./requirements-data.js";
+import { catalogContext, catalogMatching, citationSelections, occurrenceRoots, typedExtraction } from "./requirements-data.js";
 import { readCatalog, requirementsPath, type NormalizedSnapshot } from "./consolidation-data.js";
 
 test("demand evidence excludes offered prior definitions while exact reuse and cross-job bindings remain valid", async ({ api, app }) => {
@@ -26,7 +26,7 @@ test("demand evidence excludes offered prior definitions while exact reuse and c
   const secondExtraction = await modelCall(app, "requirements.extract");
   secondExtraction.reply(typedExtraction(secondExtraction, { requirements: [{ localId: "peer", text: definition }] }));
   const invalidCall = await modelCall(app, "requirements.match_catalog");
-  const context = invalidCall.body["context"] as CatalogContext;
+  const context = catalogContext(invalidCall);
   const prior = context.accepted_demands.find((row) => row.demand_fingerprint === fingerprint)!;
   expect(prior).toBeTruthy();
   const schema = invalidCall.body["response_schema"] as { $defs: Record<string, { enum?: string[]; properties?: Record<string, unknown> }> };
@@ -40,7 +40,7 @@ test("demand evidence excludes offered prior definitions while exact reuse and c
   expect(schema.$defs["DemandEvidenceCitation"]!.properties).toMatchObject({ segment_id: { type: "string", minLength: 1, maxLength: 120 } });
   const authored = catalogMatching(invalidCall, { peer: { verdict: "equivalent", requirementId: requirement.requirement_id, demandDefinition: definition } });
   const demand = occurrenceRoots(authored)[0]!.slot;
-  expect(demand.reuse_demand_fingerprint).toBe(fingerprint);
+  expect(demand.kind).toBe("keep");
   // This is an offered, exact prior definition, not an invented source or a
   // mislabeled quote. Its role is reuse context, not original demand evidence.
   demand.citations.push(...citationSelections(invalidCall, [{ sourceId: prior.source_id, valuePath: ["definition"] }]));
@@ -59,7 +59,7 @@ test("demand evidence excludes offered prior definitions while exact reuse and c
   const publishing = api.post(requirementsPath(second.job_id), { data: payload });
   const validCall = await modelCall(app, "requirements.match_catalog");
   const valid = catalogMatching(validCall, { peer: { verdict: "equivalent", requirementId: requirement.requirement_id, demandDefinition: definition } });
-  expect(occurrenceRoots(valid)[0]!.slot.reuse_demand_fingerprint).toBe(fingerprint);
+  expect(occurrenceRoots(valid)[0]!.slot.kind).toBe("keep");
   validCall.reply(valid);
   const published = await publishing;
   expect(published.status(), await published.text()).toBe(200);

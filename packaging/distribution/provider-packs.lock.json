@@ -6,7 +6,7 @@
   "packs": [
     {
       "id": "claude-agent-sdk",
-      "version": "0.2.121",
+      "version": "0.2.186",
       "owner": "Anthropic PBC",
       "source": "https://pypi.org/project/claude-agent-sdk/",
       "license": "MIT AND LicenseRef-Anthropic-Commercial-Terms",
@@ -35,10 +35,10 @@
         },
         {
           "package": "claude-agent-sdk",
-          "version": "0.2.121",
-          "url": "https://files.pythonhosted.org/packages/ca/3b/16325094d09ca5fbfb92cab11c6f01ff072f4077879ecfcf0004464da3c5/claude_agent_sdk-0.2.121-py3-none-macosx_11_0_arm64.whl",
-          "sha256": "6d4707c4626434e75c35f350e66312d8447221c97208f1775d4b4c6542b8d2f2",
-          "sizeBytes": 71735241
+          "version": "0.2.186",
+          "url": "https://files.pythonhosted.org/packages/e4/23/c4a6dc2ae62899dcd15e5ec54e9da65fc62a6f88a00b67620aa8096109a8/claude_agent_sdk-0.2.186-py3-none-macosx_11_0_arm64.whl",
+          "sha256": "4f98e05618a955fc49190465b4eb01cb3c2fca6e0b9319ee6e6c6dd042619bc6",
+          "sizeBytes": 154587724
         },
         {
           "package": "cryptography",
@@ -107,7 +107,7 @@
     },
     {
       "id": "codex-provider-runtime",
-      "version": "0.163.0",
+      "version": "0.171.0",
       "owner": "OpenAI",
       "source": "https://pypi.org/project/openai-codex-cli-bin/",
       "license": "Apache-2.0",
@@ -120,23 +120,23 @@
       "wheels": [
         {
           "package": "openai-codex",
-          "version": "0.163.0",
-          "url": "https://files.pythonhosted.org/packages/d8/9e/423922a79df8dc61ed668a4b2d6d46e75a6e754f5a18cf967188aa85e97e/openai_codex-0.163.0-py3-none-any.whl",
-          "sha256": "d151e3ff8188bc2c07a962855d598b93bf87a49ec3440810e45a5f2e1167d99e",
-          "sizeBytes": 99039
+          "version": "0.171.0",
+          "url": "https://files.pythonhosted.org/packages/24/99/e99f87810555c2becbc618d598f3abcf2fd4d396476720566276229f0b43/openai_codex-0.171.0-py3-none-any.whl",
+          "sha256": "3c9578416acddd8746224cfd6d9d3f4ac08d798b20c56065a337de72eafa6dd6",
+          "sizeBytes": 105179
         },
         {
           "package": "openai-codex-cli-bin",
-          "version": "0.163.0",
-          "url": "https://files.pythonhosted.org/packages/d1/c2/a26dc89782bb9fd94d6efeee1d22677084aba89c28fcb34c4699e490dfb1/openai_codex_cli_bin-0.163.0-py3-none-macosx_11_0_arm64.whl",
-          "sha256": "dd0e6570930167f0e15ec94c5fb494a4a5a9dceb0a97113176c7b47c826cda05",
-          "sizeBytes": 125132575
+          "version": "0.171.0",
+          "url": "https://files.pythonhosted.org/packages/f4/79/64792288ef363f2c19f39112d54b393949b659a431d39214cf31e10acd23/openai_codex_cli_bin-0.171.0-py3-none-macosx_11_0_arm64.whl",
+          "sha256": "43ee58195e6d00578c00aed0687b305984b884dcb10513228bebefa48a61792f",
+          "sizeBytes": 167932333
         }
       ]
     },
     {
       "id": "antigravity-provider-runtime",
-      "version": "0.1.2",
+      "version": "0.1.24",
       "owner": "Google LLC",
       "source": "https://pypi.org/project/google-antigravity/",
       "license": "Apache-2.0",
@@ -194,10 +194,10 @@
         },
         {
           "package": "google-antigravity",
-          "version": "0.1.2",
-          "url": "https://files.pythonhosted.org/packages/03/d5/c6dc9b06d8248059c4ebba3489f620be1e53b03528f822c0fcf9b2dcc1bf/google_antigravity-0.1.2-py3-none-macosx_11_0_arm64.whl",
-          "sha256": "129f370b44320aefc00999ccf7c97418cd40252c5d3c07c3569843224500ffc5",
-          "sizeBytes": 30044136
+          "version": "0.1.24",
+          "url": "https://files.pythonhosted.org/packages/71/60/d276f00361ddedb6f9d3f2618775a909acff006279fb7bc6a64e23c75fcf/google_antigravity-0.1.24-py3-none-macosx_11_0_arm64.whl",
+          "sha256": "9c359bfa7b752ad3417da1a455a114dca643d02bdea7281e8de8d0d0f44c9cca",
+          "sizeBytes": 38296783
         },
         {
           "package": "google-auth",

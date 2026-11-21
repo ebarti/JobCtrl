@@ -1,10 +1,9 @@
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
-import type { DomainEventEnvelope } from "../../shared/ports/EventStreamPort.js";
+import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
 
 const jobSchema = z.object({
   job_id: z.string(), revision: z.number(), source_id: z.string(), source_revision: z.number(), source_hash: z.string(),
@@ -18,6 +17,7 @@ export type PostingSnapshot = z.infer<typeof jobSchema>;
 export const jobsKeys = {
   all: (tenantId: string) => ["tenant", tenantId, "jobs"] as const,
   lists: (tenantId: string) => [...jobsKeys.all(tenantId), "list"] as const,
+  urlImports: (tenantId: string) => [...jobsKeys.all(tenantId), "url-imports"] as const,
   list: (tenantId: string, q: string, offset: number, limit: number, status: string, sort: string, direction: string) => [...jobsKeys.lists(tenantId), { q, offset, limit, status, sort, direction }] as const,
   detail: (tenantId: string, jobId: string) => [...jobsKeys.all(tenantId), "detail", jobId] as const,
 };
@@ -54,8 +54,6 @@ export function useJobActions(jobId?: string) {
   };
   const capture = useMutation({ mutationFn: async (body: { url: string; title: string; company: string; description: string; location: string }) =>
     parseJob(await http.json<unknown>("POST", "/v1/jobs/capture", { body })), onSuccess: update });
-  const importUrl = useMutation({ mutationFn: async (url: string) =>
-    parseJob(await http.json<unknown>("POST", "/v1/jobs/import-url", { body: { url } })), onSuccess: update });
   const refresh = useMutation({ mutationFn: async (revision: number) => {
     if (!jobId) throw new Error("No job selected.");
     return parseJob(await http.json<unknown>("POST", `/v1/jobs/${encodeURIComponent(jobId)}/refresh`, { body: { expectedRevision: revision } }));
@@ -64,7 +62,7 @@ export function useJobActions(jobId?: string) {
     if (!jobId) throw new Error("No job selected.");
     return parseJob(await http.json<unknown>("POST", `/v1/jobs/${encodeURIComponent(jobId)}/availability`, { body: { expectedRevision: revision } }));
   }, onSuccess: update });
-  return { capture, importUrl, refresh, checkAvailability };
+  return { capture, refresh, checkAvailability };
 }
 const deletionSelectionSchema = z.object({ selectionId: z.string(), jobIds: z.array(z.string()), count: z.number(), expiresAt: z.string(),
   retentionNotice: z.string(), retainedIndependentData: z.array(z.string()),
@@ -89,7 +87,14 @@ export function useJobBulkActions() {
   });
   return { bulk, previewDelete, permanentDelete };
 }
-export const jobsInvalidation = {
-  eventTypes: ["JobCaptured", "JobSourceObserved", "JobUpdated", "JobCaptureAttempted", "PostingQuarantined", "JobAnalysisUpdated"] as const,
-  handle(event: DomainEventEnvelope, client: QueryClient) { void invalidateQueriesWithOptimisticOwnership(client, jobsKeys.all(event.tenantId)); },
+export const jobsInvalidation: FeatureEventHandler = {
+  eventTypes: ["JobCaptured", "JobSourceObserved", "JobUpdated", "JobCaptureAttempted", "PostingQuarantined", "JobAnalysisUpdated", "ActionQueued", "ActionStarted", "ActionCompleted", "ActionFailed", "ActionCancellationRequested"] as const,
+  handle(event, invalidate) {
+    if (event.eventType.startsWith("Action")) {
+      if (event.payload && typeof event.payload === "object" && "action" in event.payload && event.payload.action === "jobs.capture_url")
+        invalidate(jobsKeys.urlImports(event.tenantId));
+      return;
+    }
+    invalidate(jobsKeys.all(event.tenantId));
+  },
 };

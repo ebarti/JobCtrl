@@ -297,6 +297,7 @@ export async function createScoredFit(
     twoRequirements = false,
     sameAchievement = false,
     legacyPartitionV5 = false,
+    postingUrl = `https://example.com/jobs/${slug}`,
   } = {},
 ) {
   const authored = structuredClone(baseline);
@@ -316,7 +317,7 @@ export async function createScoredFit(
       : []),
   ];
   const posting = await json<CapturedPosting & { title: string; company: string; url: string }>(api, "post", "/v1/jobs/capture", {
-    url: `https://example.com/jobs/${slug}`,
+    url: postingUrl,
     title: "Synthetic Reliability Engineer",
     company: "Synthetic Refresh Company",
     description: clauses.join("\n"),

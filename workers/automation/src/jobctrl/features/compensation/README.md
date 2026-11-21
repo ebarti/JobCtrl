@@ -15,13 +15,33 @@ currency, period, dates, one-sided values and component differences remain
 explicit. A source-bound classification is reused only for an exact model
 input fingerprint after validating its saved receipt again.
 
-A refresh leases its job and snapshots source permissions. Its accepted posted
-and market records publish together only if the lease, posting revision/hash,
-source permissions and optional automatic-refresh switch remain current. Failure
-or cancellation preserves the prior records. The feature stores bounded, safe
-provider receipts and emits identifier-only invalidations. Committed Jobs
-changes can request the `compensation.refresh_stale` action; automatic retries
-respect the seven-day freshness window and one-day source failure backoff.
+A refresh leases its job and snapshots source permissions. Verified posted
+pay publishes before market classification. Each publication checks the lease,
+posting revision/hash, source permissions, cancellation and the automatic
+refresh switch. A failed market refresh preserves the prior estimate and its
+exact posted-pay receipt. An invalid posted extraction preserves the prior
+posted fact. The feature emits identifier-only invalidations. Committed posting
+changes queue only the affected job IDs with source text. Daily stale refreshes
+scan the active backlog. A workspace-wide action scope serializes both paths.
+Market source failure backoff applies to the posting revision already assessed.
+Automatic refreshes and retries of an unfinished or failed refresh reuse a
+successful posted-pay receipt for the exact job, revision, source text, prompt,
+schema and model configuration. The source citations and amounts are verified
+again before publication. An unsettled call blocks another dispatch for that
+input. An explicit refresh after completion requests a fresh determination.
+
+When the saved title is the only posting text, a per-job refresh sends its
+exact bytes to the posted-pay model. Automatic refresh can admit a title-only
+card containing a citable number. If the selected salary or description field
+has a confirmed `missing` determination, a title with additional numeric
+evidence can receive its own determination. Each result retains its field and
+receipt. Market comparisons bind the selected field so historical estimates
+can still resolve the evidence they originally used.
+
+Numeric citation checks support period-grouped thousands. The model selects
+the amount and cites the original text. An alternative number convention must
+account for every selected bound using complete tokens inside those citations.
+A single ambiguous token cannot establish two different endpoints.
 
 The provider adapters support Euro Top Tech, explicitly permitted Levels.fyi
 public pages and licensed feeds, permitted Glassdoor feeds, explicit manual

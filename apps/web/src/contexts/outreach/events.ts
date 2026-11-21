@@ -1,4 +1,3 @@
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { outreachKeys } from "./queryKeys.js";
 
@@ -9,21 +8,21 @@ const sourceEvents = ["ProfileUpdated", "ProfileSourceUpdated", "JobCaptured", "
 
 export const outreachEvents: FeatureEventHandler = {
   eventTypes: [...contactEvents, ...researchEvents, ...threadEvents, ...sourceEvents],
-  handle(event, client) {
+  handle(event, invalidate) {
     const tenant = event.tenantId;
     if ((contactEvents as readonly string[]).includes(event.eventType)) {
-      void invalidateQueriesWithOptimisticOwnership(client, outreachKeys.contacts(tenant));
-      void invalidateQueriesWithOptimisticOwnership(client, outreachKeys.threads(tenant));
+      invalidate(outreachKeys.contacts(tenant));
+      invalidate(outreachKeys.threads(tenant));
     }
     if ((researchEvents as readonly string[]).includes(event.eventType)) {
-      void invalidateQueriesWithOptimisticOwnership(client, outreachKeys.researchTasks(tenant));
-      if (event.eventType === "ContactCandidateConfirmed") void invalidateQueriesWithOptimisticOwnership(client, outreachKeys.contacts(tenant));
+      invalidate(outreachKeys.researchTasks(tenant));
+      if (event.eventType === "ContactCandidateConfirmed") invalidate(outreachKeys.contacts(tenant));
     }
     if ((threadEvents as readonly string[]).includes(event.eventType) || (sourceEvents as readonly string[]).includes(event.eventType)) {
-      void invalidateQueriesWithOptimisticOwnership(client, outreachKeys.threads(tenant));
+      invalidate(outreachKeys.threads(tenant));
     }
     if ((threadEvents as readonly string[]).includes(event.eventType) || event.eventType === "ContactDeleted") {
-      void invalidateQueriesWithOptimisticOwnership(client, outreachKeys.dueFollowUps(tenant));
+      invalidate(outreachKeys.dueFollowUps(tenant));
     }
   },
 };

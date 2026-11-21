@@ -312,9 +312,6 @@ export function BrowserCapabilitiesPanel() {
   }
 
   const capabilities = (query.data?.capabilities ?? []).filter(
-    // LinkedIn/Discovery authentication belongs to the selected extension in
-    // the user's live Chrome profile. Keep the legacy backend capability
-    // readable for compatibility, but never offer profile copying in Settings.
     (capability) => capability.id !== "authenticated-linkedin-browser",
   );
 
@@ -328,9 +325,7 @@ export function BrowserCapabilitiesPanel() {
           <h2 id="browser-capabilities-title">Browser capabilities</h2>
         </CardTitle>
         <CardDescription>
-          Review the managed browser and optional Apply browser. Discovery and
-          Enrich prefer the connected extension in your live Chrome profile;
-          without it, they use anonymous access. Pair the extension below.
+          Review the managed browser and optional Apply browser. Pair the extension below to save a posting from Chrome.
         </CardDescription>
         <CardAction>
           <StatusBadge icon={false} tone="muted">

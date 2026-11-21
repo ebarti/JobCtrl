@@ -31,12 +31,12 @@ const stages: readonly DiscoveryStage[] = [
     tone: "intent",
   },
   {
-    description: "Broad boards receive compiled queries; configured ATS and Workday sources enumerate their postings.",
-    detail: ["Board search", "ATS", "Workday"],
+    description: "JobStreaming searches the selected boards with the saved queries, locations and supported filters.",
+    detail: ["JobStreaming", "Selected boards"],
     icon: IconWorldSearch,
     number: "02",
     scope: "Network sources",
-    title: "Query or enumerate sources",
+    title: "Search selected boards",
     tone: "network",
   },
   {
@@ -48,16 +48,16 @@ const stages: readonly DiscoveryStage[] = [
     tone: "process",
   },
   {
-    description: "Every returned posting must pass the compiled title rules and accepted-location rules before storage.",
-    detail: ["Title accepted", "Location accepted"],
+    description: "A saved-target search checks the offered role against the recorded role preferences and applies the requested posting filters.",
+    detail: ["Role scope", "Posting filters"],
     icon: IconAdjustmentsCheck,
     number: "04",
     scope: "Acceptance gate",
-    title: "Check title and location",
+    title: "Check role and posting filters",
     tone: "gate",
   },
   {
-    description: "Accepted job records are written to the canonical local Discovery store.",
+    description: "Accepted job records are written to the local Jobs store.",
     detail: ["~/.jobctrl/jobctrl.db"],
     icon: IconDatabase,
     number: "05",
@@ -89,14 +89,12 @@ const stages: readonly DiscoveryStage[] = [
       </span>
       <strong id="discovery-pipeline-title">Intent narrows the search before anything becomes a saved job.</strong>
       <span id="discovery-pipeline-description">
-        JobCtrl crosses the network boundary for configured sources, then accepts and persists matching postings locally.
+        JobStreaming returns postings from the selected boards. JobCtrl checks the saved role targets and stores accepted postings locally.
       </span>
     </figcaption>
 
     <p id="discovery-pipeline-summary" class="discovery-pipeline__visually-hidden">
-      Process summary: compile local target intent; query broad boards or enumerate configured ATS and Workday sources;
-      extract and normalize returned postings; accept only postings whose titles and locations match; persist accepted jobs
-      in local SQLite; then score those saved jobs in a later workflow.
+      JobCtrl reads the saved search preferences and requests postings from JobStreaming. It checks each candidate against the saved role targets and applicable filters, stores accepted jobs in SQLite, and assesses person fit.
     </p>
 
     <div class="discovery-pipeline__legend" role="list" aria-label="Discovery data boundaries">
@@ -106,7 +104,7 @@ const stages: readonly DiscoveryStage[] = [
       </span>
       <span class="discovery-pipeline__legend-item discovery-pipeline__legend-item--network" role="listitem">
         <IconWorldSearch aria-hidden="true" :stroke-width="1.9" />
-        Configured network sources
+        JobStreaming boards
       </span>
       <span class="discovery-pipeline__legend-item discovery-pipeline__legend-item--stored" role="listitem">
         <IconDatabase aria-hidden="true" :stroke-width="1.9" />

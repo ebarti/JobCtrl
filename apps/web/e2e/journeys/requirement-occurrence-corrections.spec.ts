@@ -1,6 +1,6 @@
 import type { APIRequestContext } from "@playwright/test";
 import { test, expect, json, modelCall, completed, terminal, type ApplicationStack, type ExternalCall } from "../harness/fixtures.js";
-import { catalogMatching, catalogMemberMeaning, typedExtraction, modelSources, type CatalogContext } from "./requirements-data.js";
+import { catalogContext, catalogMatching, catalogMemberMeaning, typedExtraction, modelSources, type CatalogContext } from "./requirements-data.js";
 import { captureReusePosting, acceptReuseRequirements, type CapturedPosting } from "./reuse-data.js";
 
 const ACTION = "requirements.correct_occurrences";
@@ -215,7 +215,7 @@ test("scoped occurrence corrections resolve two selected meanings and retain eve
   const laterResult = await acceptReuseRequirements(api, app, later,
     [{ localId: "transformation", text: clauses[0]!, definition: corrected[0]!.definition }],
     { transformation: { verdict: "equivalent", requirementId: value.existingId } });
-  const laterContext = laterResult.matching!.body["context"] as CatalogContext;
+  const laterContext = catalogContext(laterResult.matching!);
   expect(new Set(laterContext.candidates.map((row) => row.requirement_id))).toEqual(retainedIds);
   expect(laterResult.snapshot.requirements[0]!.requirement_id).toBe(value.existingId);
   expect(operations(app, beforeRetainedMatching)).toEqual(["requirements.extract", "requirements.match_catalog"]);
@@ -327,7 +327,7 @@ test("scoped occurrence corrections refuse a catalog race after one complete rec
   const selectedIds = value.snapshot.requirements.slice(0, 2).map((row) => row.occurrence_id).sort();
   const ownCalls = app.external.calls.slice(before).filter((row) => row.body["operation"] === ACTION ||
     row.body["operation"] === "requirements.match_catalog" &&
-    JSON.stringify((row.body["context"] as CatalogContext).incoming.map((incoming) => incoming.local_id).sort()) === JSON.stringify(selectedIds));
+    JSON.stringify(catalogContext(row).incoming.map((incoming) => incoming.local_id).sort()) === JSON.stringify(selectedIds));
   expect(ownCalls.map((row) => row.body["operation"])).toEqual([ACTION, "requirements.match_catalog"]);
   const beforeReplay = app.external.calls.length;
   expect((await start(api, payload, "occurrence-call-bound")).runId).toBe(run.runId);

@@ -93,6 +93,12 @@ strict result/citation validation and publication guards. There is no blanket
 gateway result cache. An explicit forced refresh has its own durable action
 binding; retries of that same action may reuse its settled result.
 
+Single-job refresh encodes repeated whole source values and citation paths in
+request-local dictionaries. The owner restores and verifies the full source
+inventory, then checks every model-selected reuse ID against the assigned
+retained meaning and exact definition. Newly admitted searches freeze this
+transport choice before any target is processed.
+
 The complete serialized input must pass the gateway's structural payload limit
 and lane/spend admission. A byte bound does not prove token-context fit; the
 current gateway has no selected-model context-capacity metadata. Input/context

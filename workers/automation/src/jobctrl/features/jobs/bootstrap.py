@@ -15,11 +15,14 @@ from jobctrl.features.jobs.adapters.role_analysis import SourceBoundRoleAnalysis
 from jobctrl.features.jobs.repository import SqliteJobsRepository
 from jobctrl.features.jobs.schema import RECOVER_DISCOVERY_DETAILS, SCHEMA
 from jobctrl.features.jobs.service import JobsService
+from jobctrl.features.jobs.url_imports import SCHEMA as URL_IMPORT_SCHEMA, UrlImports
 
 
 def build_feature(runtime, **ports):
     runtime.database.initialize_feature("jobs", SCHEMA)
     runtime.database.initialize_feature("jobs_recover_discovery_details_v1", RECOVER_DISCOVERY_DETAILS)
+    runtime.database.initialize_feature("jobs_url_imports_v1", URL_IMPORT_SCHEMA)
+    imports = UrlImports(runtime.database)
     repository = SqliteJobsRepository(runtime.database, runtime.events)
     fetcher = ports.get("posting_fetcher")
     if os.environ.get("JOBCTRL_POSTING_PROVIDER_ENDPOINT"):
@@ -50,6 +53,9 @@ def build_feature(runtime, **ports):
 
     async def import_url(request):
         return JSONResponse(await service.capture_external(await json_object(request)), status_code=201)
+
+    async def recent_imports(request):
+        return JSONResponse({"imports": imports.recent(request.app.state.application.action_run)})
 
     async def detail(request):
         job_id = request.path_params["job_id"]
@@ -141,7 +147,12 @@ def build_feature(runtime, **ports):
         return JSONResponse(repository.decide_quarantine(request.path_params["quarantine_id"], body.get("decision")))
 
     async def capture_action(context, payload):
-        return await service.capture_external(payload, cancelled=context.cancelled)
+        if not any(payload.get(key) for key in ("captureId", "receiptKey", "receipt_key")):
+            payload = {**payload, "captureId": context.run_id}
+        calls = imports.capture(context, payload)
+        result = await service.capture_external(payload, cancelled=context.cancelled, import_calls=calls)
+        calls.link_job(result["job_id"])
+        return result
 
     async def refresh_action(context, payload):
         job_id = payload.get("job_id") or payload.get("jobId") or payload.get("jobKey")
@@ -183,6 +194,7 @@ def build_feature(runtime, **ports):
         Route("/v1/jobs/reviewable-list", index, methods=["GET"]),
         Route("/v1/jobs/capture", capture, methods=["POST"]),
         Route("/v1/jobs/import-url", import_url, methods=["POST"]),
+        Route("/v1/jobs/url-imports", recent_imports, methods=["GET"]),
         Route("/v1/jobs/permanent-delete-selection", delete_selection, methods=["POST"]),
         *(
             Route("/v1/jobs/bulk-" + action, bulk, methods=["POST"])
@@ -205,6 +217,10 @@ def build_feature(runtime, **ports):
         name="jobs",
         service=service,
         routes=routes,
+        capabilities=("jobs.url_import_queue",),
+        action_scopes={"jobs.capture_url": imports.scope},
+        action_admissions={"jobs.capture_url": imports.admit},
+        action_finalizers={"jobs.capture_url": imports.finish},
         actions={
             "jobs.capture_url": capture_action,
             "jobs.refresh": refresh_action,

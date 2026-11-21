@@ -4,7 +4,7 @@ import { citeSources, modelSources, typedExtraction } from "./requirements-data.
 export const COMMON_DEMAND = "Maintain durable workflow recovery.";
 export type CohortPosting = { job_key: string; url: string; title: string; company: string; description: string; location: string; unsupported?: boolean; demand?: string; foreignExtractionSource?: boolean };
 export const posting = (index: number): CohortPosting => ({ job_key: `cohort-source-${index}`,
-  url: `https://example.com/jobs/cohort-source-${index}`, title: `Synthetic Cohort Source ${index} Engineer`,
+  url: `https://www.indeed.com/viewjob?jk=cohort-source-${index}`, title: `Synthetic Cohort Source ${index} Engineer`,
   company: "Synthetic Cohort Company", description: `${COMMON_DEMAND}\nDocument the distinct synthetic handover ${index}.`, location: "Madrid" });
 
 /** Answer only the declared external boundaries for this authored cohort. The

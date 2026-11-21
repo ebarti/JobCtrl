@@ -88,7 +88,7 @@ bytes stay under the document owner, independent from app appearance.
 | `~/.jobctrl/.env` | Legacy plaintext provider keys until migration, plus runtime environment configuration. |
 | repo `.env` | Development-only overrides for the current checkout. |
 | shell environment | Ephemeral overrides for commands, CI, and headless operation; not the normal persistent credential store. |
-| `workers/automation/src/jobctrl/config/*.yaml` | Packaged employer and site behavior registries (`employers.yaml`, `sites.yaml`). The dynamic source registry lives in SQLite. |
+| JobStreaming board catalog | The installed SDK supplies the boards. Discovery stores selected board IDs, availability and versioned settings in SQLite. |
 
 The development launcher loads `$JOBCTRL_DIR/.env` (default `~/.jobctrl/.env`),
 repo `.env`, and `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`) before
@@ -431,6 +431,10 @@ daily dollar limit and no affected finite token lane, the header shows running
 work or **LLM · No daily limit**; unknown history is informational rather than a
 reconciliation task. **Settings → Budgets → Today's model usage** retains the
 unknown total, recorded subtotal, running-call count and unknown-call count.
+The running count includes calls started on earlier UTC days. Daily dollars,
+tokens and unknown usage belong to the UTC date when each call started. The
+header and digest continue to show model activity across midnight even when
+the new day's recorded spend is zero.
 The original receipts are preserved. No cancellation cause is inferred from a
 receipt that lacks an exact action link.
 

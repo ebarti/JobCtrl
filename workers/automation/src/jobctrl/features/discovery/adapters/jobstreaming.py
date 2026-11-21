@@ -40,6 +40,10 @@ from jobctrl.features.discovery.remote_search import RemoteSearchConfigurationEr
 from jobctrl.features.discovery.remote_search import provider_scope, validate_remote_search_scope
 
 
+def supported_boards() -> tuple[str, ...]:
+    return tuple(site.value for site in default_registry().sites)
+
+
 @dataclass(frozen=True, slots=True)
 class JobStreamingSearchSpec:
     """Immutable JobCtrl search input translated to one provider request."""

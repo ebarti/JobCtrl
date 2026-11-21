@@ -170,6 +170,9 @@ export const SavedTableViewGridFiltersSchema = z.record(
 );
 export type SavedTableViewGridFilters = z.infer<typeof SavedTableViewGridFiltersSchema>;
 
+export const PostedPayFilterSchema = z.enum(["all", "known", "unknown", "source_known", "source_unknown"]);
+export type PostedPayFilter = z.infer<typeof PostedPayFilterSchema>;
+
 /** Server-composed Jobs query criteria that are not represented by column filters. */
 export const SavedJobGridFiltersSchema = z.object({
   jobState: z.string().trim().min(1).max(200).optional(),
@@ -178,7 +181,7 @@ export const SavedJobGridFiltersSchema = z.object({
   postedMaxEur: z.number().finite().nonnegative().optional(),
   marketMinEur: z.number().finite().nonnegative().optional(),
   marketMaxEur: z.number().finite().nonnegative().optional(),
-  postedKnown: z.enum(["all", "known", "unknown"]).optional(),
+  postedKnown: PostedPayFilterSchema.optional(),
   marketKnown: z.enum(["all", "known", "unknown"]).optional(),
   compensationConfidence: z.string().max(200).optional(),
   compensationWarnings: z.enum(["all", "present", "none"]).optional(),
@@ -4625,219 +4628,6 @@ export interface ExtensionAutofillProfileResponse {
   fields: ExtensionAutofillProfileField[];
 }
 
-export const DISCOVERY_BROWSER_SOURCE_FAMILIES = [
-  "jobspy",
-  "ats_api",
-  "workday",
-  "smartextract",
-  "enrichment",
-] as const;
-export type DiscoveryBrowserSourceFamily =
-  (typeof DISCOVERY_BROWSER_SOURCE_FAMILIES)[number];
-
-const DiscoveryBrowserTaskIdSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(160)
-  .regex(/^[A-Za-z0-9._:-]+$/);
-
-const DiscoveryBrowserHttpUrlSchema = z
-  .string()
-  .trim()
-  .max(4096)
-  .regex(/^https?:\/\/[^\s]+$/i, "url must be a valid http(s) URL");
-
-const DiscoveryBrowserHeadersSchema = z
-  .record(z.string().trim().min(1).max(80), z.string().max(4096))
-  .refine((headers) => Object.keys(headers).length <= 32, {
-    message: "At most 32 request headers are allowed.",
-  })
-  .superRefine((headers, context) => {
-    const forbidden = new Set([
-      "connection",
-      "content-length",
-      "cookie",
-      "host",
-      "origin",
-      "referer",
-      "sec-fetch-dest",
-      "sec-fetch-mode",
-      "sec-fetch-site",
-      "user-agent",
-    ]);
-    for (const name of Object.keys(headers)) {
-      const normalized = name.toLowerCase();
-      if (
-        forbidden.has(normalized) ||
-        normalized.startsWith("sec-") ||
-        normalized.startsWith("proxy-")
-      ) {
-        context.addIssue({
-          code: "custom",
-          message: `Header ${name} is browser-owned and cannot be supplied.`,
-        });
-      }
-    }
-  });
-
-const DiscoveryBrowserRequestBodySchema = z
-  .string()
-  .max(2_000_000)
-  .refine((value) => utf8ByteLength(value) <= 2_000_000, {
-    message: "Discovery request body must not exceed 2 MB of UTF-8 data.",
-  });
-
-const DiscoveryBrowserResultBodySchema = z
-  .string()
-  .max(4_000_000)
-  .refine((value) => utf8ByteLength(value) <= 4_000_000, {
-    message: "Discovery response content must not exceed 4 MB of UTF-8 data.",
-  });
-
-export const DiscoveryBrowserRequestSchema = z.discriminatedUnion("mode", [
-  z
-    .object({
-      mode: z.literal("http_request"),
-      url: DiscoveryBrowserHttpUrlSchema,
-      method: z.enum(["GET", "POST"]),
-      headers: DiscoveryBrowserHeadersSchema.default({}),
-      body: DiscoveryBrowserRequestBodySchema.optional(),
-    })
-    .strict()
-    .refine((request) => request.method === "POST" || request.body === undefined, {
-      message: "GET browser requests cannot include a body.",
-      path: ["body"],
-    }),
-  z
-    .object({
-      mode: z.literal("rendered_page"),
-      url: DiscoveryBrowserHttpUrlSchema,
-    })
-    .strict(),
-]);
-export type DiscoveryBrowserRequest = z.infer<typeof DiscoveryBrowserRequestSchema>;
-
-export const DiscoveryBrowserTaskCreateSchema = z
-  .object({
-    taskId: DiscoveryBrowserTaskIdSchema,
-    workflowId: z.string().trim().min(1).max(200),
-    temporalRunId: z.string().trim().min(1).max(200),
-    sourceFamily: z.enum(DISCOVERY_BROWSER_SOURCE_FAMILIES),
-    sourceId: z.string().trim().min(1).max(200).optional(),
-    request: DiscoveryBrowserRequestSchema,
-    timeoutMs: z.number().int().min(1_000).max(120_000).default(60_000),
-  })
-  .strict();
-export type DiscoveryBrowserTaskCreateRequest = z.infer<
-  typeof DiscoveryBrowserTaskCreateSchema
->;
-
-export const DiscoveryBrowserTaskResultSchema = z.discriminatedUnion("status", [
-  z
-    .object({
-      status: z.literal("succeeded"),
-      finalUrl: DiscoveryBrowserHttpUrlSchema,
-      statusCode: z.number().int().min(0).max(599).nullable(),
-      contentType: z.string().trim().max(300).default(""),
-      title: z.string().max(500).default(""),
-      browserUserAgent: z.string().max(500).optional(),
-      bodyText: DiscoveryBrowserResultBodySchema,
-      bodyHtml: DiscoveryBrowserResultBodySchema.optional(),
-      visibleApplyControls: z.array(z.object({
-        href: z.string().trim().min(1).max(2048),
-        jobId: z.string().trim().min(1).max(200),
-      }).strict()).max(20).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      status: z.literal("failed"),
-      errorCode: z.enum([
-        "navigation_failed",
-        "request_failed",
-        "response_too_large",
-        "unsafe_redirect",
-        "unsupported_page",
-      ]),
-      message: z.string().trim().min(1).max(500),
-      retryable: z.boolean(),
-    })
-    .strict(),
-]);
-export type DiscoveryBrowserTaskResult = z.infer<
-  typeof DiscoveryBrowserTaskResultSchema
->;
-
-export const DiscoveryBrowserTaskCompletionSchema = z
-  .object({
-    leaseId: z.string().uuid(),
-    result: DiscoveryBrowserTaskResultSchema,
-  })
-  .strict();
-export type DiscoveryBrowserTaskCompletionRequest = z.infer<
-  typeof DiscoveryBrowserTaskCompletionSchema
->;
-
-export const DiscoveryBrowserExtensionClaimSchema = z
-  .object({
-    installationId: z.string().uuid(),
-    extensionVersion: z.string().trim().min(1).max(80),
-    replace: z.boolean().default(false),
-  })
-  .strict();
-export type DiscoveryBrowserExtensionClaimRequest = z.infer<
-  typeof DiscoveryBrowserExtensionClaimSchema
->;
-
-export interface DiscoveryBrowserTaskAcceptedResponse {
-  ok: true;
-  taskId: string;
-  status: "pending" | "leased" | "succeeded" | "failed";
-}
-
-export type DiscoveryBrowserTaskLeaseResponse =
-  | {
-      ok: true;
-      status: "idle";
-    }
-  | {
-      ok: true;
-      status: "task";
-      taskId: string;
-      leaseId: string;
-      timeoutMs: number;
-      request: DiscoveryBrowserRequest;
-    };
-
-export type DiscoveryBrowserTaskStatusResponse =
-  | {
-      ok: true;
-      taskId: string;
-      status: "pending" | "leased";
-    }
-  | {
-      ok: true;
-      taskId: string;
-      status: "succeeded" | "failed";
-      result: DiscoveryBrowserTaskResult;
-    };
-
-export interface DiscoveryBrowserBridgeStatusResponse {
-  ok: true;
-  connected: boolean;
-  installationBound: boolean;
-  installationIdSuffix: string | null;
-  lastSeenAt: string | null;
-  extensionVersion: string | null;
-  pendingTasks: number;
-  activeTasks: number;
-}
-
-function utf8ByteLength(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
-}
-
 export const COMPENSATION_SOURCE_TYPES = [
   "posted_salary",
   "public_wage_baseline",
@@ -5060,7 +4850,7 @@ export interface EffectiveDiscoverySettings {
   hoursOld: EffectiveDiscoverySetting<number>;
   schedulingEnabled: EffectiveDiscoverySetting<boolean>;
   scheduleCron: EffectiveDiscoverySetting<string>;
-  maxParallelFamilies: EffectiveDiscoverySetting<number>;
+  maxParallelFamilies: InactiveDiscoveryResultLimitSetting | EffectiveDiscoverySetting<number>;
   useBrowserHeaders: EffectiveDiscoverySetting<boolean>;
   crawlUserAgentProduct: EffectiveDiscoverySetting<string>;
   crawlUserAgentContact: EffectiveDiscoverySetting<string>;
@@ -5077,6 +4867,14 @@ const lockedDiscoveryApprovalSettingSchema = z.object({
   editable: z.literal(false),
   locked: z.literal(true),
 }).strict();
+
+const inactiveDiscoveryLimitSchema = z.object({
+          value: z.number(),
+          source: z.enum(["persisted", "default"]),
+          activation: z.literal("inactive"),
+          editable: z.literal(false),
+          locked: z.literal(true),
+        }).strict();
 
 export const DiscoverySettingsResponseSchema = z
   .object({
@@ -5106,17 +4904,11 @@ export const DiscoverySettingsResponseSchema = z
         autoApply: discoveryEffectiveSettingSchema(z.boolean()),
         applyApprovalRequired: lockedDiscoveryApprovalSettingSchema,
         boards: discoveryEffectiveSettingSchema(z.array(z.string())),
-        resultsPerSite: z.object({
-          value: z.number(),
-          source: z.enum(["persisted", "default"]),
-          activation: z.literal("inactive"),
-          editable: z.literal(false),
-          locked: z.literal(true),
-        }).strict(),
+        resultsPerSite: inactiveDiscoveryLimitSchema,
         hoursOld: discoveryEffectiveSettingSchema(z.number()),
         schedulingEnabled: discoveryEffectiveSettingSchema(z.boolean()),
         scheduleCron: discoveryEffectiveSettingSchema(z.string()),
-        maxParallelFamilies: discoveryEffectiveSettingSchema(z.number()),
+        maxParallelFamilies: z.union([inactiveDiscoveryLimitSchema, discoveryEffectiveSettingSchema(z.number())]),
         useBrowserHeaders: discoveryEffectiveSettingSchema(z.boolean()),
         crawlUserAgentProduct: discoveryEffectiveSettingSchema(z.string()),
         crawlUserAgentContact: discoveryEffectiveSettingSchema(z.string()),
@@ -5401,67 +5193,6 @@ export const MANUAL_CAPTURE_MODE_VALUES = [
 ] as const;
 export type ManualCaptureModeValue = (typeof MANUAL_CAPTURE_MODE_VALUES)[number];
 
-export const SourceProposalEvidenceSchema = z.object({
-  originJobId: z.string(),
-  originPostingUrl: z.string(),
-  inputUrl: z.string(),
-  urlKind: z.enum(["posting_url", "canonical_url", "application_url"]),
-  observations: z.array(z.object({
-    observationId: z.string(), sourceId: z.string(), runId: z.string(),
-    observedUrl: z.string(), observedAt: z.string(),
-  })),
-  extraction: z.object({
-    tier: z.string().nullable(), enrichedAt: z.string().nullable(), snapshotVersion: z.number().nullable(),
-    descriptionSha256: z.string().nullable(), snapshotSha256: z.string().nullable(),
-    snapshotEvidence: z.array(z.string()).optional(),
-  }),
-  sample: z.object({ title: z.string(), company: z.string(), descriptionExcerpt: z.string() }),
-});
-export type SourceProposalEvidence = z.infer<typeof SourceProposalEvidenceSchema>;
-
-export interface SourceProposalReview {
-  coordinateKey: string;
-  sourceId: string;
-  atsKind: string | null;
-  boardToken: string | null;
-  completeness: "unknown";
-  promotionBlockedReason?: string | null;
-  evidence: SourceProposalEvidence[];
-  overlaps: { sourceId: string; state: string; seedUrl: string | null }[];
-}
-
-export interface SourceLocatorCandidateSummary {
-  candidateId: string;
-  candidateUrl: string;
-  sourceKind: SourceKindValue;
-  confidence: number;
-  detectedAtsKind: string | null;
-  employerDomainMatched: boolean;
-  manualActionReason: ManualActionReasonValue | null;
-  discoveredAt: string;
-  proposal?: SourceProposalReview;
-}
-
-export interface SourceLocatorListResponse {
-  ok: true;
-  candidates: SourceLocatorCandidateSummary[];
-}
-
-export const SourceLocatorDecisionSchema = z
-  .object({
-    reason: z.string().trim().max(400).optional(),
-  })
-  .strict();
-export type SourceLocatorDecisionRequest = z.infer<typeof SourceLocatorDecisionSchema>;
-
-export interface SourceLocatorDecisionResponse {
-  ok: true;
-  candidateId: string;
-  decision: "promote" | "reject";
-  source: SourceRegistryEntrySummary | null;
-  decidedAt: string;
-}
-
 export const QUARANTINE_REASONS = [
   "low_confidence_extraction",
   "policy_overridden",
@@ -5610,23 +5341,6 @@ export interface RoleMatchFeedbackDecisionResponse {
   ok: true;
   suggestion: RoleMatchFeedbackSuggestion;
 }
-
-export const SourceUpsertRequestSchema = z
-  .object({
-    sourceId: z.string().trim().min(1).max(160),
-    kind: z.enum(SOURCE_KIND_VALUES),
-    displayName: z.string().trim().min(1).max(160),
-    priority: z.enum(SOURCE_PRIORITY_VALUES).default("standard"),
-    state: z.enum(SOURCE_STATE_VALUES).default("experimental"),
-    seedUrl: z
-      .string()
-      .trim()
-      .max(2048)
-      .regex(/^https?:\/\/[^\s]+$/i, "seedUrl must be a valid http(s) URL")
-      .optional(),
-  })
-  .strict();
-export type SourceUpsertRequest = z.infer<typeof SourceUpsertRequestSchema>;
 
 export const SourceStatePatchSchema = z
   .object({

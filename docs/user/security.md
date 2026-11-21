@@ -28,7 +28,7 @@ boundary.
 | Boundary | Enforced protection |
 | --- | --- |
 | Local API | Loopback bind, loopback `Host` and peer-address checks, first-party mutation origins, Fetch Metadata validation, and a worker-readiness gate. |
-| Browser extension | Rotatable local capability token, a bounded memory-only Discovery task bridge, same-origin-only token management, a whitelisted autofill DTO, and no submit capability. |
+| Browser extension | Rotatable local capability token, same-origin-only token management, a whitelisted autofill DTO, and no submit capability. |
 | Outbound browsing | Public HTTP(S)-only validation for explicit task/top-level targets and each final URL; paths with an owned interception guard also validate their redirects, popups, and subrequests. Normal subresource loading in the user's Chrome profile remains Chrome/site-owned. |
 | Credentials and files | Secrets stay outside SQLite and `config.json`; status APIs are secret-free; saved passwords and reviewed artifacts can be used only by origin-bound local tools. |
 | Provider runtimes | JobCtrl-owned provider state, filtered subprocess environments, restricted tool surfaces, and prompt-driven filesystem boundaries isolate model execution from unrelated local data. |
@@ -54,20 +54,14 @@ identity, and privacy contact, read the canonical
 | --- | --- | --- |
 | LLM providers | Scoring, analysis, tailoring, contact extraction, opt-in Required-bullet coaching | Posting text, relevant profile evidence, generated text, or opted-in page text. Required-bullet coaching sends only selected saved claims, role/company context and matching achievement evidence. Employer analysis uses Claude, Codex, and Gemini legs. |
 | Apply model | Apply/dry-run or an enabled standing loop | The reviewed application URL and page content observed during the transport-locked inspection. Stored profile fields, job-description prose, tailored resume text, local artifact paths, and artifact-upload authority are excluded. |
-| Job/ATS/public pages | Integrated Discovery and its enrichment drain through the user's current Chrome profile; supervised contact research through its separate gateway | Search terms and network/page requests. During Discovery, Chrome may also send that site's existing cookies/session state; those browser-owned values are not copied into worker tasks. |
+| Job boards and public postings | JobStreaming board searches, explicit posting URL imports, saved posting checks and supervised contact research | The selected search terms or public posting URL go to the corresponding site. |
 | Salary data sources | At the end of a Discover run, only for benchmark slices that are missing or past their seven-day freshness window; Levels.fyi or Glassdoor only when their Settings policy permits | Requests for public benchmark data from Euro Top Tech, ECB exchange rates when a currency conversion is needed, and Eurostat price levels when a slice has no direct benchmark. Levels.fyi public-page URLs name the role and location being benchmarked. |
 | Gmail | Authenticated verification/outcome flows or approved email applications | Bounded queries/evidence, or the exact reviewed send. |
 | Google Maps | Configured profile autocomplete | Address text typed in the field. |
 | CAPTCHA provider | Supported widget during an apply run you explicitly start or a standing loop you enable, with a configured solver | Site key and page URL through the local solver tool. |
 | Langfuse/OpenTelemetry | Explicit telemetry configuration | Metadata-only provider/model, operation/stage, outcome, token-count, and safe-size span attributes. |
 
-Discovery and Enrich snapshots contain HTML and text rendered in your signed-in
-Chrome session, which can include personalized account content beyond the job
-posting. Extracted posting text can be stored locally, and snapshots or posting
-text can reach configured LLM providers during extraction and later stages.
-See the [data-flow notice](data-and-safety.md#external-services). Cookie values
-are never copied into worker tasks or results; the browser user-agent string is
-returned with results as transport metadata; it is not used for robots checks.
+Posting snapshots may include provider-supplied descriptions and content retrieved from a public URL. The extension sends the selected tab’s captured content to JobCtrl when you click **Save job**. Extraction and Fit can send relevant text to the configured model. [Data-flow notice](data-and-safety.md#external-services).
 
 The Apply model receives no applicant profile or generated-material prose.
 Reviewed resume files remain local for the user to handle
@@ -87,9 +81,7 @@ Browser-adoption metadata is stored in `config.json`, while the extension
 pairing token remains a separate protected artifact. An installation upgraded
 from an older release may still contain a previously consented copied profile,
 but current Settings neither creates nor selects it for LinkedIn work.
-Integrated Discovery and Enrich use the extension in the current Chrome profile
-and never read those copies. Discovery task bodies and results live only in the
-API broker's process memory while the bounded task is active.
+JobStreaming supplies automatic discovery independently of the Chrome profile.
 
 ::: warning Local does not mean encrypted
 JobCtrl does not encrypt `jobctrl.db`, `.env`, or generated artifacts. Protect
@@ -127,26 +119,7 @@ disconnects existing extension clients. An extension-origin request can use a
 valid token for its scoped routes, but it cannot read, mint, or rotate the token
 itself.
 
-Once paired, the extension polls a loopback-only lease route and supplies the
-heartbeat shown in Settings. When selected for acquisition, the extension
-receives only execution-bound, idempotent tasks carrying the exact Temporal
-workflow/run identity, one public
-HTTP(S) URL, a `GET` or `POST` request or a rendered-page request, a maximum
-two-minute timeout, and bounded bodies/results. Browser-owned `Cookie`,
-`User-Agent`, `Origin`, `Referer`, `Host`, and all `Sec-*`/`Proxy-*` headers are
-rejected at the contract and stripped again by the worker/content script; Chrome supplies
-its own values from the current profile. Saving the token in the extension
-explicitly binds one UUID-backed extension installation; the binding is stored
-outside Chrome as a mode-`0600` control file, Settings exposes only its last
-eight characters, and another Chrome profile cannot heartbeat, lease, or
-complete work until the user replaces the selection there. The broker is
-memory-only and admits at most four active/pending tasks for four extension
-executors. Queue waiting and lease execution use separate bounds. Each active
-lease heartbeats while Chrome works; cancellation or a hard timeout aborts the
-request, closes its owned tab when one exists, and invalidates stale
-completion. A selected extension disconnect can fail its acquisition; it does
-not trigger another transport for that fetch. The next acquisition setup may
-select anonymous access if the bounded status probe reports unavailable.
+When the user pairs the extension, it verifies the token with the selected JobCtrl loopback API before saving it. The extension’s own network access is restricted to loopback. The user can invoke capture on the current tab and review autofill suggestions. JobStreaming performs automatic board searches.
 
 Capture requires a click. Before sending the active page URL/visible text to the
 local API, the extension stores it in its local queue. The queue holds up to 25
@@ -306,13 +279,7 @@ choosing not to click Submit.
 
 ### Browser Capabilities Are Explicit
 
-Discovery and Enrich prefer the selected paired extension when its bounded
-status probe reports connected. Otherwise they use guarded public HTTP or
-anonymous managed Playwright. API launch and job-level/bulk retries remain
-available offline, subject to worker readiness, authorization and stage gates.
-A failed acquisition or cancellation never switches transports. Neither mode
-adopts a Chrome executable or reads a copied profile, even if a standalone
-compatibility capability has prior consent. The optional Apply browser remains
+JobStreaming supplies board search. Known-URL intake and enrichment use the public posting transport and its destination checks. The optional Apply browser remains
 disabled until explicitly adopted.
 
 The Apply-browser Settings read path may detect supported Chrome/Chromium installations, but
@@ -364,26 +331,7 @@ unsupported/failed challenges, the apply path stops.
 
 ### Crawl Politeness
 
-Discovery and Enrich do not request, evaluate, or enforce `robots.txt` in
-connected or anonymous mode. Legacy blocked outcomes remain readable and
-retryable; old source-policy values cannot reactivate enforcement.
-
-- Initial URLs, DNS resolution, redirects and final URLs retain their public
-  destination checks; rendered browser tasks retain exact-origin navigation guards.
-- Per-host pacing, concurrency, and per-run request budgets limit load.
-- Chrome owns its cookies, proxy and user agent; anonymous acquisition never
-  borrows a personal profile or ambient credentials.
-- Rate-limit, budget and unsafe-destination outcomes remain distinguishable from
-  generic scrape errors, and cancellation still ends owned work.
-
-JobStreaming owns internal board traversal. JobCtrl applies invocation-level
-pacing/budget there, with a public-destination guard on every anonymous request,
-rather than claiming per-request budget accounting.
-Its provider sessions prefer the extension when connected. The configured
-`JobCtrl/<version> (+<contact>)` identity remains in use for non-extension
-gateways and integrated anonymous broad-board requests; it is never substituted
-for Chrome's live user agent. Copied-profile capabilities remain separate. See
-[Discovery → Crawl Politeness](discovery.md#crawl-politeness).
+JobStreaming owns internal board traversal. JobCtrl records cancellation, budget exhaustion, unsupported requests, credential failures and rate limits by board. The posting URL importer validates its public destination, redirects and final response. Server deferrals preserve the previously accepted posting. [Discovery → Crawl Politeness](discovery.md#crawl-politeness).
 
 ## Credentials
 

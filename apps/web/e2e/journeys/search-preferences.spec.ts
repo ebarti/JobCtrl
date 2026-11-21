@@ -1,9 +1,11 @@
+import { indeedPage } from "./indeed-data.js";
 import { test, expect, json, completed, terminal, modelCall } from "../harness/fixtures.js";
 import { baseline, createBaseline, createPosting, type Library, type Profile } from "./core-data.js";
 import { authoredPartition, type NormalizedSnapshot } from "./consolidation-data.js";
 import { untilNormalization } from "./preparation-cohort-data.js";
 import { qualificationBatchDecision, qualificationBindings, qualificationKey } from "./qualification-data.js";
 import { COHORT_NORMALIZATION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
+import { serveRoleTarget } from "./discovery-role-scope-data.js";
 
 type LocationBinding = {
   rowIndex: number;
@@ -244,16 +246,10 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
     await expect(runtime.getByRole("spinbutton", { name: "Results per board", exact: true })).toHaveCount(0);
     await expect(runtime.getByRole("spinbutton", { name: "Posting lookback hours", exact: true })).toHaveCount(0);
     await expect(runtime.getByRole("group", { name: "Job boards", exact: true })).toHaveCount(0);
-    const parallel = settingsBefore.settings.maxParallelFamilies === 2 ? 1 : 2;
-    await runtime.getByRole("spinbutton", { name: "Parallel source families", exact: true }).fill(String(parallel));
+    await expect(runtime.getByRole("spinbutton", { name: "Parallel source families", exact: true })).toHaveCount(0);
     const age = settingsBefore.settings.hoursOld === 48 ? 72 : 48;
     await page.getByRole("spinbutton", { name: "Posting age", exact: true }).fill(String(age));
     await expect.poll(async () => (await json<{ settings: { hoursOld: number } }>(api, "get", "/v1/discovery/settings")).settings.hoursOld).toBe(age);
-    const runtimeSettingsPatch = page.waitForRequest((request) => request.method() === "PATCH"
-      && new URL(request.url()).pathname === "/v1/discovery/settings");
-    await runtime.getByRole("button", { name: "Save changes", exact: true }).click();
-    expect((await runtimeSettingsPatch).postDataJSON()).not.toHaveProperty("resultsPerSite");
-    await expect.poll(async () => (await json<{ settings: { maxParallelFamilies: number } }>(api, "get", "/v1/discovery/settings")).settings.maxParallelFamilies).toBe(parallel);
     const current = await json<{ settings: { boards: string[]; hoursOld: number; resultsPerSite: number } }>(api, "get", "/v1/discovery/settings");
     expect(current.settings).toMatchObject({ boards: settingsBefore.settings.boards, hoursOld: age, resultsPerSite: settingsBefore.settings.resultsPerSite });
     expect((await json<{ runs: unknown[] }>(api, "get", "/v1/discovery/runs")).runs).toEqual([]);
@@ -481,13 +477,13 @@ async function savedSearch(api: Parameters<typeof createBaseline>[0]) {
   });
   const before = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
   await json(api, "patch", "/v1/discovery/settings", {
-    expectedRevision: before.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 5, resultsPerSite: 5,
+    expectedRevision: before.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 5, resultsPerSite: 5,
   });
   return profile;
 }
 
 function searchPosting(id: string) {
-  return { job_key: id, url: `https://example.com/jobs/${id}`, title: `Synthetic ${id} Engineer`,
+  return { job_key: id, url: `https://www.indeed.com/viewjob?jk=${id}`, title: `Synthetic ${id} Engineer`,
     company: "Synthetic Hiring Company", description: `Maintain durable ${id} workflow recovery.`, location: "Madrid" };
 }
 
@@ -516,11 +512,17 @@ test("Jobs starts saved searches directly, preserves live progress across naviga
   expect(receipt.request().postDataJSON()).toEqual({ queries: [], locations: [], expectedProfileVersion: profile.profileVersion });
   const { runId } = await receipt.json() as { runId: string };
   const first = await app.external.next();
-  expect(first.path).toBe("/discovery");
-  expect(first.body["request"]).toMatchObject({ query: "Synthetic Reliability Engineer", location: "Madrid", remote_only: true, sites: ["linkedin"] });
-  first.respond({ jobs: [platform, infrastructure], cursor: "next-page", complete: false });
+  expect(first.path).toBe("/jobstreaming/indeed");
+  expect(String(first.body["query"])).toContain('what: "Synthetic Reliability Engineer"');
+  expect(String(first.body["query"])).toContain('where: "Madrid"');
+  expect(String(first.body["query"])).toContain('keys: ["DSQF7"]');
+  first.respond(indeedPage({ jobs: [platform, infrastructure], cursor: "next-page", complete: false }));
+  // The SDK can prefetch the next native page while JobCtrl qualifies the first two listings.
   const next = await app.external.next();
-  expect(next.body["runId"]).toBe(runId);
+  expect(next.path).toBe("/jobstreaming/indeed");
+  await serveRoleTarget(app, "match");
+  await serveRoleTarget(app, "match");
+  expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/discovery/runs")).runs).toContainEqual(expect.objectContaining({ runId: runId }));
   await expect(progress.getByRole("progressbar")).toBeVisible();
   await expect(progress.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
   await expect(progress).toContainText("2 new jobs");
@@ -546,7 +548,8 @@ test("Jobs starts saved searches directly, preserves live progress across naviga
     await expect(peer.getByRole("button", { name: "Start search", exact: true })).toBeDisabled();
   } finally { await peer.close(); }
   expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/action-runs?action=discovery.search")).runs.map((row) => row.runId)).toEqual([runId]);
-  next.respond({ jobs: [systems], cursor: null, complete: true });
+  next.respond(indeedPage({ jobs: [systems], cursor: null, complete: true }));
+  await serveRoleTarget(app, "match");
   // Acquisition has committed while the first assessment boundary is held.
   await expect.poll(() => app.external.calls.filter((call) => call.path === "/posting-page").length).toBe(1);
   const acquired = await json<{ runs: { runId: string; status: string }[] }>(api, "get", "/v1/discovery/runs");
@@ -636,7 +639,8 @@ test("Jobs reconciles a lost search acknowledgement without duplicate work and s
   await start.click();
   const provider = await app.external.next();
   await expect.poll(() => admittedId).not.toBe("");
-  expect(provider.body["runId"]).toBe(admittedId);
+  expect(provider.path).toBe("/jobstreaming/indeed");
+  expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/discovery/runs")).runs).toContainEqual(expect.objectContaining({ runId: admittedId }));
   await page.reload();
   const progress = page.getByRole("region", { name: "Job search progress", exact: true });
   await expect(progress.getByRole("progressbar")).toBeVisible();
@@ -649,11 +653,11 @@ test("Jobs reconciles a lost search acknowledgement without duplicate work and s
   // Keep the source pending until cancellation settles; releasing a successful
   // final page immediately can legitimately win the completion/cancel race.
   expect((await terminal(api, admittedId)).status).toBe("cancelled");
-  provider.respond({ jobs: [], cursor: null, complete: true });
+  provider.respond(indeedPage({ jobs: [], cursor: null, complete: true }));
   await expect(progress).toContainText("Search cancelled");
   await expect(start).toBeEnabled();
   expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/action-runs?action=discovery.search")).runs.map((row) => row.runId)).toEqual([admittedId]);
-  expect(app.external.calls.filter((call) => call.path === "/discovery")).toHaveLength(1);
+  expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(1);
   expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(0);
 });
 
@@ -683,15 +687,16 @@ test("simultaneous Jobs searches from two tabs admit one run and recover the ref
     const accepted = responses.find((response) => response.status() === 202)!;
     const { runId } = await accepted.json() as { runId: string };
     const provider = await app.external.next();
-    expect(provider.body["runId"]).toBe(runId);
+    expect(provider.path).toBe("/jobstreaming/indeed");
+  expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/discovery/runs")).runs).toContainEqual(expect.objectContaining({ runId: runId }));
     await expect(start).toBeDisabled();
     await expect(peerStart).toBeDisabled();
     for (const tab of [page, peer]) await expect(tab.getByRole("region", { name: "Job search progress", exact: true }).getByRole("progressbar")).toBeVisible();
-    provider.respond({ jobs: [], cursor: null, complete: true });
+    provider.respond(indeedPage({ jobs: [], cursor: null, complete: true }));
     await completed(api, runId);
     await expect(start).toBeEnabled();
     await expect(peerStart).toBeEnabled();
     expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/action-runs?action=discovery.search")).runs.map((row) => row.runId)).toEqual([runId]);
-    expect(app.external.calls.filter((call) => call.path === "/discovery")).toHaveLength(1);
+    expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(1);
   } finally { await peer.close(); }
 });

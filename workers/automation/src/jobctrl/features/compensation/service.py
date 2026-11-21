@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from jobctrl.app.errors import AppError, ConflictError
 
-from .core.analysis import EvidenceError, annualize, direct_benchmark, estimate_market, extrapolate, extract_posted, posted_from_judgment, validate_classification, validate_source_date
+from .core.analysis import EvidenceError, annualize, direct_benchmark, estimate_market, extrapolate, has_citable_number, posted_from_judgment, validate_classification, validate_source_date
 from .core.ports import Observation, Source
 from .geography import CompanyMatch, company_identity_source, extrapolate_for_target, validate_company_match
 from .policy import PolicyInput, registry
@@ -30,14 +30,30 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def _posting_source(snapshot: dict) -> tuple[Source, str]:
-    for field in ("salary", "enriched_description", "full_description", "description"):
+_PRIMARY_PAY_FIELDS = ("salary", "enriched_description", "full_description", "description")
+
+
+def _title_adds_numeric_source(snapshot: dict, reviewed_text: str) -> bool:
+    title = snapshot.get("title") or ""
+    return bool(title and title not in reviewed_text and has_citable_number(title))
+
+
+def has_automatic_posted_source(snapshot: dict) -> bool:
+    """Only the model can determine whether an eligible numeric title describes pay."""
+    return any(snapshot.get(field) for field in _PRIMARY_PAY_FIELDS) or _title_adds_numeric_source(snapshot, "")
+
+
+def _pay_source(reference: str, snapshot: dict, as_of, url, *, fields) -> tuple[Source, str]:
+    for field in fields:
         value = snapshot.get(field)
         if isinstance(value, str) and value.strip():
-            return Source(reference=f"posting:{snapshot['job_id']}:{snapshot['revision']}:{field}", text=value,
-                          as_of=snapshot.get("observed_at"), url=snapshot.get("url")), field
-    return Source(reference=f"posting:{snapshot['job_id']}:{snapshot['revision']}:missing", text="",
-                  as_of=snapshot.get("observed_at"), url=snapshot.get("url")), "missing"
+            return Source(reference=f"{reference}:{field}", text=value, as_of=as_of, url=url), field
+    return Source(reference=f"{reference}:missing", text="", as_of=as_of, url=url), "missing"
+
+
+def _posting_source(snapshot: dict, *, fields=(*_PRIMARY_PAY_FIELDS, "title")) -> tuple[Source, str]:
+    return _pay_source(f"posting:{snapshot['job_id']}:{snapshot['revision']}", snapshot,
+                       snapshot.get("observed_at"), snapshot.get("url"), fields=fields)
 
 
 def _target_source(snapshot: dict) -> Source:
@@ -166,7 +182,7 @@ def _posted_response(job_id: str, stored: dict) -> dict:
         confidence = "low"
     fact = {"tenantId": "local", "jobKey": job_id, "sourceField": stored["sourceField"],
             "sourceText": excerpt[:280] if excerpt is not None else None,
-            "legacyRawSalary": source["text"][:280] or None, "parseState": result["parse_state"],
+            "legacyRawSalary": None if stored["sourceField"] == "title" else source["text"][:280] or None, "parseState": result["parse_state"],
             "parserVersion": "posted-compensation-v5-determination", "sourceHash": result["determination"]["source_hash"],
             "parsedAt": stored["updatedAt"], "confidence": confidence,
             "warnings": [_warning(c) for c in dict.fromkeys([*result["warnings"], *(["source_text_truncated"] if excerpt and len(excerpt) > 280 else [])])]}
@@ -370,11 +386,18 @@ class CompensationService:
     def needs_refresh(self, snapshot: dict) -> bool:
         with self.repository.read() as unit:
             record = unit.record("market", snapshot["job_id"])
+            posted = unit.record("posted", snapshot["job_id"])
             state = unit.refresh_state(snapshot["job_id"])
         now = datetime.now(timezone.utc)
         if state and state["status"] == "running" and state["lease_expires_at"] and state["lease_expires_at"] > _now():
             return False
-        if state and state["status"] == "failed" and state["failure_code"] == "compensation_source_unavailable":
+        if posted:
+            fact = posted["record"].get("fact") or {}
+            if ((fact.get("judgment") or {}).get("parse_state") == "missing"
+                    and _title_adds_numeric_source(snapshot, (fact.get("source") or {}).get("text") or "")):
+                return True
+        if (state and state["status"] == "failed" and state["failure_code"] == "compensation_source_unavailable"
+                and posted and posted["posting_revision"] == snapshot["revision"] and posted["posting_hash"] == snapshot["source_hash"]):
             try:
                 failed_at = datetime.fromisoformat(state["updated_at"].replace("Z", "+00:00"))
             except (ValueError, TypeError):
@@ -462,10 +485,26 @@ class CompensationService:
             observations.append(observation)
             by_source[_json(row)] = observation
         estimate = stored["estimate"]
-        posted_row = unit.record("posted", stored["jobId"])
-        if posted_row is None:
-            raise EvidenceError("posted_compensation_unavailable")
-        posted = self._verify_record("posted", posted_row["record"], unit)
+        reference, suffix = target_source.reference.rsplit(":", 1)
+        if suffix != "classification":
+            raise EvidenceError("target_determination_binding_invalid")
+        # Older estimates used the salary/description policy even when the title contained a range.
+        # Rebuild their exact historical input before checking the pinned receipt.
+        posted_field = stored.get("postedSourceField")
+        fields = ("title",) if posted_field == "title" else _PRIMARY_PAY_FIELDS
+        pay_source, field = _pay_source(reference, json.loads(target_source.text), target_source.as_of, target_source.url, fields=fields)
+        if posted_field is not None and posted_field != field:
+            raise EvidenceError("posted_determination_binding_invalid")
+        receipt_id = stored.get("postedReceiptId")
+        if receipt_id is None:
+            # Older market estimates were published atomically with the posted
+            # record. The repository pins that exact receipt before replacing it.
+            previous = unit.record("posted", stored["jobId"])
+            if previous is None:
+                raise EvidenceError("posted_compensation_unavailable")
+            receipt_id = previous["record"]["fact"]["judgment"]["determination"]["reference"]
+        pay_result = unit.verified_model_result(pay_source, receipt_id, "posted")
+        posted = posted_from_judgment(pay_source, self.model.rebuild_posted(pay_source, pay_result))
         expected = estimate_market(target_source, target_rebuilt, observations, component=estimate["component"], posted=posted)
         geography = stored.get("geography") or {}
         geographic = geography.get("status") == "estimated"
@@ -658,7 +697,7 @@ class CompensationService:
             return {"ok": True, "recordStatus": "unavailable", "jobKey": job_id, "failureCode": "compensation_determination_unavailable"}
         return _market_response(job_id, stored) if stored else {"ok": True, "recordStatus": "not_requested", "jobKey": job_id}
 
-    def _claim(self, job_id: str, operation_id: str | None = None, input_hash: str | None = None) -> tuple[str | None, dict | None]:
+    def _claim(self, job_id: str, operation_id: str | None = None, input_hash: str | None = None) -> tuple[str | None, dict | None, str | None]:
         attempt = str(uuid4())
         now = _now()
         expires = (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -669,10 +708,10 @@ class CompensationService:
                 if completion:
                     if completion["input_hash"] != input_hash:
                         raise ConflictError("The refresh operation belongs to different input.")
-                    return None, completion["result"]
-            unit.claim(job_id, attempt, now, expires)
+                    return None, completion["result"], None
+            prior_status = unit.claim(job_id, attempt, now, expires)
             unit.append_event("CompensationRefreshChanged", {"jobId": job_id, "status": "running"}, job_id)
-        return attempt, None
+        return attempt, None, prior_status
 
     def _renew(self, job_id: str, attempt: str) -> None:
         now = _now()
@@ -704,7 +743,7 @@ class CompensationService:
                 if completion["input_hash"] != input_hash:
                     raise ConflictError("The refresh operation belongs to different input.")
                 return completion["result"]
-        attempt, completed = self._claim(job_id, operation_id, input_hash)
+        attempt, completed, prior_status = self._claim(job_id, operation_id, input_hash)
         if completed is not None:
             return completed
         if attempt is None:
@@ -721,11 +760,34 @@ class CompensationService:
                 snapshot = unit.posting(job_id)
                 preferences, policy_revision = unit.policy_snapshot()
             source, source_field = _posting_source(snapshot)
-            posted = await extract_posted(source, self.model)
+
+            def guard_pay_admission(connection, _receipt_id):
+                with self.repository.read(connection) as unit:
+                    unit.require_owner(job_id, attempt, _now())
+                    unit.assert_posting_current(snapshot)
+                    automation_guard(unit)
+                    cancellation_guard()
+
+            async def determine_pay(selected: Source):
+                judgment = await self.model.posted_pay(selected, recover=automatic or prior_status != "succeeded",
+                                                       on_admitted=guard_pay_admission)
+                return posted_from_judgment(selected, judgment)
+
+            posted = await determine_pay(source)
+            if posted.judgment.parse_state == "missing" and _title_adds_numeric_source(snapshot, source.text):
+                source, source_field = _posting_source(snapshot, fields=("title",))
+                posted = await determine_pay(source)
             automation_guard()
             if context and context.cancelled():
                 raise AppError("cancelled", "Compensation refresh cancelled.", 409)
             posted_record = {"fact": asdict(posted), "sourceField": source_field, "updatedAt": _now()}
+            with self.repository.write() as unit:
+                automation_guard(unit)
+                cancellation_guard()
+                if unit.policy_snapshot()[1] != policy_revision:
+                    raise ConflictError("Compensation source settings changed during refresh.")
+                self._verify_record("posted", posted_record, unit)
+                unit.save_record("posted", snapshot, posted_record, attempt)
             target_source = _target_source(snapshot)
             target = await self.model.classify(target_source)
             automation_guard()
@@ -1016,6 +1078,7 @@ class CompensationService:
                     source_expiries.append(input_freshness[fact.exchange_rate.source.reference]["fresh_until"])
             evidence_expiry = geography.fresh_until if geography and geography.status == "estimated" else min(source_expiries, default=current_expiry)
             market_record = {"jobId": job_id, "estimate": asdict(estimate), "target": asdict(target), "updatedAt": _now(),
+                             "postedReceiptId": posted.judgment.determination.reference, "postedSourceField": source_field,
                              "evidenceFreshUntil": evidence_expiry,
                              "company": snapshot.get("company"), "title": snapshot.get("title"),
                              "targetSource": asdict(target_source), "allEvidence": [asdict(row) for row in rows],
@@ -1038,9 +1101,7 @@ class CompensationService:
                     unit.save_benchmark_input(asdict(fact), window["observed_at"], window["fresh_until"])
                 for price_source, year, observed, expiry in new_prices:
                     unit.save_price_snapshot(asdict(price_source), year, observed, expiry)
-                unit.save_record("posted", snapshot, posted_record, attempt)
                 unit.save_record("market", snapshot, market_record, attempt)
-                self._verify_record("posted", posted_record, unit)
                 self._verify_record("market", market_record, unit)
                 cancellation_guard()
                 unit.set_refresh_result(job_id, attempt, "succeeded", None, _now())

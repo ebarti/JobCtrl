@@ -1,3 +1,4 @@
+import { boardLabel } from "../boards.js";
 import type { ReactNode } from "react";
 
 import { Button } from "../../../shared/ui/button.js";
@@ -10,6 +11,7 @@ import "./discovery-search-feedback.css";
 export interface DiscoveryAssessmentProgress {
   phase: "acquiring" | "assessing" | null;
   assessedJobs: number | null; failedJobs: number | null; totalJobs: number | null;
+  checkpoint: { postingsChecked: number | null; requirementsChecked: number | null; phase: "checking" | "normalizing" | "qualifying" } | null;
   skippedJobs: number | null;
   skipped: readonly { jobId: string; reason: string }[];
   failures: readonly { jobId: string; stage: string; code: string | null }[];
@@ -24,9 +26,9 @@ const STATUS_LABELS: Readonly<Record<string, string>> = {
   "status-unavailable": "Search status unavailable", checking: "Checking search status…", unconfirmed: "Search request needs confirmation",
 };
 
-const BOARD_LABELS: Readonly<Record<string, string>> = { indeed: "Indeed", linkedin: "LinkedIn", glassdoor: "Glassdoor", zip_recruiter: "ZipRecruiter", google: "Google Jobs", bayt: "Bayt", bdjobs: "Bdjobs", naukri: "Naukri" };
+
 function sourceLabel(failure: DiscoverySearchController["sourceFailures"][number]) {
-  return failure.boards?.map((board) => BOARD_LABELS[board] ?? "Job board").join(", ") ?? "Employer source";
+  return failure.boards?.map((board) => boardLabel(board)).join(", ") ?? "Employer source";
 }
 
 function groupSourceFailures(failures: DiscoverySearchController["sourceFailures"]) {
@@ -51,6 +53,7 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
   const assessedJobs = controller.assessment?.assessedJobs ?? assessmentProgress?.assessedJobs ?? null;
   const failedJobs = controller.assessment?.failedJobs ?? assessmentProgress?.failedJobs ?? null;
   const skippedJobs = controller.assessment?.skippedJobs ?? assessmentProgress?.skippedJobs ?? null;
+  const checkpoint = active && !action?.cancellationRequested && !controller.assessment && !assessmentProgress?.unavailable ? assessmentProgress?.checkpoint : null;
   const skipped = controller.assessment?.skipped ?? assessmentProgress?.skipped ?? [];
   const unsupportedLanguages = skipped.filter((item) => item.reason === "unsupported_posting_language").length;
   const noRequirements = skipped.filter((item) => item.reason === "no_extractable_requirements").length;
@@ -73,6 +76,11 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
       {active ? <Progress value={null} aria-label="Job search progress" className="discovery-search-progress" /> : null}
     </div>
     {assessedJobs !== null ? <p>{assessmentProgress?.unavailable && !controller.assessment ? "Last recorded: " : ""}{assessmentProgress?.totalJobs != null ? `${assessedJobs} of ${assessmentProgress.totalJobs} jobs assessed` : `${assessedJobs} jobs assessed`}{failedJobs !== null ? ` · ${failedJobs} failed` : ""}{skippedJobs !== null && skippedJobs > 0 ? ` · ${skippedJobs} skipped` : ""}</p> : null}
+    {checkpoint && assessmentProgress?.totalJobs != null ? <p aria-label="Fit preparation progress">
+      {checkpoint.postingsChecked !== null ? `${checkpoint.postingsChecked} of ${assessmentProgress.totalJobs} postings checked. ` : ""}
+      {checkpoint.requirementsChecked !== null ? `Requirements checked for ${checkpoint.requirementsChecked} of ${assessmentProgress.totalJobs} jobs. ` : ""}
+      {checkpoint.phase === "qualifying" ? "Checking your evidence against the requirements before publishing Fit scores." : checkpoint.phase === "normalizing" ? "Reconciling requirements across these jobs before Fit scoring." : "Fit scoring waits for posting and requirements checks across this search."}
+    </p> : null}
     {unsupportedLanguages > 0 ? <p>{unsupportedLanguages} {unsupportedLanguages === 1 ? "posting was" : "postings were"} skipped because only English postings are supported. No fit score was calculated.</p> : null}
     {noRequirements > 0 ? <p>{noRequirements} {noRequirements === 1 ? "posting had" : "postings had"} no in-scope requirements to assess. No fit score was calculated.</p> : null}
     {sourceOnly ? <p>Initial fit assessment is unavailable in this application.</p> : null}

@@ -137,17 +137,21 @@ class NormalizationStore:
             return {"input_fingerprint": row["input_fingerprint"], "operation": row["operation"],
                     "result": json.loads(row["result_json"]), "provenance": json.loads(row["provenance_json"])}
 
-    def reserve_normalization_call(self, operation_id, input_fingerprint, guard, connection=None):
+    def assert_normalization_call_available(self, operation_id, input_fingerprint, connection=None):
+        with self.read_session() if connection is None else nullcontext(connection) as connection:
+            previous = connection.execute("SELECT input_fingerprint FROM requirements_normalization_intents WHERE operation_id=?",
+                                          (operation_id,)).fetchone()
+        if previous is not None:
+            if previous["input_fingerprint"] != input_fingerprint:
+                raise ConflictError("The consolidation operation's complete semantic input changed. Start a new explicit operation.")
+            raise RequirementError("requirements_consolidation_call_unsettled")
+
+    def reserve_normalization_call(self, operation_id, input_fingerprint, guard, *, connection):
         """An interrupted unreceipted dispatch cannot spend another allowance."""
-        with (self.database.transaction() if connection is None else nullcontext(connection)) as connection:
-            guard(connection)
-            previous = connection.execute("SELECT * FROM requirements_normalization_intents WHERE operation_id=?", (operation_id,)).fetchone()
-            if previous is not None:
-                if previous["input_fingerprint"] != input_fingerprint:
-                    raise ConflictError("The consolidation operation's complete semantic input changed. Start a new explicit operation.")
-                raise RequirementError("requirements_consolidation_call_unsettled")
-            connection.execute("INSERT INTO requirements_normalization_intents VALUES (?,?,?,?)",
-                               (operation_id, input_fingerprint, NORMALIZATION_VERSION, now()))
+        guard(connection)
+        self.assert_normalization_call_available(operation_id, input_fingerprint, connection)
+        connection.execute("INSERT INTO requirements_normalization_intents VALUES (?,?,?,?)",
+                           (operation_id, input_fingerprint, NORMALIZATION_VERSION, now()))
         return 1
 
     def save_normalization_model_call(self, *, input_fingerprint, operation, catalog_revision, result, provenance, guard):

@@ -98,7 +98,7 @@ class CompensationSession:
         ).fetchone()
         return dict(row) if row is not None else None
 
-    def claim(self, job_id: str, attempt: str, now: str, expiry: str) -> None:
+    def claim(self, job_id: str, attempt: str, now: str, expiry: str) -> str | None:
         self._require_transaction()
         self.posting(job_id)
         prior = self.refresh_state(job_id)
@@ -110,6 +110,7 @@ class CompensationSession:
             "status='running',attempt_id=excluded.attempt_id,lease_expires_at=excluded.lease_expires_at,"
             "failure_code=NULL,updated_at=excluded.updated_at", (job_id, attempt, expiry, now)
         )
+        return prior["status"] if prior else None
 
     def renew(self, job_id: str, attempt: str, now: str, expiry: str) -> None:
         self._require_transaction()
@@ -132,6 +133,16 @@ class CompensationSession:
         self.require_owner(snapshot["job_id"], attempt, _now())
         self.assert_posting_current(snapshot)
         if kind == "posted":
+            # Older market records reference their then-current posted fact
+            # implicitly. Keep their original comparison verifiable when a
+            # newer employer range is published ahead of market research.
+            self._connection.execute(
+                "UPDATE compensation_market AS m SET record_json=json_set(m.record_json,'$.postedReceiptId',"
+                "json_extract(p.record_json,'$.fact.judgment.determination.reference')) "
+                "FROM compensation_posted AS p WHERE m.job_id=? AND p.job_id=m.job_id "
+                "AND p.posting_revision=m.posting_revision AND p.posting_hash=m.posting_hash "
+                "AND json_type(m.record_json,'$.postedReceiptId') IS NULL", (snapshot["job_id"],),
+            )
             self._connection.execute(
                 "INSERT INTO compensation_posted(job_id,posting_revision,posting_hash,source_hash,record_json,updated_at) "
                 "VALUES(?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET "

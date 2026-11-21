@@ -113,6 +113,20 @@ redirect validation, credential stripping, timeouts and read-only request
 restrictions apply to both limits. An oversized resource remains an acquisition
 failure and cannot establish a posting or availability verdict.
 
+**Jobs → Add a job by URL or text → Import posting URL** queues the import in
+your workspace. You can leave Jobs or close the browser after it is queued.
+Open **Recent URL imports** in the same workspace to follow progress, cancel a
+pending import, or open the saved job. **Queued for model capacity** means
+another model operation holds the required slot. The worker continues
+automatically when capacity becomes available. A worker restart recovers
+settled stages from their exact receipts. A changed source or an interrupted
+provider call with an unconfirmed result leaves a recorded failure for review.
+
+When connected to an older server, the form offers **View import run** after
+submission. **View URL import runs** also shows earlier receipts after a reload.
+Those server versions can end the import with `model_lane_busy` when another
+operation holds the lane. The run records that failure.
+
 Direct URL imports interpret the complete visible page capture, including
 posting details and current controls outside its main-content panel. For the
 description, the model selects a recorded source and contiguous line range;
@@ -495,8 +509,6 @@ Page availability, individual-posting state and description quality use cited mo
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
-### Arbitrary-site discovery captures
+### Importing a known posting URL
 
-Smart Extract resolves listing cards through the same rendered and structured posting-source preparation as direct URL imports. Card titles, employer guesses and blank places are not canonical posting facts. Its full-posting qualification checks the extracted specific role, description and saved location/work-model scope before creating a Job, as described in [Discovery](discovery.md#how-target-search-controls-are-used). The accepted posting snapshot records the page, extraction and qualification determination IDs. That exact capture seeds enrichment; failed or uncertain qualification preserves existing accepted job content and creates no replacement job.
-
-For archived Smart Extract recovery, interrupted snapshot publication retains the exact qualified capture and determination references. Retry completes that capture without another page fetch or model call, while preserving newer accepted snapshots, enrichment and owner deletion. A publication failure leaves the archived item available for retry; canonical Job existence alone does not acknowledge it.
+**Jobs → Import job → Import posting URL** fetches the supplied public posting, extracts its job facts and preserves the source snapshot. Importing during an active search queues the request if model capacity is occupied. A retry uses the same receipt. JobStreaming owns the separate board search path. [Discovery](discovery.md#capture-a-known-posting).

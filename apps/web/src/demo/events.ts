@@ -129,14 +129,6 @@ export const createScoreRescoreRequested = event(
   "ScoreRescoreRequested",
   "fit",
 );
-export const createSourceLocationCandidatePromoted = event(
-  "SourceLocationCandidatePromoted",
-  "discovery",
-);
-export const createSourceRegistryEntryCreated = event(
-  "SourceRegistryEntryCreated",
-  "discovery",
-);
 export const createSourceRegistryEntryUpdated = event(
   "SourceRegistryEntryUpdated",
   "discovery",
@@ -184,8 +176,6 @@ export const DEMO_EVENT_TYPES = [
   "ResumeTemplateVersionSaved",
   "ScoreCorrected",
   "ScoreRescoreRequested",
-  "SourceLocationCandidatePromoted",
-  "SourceRegistryEntryCreated",
   "SourceRegistryEntryUpdated",
   "SourceStateChanged",
   "StageCanceled",
@@ -202,13 +192,11 @@ const publicTypes: Readonly<Record<string, string>> = {
   JobDiscovered: "JobCaptured",
   ScoreCorrected: "FitCorrected",
   ScoreRescoreRequested: "FitUpdated",
-  SourceRegistryEntryCreated: "DiscoverySourceUpdated",
   SourceRegistryEntryUpdated: "DiscoverySourceUpdated",
   SourceStateChanged: "DiscoverySourceUpdated",
   ResumeTemplateDefaultChanged: "ResumeTemplateUpdated",
   ResumeTemplateVersionSaved: "ResumeTemplateUpdated",
   JobResumeTemplateAssigned: "ResumeTemplateUpdated",
-  SourceLocationCandidatePromoted: "SourceProposalUpdated",
   DiscoveryFeedbackRecorded: "DiscoveryFeedbackUpdated",
   ContactResearchTaskCompleted: "ContactResearchTaskUpdated",
   WorkflowCanceled: "ActionCancellationRequested",

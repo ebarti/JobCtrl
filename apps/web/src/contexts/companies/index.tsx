@@ -3,7 +3,6 @@ import type { TenantId } from "@jobctrl/domain-types";
 import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
@@ -35,9 +34,9 @@ export function CompanyBriefingForJob({ jobId }: { readonly jobId: string }) {
 
 export const companyEvents: FeatureEventHandler = {
   eventTypes: ["CompanyBriefingUpdated"],
-  handle(event, queryClient) {
+  handle(event, invalidate) {
     const payload = event.payload;
     const jobId = payload && typeof payload === "object" && "jobId" in payload && typeof payload.jobId === "string" ? payload.jobId : null;
-    void invalidateQueriesWithOptimisticOwnership(queryClient, jobId ? companyKeys.briefing(event.tenantId, jobId) : companyKeys.all(event.tenantId));
+    invalidate(jobId ? companyKeys.briefing(event.tenantId, jobId) : companyKeys.all(event.tenantId));
   },
 };

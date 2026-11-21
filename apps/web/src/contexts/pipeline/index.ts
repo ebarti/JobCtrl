@@ -6,6 +6,7 @@ export { PipelineBulkActions, PreparationRunDetail, PreparationRunList } from ".
 export { preparationInvalidation, preparationKeys, usePreparationCommands, usePreparationRun, usePreparationRuns, useSearchPreparationProgress } from "./client.js";
 export { pipelineTelemetryEvents, usePipelineTelemetry } from "./telemetry.js";
 export type { PreparationRecipe, PreparationRequest, PreparationResumeMode, PreparationRun } from "./client.js";
+export { jobFitPreparation, type FitPreparationReason } from "./lib/job-fit-preparation.js";
 export { StageBadge, type StageBadgeProps } from "./components/StageBadge.js";
 export {
   UserFacingStageBadge,

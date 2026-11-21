@@ -11,7 +11,7 @@ Use the secondary **Search preferences** action to edit criteria, then
 **Back to jobs** to return to the same comparison-table context.
 **My profile → Search preferences** keeps roles, career
 tracks/levels, locations/work arrangements, boards and limits together.
-**Filter saved jobs** only filters existing records; it starts no acquisition.
+**Filter saved jobs** filters existing records. JobStreaming supplies every board available to **Start search**. To save one posting you already know, use **Jobs → Import job → Import posting URL**.
 
 This guide describes the Original redesign source candidate. The
 [redesign ledger](../plans/2026-11-11-original-app-redesign.md) records actual
@@ -42,7 +42,7 @@ Add target roles as independent repeatable inputs; Enter adds a row and moves
 focus to it. Choose career tracks and levels explicitly. Each location row keeps
 its own work-arrangement selections. These are current search choices, not
 preferences inferred from past employment or a suggestion accepted silently.
-Source suggestions and target-role coaching remain explicit, source-bound work.
+Target-role coaching uses your selected sources and requires an explicit request.
 
 **Search map** sends only that location query to Photon and shows real results.
 Select a result to bind its place identity, display name, coordinates, selection
@@ -74,6 +74,29 @@ supported contextual/CLI uses, not rewritten. **Search-only overrides** can
 supply literal queries and locations for one request without replacing saved
 preferences. The displayed effective summary names the inputs used.
 
+A new search from saved role preferences checks each provider candidate before it
+uses one of the new-job places. It compares the offered role with the roles,
+tracks, levels, functions and specializations saved for that search. The decision
+cites both the posting and the relevant preference. A posting can use a different
+title and still qualify. Unsupported or unresolved role scope stays outside the
+new-job count. A LinkedIn card without a description receives a targeted detail
+request before the role check. A missing description leaves role scope unresolved. Model or source failures remain visible
+in the search result. A durable search waits when the model lane is occupied.
+If the worker stops during a paid role check, recovery uses a completed receipt
+or reports that its outcome is unresolved. Person Fit runs later and checks your qualifications
+against the job's requirements. A search using explicit one-run query overrides
+can still explore other roles.
+
+When multiple board queries share a finite new-job limit, each query gets a
+share of the remaining places. Previously saved jobs, duplicates and exclusions
+leave places available. A query that exhausts its results releases its unused
+places for the other queries. Recovery uses the run's committed admissions.
+
+The run's `newJobs` counts newly created job identities. `observedJobs` includes
+accepted observations of previously saved jobs. `roleTargetObservations` shows
+the number of role checks by verdict and the count missing a posting description.
+Filtered listings are recorded separately from observations admitted to Jobs.
+
 Search may make model-backed query preparation only after the explicit launch
 admits that work. Preference saves, reads, navigation and connection remedies
 start no query preparation, match refresh, scoring or resume generation.
@@ -93,6 +116,17 @@ provider failures are also recorded per board, with source-specific remedies in
 the progress strip. Repeated failures with the same source identity, error code
 and recorded message appear once with the number of affected query/location
 combinations.
+
+Indeed uses the worker environment variable `JOBSTREAMING_INDEED_API_KEY`.
+ZipRecruiter uses `JOBSTREAMING_ZIPRECRUITER_AUTHORIZATION`. If Search reports
+a missing credential, configure that variable and restart the worker. An HTTP
+401 or 403 means the board denied the request. Check that the configured
+credential has access to its search API. A TLS or proxy diagnostic points to
+the worker’s connection settings. Older runs may show a general access error.
+A board that rate-limits a search appears by name in the progress strip and
+Search details. Wait before starting another search on that board. Older runs
+show this explanation when they recorded the board’s rate-limit code.
+
 **Search details** retains every recorded failure and its query-unit identity;
 different boards, codes or messages remain separate notices.
 Source acquisition is partial when a source completes or the new-job limit ends
@@ -160,6 +194,10 @@ keeps that one action active while the preparation owner enriches each newly
 saved job, records role context and extracts its requirements. It completes this
 work for all newly saved jobs before assessing person fit, so a later posting's
 capability consolidation cannot invalidate an earlier score from the same search.
+If another job temporarily occupies a model lane, the affected stage waits for
+capacity. Activity records the wait. You can cancel the run while it waits.
+When capacity returns, the worker checks the current spending limits and resumes
+the same stage.
 It checks that accepted Fit results are still current before reporting successful
 assessment. A concurrent Profile, posting or requirement change is reported as an
 assessment failure requiring review; accepted scores remain in history and the
@@ -170,7 +208,21 @@ separately. A job whose assessment fails stays saved with its explicit outcome,
 and other jobs continue. A completed source alone cannot complete the overall
 search or enable a second launch during assessment.
 The Jobs progress changes to **Assessing saved jobs** while that work runs and
-shows recorded assessed, failed and cohort counts when available. Selected job
+shows recorded assessed, failed and cohort counts when available. While Fit
+waits, it shows how many of those jobs have completed posting and requirements
+checks. A previously accepted, current posting counts as checked. Smaller
+searches also show when requirements are being reconciled or evidence is being
+checked across jobs. The checkpoint summary gives way to the assessed count
+when per-job scoring starts. In the Jobs table, an unassessed job can show
+that it is waiting for the search, that Fit is running, or which check failed.
+Follow the label to inspect the recorded run. The Fit tab includes the recorded
+failure code. A current non-English posting is marked as skipped. All of these
+jobs still match the **Not assessed** filter while no Fit score exists. When
+the recorded run cannot be tied to the current posting, the table keeps the
+general **Not assessed** label. On older servers, **Non-English in this run**
+means the run’s requirements check classified this exact posting revision.
+**Skipped in this run · non-English** means its Fit step also recorded the skip.
+The Fit tab shows the latest accepted requirements for the posting. Selected job
 details identify an active `search` or `assess` recipe as **Assessing fit**, with
 its current stage; this task generates no resume. The ordinary **Prepare resume**
 action is available again after assessment settles. If the preparation owner is
@@ -240,19 +292,6 @@ Unknown provider or worker state remains unknown. An event stream connection,
 fresh wrapper process or unavailable probe does not prove provider readiness or
 that all earlier work has stopped. Read the action's actual blocker and remedy.
 
-### Optional live Chrome connection
-
-A selected paired extension can supply bounded acquisition through the user's
-running Chrome session on supported provider-owned hosts. Without it, supported
-sources can use guarded public HTTP or anonymous managed browser acquisition.
-An offline optional extension does not itself block every search. Site policy,
-public destination checks and operation readiness still apply.
-
-Transport is selected before acquisition; a failed site request does not
-silently switch to another authority. Neither mode copies a personal browser
-profile. Extension pairing/rotation, capability adoption and a configured
-provider are separate explicit actions in **Settings → Connections**.
-
 ### Resumable Broad-Board Searches
 
 Provider cursor/checkpoint state and the exact saved search fingerprint belong
@@ -264,25 +303,13 @@ totals remain unknown rather than becoming an invented completion percentage.
 
 ## Capture A Known Posting
 
-Use **Jobs → Import job**, the extension's user-mediated **Save job**, or the
-contextual manual-capture queue for inaccessible content. Manual Jobs remains
-usable when optional Discovery is absent. Exact canonical identity, source
-snapshots, review lifetimes and import receipts prevent duplicate publication.
-A changed submitted body requires a new capture review lifetime; an exact receipt
-replay makes no additional model call.
+Open **Jobs → Import job → Import posting URL**, paste the public posting URL, and start the import. Jobs stores the request and extracts that particular posting. You can start an import while a search is running. If its model lane is occupied, the import waits. After capacity returns, the worker resumes the same request. Reloading the app or replaying its receipt preserves the job identity.
 
-Blocked/login-walled/unsafe content does not become a placeholder Job. Supply
-reviewed content through the existing recovery path. Source refresh failures
-preserve accepted posting text. [Enrichment & Extraction](enrichment-and-extraction.md)
-owns canonical posting availability and capture provenance.
+If a posting is inaccessible, the import reports the underlying problem. The extension's **Save job** and the historical capture review queue are separate, user-initiated controls. [Enrichment & Extraction](enrichment-and-extraction.md) describes posting availability and capture provenance.
 
 ## Saved Source Review Views
 
-Source controls retain literal URL-backed filters, sort and saved views for
-review. Registry, locator candidates, quarantine, manual capture and source
-history remain reachable in contextual source tools. Deliberately inactive or
-rejected sources do not become actionable failures merely because they exist.
-Reading a source, a proposal or its diagnostics never enables it.
+Source controls show JobStreaming boards, their saved states, and the outcomes of their recent runs. A preview reads previously saved observations for the board. A disabled or quarantined board retains its historical results. Changing its state requires the current saved revision.
 
 ## Runtime, Sources, And Schedule
 
@@ -294,7 +321,7 @@ when needed; none requires a separate ordinary Pipelines visit.
 | --- | --- |
 | Roles, tracks/levels, locations/work arrangements and optional place bindings | Profile's versioned saved preferences; next explicitly started search. |
 | Boards, lookback and new-job limit | Discovery settings with `expectedRevision`; captured for the admitted search. |
-| Source enablement, locator, quarantine and capture review | Feature-owned review/registry records; disabled/rejected intent is retained. |
+| Board availability and capture review | Discovery stores board states, run history and existing capture reviews. JobStreaming defines the list of boards. |
 | Schedule | Explicitly enabled Discovery definition, reconciled by the worker; saving a schedule is not a manual search and does not normally require a restart. Saved and effective acknowledgement remain distinct. |
 | Shared automation/fit policy | Canonical runtime policy with `expectedPolicyRevision`; Discovery has no competing application-approval authority. |
 
@@ -302,55 +329,6 @@ Only the applicable owner's settings may change. Shared provider/model, spend
 and credential controls are in [Configuration](configuration.md). Normal forms
 do not ask you to tune lane JSON, worker slots or inspect queues to decide
 whether to search.
-
-### Propose sources from saved posting history
-
-Run `jobctrl source-proposals from-history` (optionally `--job-id JOB_ID` for one
-saved job) to opt into proposals from saved
-current posting URLs, canonical posting identities and current enrichment
-application URLs. This is an explicit command; importing, capturing, applying,
-opening Discovery or listing candidates does not trigger the history scan.
-Historical application aliases are lookup evidence, not current targets, and
-are excluded. The command checks public destinations through DNS but never
-fetches a page, invokes a model or starts a Discover run.
-
-Proposals enter the existing **Source controls → Source locator** review queue.
-URLs for one recognized ATS board share a candidate coordinate, including
-posting/API/apply URL forms. Literal board tokens, regional Lever hosts and
-Workday site names retain distinct source identities; display slugs do not
-merge them. Ordinary learning reuses a reviewed coordinate. Unknown hosts are proposed at host scope with no
-verified board identity. Malformed, credential-bearing, local/private and
-unresolvable destinations are not proposed. Public network policy still
-applies when a reviewed source is later acquired.
-
-Each proposal retains the original JobId and posting URL, the exact input URL
-and its authority, recorded source-observation/run IDs, extraction tier and
-time, snapshot version, hashes and recorded extraction evidence, and a bounded
-saved-content sample. The
-review panel shows board coordinates, existing registry overlaps, saved origin
-samples and **Completeness unknown**: saved postings do not prove board
-coverage or source availability. `jobctrl source-proposals list` reads all saved
-receipts and decisions as JSON without writing or making network requests.
-
-The proposal command and all review reads leave source enablement, schedules,
-job identity, application targets and application records unchanged. Promotion
-requires the existing explicit review control and rechecks the public
-destination before enabling a source. An overlapping active registry
-entry is reused with its reviewed configuration intact. A disabled or
-quarantined overlap must be changed explicitly in the registry first; a proposal
-cannot enable it. Normal worker reconciliation also preserves disabled sources. New Workday
-coordinates require the employer/site to be configured first; regional Lever
-coordinates remain review-only while the adapter supports global boards. The
-queue explains these promotion limits without hiding their evidence.
-
-Rejecting a candidate records durable suppression for its source coordinate,
-including alternate posting URLs and ordinary automatic learning. Run
-`jobctrl source-proposals reset CANDIDATE_ID` to explicitly clear that rejection,
-then run `from-history` again if desired. Reset never enables a source or creates
-a schedule. Pending, rejected and reset history coordinates cannot be promoted by normal
-worker learning. Retries reuse unchanged evidence; failed persistence rolls back
-the scan and retains the prior queue and receipts. Proposal evidence and review
-decisions remain local source-control history, including after job-data purge.
 
 ### Runtime setting reference
 
@@ -369,7 +347,7 @@ Legacy saved `resultsPerSite` values, API overrides and CLI `--results-per-site`
 remain readable for compatibility but do not limit new searches. Already admitted
 older searches retain their frozen finite request and checkpoint semantics.
 The shared maximum-new-jobs setting counts canonical new admissions across all
-source families. The final accepted job and receipt commit before provider
+selected boards. The final accepted job and receipt commit before provider
 acknowledgement and acquisition stops immediately afterward. In-flight provider
 work can still exist; no further job admission is allowed at capacity. Budget
 exhaustion, user cancellation and confirmed provider exhaustion remain distinct.
@@ -379,17 +357,10 @@ Authentication, native source limits, pacing and cancellation remain enforced.
 **Posting lookback hours.** Requested age window where the provider supports it;
 unsupported combinations are reported explicitly.
 
-<a id="runtime-setting-parallel-source-families"></a>
-**Parallel source families.** Bounded intake concurrency, separate from shared
-worker capacity and downstream preparation. It cannot bypass budgets or source
-pacing.
-
 <a id="runtime-setting-crawler-product-name"></a>
 <a id="runtime-setting-crawler-contact"></a>
 <a id="runtime-setting-use-browser-headers"></a>
-**Crawler identity and browser headers.** Saved non-secret request identity
-applies to new owned acquisition sessions. Connected Chrome keeps its own
-headers/session. Identity selection does not grant access or bypass rate limits.
+**Crawler identity and browser headers.** These settings supply the request identity for JobCtrl features that use its public posting transport. JobStreaming owns board sessions.
 
 <a id="runtime-setting-enable-scheduled-discovery"></a>
 <a id="runtime-setting-schedule-cron"></a>
@@ -416,66 +387,11 @@ owns how the accepted analysis supplies qualified requirements and person fit.
 
 ## Crawl Politeness
 
-Discovery and Enrich do not request, evaluate, or enforce `robots.txt` in
-extension or anonymous mode. This policy applies to broad boards, ATS/API,
-Workday, Smart Extract, and detail acquisition. Older source records with
-`honor` or `exempt_documented_api` values remain readable but cannot enable
-robots enforcement. Historical robots-blocked jobs remain retryable.
+JobStreaming performs board searches and retrieves supported posting details. Each board has its own access requirements, supported search filters, native page sizes and safety limits. JobCtrl records board-specific authentication failures and rate limits alongside accepted jobs. A terminal rate limit defers the board's remaining queries in that run.
 
-Connected acquisition uses the selected live extension/profile; Chrome owns its
-cookies, proxy, and user agent. Anonymous ATS/API and Workday use guarded HTTP,
-while Smart Extract and Enrich use anonymous Playwright with the public route
-guard. Public destinations, redirects, authentication boundaries, host pacing,
-concurrency, request budgets, and cancellation remain enforced in both modes.
-Broad-board traversal has the narrower accounting boundary below.
+JobCtrl freezes the selected boards and search criteria at launch. Its worker checkpoints the provider cursor, saves an admission or exclusion receipt, and acknowledges the provider. Only a newly created job uses one place in the requested limit. Cancellation and worker recovery keep the same run identity.
 
-The **Use browser headers** option under **Discovery → Runtime settings**
-selects the identity for non-extension gateways, including compensation lookups
-and opted-in contact research. When off, the effective form remains
-`<product>/<version> (+<contact>)`—for example
-`JobCtrl/0.3 (+https://github.com/ebarti/JobCtrl)`. When on, controlled HTTP and
-anonymous Playwright requests receive the generated User-Agent and client hints.
-Integrated anonymous broad-board requests receive the selected User-Agent;
-JobStreaming owns their remaining transport headers. `jobctrl doctor` prints an
-identity for the selected mode. Connected Chrome retains its real browser identity.
-
-Controlled HTTP and posting-browser acquisition record HTTP 429 and 503 as
-server deferrals before extraction. After a redirect, the cooldown belongs to
-the validated final response host; the original posting identity stays intact. They honor a valid `Retry-After` through the
-shared host limiter; when the header is absent or invalid, they use a one-minute
-cooldown. Connected rendered-page results do not carry response headers, so they
-use that same fallback. Other hosts remain independent. Long server delays retain
-the limiter's five-minute bound and explicit deferral behavior.
-
-The rest of crawl policy also lives on the SQLite-backed Discovery boundary, so
-per-source overrides ride the existing registry rather than a parallel config
-surface:
-
-- **Per-host rate/concurrency + per-run request budget** are fields on each
-  source's `SourcePolicy` (`domain/discovery/source_registry.py`), with
-  bounded defaults (a non-zero min-interval, a concurrency of one, and a finite
-  run budget). Per-source overrides
-  ride the existing `SourceRegistryEntry` rows; a registry policy editor is a
-  planned addition, not yet in the UI.
-- **Broad boards** (`indeed`, `linkedin`, `glassdoor`, `zip_recruiter`) are
-  parsed by JobStreaming. Their sessions prefer the connected extension or use
-  guarded Requests for anonymous acquisition, including providers normally
-  using native tls-client. Initial requests, redirects, recreated search
-  sessions and detail sessions all retain public URL/DNS checks. Direct sockets
-  connect to validated public numeric addresses; public redirects retain normal
-  Requests behavior. Provider headers, cookies, payloads and timeouts remain
-  supported. JobStreaming owns internal traversal, so
-  JobCtrl's crawl-policy pacing and budget apply at the invocation boundary;
-  `jobctrl doctor` warns when those sources are enabled. This is not a claim of
-  per-request budget accounting inside the library.
-- Live-profile Discovery uses the proxy configured in Chrome or the operating
-  system. It does not inject the SQLite `proxy` value into the user's browser.
-  Anonymous integrated broad-board acquisition rejects HTTP(S) and SOCKS proxy
-  routing, including environment proxies, because the worker cannot pin a
-  proxy's destination DNS. It does not silently go direct after that failure.
-  Connect the extension to use Chrome's configured proxy, or remove the proxy
-  for anonymous direct access. Other compatibility paths that consume the
-  JobCtrl proxy setting still reject malformed `host:port[:user:pass]` values.
+For a user-supplied posting URL, Jobs validates the public destination and redirects. The posting transport respects host cooldowns following server deferrals. A failed refresh retains the last accepted posting snapshot. See [Enrichment & Extraction](enrichment-and-extraction.md).
 
 ## Contact Research
 

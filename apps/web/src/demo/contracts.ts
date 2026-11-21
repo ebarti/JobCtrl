@@ -143,7 +143,6 @@ export interface DemoReadModel {
     readonly sources: ApiClientResponse<"discoverySources">;
     readonly sourcePreviews: Readonly<Record<string, ApiClientResponse<"discoverySourcePreview">>>;
     readonly compensationSources: ApiClientResponse<"compensationSources">;
-    readonly locatorCandidates: ApiClientResponse<"discoveryLocatorCandidates">;
     readonly quarantine: ApiClientResponse<"discoveryQuarantine">;
     readonly manualCapture: ApiClientResponse<"manualCaptureQueue">;
     readonly roleMatchFeedback: ApiClientResponse<"roleMatchFeedbackSuggestions">;

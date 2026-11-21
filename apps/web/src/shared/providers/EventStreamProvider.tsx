@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
-import { invalidateQueriesWithOptimisticOwnership } from "../lib/createOptimisticMutation.js";
+import { createEventQueryInvalidation } from "../lib/eventQueryInvalidation.js";
 import type { EventStreamStatus } from "../ports/EventStreamPort.js";
 import type { FeatureEventHandler } from "../ports/FeatureEvents.js";
 import { usePorts } from "./PortsProvider.js";
@@ -21,12 +21,13 @@ export function EventStreamProvider({ children, handlers = NO_HANDLERS }: {
   const [status, setStatus] = useState<EventStreamStatus>(eventStream.status);
   useEffect(() => {
     const subscription = eventStream.subscribe({ tenantId });
+    const refresh = createEventQueryInvalidation(queryClient);
     setStatus(subscription.status);
     let previousStatus = subscription.status;
     const reconcile = () => {
       // Preserve in-flight optimistic patches and reconcile initial reads
       // after they settle, including route-loader reads.
-      void invalidateQueriesWithOptimisticOwnership(queryClient, ["tenant", tenantId]);
+      refresh.invalidate(["tenant", tenantId]);
     };
     const offStatus = subscription.onStatusChange((next) => {
       setStatus(next);
@@ -42,7 +43,7 @@ export function EventStreamProvider({ children, handlers = NO_HANDLERS }: {
         reconcile();
       }
       try {
-        for (const owner of [...owners, ...observers]) owner.handle(event, queryClient);
+        for (const owner of [...owners, ...observers]) owner.handle(event, refresh.invalidate);
       } catch {
         telemetry.event("event-stream.invalidation-failed", { eventType: event.eventType });
         reconcile();
@@ -53,7 +54,7 @@ export function EventStreamProvider({ children, handlers = NO_HANDLERS }: {
       reconcile();
     });
     if (previousStatus === "open") reconcile();
-    return () => { offInvalid?.(); offEvent(); offStatus(); subscription.close(); };
+    return () => { offInvalid?.(); offEvent(); offStatus(); refresh.close(); subscription.close(); };
   }, [tenantId, eventStream, queryClient, telemetry, handlers]);
   const value = useMemo<EventStreamContextValue>(() => ({ status }), [status]);
   return <EventStreamContext.Provider value={value}>{children}</EventStreamContext.Provider>;

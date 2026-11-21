@@ -17,6 +17,7 @@ from jsonschema.exceptions import SchemaError, ValidationError
 from jobctrl.app.database import Database
 from jobctrl.app.errors import AppError, NotFoundError
 from jobctrl.app.events import now
+from jobctrl.app.model_capacity import ModelCapacityBusy, admit_model_call
 from jobctrl.app.settings import PROVIDER_CONFIGURATION_KEYS, Settings
 from jobctrl.app.synthetic import synthetic_boundary
 
@@ -179,6 +180,15 @@ class ModelGateway:
         ).fetchall()
         return [self.receipt(row[0], connection) for row in rows]
 
+    @staticmethod
+    def receipt_ids_in_window(operation: str, opened: str, closed: str, connection) -> list[str]:
+        """Distinguish no admission, a single admission, and ambiguous admissions."""
+        rows = connection.execute(
+            "SELECT receipt_id FROM app_model_calls WHERE operation=? AND created_at>=? AND created_at<=? "
+            "ORDER BY created_at,receipt_id LIMIT 2", (operation, opened, closed),
+        ).fetchall()
+        return [row[0] for row in rows]
+
     def find_succeeded(self, input_fingerprint: str, connection=None) -> dict | None:
         """Exact receipt lookup only; feature owners still validate acceptance."""
         if connection is None:
@@ -208,21 +218,27 @@ class ModelGateway:
                 "AND (input_tokens IS NULL OR output_tokens IS NULL) THEN 1 ELSE 0 END) unavailable_tokens "
                 "FROM app_model_calls WHERE created_at>=? GROUP BY lane", (day,)
             ).fetchall()
+            # A live reservation occupies its lane until it settles, across UTC days.
             running = connection.execute(
-                "SELECT lane,owner_pid,COUNT(*) calls FROM app_model_calls WHERE created_at>=? "
-                "AND status='running' GROUP BY lane,owner_pid", (day,)
+                "SELECT lane,owner_pid,COUNT(*) calls,SUM(created_at>=?) daily_calls FROM app_model_calls "
+                "WHERE status='running' GROUP BY lane,owner_pid", (day,)
             ).fetchall()
         lanes = {row["lane"]: {**dict(row), "active": 0} for row in rows}
-        owners = {row["owner_pid"]: _alive(row["owner_pid"]) for row in running}
+        owners = {pid: _alive(pid) for pid in {row["owner_pid"] for row in running}}
+        active = 0
         for row in running:
-            lanes[row["lane"]]["active" if owners[row["owner_pid"]] else "unresolved"] += row["calls"]
-        active = sum(row["active"] for row in lanes.values())
+            alive = owners[row["owner_pid"]]
+            if alive:
+                active += row["calls"]
+            if row["daily_calls"]:
+                lanes[row["lane"]]["active" if alive else "unresolved"] += row["daily_calls"]
+        daily_active = sum(row["active"] for row in lanes.values())
         unresolved = sum(row["unresolved"] for row in lanes.values())
         missing_cost = sum(row["unavailable_cost"] for row in lanes.values())
         missing_tokens = sum(row["unavailable_tokens"] for row in lanes.values())
 
         def status(unavailable):
-            return "unresolved" if unresolved else "pending" if active else "unavailable" if unavailable else "complete"
+            return "unresolved" if unresolved else "pending" if daily_active else "unavailable" if unavailable else "complete"
 
         cost_status, token_status = status(missing_cost), status(missing_tokens)
         known_cost = sum(row["cost_usd"] or 0 for row in lanes.values())
@@ -237,7 +253,7 @@ class ModelGateway:
                 "monetaryAccountingBlocked": monetary_blocked, "tokenAccountingBlockedLanes": blocked_lanes,
                 "costUsd": known_cost if cost_status == "complete" else None, "knownCostUsd": known_cost,
                 "costStatus": cost_status, "tokenStatus": token_status,
-                "activeCalls": active, "unresolvedCalls": unresolved,
+                "activeCalls": active, "dailyActiveCalls": daily_active, "unresolvedCalls": unresolved,
                 "unavailableCostCalls": missing_cost, "unavailableTokenCalls": missing_tokens,
                 "accountingComplete": cost_status == "complete" and token_status == "complete",
                 "costAuthority": "incomplete" if cost_status != "complete" else "includes_estimates"
@@ -259,7 +275,7 @@ class ModelGateway:
                 "budgetBusy": settings["dailyBudgetUsd"] > 0 and any(item["active"] for item in lanes.values()),
                 "scope": "recorded model calls and configured lane limits; provider readiness is separate"}
 
-    def _admit(self, payload: dict, *, require_accounting: bool = False) -> str:
+    def _admit(self, payload: dict, *, require_accounting: bool = False, on_admitted=None) -> str:
         receipt_id = str(uuid.uuid4())
         with self.database.transaction() as connection:
             settings = self.settings.snapshot(connection)
@@ -297,11 +313,11 @@ class ModelGateway:
                 raise AppError("spend_limit_reached", "The configured model spend or lane token limit has been reached.", 409)
             active = connection.execute("SELECT COUNT(*) FROM app_model_calls WHERE status='running' AND lane=?", (lane,)).fetchone()[0]
             if active >= settings["laneConcurrency"].get(lane, 1):
-                raise AppError("model_lane_busy", "The model lane is at its configured capacity.", 429)
+                raise ModelCapacityBusy("model_lane_busy", "The model lane is at its configured capacity.", 429)
             # Capped accounting must settle one accepted call before admitting a
             # peer, otherwise concurrent checks could all spend the same budget.
             if budget and connection.execute("SELECT 1 FROM app_model_calls WHERE status='running' LIMIT 1").fetchone():
-                raise AppError("model_budget_busy", "A budgeted model call is still settling.", 429)
+                raise ModelCapacityBusy("model_budget_busy", "A budgeted model call is still settling.", 429)
             connection.execute(
                 "INSERT INTO app_model_calls(receipt_id,operation,provider,model,lane,prompt_version,input_fingerprint,created_at,status,owner_pid,pricing_json) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -309,6 +325,9 @@ class ModelGateway:
                  payload["prompt_version"], hashlib.sha256(_canonical(payload).encode()).hexdigest(), now(), "running", os.getpid(),
                  _canonical(quote) if quote is not None else None),
             )
+            if on_admitted is not None:
+                # The caller's durable phase must own this receipt before external execution can begin.
+                on_admitted(connection, receipt_id)
         return receipt_id
 
     async def _external(self, payload: dict, execution: ModelExecution):
@@ -341,14 +360,16 @@ class ModelGateway:
     async def determine(self, *, operation: str, instructions: str, sources, response_schema: dict,
                         context: dict | None = None, prompt_version: str = "1", lane: str = "interactive",
                         model: str | None = None, require_accounting: bool = False,
-                        execution: ModelExecution | None = None) -> ModelResult:
+                        execution: ModelExecution | None = None, on_admitted=None) -> ModelResult:
         if type(require_accounting) is not bool:
             raise AppError("invalid_model_request", "Accounting admission must be an explicit boolean.")
         execution = self._execution(execution, model=model)
         payload = self._payload(operation=operation, instructions=instructions, sources=sources,
                                 response_schema=response_schema, context=context, prompt_version=prompt_version,
                                 lane=lane, execution=execution)
-        receipt_id = self._admit(payload, require_accounting=require_accounting)
+        receipt_id = await admit_model_call(
+            lane, lambda: self._admit(payload, require_accounting=require_accounting, on_admitted=on_admitted)
+        )
         usage = {}
         try:
             value, usage = await self._external(payload, execution)

@@ -1,8 +1,8 @@
 import { test, expect, json, modelCall } from "../harness/fixtures.js";
 import { captureReusePosting } from "./reuse-data.js";
 import { authoredPartition, requirementsPath, type NormalizedSnapshot, type ReconciliationReport } from "./consolidation-data.js";
-import { NORMALIZATION_STORAGE_VERSION, PARTITION_BINDER_VERSION, normalizationFingerprint, typedExtraction,
-  type CapabilityChoice, type CatalogContext, type legacyCatalogNormalizationV3 } from "./requirements-data.js";
+import { catalogContext, NORMALIZATION_STORAGE_VERSION, PARTITION_BINDER_VERSION, normalizationFingerprint, typedExtraction,
+  type CapabilityChoice, type legacyCatalogNormalizationV3 } from "./requirements-data.js";
 
 // The same source clauses receive two opposing, explicitly authored identity
 // choices in fresh workspaces. No helper decides their semantic relationship.
@@ -15,7 +15,7 @@ for (const partition of ["separate", "merged"] as const) {
     const extraction = await modelCall(app, "requirements.extract");
     extraction.reply(typedExtraction(extraction, { requirements: clauses.map((text, index) => ({ localId: localIds[index]!, text })) }));
     const normalization = await modelCall(app, "requirements.match_catalog");
-    const context = normalization.body["context"] as CatalogContext;
+    const context = catalogContext(normalization);
     expect(context.members.map((row) => row.member_id).sort()).toEqual(localIds.map((id) => "incoming:" + id).sort());
     expect(context.occurrences).toHaveLength(3);
     const separate: CapabilityChoice[] = clauses.map((definition, index) => ({ groupId: localIds[index]!,
@@ -38,7 +38,10 @@ for (const partition of ["separate", "merged"] as const) {
       expect(schema.$defs[name]!.additionalProperties).toBe(false);
     }
     expect(schema.$defs["CapabilityGroupId"]!.enum).toEqual(context.partition_group_handles.capabilities);
-    expect(schema.$defs["DemandGroupId"]!.enum).toEqual(context.partition_group_handles.demands);
+    expect(schema.$defs["CapabilityGroup"]!.properties!["reuse_requirement_id"]).toMatchObject({ type: "null" });
+    expect(schema.$defs["CitedOccurrence"]!.required).toEqual(["kind"]);
+    expect(schema.$defs["CitedOccurrence"]!.additionalProperties).toBe(false);
+    expect(Object.values(raw.occurrence_slots)).toEqual(context.occurrences.map(() => ({ kind: "cited" })));
     expect(schema.$defs["OfferedSourceId"]!.enum!.slice().sort()).toEqual(Object.keys(context.citation_segments).sort());
     expect(schema.$defs["DemandEvidenceSourceId"]!.enum!.slice().sort()).toEqual([
       context.catalog_inventory_source_id, ...context.occurrences.map((row) => row.source_id),

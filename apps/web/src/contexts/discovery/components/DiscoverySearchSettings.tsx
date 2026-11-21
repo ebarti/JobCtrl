@@ -1,3 +1,4 @@
+import { useJobStreamingBoardOptions } from "../hooks/useDiscoveryProductControlsQuery.js";
 import { DiscoverySettingsUpdateRequestSchema, type DiscoverySettingsResponse } from "@jobctrl/contracts";
 import { useForm } from "@tanstack/react-form";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -26,7 +27,6 @@ const drafts = createScopedFormDraftStore<Draft>();
 export function clearDiscoverySearchSettingsDraftsForSession(session: SessionPort, tenant: string): void {
   drafts.getState().clear(session, tenant);
 }
-const BOARD_OPTIONS = [["indeed", "Indeed"], ["linkedin", "LinkedIn"], ["zip_recruiter", "ZipRecruiter"], ["glassdoor", "Glassdoor"]] as const;
 
 export interface DiscoverySearchSettingsState {
   readonly ready: boolean;
@@ -81,6 +81,7 @@ function settingsChanged(saved: Saved, values: Inputs): boolean {
 
 function SavedDiscoverySearchSettings({ initial, onStateChange, workspaceIdentity }: { initial: Saved; onStateChange?: ((state: DiscoverySearchSettingsState) => void) | undefined; workspaceIdentity?: string | undefined }) {
   const tenant = useTenantId(); const { session } = usePorts(); const query = useDiscoverySettingsQuery(workspaceIdentity); const save = useUpdateDiscoverySettingsMutation(workspaceIdentity);
+  const boardOptions = useJobStreamingBoardOptions();
   const draftEpoch = useRef(drafts.getState().resetEpochs.get(session)?.get(tenant) ?? 0);
   const retained = useRef(workspaceIdentity ? drafts.getState().read(session, tenant, workspaceIdentity) : undefined); const base = useRef(retained.current?.base ?? initial);
   const defaults = useRef(retained.current?.values ?? toInputs(initial)); const [baseRevision, setBaseRevision] = useState(base.current.revision);
@@ -125,7 +126,7 @@ function SavedDiscoverySearchSettings({ initial, onStateChange, workspaceIdentit
   const useSaved = () => { base.current = initial; setBaseRevision(initial.revision); setUncertain(false); save.reset(); const values = toInputs(initial); defaults.current = values; form.reset(defaults.current); remember(values); setResetToken((token) => token + 1); setMessage("Using saved search settings."); };
   return <form className="search-settings-form" ref={formRef} onSubmit={(event) => { event.preventDefault(); void form.handleSubmit(); }}>
     <FieldGroup>
-      <form.Field name="boards">{(field) => <FieldSet className="search-choice-group"><FieldLegend variant="label">Job boards</FieldLegend><FieldGroup className="search-choices">{[...BOARD_OPTIONS, ...field.state.value.filter((value) => !BOARD_OPTIONS.some(([code]) => value === code)).map((value) => [value, value] as const)].map(([value, label]) => <Field key={value} orientation="horizontal"><Checkbox id={`search-board-${value}`} checked={field.state.value.includes(value)} disabled={!initial.effectiveSettings.boards.editable} onCheckedChange={(checked) => field.handleChange(checked ? [...field.state.value, value] : field.state.value.filter((board) => board !== value))} /><FieldLabel htmlFor={`search-board-${value}`}>{label}</FieldLabel></Field>)}</FieldGroup><FieldDescription>Employer sources you enabled are searched alongside these boards.</FieldDescription></FieldSet>}</form.Field>
+      <form.Field name="boards">{(field) => <FieldSet className="search-choice-group"><FieldLegend variant="label">Job boards</FieldLegend><FieldGroup className="search-choices">{boardOptions.map(({ value, label }) => <Field key={value} orientation="horizontal"><Checkbox id={`search-board-${value}`} checked={field.state.value.includes(value)} disabled={!initial.effectiveSettings.boards.editable} onCheckedChange={(checked) => field.handleChange(checked ? [...field.state.value, value] : field.state.value.filter((board) => board !== value))} /><FieldLabel htmlFor={`search-board-${value}`}>{label}</FieldLabel></Field>)}</FieldGroup><FieldDescription>JobStreaming searches the selected boards.</FieldDescription></FieldSet>}</form.Field>
       <FieldGroup className="search-limit-grid">
         <form.Field name="newJobLimit">{(field) => <Field><FieldLabel htmlFor="search-new-job-limit">Maximum new jobs</FieldLabel><Input id="search-new-job-limit" type="number" min={1} max={10000} step={1} inputMode="numeric" value={field.state.value} onChange={(event) => field.handleChange(event.target.value)} /><FieldDescription>Maximum new jobs added by each search.</FieldDescription></Field>}</form.Field>
         <form.Field name="hoursOld">{(field) => <Field><FieldLabel htmlFor="search-posting-age">Posting age</FieldLabel><Input id="search-posting-age" type="number" min={0} max={8760} step={1} inputMode="numeric" value={field.state.value} disabled={!initial.effectiveSettings.hoursOld.editable} onChange={(event) => field.handleChange(event.target.value)} /><FieldDescription>Hours. 0 means no age cutoff. Where a board needs a broader date request, only postings with a confirmed date inside your cutoff are kept. Unavailable boards are reported separately.</FieldDescription></Field>}</form.Field>

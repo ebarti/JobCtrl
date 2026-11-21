@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useMemo, type ReactNode } from "react";
 import type { ComposedJobRow, ComposedJobsResponse, PostingSnapshot } from "../../contexts/jobs/index.js";
+import { jobFitPreparation, usePreparationRuns, type FitPreparationReason } from "../../contexts/pipeline/index.js";
 import { PYTHON_JOBS_SORT_FIELDS } from "../../shared/stores/saved-table-views.js";
 import {
   FilterableDataGrid, isActiveDataGridFilter, type DataGridColumn, type DataGridColorRule, type DataGridColumnWidthsState,
@@ -61,7 +62,7 @@ function moduleLabel(data: ComposedJobsResponse | undefined, name: "fit" | "comp
   const state = data?.modules[name];
   return state && !state.enabled ? "Feature disabled" : state && !state.available ? "Unavailable" : null;
 }
-function valueFor(row: ComposedJobRow, id: string, data: ComposedJobsResponse | undefined): ReactNode {
+function valueFor(row: ComposedJobRow, id: string, data: ComposedJobsResponse | undefined, preparation?: FitPreparationReason | null): ReactNode {
   const scalar = row.scalars[id];
   if (id === "posted_compensation") {
     const unavailable = moduleLabel(data, "compensation");
@@ -77,7 +78,9 @@ function valueFor(row: ComposedJobRow, id: string, data: ComposedJobsResponse | 
     const unavailable = moduleLabel(data, "fit");
     if (unavailable) return unavailable;
     return typeof scalar === "number" ? `${scalar}/10${row.fit && !row.fit.current ? row.fit.stale_reasons?.includes("contract_changed") ? " · historical" : " · stale" : ""}`
-      : row.fit?.score?.score === null ? "No score · no eligible demands" : "Not assessed";
+      : row.fit?.score?.score === null ? "No score · no eligible demands"
+      : preparation?.runId ? <Link to="/runs/$runId" params={{ runId: preparation.runId }} title={preparation.detail}>{preparation.label}</Link>
+      : preparation?.label ?? "Not assessed";
   }
   if (id === "eligibility") return moduleLabel(data, "fit") ?? row.fit?.score?.eligibility.status ?? "Unknown";
   if (id.startsWith("compensation_")) {
@@ -121,6 +124,11 @@ function valueFor(row: ComposedJobRow, id: string, data: ComposedJobsResponse | 
 export function ComposedJobsGrid(props: ComposedJobsGridProps) {
   const navigate = useNavigate();
   const { data, filterMetadata, selected, onSelectionChange } = props;
+  const hasPreparation = Boolean(data?.modules.preparation.enabled && data.modules.preparation.available);
+  const runs = usePreparationRuns({ enabled: hasPreparation && Boolean(data?.modules.fit.available && data.rows.some((row) => row.fit?.score === null)) });
+  const reasons = useMemo(() => jobFitPreparation((data?.rows ?? []).filter((row) => row.fit?.score === null)
+    .map((row) => ({ job: row.job, currentRequirements: row.fit?.current_requirements, latestRunId: row.preparation?.run_id })),
+    hasPreparation && !runs.isError ? runs.data ?? [] : []), [data, hasPreparation, runs.data, runs.isError]);
   const columns = useMemo<Array<DataGridColumn<ComposedJobRow>>>(() => {
     const sortable = new Set(filterMetadata?.capabilities.sortable_fields ?? []);
     const filterable = new Set(filterMetadata?.capabilities.filterable_fields ?? []);
@@ -143,14 +151,15 @@ export function ComposedJobsGrid(props: ComposedJobsGridProps) {
         filterSummary: jobColumnFilterSummary(id, props.criteria),
         onClearFilter: () => props.onCriteriaChange(clearJobColumnCriteria(id, props.criteria), { ...props.filters, [id]: undefined }),
         renderFilter: ({ filter, defaultContent, predicateContent }) => <JobColumnFilter key={JSON.stringify(props.criteria)} columnId={id} criteria={props.criteria} filter={filter} literalContent={defaultContent} literalPredicate={predicateContent}
+          postedPayFilters={filterMetadata?.capabilities.posted_pay_filters ?? []}
           unavailable={id === "fit_score" || id === "scored_at" ? moduleLabel(data, "fit") : id === "posted_compensation" || id.startsWith("compensation_") ? moduleLabel(data, "compensation") : null}
           onApply={(next, literal) => props.onCriteriaChange(next, literal ? { ...props.filters, [id]: literal } : props.filters)}
           onClear={() => props.onCriteriaChange(clearJobColumnCriteria(id, props.criteria), { ...props.filters, [id]: undefined })}
           onClearLiteral={() => props.onFiltersChange({ ...props.filters, [id]: undefined })} />,
       } : {}),
-      render: (row) => valueFor(row, id, data),
+      render: (row) => valueFor(row, id, data, reasons.get(row.job.job_id)),
     }))];
-  }, [data, filterMetadata, selected, onSelectionChange, props.criteria, props.filters, props.onCriteriaChange, props.onFiltersChange]);
+  }, [data, reasons, filterMetadata, selected, onSelectionChange, props.criteria, props.filters, props.onCriteriaChange, props.onFiltersChange]);
   const visibility = useMemo(() => Object.fromEntries(props.hiddenColumnIds.map((id) => [id, false])), [props.hiddenColumnIds]);
   return <FilterableDataGrid<ComposedJobRow>
     title="Jobs table" data={data?.rows ?? []} columns={columns} getRowId={(row) => row.job.job_id}

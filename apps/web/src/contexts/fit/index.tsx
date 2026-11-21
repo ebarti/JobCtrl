@@ -1,14 +1,13 @@
 export { AssociationStateAction, RequirementAssociationPicker, requirementQualifierText, achievementChoices, type AchievementChoice, type LibraryRequirement, type UserAssociation } from "./components/RequirementAssociationPicker.js";
 import { useForm } from "@tanstack/react-form";
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState, type ReactNode } from "react";
 import { z } from "zod";
 
-import type { DomainEventEnvelope } from "../../shared/ports/EventStreamPort.js";
+import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
 import { Button } from "../../shared/ui/button.js";
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
 import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
 import "../../styles/redesign-fit.css";
@@ -287,9 +286,9 @@ function evidenceSection(source: EvidenceOption | undefined) {
   return source ? fitStatusLabel(source.kind) : "Recorded source";
 }
 
-export function PersonFitPanel({ jobId, sources = [], achievements = [], defaultMode = null, managedPreparation = false, requirementsStatus }: {
+export function PersonFitPanel({ jobId, sources = [], achievements = [], defaultMode = null, managedPreparation = false, requirementsStatus, preparationNotice }: {
   jobId: string; sources?: readonly EvidenceOption[]; achievements?: readonly AchievementOption[]; defaultMode?: "baseline" | "tailored" | null;
-  managedPreparation?: boolean; requirementsStatus?: "complete" | "unsupported_language" | undefined;
+  managedPreparation?: boolean; preparationNotice?: ReactNode; requirementsStatus?: "complete" | "unsupported_language" | undefined;
 }) {
   const { featureFlags } = usePorts();
   const assessmentAvailability = getApiCapabilityAvailability(featureFlags, "rescoreJob");
@@ -363,7 +362,7 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
         </li>;
       })}</ul>
       {!historical && !unsupportedLanguage && fit.current && fit.score.score !== null ? <CorrectionForm key={fit.score.revision} score={fit.score.score} revision={fit.score.revision} pending={busy} onSave={(body) => correct.mutate(body)} /> : null}
-    </> : fit && !unsupportedLanguage ? <p>No person-fit assessment has been recorded yet.</p> : null}
+    </> : fit ? preparationNotice ?? (!unsupportedLanguage ? <p>No person-fit assessment has been recorded yet.</p> : null) : null}
     {fit && !fit.score && !managedPreparation && !unsupportedLanguage ? <div className="toolbar">
       <Button type="button" disabled={!assessmentAvailability.available || busy || query.isPending} onClick={runAssessment}>{assess.isPending ? "Assessing…" : "Assess person fit"}</Button>
     </div> : null}
@@ -384,7 +383,7 @@ export function PersonFitPanel({ jobId, sources = [], achievements = [], default
   </section>;
 }
 
-export const fitInvalidation = {
+export const fitInvalidation: FeatureEventHandler = {
   eventTypes: ["FitAssessed", "FitCorrected", "FitRequirementCorrected", "FitCoverageUpdated", "FitRefreshUpdated", "FitAssociationUpdated", "FitCurrentWordingUpdated", "ProfileUpdated", "ProfileWordingUpdated", "ProfileSourceUpdated", "JobCaptured", "JobSourceObserved", "JobUpdated", "RequirementBindingCorrected", "RequirementsUpdated", "RequirementMeaningRevised", "RequirementsConsolidated"] as const,
-  handle(event: DomainEventEnvelope, client: QueryClient) { void invalidateQueriesWithOptimisticOwnership(client, fitKeys.all(event.tenantId)); },
+  handle(event, invalidate) { invalidate(fitKeys.all(event.tenantId)); },
 };

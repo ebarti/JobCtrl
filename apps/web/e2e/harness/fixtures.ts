@@ -92,7 +92,7 @@ type Fixtures = {
   api: APIRequestContext;
   consoleErrors: string[];
   features: string | undefined;
-  discoveryTransport: "http" | "jobstreaming";
+  discoveryTransport: "jobstreaming" | "jobstreaming-indeed-missing" | "jobstreaming-tls-failure";
   nativeAccountingPreflight: boolean;
   sourceRevision: string | undefined;
   fitRecoveryDebugger: boolean;
@@ -113,7 +113,7 @@ type Fixtures = {
 
 export const test = base.extend<Fixtures, WorkerFixtures>({
   features: [undefined, { option: true }],
-  discoveryTransport: ["http", { option: true }],
+  discoveryTransport: ["jobstreaming", { option: true }],
   nativeAccountingPreflight: [false, { option: true }],
   sourceRevision: [undefined, { option: true }],
   fitRecoveryDebugger: [false, { option: true }],
@@ -323,10 +323,14 @@ export async function completed(api: APIRequestContext, runId: string) {
 
 export async function terminal(api: APIRequestContext, runId: string) {
   let result: Record<string, unknown> = {};
+  const path = `/v1/action-runs/${runId}`;
   await expect
     .poll(
       async () => {
-        result = await json(api, "get", `/v1/action-runs/${runId}`);
+        // Recover an idle connection reset on this idempotent status read.
+        const response = await api.get(path, { maxRetries: 1 });
+        expect(response.ok(), `GET ${path}: ${await response.text()}`).toBe(true);
+        result = await response.json() as Record<string, unknown>;
         return ["succeeded", "failed", "cancelled"].includes(
           String(result["status"]),
         );
