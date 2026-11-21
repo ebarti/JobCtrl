@@ -45,6 +45,21 @@ export function useJob(jobId: string) {
     meta: { suppressGlobalErrorToast: true },
   });
 }
+const availabilityRead = z.object({
+  last_confirmed: z.object({ at: z.string(), state: z.string() }).nullable().optional(),
+  last_attempt: z.object({ at: z.string(), outcome: z.string() }).nullable().optional(),
+  availability: z.unknown(),
+});
+export function usePostingAvailability(jobId: string, enabled: boolean) {
+  const tenantId = useTenantId();
+  const { http } = usePorts();
+  return useQuery({
+    queryKey: [...jobsKeys.detail(tenantId, jobId), "availability"],
+    queryFn: async () => availabilityRead.parse(await http.json("GET", `/v1/jobs/${encodeURIComponent(jobId)}/availability`)),
+    enabled,
+    meta: { suppressGlobalErrorToast: true },
+  });
+}
 export function useJobActions(jobId?: string) {
   const tenantId = useTenantId(); const { http } = usePorts(); const client = useQueryClient();
   const update = (job: PostingSnapshot) => {
@@ -61,7 +76,7 @@ export function useJobActions(jobId?: string) {
   const checkAvailability = useMutation({ mutationFn: async (revision: number) => {
     if (!jobId) throw new Error("No job selected.");
     return parseJob(await http.json<unknown>("POST", `/v1/jobs/${encodeURIComponent(jobId)}/availability`, { body: { expectedRevision: revision } }));
-  }, onSuccess: update });
+  }, onSuccess: update, onSettled: () => client.invalidateQueries({ queryKey: jobsKeys.detail(tenantId, jobId ?? "") }) });
   return { capture, refresh, checkAvailability };
 }
 const deletionSelectionSchema = z.object({ selectionId: z.string(), jobIds: z.array(z.string()), count: z.number(), expiresAt: z.string(),

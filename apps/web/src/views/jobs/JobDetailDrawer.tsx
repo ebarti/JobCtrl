@@ -111,9 +111,9 @@ export function JobDetailDrawer({ jobId, onClose, returnLabel = "Back to jobs", 
               {reason.runId ? <Link to="/runs/$runId" params={{ runId: reason.runId }}>View preparation run</Link> : null}
             </p> : null} />
           {overview.map(renderSection)}
+          <PostingAvailabilityPanel posting={posting} />
           <details className="job-workspace-inspection"><summary>Posting, availability and requirement details</summary>
             <JobDescription text={posting.description} />
-            <PostingAvailabilityPanel posting={posting} />
             <RoleAnalysisPanel jobId={jobId} postingRevision={posting.revision} />
             <RequirementsPanel jobId={jobId} postingRevision={posting.revision} />
             <p>Posting revision {posting.revision} · source {posting.source_id}, revision {posting.source_revision}</p>

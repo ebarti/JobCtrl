@@ -2704,6 +2704,11 @@ focus emulation from native visibility proof.
 
 ## 2026-10-04: Persist Bounded Saved-Posting Availability Separately
 
+**November 2026 amendment.** Saved postings use manual availability checks.
+Job Detail warns when a confirmation is 24 hours old. Periodic sweeps, catch-up
+and automated retries described in the original decision below are superseded.
+Scheduled discovery of new jobs and approval checks have separate contracts.
+
 Status: accepted
 
 Decision: Enrichment owns recurring and explicit posting observations in the
