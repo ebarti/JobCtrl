@@ -11,9 +11,13 @@ from collections.abc import Collection
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from temporalio.api.enums.v1 import TaskQueueType
+from temporalio.api.taskqueue.v1 import TaskQueue
+from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest, DescribeTaskQueueRequest
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
+from temporalio.service import RPCError, RPCStatusCode
 
 from jobctrl.app.contracts import ActionContext, Feature, Runtime
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
@@ -91,7 +95,8 @@ class Application:
         return encoded
 
     def _create_run(self, action: str, payload: dict, *, idempotency_key: str | None = None,
-                    request_id: str | None = None, run_id: str | None = None, workflow_id: str | None = None):
+                    request_id: str | None = None, run_id: str | None = None, workflow_id: str | None = None,
+                    existing_only: bool = False):
         encoded = self._require_action(action, payload)
         identity = {"action": action, "payload": payload}
         version = self.action_versions.get(action)
@@ -102,7 +107,8 @@ class Application:
             raise AppError("invalid_idempotency_key", "Use a nonempty idempotency key of at most 200 characters.")
         run_id = run_id or str(uuid.uuid4())
         workflow_id = workflow_id or f"{self.identity['taskQueue']}-{run_id}"
-        with self.runtime.database.transaction() as connection:
+        access = self.runtime.database.connect if existing_only else self.runtime.database.transaction
+        with access() as connection:
             existing = connection.execute(
                 "SELECT * FROM app_action_runs WHERE run_id=? OR (? IS NOT NULL AND idempotency_key=?)",
                 (run_id, idempotency_key, idempotency_key),
@@ -113,6 +119,8 @@ class Application:
                         raise AppError("action_contract_changed", "This action belongs to an earlier processing contract. Start a new action; the earlier result remains in history.", 409)
                     raise ConflictError("This action identity already belongs to different input.")
                 return self._run_payload(existing)
+            if existing_only:
+                return None
             scope = self.action_scopes.get(action)
             if scope is not None:
                 requested_scope = scope(payload)
@@ -269,9 +277,14 @@ class Application:
 
     async def submit(self, action: str, payload: dict, *, idempotency_key: str | None = None, request_id: str | None = None) -> dict:
         self._require_action(action, payload)
-        readiness = self.worker_status(action)
+        if idempotency_key is not None:
+            saved = self._create_run(action, payload, idempotency_key=idempotency_key, existing_only=True)
+            if saved and saved["status"] not in {"pending", "start_failed"}:
+                return {key: saved[key] for key in ("runId", "workflowId", "status")}
+        readiness = await self.dispatch_readiness(action)
         if not readiness["healthy"]:
             raise AppError(readiness["reason"], readiness["message"], 503)
+        idempotency_key = idempotency_key or uuid.uuid4().hex
         run = self._create_run(action, payload, idempotency_key=idempotency_key, request_id=request_id)
         if run["status"] not in {"pending", "start_failed"}:
             return {key: run[key] for key in ("runId", "workflowId", "status")}
@@ -282,6 +295,7 @@ class Application:
                                  "request_id": request_id or run["runId"]},
                 id=run["workflowId"], task_queue=self.identity["taskQueue"],
                 id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+                rpc_timeout=timedelta(seconds=5),
             )
             temporal_run_id = handle.first_execution_run_id
         except WorkflowAlreadyStartedError as error:
@@ -290,15 +304,17 @@ class Application:
             with self.runtime.database.transaction() as connection:
                 connection.execute("UPDATE app_action_runs SET status='start_failed',error_code='workflow_start_failed',updated_at=? WHERE run_id=? AND status='pending'", (now(), run["runId"]))
             raise AppError("workflow_start_failed", "The durable action was not confirmed as queued; retry with the same idempotency key.", 503,
-                           {"runId": run["runId"]}) from None
+                           {"runId": run["runId"], "idempotencyKey": idempotency_key}) from None
         with self.runtime.database.transaction() as connection:
-            connection.execute(
-                "UPDATE app_action_runs SET status=CASE WHEN status IN ('pending','start_failed') THEN 'queued' ELSE status END,"
-                "temporal_run_id=COALESCE(temporal_run_id,?),error_code=NULL,updated_at=? WHERE run_id=?",
+            queued = connection.execute(
+                "UPDATE app_action_runs SET status='queued',temporal_run_id=COALESCE(temporal_run_id,?),"
+                "error_code=NULL,updated_at=? WHERE run_id=? AND status IN ('pending','start_failed')",
                 (temporal_run_id, now(), run["runId"]),
             )
-            self.runtime.events.append(connection, "ActionQueued", {"runId": run["runId"], "action": action}, feature=action.split(".")[0])
-        return {"runId": run["runId"], "workflowId": run["workflowId"], "status": "queued"}
+            if queued.rowcount:
+                self.runtime.events.append(connection, "ActionQueued", {"runId": run["runId"], "action": action}, feature=action.split(".")[0])
+            receipt = self.action_run(run["runId"], connection)
+        return {key: receipt[key] for key in ("runId", "workflowId", "status")}
 
     async def execute(self, action: str, payload: dict, *, run_id: str | None = None, request_id: str | None = None,
                       context: ActionContext | None = None, workflow_id: str | None = None,
@@ -388,8 +404,9 @@ class Application:
         unavailable = {"status": "unavailable", "healthy": False, "pid": None, "workerId": None,
                        "heartbeatAt": None, "taskQueue": queue}
         with self.runtime.database.connect() as connection:
-            binding = connection.execute("SELECT history,namespace FROM app_workflow_history WHERE singleton=1").fetchone()
-            if binding and tuple(binding) != (self.identity["history"], self.identity["namespace"]):
+            binding = connection.execute("SELECT history,namespace,namespace_id FROM app_workflow_history WHERE singleton=1").fetchone()
+            unavailable["namespaceId"] = binding["namespace_id"] if binding else None
+            if binding and (binding["history"], binding["namespace"]) != (self.identity["history"], self.identity["namespace"]):
                 return {**unavailable, "reason": "workflow_history_mismatch",
                         "message": "Restart JobCtrl with this workspace’s original workflow service."}
             rows = connection.execute(
@@ -414,10 +431,54 @@ class Application:
                         "message": "Restart the worker with the requested feature enabled, then retry."}
             if ready is None:
                 ready = {"status": "healthy", "healthy": True, "pid": row["pid"], "workerId": row["worker_id"],
-                         "heartbeatAt": row["heartbeat_at"], "taskQueue": queue, "build": self.identity["build"]}
+                         "heartbeatAt": row["heartbeat_at"], "taskQueue": queue, "build": self.identity["build"],
+                         "namespaceId": binding["namespace_id"] if binding else None}
         return ready or {**unavailable, "reason": "worker_unavailable", "message": "Start the JobCtrl worker and retry."}
 
-    def require_write_identity(self):
+    async def require_write_identity(self):
         status = self.worker_status()
         if status.get("reason") in {"workflow_history_mismatch", "worker_incompatible"}:
             raise AppError(status["reason"], status["message"], 409)
+        if not status.get("namespaceId"):
+            return
+        try:
+            async with asyncio.timeout(2):
+                client = await self.temporal()
+                namespace = await client.workflow_service.describe_namespace(DescribeNamespaceRequest(namespace=client.namespace))
+                if namespace.namespace_info.id == status["namespaceId"]:
+                    return
+        except RPCError as error:
+            if error.status != RPCStatusCode.NOT_FOUND:
+                return  # Local edits remain available when the workflow service is offline.
+        except (TimeoutError, OSError, RuntimeError):
+            return
+        raise AppError("workflow_history_mismatch", "Restart JobCtrl with this workspace’s original workflow service.", 409)
+
+    async def dispatch_readiness(self, action: str | None = None) -> dict:
+        worker = self.worker_status(action)
+        if not worker["healthy"]:
+            return worker
+        unavailable = {**worker, "healthy": False, "status": "unavailable"}
+        try:
+            async with asyncio.timeout(2):
+                client = await self.temporal()
+                service = client.workflow_service
+                namespace, workflows, activities = await asyncio.gather(
+                    service.describe_namespace(DescribeNamespaceRequest(namespace=client.namespace)),
+                    *(service.describe_task_queue(DescribeTaskQueueRequest(
+                        namespace=client.namespace, task_queue=TaskQueue(name=worker["taskQueue"]), task_queue_type=kind,
+                    )) for kind in (TaskQueueType.TASK_QUEUE_TYPE_WORKFLOW, TaskQueueType.TASK_QUEUE_TYPE_ACTIVITY)),
+                )
+        except Exception:
+            return {**unavailable, "reason": "workflow_service_unavailable",
+                    "message": "The workflow service is unavailable. Start it, then retry."}
+        if namespace.namespace_info.id != worker["namespaceId"]:
+            return {**unavailable, "reason": "workflow_history_mismatch",
+                    "message": "Restart JobCtrl with this workspace’s original workflow service."}
+        # A healthy idle worker can spend a minute in a single long poll.
+        recent = datetime.now(timezone.utc).timestamp() - 120
+        if not all(any(p.identity == worker["workerId"] and p.last_access_time.seconds >= recent for p in queue.pollers)
+                   for queue in (workflows, activities)):
+            return {**unavailable, "reason": "worker_not_polling",
+                    "message": "The worker is connecting to its queue. Retry once it is ready."}
+        return worker

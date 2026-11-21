@@ -9,7 +9,7 @@ there is no Fastify business authority or TypeScript/Python JSON-RPC hop.
 
 | Route | Contract |
 | --- | --- |
-| `GET /v1/health` | Application/schema/workspace identity, selected features and their advertised capabilities, live worker heartbeat and model accounting. |
+| `GET /v1/health` | Application/schema/workspace identity, selected features, live dispatch readiness and model accounting. |
 | `GET /v1/setup/status` | Public Profile/provider/browser/Temporal/policy readiness; configuration and verified readiness are distinct. |
 | `GET /v1/settings` | Direct non-secret settings snapshot with integer `revision` and derived read-only `modelAccounting` (selected provider/model, availability, cost source and exact quote). Derivation does not contact providers or inspect credentials. |
 | `PATCH /v1/settings` | Partial top-level values plus required `expectedRevision`; returns a new snapshot or 409 for stale input. Nested maps replace the supplied map. |
@@ -249,3 +249,9 @@ See [runtime](architecture/runtime.md), [storage](architecture/storage.md), and
 The local `/v1/health` response includes `runtimeIdentity` with the startup
 build fingerprint, workspace, database instance, workflow history and queue.
 An unavailable worker supplies an actionable `message` and `reason`.
+Health, setup and pipeline telemetry use the same bounded check of the selected
+Temporal namespace and the worker's workflow and activity pollers. A refused
+new action creates no receipt. If confirmation of a start is lost, the 503
+includes the run ID and idempotency key. Sending the same payload and key
+reuses its workflow ID. A previously confirmed receipt can be read during
+a service outage.

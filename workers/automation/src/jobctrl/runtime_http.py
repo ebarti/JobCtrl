@@ -47,7 +47,7 @@ async def setup_status(application, *, credential_service=None):
                           for item in await run_in_threadpool(list_browser_capabilities, app_dir=runtime.workspace)]
     except BrowserCapabilityError:
         browser_status = [{"id": "browser", "status": "failed", "detail": "Browser capability configuration could not be verified."}]
-    worker = application.worker_status()
+    worker = await application.dispatch_readiness()
     try:
         client = await asyncio.wait_for(application.temporal(), timeout=2)
         healthy = await asyncio.wait_for(client.service_client.check_health(), timeout=2)

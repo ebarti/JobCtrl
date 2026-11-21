@@ -193,7 +193,7 @@ class LocalSecurity:
 
         if not error and self.validate_write_identity and scope["method"] in UNSAFE_METHODS and scope["path"].startswith("/v1/"):
             try:
-                self.validate_write_identity()
+                await self.validate_write_identity()
             except AppError as conflict:
                 error = conflict
         if error:
