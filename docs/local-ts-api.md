@@ -245,3 +245,7 @@ business or semantic authority.
 
 See [runtime](architecture/runtime.md), [storage](architecture/storage.md), and
 [contract ownership](architecture/contracts-types-and-api-boundaries.md).
+
+The local `/v1/health` response includes `runtimeIdentity` with the startup
+build fingerprint, workspace, database instance, workflow history and queue.
+An unavailable worker supplies an actionable `message` and `reason`.

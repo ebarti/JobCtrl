@@ -19,6 +19,7 @@ from jobctrl.app.contracts import ActionContext, Feature, Runtime
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 from jobctrl.app.events import now
 from jobctrl.app.execution import ExecutionCustody
+from jobctrl.app.worker_identity import SCHEMA as WORKER_IDENTITY_SCHEMA, process_identity
 
 
 def encode(value) -> str:
@@ -60,6 +61,8 @@ class Application:
                 if name not in feature.actions or not callable(admission):
                     raise ValueError(f"Invalid action admission: {name}")
                 self.action_admissions[name] = admission
+        self.runtime.database.initialize_feature("worker_identity", WORKER_IDENTITY_SCHEMA)
+        self.identity = process_identity(runtime, task_queue(runtime.workspace))
         self._temporal = None
         self._temporal_lock = asyncio.Lock()
 
@@ -73,8 +76,7 @@ class Application:
             async with self._temporal_lock:
                 if self._temporal is None:
                     self._temporal = await Client.connect(
-                        os.environ.get("JOBCTRL_TEMPORAL_ADDRESS", "127.0.0.1:7233"),
-                        namespace=os.environ.get("JOBCTRL_TEMPORAL_NAMESPACE", "default"),
+                        self.identity["address"], namespace=self.identity["namespace"],
                     )
         return self._temporal
 
@@ -99,7 +101,7 @@ class Application:
         if idempotency_key is not None and (not idempotency_key.strip() or len(idempotency_key) > 200):
             raise AppError("invalid_idempotency_key", "Use a nonempty idempotency key of at most 200 characters.")
         run_id = run_id or str(uuid.uuid4())
-        workflow_id = workflow_id or f"{task_queue(self.runtime.workspace)}-{run_id}"
+        workflow_id = workflow_id or f"{self.identity['taskQueue']}-{run_id}"
         with self.runtime.database.transaction() as connection:
             existing = connection.execute(
                 "SELECT * FROM app_action_runs WHERE run_id=? OR (? IS NOT NULL AND idempotency_key=?)",
@@ -267,8 +269,9 @@ class Application:
 
     async def submit(self, action: str, payload: dict, *, idempotency_key: str | None = None, request_id: str | None = None) -> dict:
         self._require_action(action, payload)
-        if not self.worker_status()["healthy"]:
-            raise AppError("worker_unavailable", "The durable worker is not ready.", 503)
+        readiness = self.worker_status(action)
+        if not readiness["healthy"]:
+            raise AppError(readiness["reason"], readiness["message"], 503)
         run = self._create_run(action, payload, idempotency_key=idempotency_key, request_id=request_id)
         if run["status"] not in {"pending", "start_failed"}:
             return {key: run[key] for key in ("runId", "workflowId", "status")}
@@ -277,7 +280,7 @@ class Application:
             handle = await client.start_workflow(
                 "JobCtrlAction", {"run_id": run["runId"], "action": action, "payload": payload,
                                  "request_id": request_id or run["runId"]},
-                id=run["workflowId"], task_queue=task_queue(self.runtime.workspace),
+                id=run["workflowId"], task_queue=self.identity["taskQueue"],
                 id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
             )
             temporal_run_id = handle.first_execution_run_id
@@ -380,18 +383,41 @@ class Application:
                            {"runId": run_id}) from None
         return self.action_run(run_id)
 
-    def worker_status(self) -> dict:
-        queue = task_queue(self.runtime.workspace)
+    def worker_status(self, action: str | None = None) -> dict:
+        queue = self.identity["taskQueue"]
+        unavailable = {"status": "unavailable", "healthy": False, "pid": None, "workerId": None,
+                       "heartbeatAt": None, "taskQueue": queue}
         with self.runtime.database.connect() as connection:
-            rows = connection.execute("SELECT * FROM app_worker_heartbeats WHERE task_queue=? AND status='running' ORDER BY heartbeat_at DESC", (queue,)).fetchall()
+            binding = connection.execute("SELECT history,namespace FROM app_workflow_history WHERE singleton=1").fetchone()
+            if binding and tuple(binding) != (self.identity["history"], self.identity["namespace"]):
+                return {**unavailable, "reason": "workflow_history_mismatch",
+                        "message": "Restart JobCtrl with this workspace’s original workflow service."}
+            rows = connection.execute(
+                """SELECT h.*,r.identity_json,r.actions_json FROM app_worker_heartbeats h
+                   LEFT JOIN app_worker_registrations r ON r.worker_id=h.worker_id
+                   WHERE h.status='running' ORDER BY h.heartbeat_at DESC""",
+            ).fetchall()
+        ready = None
         for row in rows:
-            age = (datetime.now(timezone.utc) - datetime.fromisoformat(row["heartbeat_at"].replace("Z", "+00:00"))).total_seconds()
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(row["heartbeat_at"])).total_seconds()
             if age > 15 or age < -5:
                 continue
             try:
                 os.kill(row["pid"], 0)
             except (ProcessLookupError, PermissionError):
                 continue
-            return {"status": "healthy", "healthy": True, "pid": row["pid"], "workerId": row["worker_id"],
-                    "heartbeatAt": row["heartbeat_at"], "taskQueue": queue}
-        return {"status": "unavailable", "healthy": False, "pid": None, "workerId": None, "heartbeatAt": None, "taskQueue": queue}
+            if not row["identity_json"] or json.loads(row["identity_json"]) != self.identity:
+                return {**unavailable, "reason": "worker_incompatible",
+                        "message": "Stop and restart JobCtrl so the API and worker use the same workspace and build."}
+            if action is not None and action not in json.loads(row["actions_json"]):
+                return {**unavailable, "reason": "worker_action_unavailable",
+                        "message": "Restart the worker with the requested feature enabled, then retry."}
+            if ready is None:
+                ready = {"status": "healthy", "healthy": True, "pid": row["pid"], "workerId": row["worker_id"],
+                         "heartbeatAt": row["heartbeat_at"], "taskQueue": queue, "build": self.identity["build"]}
+        return ready or {**unavailable, "reason": "worker_unavailable", "message": "Start the JobCtrl worker and retry."}
+
+    def require_write_identity(self):
+        status = self.worker_status()
+        if status.get("reason") in {"workflow_history_mismatch", "worker_incompatible"}:
+            raise AppError(status["reason"], status["message"], 409)

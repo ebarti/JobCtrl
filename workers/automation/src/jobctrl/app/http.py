@@ -81,7 +81,7 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
         return JSONResponse({
             "ok": True, "application": "jobctrl-python", "schemaVersion": SCHEMA_VERSION,
             "workspaceId": hashlib.sha256(str(runtime.workspace).encode()).hexdigest(),
-            "databaseInstanceId": runtime.database.instance_id,
+            "databaseInstanceId": runtime.database.instance_id, "runtimeIdentity": application.identity,
             "features": list(application.features), "capabilities": capabilities, "worker": application.worker_status(),
             "llmSpend": runtime.model.spend(),
             "temporal": temporal_metadata(),
@@ -309,7 +309,8 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
         await asyncio.to_thread(close_provider_runtimes)
 
     app = Starlette(routes=routes, middleware=[Middleware(LocalSecurity, workspace=runtime.workspace, port=port,
-                                                         database_instance_id=runtime.database.instance_id)],
+                                                         database_instance_id=runtime.database.instance_id,
+                                                         validate_write_identity=application.require_write_identity)],
                     exception_handlers={AppError: app_error, json.JSONDecodeError: invalid_input,
                                         UnicodeDecodeError: invalid_input, ValidationError: invalid_input,
                                         Exception: unexpected}, lifespan=lifespan)

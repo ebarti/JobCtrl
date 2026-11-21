@@ -13,11 +13,13 @@ from pathlib import Path
 
 from temporalio import activity, workflow
 from temporalio.common import RetryPolicy
+from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest
 from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.worker import Worker
 
 with workflow.unsafe.imports_passed_through():
-    from jobctrl.app.actions import Application, task_queue
+    from jobctrl.app.actions import Application, encode
+    from jobctrl.app.worker_identity import bind_workflow_history
     from jobctrl.app.bootstrap import create_application
     from jobctrl.app.contracts import ActionContext
     from jobctrl.app.errors import AppError
@@ -90,7 +92,10 @@ async def run_worker(workspace: Path, *, enabled_features=None):
     application = create_application(workspace, enabled_features=enabled_features)
     client = await application.temporal()
     worker_id = str(uuid.uuid4())
-    queue = task_queue(application.runtime.workspace)
+    queue = application.identity["taskQueue"]
+    namespace = await client.workflow_service.describe_namespace(DescribeNamespaceRequest(namespace=client.namespace), timeout=timedelta(seconds=5))
+    bind_workflow_history(application.runtime.database, application.identity, namespace.namespace_info.id)
+    registration = (worker_id, encode(application.identity), encode(sorted(application.actions)))
     started = now()
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -108,6 +113,7 @@ async def run_worker(workspace: Path, *, enabled_features=None):
                     "DO UPDATE SET heartbeat_at=excluded.heartbeat_at,status=excluded.status",
                     (worker_id, os.getpid(), queue, started, now(), "running"),
                 )
+                connection.execute("INSERT OR IGNORE INTO app_worker_registrations VALUES(?,?,?)", registration)
             try:
                 await asyncio.wait_for(stop.wait(), timeout=3)
             except TimeoutError:
