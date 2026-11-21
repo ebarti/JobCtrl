@@ -248,6 +248,19 @@ export async function refreshTelemetryIdentity(
   return refreshed !== null;
 }
 
+export async function resumeTelemetrySession(
+  env: DemoEdgeEnv, visitorId: string, sessionId: string, now: Date,
+): Promise<boolean> {
+  const { visitorHash, sessionHash } = await hashTelemetryIds(visitorId, sessionId);
+  const session = await env.DEMO_TELEMETRY_DB.prepare(
+    `INSERT INTO active_demo_identities (visitor_hash, session_hash, expires_at)
+     SELECT visitor_hash, ?, expires_at FROM active_demo_identities
+     WHERE visitor_hash = ? AND expires_at > ? ORDER BY expires_at DESC LIMIT 1
+     RETURNING session_hash`,
+  ).bind(sessionHash, visitorHash, now.toISOString()).first<{ session_hash: string }>();
+  return session !== null;
+}
+
 export async function hasActiveTelemetryVisitor(
   env: DemoEdgeEnv,
   visitorId: string,

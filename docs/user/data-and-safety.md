@@ -87,6 +87,10 @@ earlier first-party-only choice, so existing visitors are asked again once.
 The data controller for the public demo is Eloi Barti, acting as an individual.
 For privacy questions, contact me[at]eloibarti.com (replace [at] with @).
 
+Returning visitors with valid consent and an active visitor cookie receive a new
+session when their browser discards its session cookie. The existing consent
+expiry still applies.
+
 After acceptance, Cloudflare sets a versioned consent cookie plus random
 HttpOnly visitor and session identifiers. JobCtrl's persistent cookies expire
 within six months, the session cookie at the end of the browser session, and raw

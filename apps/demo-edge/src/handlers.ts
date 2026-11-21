@@ -20,6 +20,7 @@ import {
   isTelemetryRequestAllowed,
   recordOperationalCounter,
   refreshTelemetryIdentity,
+  resumeTelemetrySession,
 } from "./database.js";
 import { randomId } from "./crypto.js";
 import {
@@ -106,24 +107,23 @@ export async function handleConsentGet(context: DemoRequestContext, now = new Da
   }
   if (!context.ingressAllowed) return rejectedResponse(429);
   if (cookies.consent !== "granted") return jsonResponse(200, consentPayload("unknown"));
-  if (cookies.visitorId === undefined || cookies.sessionId === undefined) {
-    return appendCookies(
-      jsonResponse(200, consentPayload("unknown")),
-      expiredStaleCookies(context),
-    );
-  }
-
   try {
-    if (!await hasActiveTelemetryIdentity(context.env, cookies.visitorId, cookies.sessionId, now)) {
-      return appendCookies(
-        jsonResponse(200, consentPayload("unknown")),
-        expiredStaleCookies(context),
-      );
+    if (cookies.visitorId !== undefined) {
+      if (cookies.sessionId !== undefined) {
+        if (await hasActiveTelemetryIdentity(context.env, cookies.visitorId, cookies.sessionId, now)) {
+          return jsonResponse(200, consentPayload("granted"));
+        }
+      } else if (!cookies.sessionCookiePresent) {
+        const sessionId = randomId();
+        if (await resumeTelemetrySession(context.env, cookies.visitorId, sessionId, now)) {
+          return appendCookies(jsonResponse(200, consentPayload("granted")), [sessionCookie(sessionId)]);
+        }
+      }
     }
   } catch {
     return temporarilyUnavailableResponse();
   }
-  return jsonResponse(200, consentPayload("granted"));
+  return appendCookies(jsonResponse(200, consentPayload("unknown")), expiredStaleCookies(context));
 }
 
 export async function handleConsentPost(context: DemoRequestContext, now = new Date()): Promise<Response> {
