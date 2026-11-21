@@ -26,32 +26,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Fetch the fixed predecessor for the real workspace upgrade journey
-        run: git fetch --no-tags --depth=1 origin 8ab86e9232d66fff9795906e061d208e7a057d8b
-      - name: Fetch the fixed predecessor for the real catalog consolidation journey
-        run: git fetch --no-tags --depth=1 origin 5b9db7ddfa20fa2d618687da1b311e2287286679
-      - name: Fetch the fixed predecessor for citation selection replay
-        run: git fetch --no-tags --depth=1 origin 6e4131061fb41aab4743701084a7c74a19fa21f3
-      - name: Fetch the fixed predecessor for required normalization slots
-        run: git fetch --no-tags --depth=1 origin 943c8b4d0c6f4a15521e10c04a015de726bfcbb9
-      - name: Fetch the fixed predecessor for terminal-root normalization replay
-        run: git fetch --no-tags --depth=1 origin 5d3fda5352fe4418332b989c05f710e0529f578c
-      - name: Fetch the fixed predecessor for finite source request replay
-        run: git fetch --no-tags --depth=1 origin 6f46b0ba5913383b7c57ffcce986729fa0bdbf0e
-      - name: Fetch the fixed predecessor for Requirements v5 and Fit v4 authority replay
-        run: git fetch --no-tags --depth=1 origin df06b08ae201f7a73dc2c359944c06daf517c69e
-      - name: Fetch the fixed predecessor for Fit impact and scoped qualification call recovery
-        run: git fetch --no-tags --depth=1 origin b49dc52e3d727356870317069304ac6ceb9f1237
-      - name: Fetch the fixed predecessor for serial preparation recovery
-        run: git fetch --no-tags --depth=1 origin 38ef94613ebb7c0413d8d5ee89987ef860f53b13
-      - name: Fetch the released server for URL import compatibility
-        run: git fetch --no-tags --depth=1 origin 17f9ce5be1de2f21735fb27d5dfe8f6d1b7c8118
-      - name: Fetch the fixed predecessor for the single-job source dictionary
-        run: git fetch --no-tags --depth=1 origin e41c55189285697549ea35d40bb62b4070c9462b
-      - name: Fetch the fixed predecessor for the original catalog table prompt
-        run: git fetch --no-tags --depth=1 origin e804fac0cf71f3294a71d77d43cc098f133bab34
-      - name: Fetch the fixed predecessor for explicit retained demand choices
-        run: git fetch --no-tags --depth=1 origin c74d8ae3e43c55ae57c6d2bcb9e024c42f27d708
       - name: Set up pnpm
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - name: Set up Node
@@ -59,6 +33,8 @@ jobs:
         with:
           node-version: 22.21.1
           cache: pnpm
+      - name: Fetch the fixed source-upgrade predecessors
+        run: node scripts/fetch-e2e-predecessors.mjs
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:

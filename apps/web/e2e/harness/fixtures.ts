@@ -323,10 +323,14 @@ export async function completed(api: APIRequestContext, runId: string) {
 
 export async function terminal(api: APIRequestContext, runId: string) {
   let result: Record<string, unknown> = {};
+  const path = `/v1/action-runs/${runId}`;
   await expect
     .poll(
       async () => {
-        result = await json(api, "get", `/v1/action-runs/${runId}`);
+        // Recover an idle connection reset on this idempotent status read.
+        const response = await api.get(path, { maxRetries: 1 });
+        expect(response.ok(), `GET ${path}: ${await response.text()}`).toBe(true);
+        result = await response.json() as Record<string, unknown>;
         return ["succeeded", "failed", "cancelled"].includes(
           String(result["status"]),
         );

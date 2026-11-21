@@ -1,4 +1,9 @@
 import { test, expect, json, modelCall, action, completed, terminal, type ExternalCall } from "../harness/fixtures.js";
+import { createBaseline } from "./core-data.js";
+import { authoredPartition, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
+import { indeedPage } from "./indeed-data.js";
+import { posting as cohortPosting, untilNormalization } from "./preparation-cohort-data.js";
+import { qualificationBatchDecision } from "./qualification-data.js";
 import { captureReusePosting, acceptReuseRequirements, reusableModelCatalog, type CapturedPosting, type RequirementSnapshot } from "./reuse-data.js";
 import { catalogContext, catalogMatching, catalogSource, citeSources, modelSources, EXTRACTION_PROMPT_VERSION, V6_NORMALIZATION_PROMPT_VERSION,
   REFRESH_NORMALIZATION_PROMPT_VERSION, SOURCE_DICTIONARY_PROMPT_VERSION, V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION, typedExtraction } from "./requirements-data.js";
@@ -125,38 +130,90 @@ test("Requirements exact content reuse keeps extraction destination bindings and
 
 test("one complete single-job comparison binds all 100 original postings and every occurrence slot", async ({ api, app }, info) => {
   test.setTimeout(240_000);
+  await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
   await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
-  const postings = new Map<string, CapturedPosting>();
-  let canonicalId: string | undefined;
-  for (let index = 1; index <= 100; index++) {
+
+  // Build the historical catalog through bounded real search cohorts. Repeated
+  // single-job refreshes would compare every growing prefix of the same catalog.
+  const description = (index: number) => {
     const note = `Synthetic division ${index} reviews its own source evidence and retains the service details. `;
-    const posting = await captureReusePosting(api, `tables-division-${index}`, `${body}\n${note.repeat(12)}`);
-    postings.set(posting.job_id, posting);
-    const before = app.external.calls.length;
-    const result = await acceptReuseRequirements(api, app, posting, requirement, { recovery:
-      canonicalId ? { verdict: "equivalent", requirementId: canonicalId } : { verdict: "new" } });
-    canonicalId ??= result.snapshot.requirements[0]!.requirement_id;
-    expect(result.snapshot.requirements[0]!.requirement_id).toBe(canonicalId);
-    if (index !== 100) continue;
-    const call = result.matching!;
-    const context = catalogContext(call);
-    expect(app.external.calls.slice(before).map(row => row.body["operation"])).toEqual(["requirements.extract", "requirements.match_catalog"]);
-    expect(context.posting_sources.map(row => row.job_id).sort()).toEqual([...postings.keys()].sort());
-    for (const row of context.posting_sources) {
-      const original = postings.get(row.job_id)!;
-      expect(catalogSource(call, row.source_id)).toMatchObject({ job_id: original.job_id, source_hash: original.source_hash, text: original.description });
+    return `${body}\n${note.repeat(12).trimEnd()}`;
+  };
+  const demand = requirement[0]!.text;
+  const historical = Array.from({ length: 99 }, (_, offset) => ({
+    ...cohortPosting(offset + 1), description: description(offset + 1), demand,
+  }));
+  const jobIds = new Set<string>();
+  let retained: { requirementId: string; demandFingerprint: string } | undefined;
+  const groupId = "shared-recovery";
+  // Larger searches use per-job preparation. Keep the fixture within the
+  // product's shared normalization limit of ten new jobs per cohort.
+  for (let offset = 0; offset < historical.length; offset += 10) {
+    const listings = historical.slice(offset, offset + 10);
+    const search = await action(api, "discovery.search", {
+      queries: ["Synthetic Engineer"], locations: ["Madrid"], boards: ["indeed"], hoursOld: 0,
+      newJobLimit: listings.length,
+    });
+    const board = await app.external.next();
+    expect(board.path).toBe("/jobstreaming/indeed");
+    board.respond(indeedPage({ jobs: listings, cursor: null, complete: true }));
+    const matching = await untilNormalization(app, listings);
+    const incoming = catalogContext(matching).incoming;
+    expect(incoming).toHaveLength(listings.length);
+    const capability = retained ? retainedCapability(matching, retained.requirementId, groupId) : {
+      groupId, memberIds: [], name: demand, definition: demand, category: "professional_experience" as const,
+    };
+    capability.memberIds.push(...incoming.map((row) => row.member_id));
+    for (const row of incoming) jobIds.add(row.job_id);
+    matching.reply(authoredPartition(matching, [capability], [{
+      groupId, definition: demand, jobIds: [...jobIds], reuseDemandFingerprint: retained?.demandFingerprint,
+    }]));
+    if (!retained) {
+      const qualification = await modelCall(app, "fit.qualification-batch");
+      qualification.reply(qualificationBatchDecision(qualification, () => ({ kind: "missing" })));
     }
-    const schema = call.body["response_schema"] as { $defs: { OccurrenceSlots: { properties: Record<string, unknown>; required: string[] } } };
-    expect(context.occurrences).toHaveLength(100);
-    expect(schema.$defs.OccurrenceSlots.required.slice().sort()).toEqual(context.occurrences.map(row => row.occurrence_id).sort());
-    expect(new Set(Object.values(schema.$defs.OccurrenceSlots.properties).map(value => JSON.stringify(value))).size).toBe(1);
-    const sentBytes = Buffer.byteLength(JSON.stringify(call.body));
-    expect(sentBytes).toBeLessThan(1024 * 1024);
-    await info.attach("100-posting-comparison", { contentType: "application/json", body: JSON.stringify({
-      postingCount: context.posting_sources.length, occurrenceCount: context.occurrences.length, sentBytes,
-    }) });
+    expect((await completed(api, search.runId)).result).toMatchObject({
+      newJobs: listings.length, preparation: { assessedJobs: listings.length, failedJobs: 0 },
+    });
+    if (!retained) {
+      const prior = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${incoming[0]!.job_id}/requirements`);
+      const accepted = prior.requirements[0]!;
+      retained = { requirementId: accepted.requirement_id, demandFingerprint: accepted.normalized_demand.demand_fingerprint };
+    }
   }
+
+  const { jobs } = await json<{ jobs: (CapturedPosting & { url: string })[] }>(api, "get", "/v1/jobs?limit=100");
+  expect(jobIds.size).toBe(99);
+  expect(jobs.map((row) => row.job_id).sort()).toEqual([...jobIds].sort());
+  const offered = new Map(historical.map((row) => [row.url, row.description]));
+  for (const row of jobs) expect(row.description).toBe(offered.get(row.url));
+  const canonicalId = retained!.requirementId;
+
+  const last = await captureReusePosting(api, "tables-division-100", description(100));
+  const postings = new Map([...jobs, last].map((row) => [row.job_id, row]));
+  const before = app.external.calls.length;
+  const result = await acceptReuseRequirements(api, app, last, requirement, {
+    recovery: { verdict: "equivalent", requirementId: canonicalId },
+  });
+  expect(result.snapshot.requirements[0]!.requirement_id).toBe(canonicalId);
+  const call = result.matching!;
+  const context = catalogContext(call);
+  expect(app.external.calls.slice(before).map(row => row.body["operation"])).toEqual(["requirements.extract", "requirements.match_catalog"]);
+  expect(context.posting_sources.map(row => row.job_id).sort()).toEqual([...postings.keys()].sort());
+  for (const row of context.posting_sources) {
+    const original = postings.get(row.job_id)!;
+    expect(catalogSource(call, row.source_id)).toMatchObject({ job_id: original.job_id, source_hash: original.source_hash, text: original.description });
+  }
+  const schema = call.body["response_schema"] as { $defs: { OccurrenceSlots: { properties: Record<string, unknown>; required: string[] } } };
+  expect(context.occurrences).toHaveLength(100);
+  expect(schema.$defs.OccurrenceSlots.required.slice().sort()).toEqual(context.occurrences.map(row => row.occurrence_id).sort());
+  expect(new Set(Object.values(schema.$defs.OccurrenceSlots.properties).map(value => JSON.stringify(value))).size).toBe(1);
+  const sentBytes = Buffer.byteLength(JSON.stringify(call.body));
+  expect(sentBytes).toBeLessThan(1024 * 1024);
+  await info.attach("100-posting-comparison", { contentType: "application/json", body: JSON.stringify({
+    postingCount: context.posting_sources.length, occurrenceCount: context.occurrences.length, sentBytes,
+  }) });
 });
 
 for (const [version, sourceRevision, prompt] of [

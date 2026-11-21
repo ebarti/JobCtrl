@@ -50,6 +50,9 @@ jobs:
         with:
           node-version: 22.21.1
 
+      - name: Fetch the fixed source-upgrade predecessors
+        run: node scripts/fetch-e2e-predecessors.mjs
+
       - name: Install the locked test dependencies and Poppler
         run: |
           corepack pnpm install --frozen-lockfile
