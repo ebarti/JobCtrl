@@ -167,7 +167,8 @@ test("one complete single-job comparison binds all 100 original postings and eve
     capability.memberIds.push(...incoming.map((row) => row.member_id));
     for (const row of incoming) jobIds.add(row.job_id);
     matching.reply(authoredPartition(matching, [capability], [{
-      groupId, definition: demand, jobIds: [...jobIds], reuseDemandFingerprint: retained?.demandFingerprint,
+      groupId, definition: demand, jobIds: [...jobIds],
+      ...(retained ? { reuseDemandFingerprint: retained.demandFingerprint } : {}),
     }]));
     if (!retained) {
       const qualification = await modelCall(app, "fit.qualification-batch");
