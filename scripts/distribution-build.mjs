@@ -44,6 +44,11 @@ import {
   verifyLockedArchive,
 } from "./distribution-archive.mjs";
 import { writeLocalReleaseBundle } from "./distribution-release.mjs";
+import {
+  chromiumCaseIds,
+  installedJourneyPlan,
+  INSTALLED_JOURNEY_SHARDS,
+} from "./installed-journey-evidence.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DISTRIBUTION_DIR = path.join(REPO_ROOT, "packaging", "distribution");
@@ -2158,6 +2163,7 @@ export async function prepareExtractedSmokeLayout({ archivePath, outputRoot }) {
 
 async function smokeExtractedPayload(archivePath, outputRoot, contracts, {
   nativeLauncherReleaseChannel = "local",
+  deferApplicationJourneys = false,
 } = {}) {
   const {
     canonicalExtractedRoot,
@@ -2232,14 +2238,16 @@ finally:
     "-I", "-B", "-c",
     "import tls_client\nfrom tls_client.cffi import library\nassert library is not None",
   ], { cwd: payloadRoot, env: stockEnvironment });
-  const applicationJourneys = await runInstalledApplicationJourneys({ payloadRoot, contracts });
+  const applicationJourneys = deferApplicationJourneys
+    ? await planInstalledApplicationJourneys()
+    : await runInstalledApplicationJourneys({ payloadRoot, contracts });
   const nativeLauncherLifecycleRequirement = nativeLauncherLifecycleSmokeRequirement(nativeLauncherReleaseChannel);
   const nativeLauncherLifecycle = nativeLauncherLifecycleRequirement.status === "required"
     ? await smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot: canonicalExtractedRoot, stockEnvironment })
     : nativeLauncherLifecycleRequirement;
   await verifyExactPayloadTree(payloadRoot, manifest);
   return {
-    status: "pass",
+    status: deferApplicationJourneys ? "pending-installed-journeys" : "pass",
     nodeVersion,
     playwrightMcp: mcpProtocol,
     tlsClientNative: "darwin-arm64-load-pass",
@@ -2253,8 +2261,23 @@ finally:
   };
 }
 
-export async function runInstalledApplicationJourneys({ payloadRoot, contracts }) {
-  const result = await run(process.execPath, [path.join(REPO_ROOT, "scripts", "run-e2e.mjs"), "--installed", "--project=chromium"], {
+async function checkedOutCommit() {
+  const { stdout } = await run("git", ["rev-parse", "HEAD"]);
+  return stdout.trim();
+}
+
+async function planInstalledApplicationJourneys() {
+  const { stdout } = await run("corepack", ["pnpm", "--filter", "@jobctrl/web", "exec", "playwright", "test",
+    "--config=e2e/playwright.config.ts", "--project=chromium", "--list", "--reporter=json"], {
+    env: { ...process.env, JOBCTRL_E2E_INSTALLED: "1" },
+  });
+  return { status: "pending", sourceCommit: await checkedOutCommit(), caseIds: chromiumCaseIds(JSON.parse(stdout)) };
+}
+
+export async function runInstalledApplicationJourneys({ payloadRoot, contracts, shard }) {
+  const args = [path.join(REPO_ROOT, "scripts", "run-e2e.mjs"), "--installed", "--project=chromium"];
+  if (shard !== undefined) args.push(`--shard=${shard}/${INSTALLED_JOURNEY_SHARDS}`);
+  const result = await run(process.execPath, args, {
     cwd: REPO_ROOT,
     env: {
       ...process.env,
@@ -2268,10 +2291,42 @@ export async function runInstalledApplicationJourneys({ payloadRoot, contracts }
   const line = result.stdout.split("\n").findLast((value) => value.startsWith("E2E timing: "));
   invariant(line, "installed application journeys did not publish their owned evidence summary");
   const evidence = JSON.parse(line.slice("E2E timing: ".length));
-  invariant(evidence.mode === "installed" && evidence.exitCode === 0 && evidence.lockfileUnchanged === true,
+  invariant(evidence.mode === "installed" && evidence.exitCode === 0 && evidence.lockfileUnchanged === true
+    && evidence.webBuildUnchanged === true && evidence.payloadRoot === payloadRoot,
     "installed application journeys did not complete against the exact extracted candidate");
   return { status: "pass", suite: "target-application-e2e", execution: "extracted-python-and-web-assets",
     controlledExternalBoundaries: true, ...evidence };
+}
+
+async function qualifyInstalledJourneyShard({ candidateDirectory, output, shard }) {
+  invariant(Number.isInteger(shard) && shard >= 1 && shard <= INSTALLED_JOURNEY_SHARDS, "invalid installed journey shard");
+  const build = JSON.parse(await readFile(path.join(candidateDirectory, "build-result.json"), "utf8"));
+  const { identity, expected } = installedJourneyPlan(build);
+  invariant(await checkedOutCommit() === identity.sourceCommit, "installed journey checkout does not match the plan");
+  const contracts = await loadBuildContracts(REPO_ROOT);
+  const archivePath = path.join(candidateDirectory, `jobctrl-${contracts.versions["jobctrl-launcher"]}-${contracts.platform.id}.zip`);
+  invariant(await sha256File(archivePath) === identity.archiveSha256, "installed journey archive does not match the plan");
+  const extraction = await mkdtemp(path.join(os.tmpdir(), "jobctrl-installed-journeys-"));
+  try {
+    const { payloadRoot } = await prepareExtractedSmokeLayout({ archivePath, outputRoot: extraction });
+    const manifestPath = path.join(payloadRoot, "manifest.json");
+    invariant(await sha256File(manifestPath) === identity.manifestSha256, "installed journey manifest does not match the plan");
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    validateDistributionManifest(manifest, contracts);
+    invariant(manifest.buildId === identity.buildId, "installed journey manifest build ID does not match the plan");
+    await verifyExactPayloadTree(payloadRoot, manifest);
+    const evidence = await runInstalledApplicationJourneys({ payloadRoot, contracts, shard });
+    await verifyExactPayloadTree(payloadRoot, manifest);
+    invariant(await sha256File(manifestPath) === identity.manifestSha256, "installed journey changed the candidate manifest");
+    const report = JSON.parse(await readFile(path.join(evidence.evidence, "results.json"), "utf8"));
+    const caseIds = chromiumCaseIds(report, shard);
+    invariant(caseIds.every(id => expected.has(id)), "installed journey shard executed a case outside the plan");
+    const result = { status: "pass", ...identity, shard, journeysMs: evidence.journeysMs, caseIds };
+    await writeJson(output, result);
+    return { shard, caseCount: caseIds.length, journeysMs: evidence.journeysMs };
+  } finally {
+    await rm(extraction, { recursive: true, force: true });
+  }
 }
 
 export async function smokeExistingRealArtifact({ outputDirectory, root = REPO_ROOT } = {}) {
@@ -3280,6 +3335,7 @@ export async function buildRealPayload({
   baselineSizeReportPath = null,
   releaseChannel = "local",
   releaseTrustKeyBase64 = "",
+  deferApplicationJourneys = false,
   root = REPO_ROOT,
 } = {}) {
   invariant(outputDirectory, "real build requires outputDirectory");
@@ -3393,6 +3449,7 @@ export async function buildRealPayload({
     const compressed = await createDeterministicZip(payloadRoot, archivePath, sourceDateEpoch);
     const smoke = await smokeExtractedPayload(archivePath, outputRoot, contracts, {
       nativeLauncherReleaseChannel: releaseChannel,
+      deferApplicationJourneys,
     });
     await rm(path.join(outputRoot, "clean-extraction"), { recursive: true, force: true });
 
@@ -3522,6 +3579,7 @@ export async function main(argv = process.argv.slice(2)) {
     return;
   }
   if (command === "real") {
+    invariant(options["installed-journeys"] === undefined || options["installed-journeys"] === "deferred", "unsupported installed-journeys mode");
     const result = await buildRealPayload({
       outputDirectory: path.resolve(options.output ?? path.join(REPO_ROOT, "dist", "distribution-real")),
       cacheDirectory: options.cache ? path.resolve(options.cache) : undefined,
@@ -3530,6 +3588,7 @@ export async function main(argv = process.argv.slice(2)) {
       baselineSizeReportPath: options["baseline-size-report"] ?? null,
       releaseChannel: options["release-channel"] ?? "local",
       releaseTrustKeyBase64: options["release-trust-key"] ?? "",
+      deferApplicationJourneys: options["installed-journeys"] === "deferred",
     });
     process.stdout.write(canonicalJson({
       mode: result.mode,
@@ -3541,6 +3600,15 @@ export async function main(argv = process.argv.slice(2)) {
       compressedBytes: result.compressedBytes,
       smoke: result.smoke,
     }));
+    return;
+  }
+  if (command === "qualify-installed-journey-shard") {
+    const result = await qualifyInstalledJourneyShard({
+      candidateDirectory: path.resolve(options.candidate),
+      output: path.resolve(options.output),
+      shard: Number(options.shard),
+    });
+    process.stdout.write(canonicalJson(result));
     return;
   }
   throw new Error(`unknown distribution build mode: ${command}`);
