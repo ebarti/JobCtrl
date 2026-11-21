@@ -38,6 +38,7 @@ import {
   buildFileInventory,
   validateDistributionManifest,
 } from "./distribution-manifest.mjs";
+import { verifyInstalledJourneyClosure } from "./installed-journey-evidence.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -720,6 +721,19 @@ export async function verifyPreparedCandidate({ preparedDirectory, channel, publ
   const archiveSha256 = await sha256File(paths.archivePath);
   invariant(prepared.archiveSha256 === archiveSha256, "prepared archive SHA-256 does not match the checkout-rooted archive");
   invariant(prepared.compressedBytes === archiveEntry.size, "prepared archive byte count does not match the checkout-rooted archive");
+  const inlineJourneys = prepared.smoke?.applicationJourneys;
+  let installedJourneys;
+  if (inlineJourneys?.status === "pending") {
+    installedJourneys = await verifyInstalledJourneyClosure(prepared, path.join(paths.preparedDirectory, "installed-journeys"));
+    invariant(manifest.buildId === `${manifest.appVersion}-${installedJourneys.sourceCommit}-${contracts.platform.id}`,
+      "installed journey checkout does not match the release build ID");
+  } else {
+    invariant(prepared.smoke?.status === "pass" && prepared.smoke.postSmokePayloadTree === "exact-manifest-match"
+      && inlineJourneys?.status === "pass" && inlineJourneys.mode === "installed" && inlineJourneys.exitCode === 0
+      && inlineJourneys.lockfileUnchanged === true && inlineJourneys.webBuildUnchanged === true,
+    "complete installed journey evidence is required before signing");
+    installedJourneys = { status: "pass", journeysMs: inlineJourneys.journeysMs };
+  }
   // The signing input is the verified payload tree. Signing creates new ZIPs;
   // rebuilding the unused unsigned ZIP here only retests the packager.
   const nativeBinding = await verifyPreparedNativeBinding({ preparedDirectory: paths.preparedDirectory, channel, publicKeyBase64, runner });
@@ -735,6 +749,7 @@ export async function verifyPreparedCandidate({ preparedDirectory, channel, publ
     installedBytes,
     nativeLauncherReleaseChannel: channel,
     nativeLauncherReleaseTrustKeySha256: prepared.nativeLauncherReleaseTrustKeySha256,
+    installedJourneys,
     nativeBinding,
   };
 }
@@ -771,6 +786,8 @@ export function assertPreSignVerificationMatches(prepared, verification) {
     "nativeLauncherReleaseTrustKeySha256",
   ];
   for (const field of fields) invariant(verification[field] === prepared[field], `pre-sign verification does not bind prepared ${field}`);
+  invariant(canonicalJson(verification.installedJourneys) === canonicalJson(prepared.installedJourneys),
+    "pre-sign verification does not bind the installed journeys");
   return true;
 }
 
@@ -1014,6 +1031,8 @@ export async function finalizeNetworkRelease({
   const prepared = JSON.parse(await readFile(path.join(preparedDirectory, "build-result.json"), "utf8"));
   invariant(prepared.releaseChannel === "local" && prepared.nativeLauncherReleaseChannel === channel, "prepared build is not a matching unsigned pre-sign network build");
   assertPreSignVerificationMatches(verifiedPrepared, preSignVerification);
+  invariant(!verifiedPrepared.installedJourneys.sourceCommit || verifiedPrepared.installedJourneys.sourceCommit === sourceCommit,
+    "final source commit does not match the installed journey checkout");
   const nativeBinding = verifiedPrepared.nativeBinding;
   const payloadRoot = path.join(preparedDirectory, "payload");
   const preparedManifest = JSON.parse(await readFile(path.join(payloadRoot, "manifest.json"), "utf8"));
@@ -1424,7 +1443,8 @@ export async function main(argv = process.argv.slice(2)) {
   }
   const options = parseOptions(rest);
   if (command === "prepare") {
-    requireOptions(options, ["output", "channel", "build-id", "source-date-epoch"], command);
+    requireOptions(options, ["output", "channel", "build-id", "source-date-epoch"], command, ["installed-journeys"]);
+    invariant(options["installed-journeys"] === undefined || options["installed-journeys"] === "deferred", "unsupported installed-journeys mode");
     const configuredPublicKey = process.env.JOBCTRL_RELEASE_PUBLIC_KEY;
     const publicKey = configuredPublicKey ?? releasePublicKeyBase64(privateKeyFromBase64(process.env.JOBCTRL_RELEASE_SIGNING_KEY ?? ""));
     invariant(Buffer.from(publicKey, "base64").length === 32 && Buffer.from(publicKey, "base64").toString("base64") === publicKey, "prepared release requires a canonical raw Ed25519 public key");
@@ -1434,8 +1454,9 @@ export async function main(argv = process.argv.slice(2)) {
       sourceDateEpoch: parseCanonicalIntegerOption(options["source-date-epoch"], "source-date-epoch"),
       releaseChannel: options.channel,
       releaseTrustKeyBase64: publicKey,
+      deferApplicationJourneys: options["installed-journeys"] === "deferred",
     });
-    process.stdout.write(canonicalJson({ status: "prepared", buildId: result.buildId, archiveSha256: result.archiveSha256, manifestSha256: result.manifestSha256, nativeLauncherReleaseChannel: result.nativeLauncherReleaseChannel, nativeLauncherReleaseTrustKeySha256: result.nativeLauncherReleaseTrustKeySha256 }));
+    process.stdout.write(canonicalJson({ status: result.smoke.status === "pass" ? "prepared" : result.smoke.status, buildId: result.buildId, archiveSha256: result.archiveSha256, manifestSha256: result.manifestSha256, nativeLauncherReleaseChannel: result.nativeLauncherReleaseChannel, nativeLauncherReleaseTrustKeySha256: result.nativeLauncherReleaseTrustKeySha256 }));
     return;
   }
   if (command === "verify-prepared") {
