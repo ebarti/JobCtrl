@@ -47,6 +47,7 @@ export type ApplicationStack = {
     units: { unitId: string; status: string; resultsPerSite: number | null; sdkFingerprint: string; sdkResultsWanted: number | null; sdkMaxPages: number; result: { termination?: string; sourceTerminations?: Record<string, string> } | null }[];
   }>;
   restartWorker(): Promise<{ previous: number; current: number }>;
+  alternateNamespaceApi(namespace: string): Promise<string>;
   upgradeSource(): Promise<{ previous: number; current: number; backup: string; candidateOrigin: string; mode: "source" | "installed" }>;
   armFitRecoveryPause(operation: "fit.catalog-impact" | "fit.qualification-batch"): Promise<void>;
   waitForFitRecoveryPause(): Promise<void>;

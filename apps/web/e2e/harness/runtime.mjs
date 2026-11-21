@@ -528,6 +528,19 @@ export async function applicationStack(
       get workerPid() {
         return worker?.pid;
       },
+      async alternateNamespaceApi(namespace) {
+        const apiPort = String(await port());
+        const url = `http://127.0.0.1:${apiPort}`;
+        const alternate = await launch("alternate-api", pythonExecutable,
+          ["-m", "jobctrl.app.server", "--host", "127.0.0.1", "--port", apiPort, "--workspace", workspace],
+          { directory, env: { ...env, JOBCTRL_API_PORT: apiPort, JOBCTRL_TEMPORAL_NAMESPACE: namespace } });
+        services.push(alternate);
+        await waitFor(async () => {
+          alternate.assertRunning();
+          return (await fetch(`${url}/v1/health`)).ok;
+        }, "alternate workspace API health");
+        return url;
+      },
       async armCohortBoundaryPause() {
         if (!cohortBoundaryDebugger) throw new Error("The cohort guard debugger is not enabled.");
         await writeFile(cohortArm, "final-currentness-guard", { mode: 0o600, flag: "wx" });

@@ -28,6 +28,10 @@ retries. The run reports build, journey and total elapsed time; the hosted job
 also measures dependency preparation. See the exact scenario and coverage
 ledger in [Python application journeys](developer/qa/python-journeys.md).
 
+The workspace identity journey opens the same disposable database with a second
+API configured for a different workflow namespace. It verifies a write refusal,
+restarts the original worker and reads the saved job through the original API.
+
 Hosted Browser CI schedules that same inventory in six fixed, disjoint
 Playwright shards, `--shard=1/6` through `--shard=6/6`, on separate
 runners. Each hosted invocation uses two Playwright workers, zero retries, the
@@ -134,7 +138,8 @@ group decisions cannot overwrite newer maintained-head inputs.
 Reject missing/foreign members or occurrences, invalid reuse/citations, uncertainty,
 oversized/context refusal, stale posting/catalog/snapshot heads and cancellation
 without partial publication. Compare every predecessor schema entry byte-for-byte
-and allow only the declared additive normalization schema objects. Preserve old
+and allow only the declared additions for normalization, cohort operations,
+recovery and worker identity. Preserve old
 scores, approval history and accepted PDF bytes, while changed derivations become
 historical. No read/save starts repair or downstream work. Controlled boundary
 choices prove authority, not semantic accuracy; run the configured provider on

@@ -83,8 +83,9 @@ class CapabilityToken:
 
 
 class LocalSecurity:
-    def __init__(self, app, *, workspace: Path, port: int, database_instance_id: str | None = None):
+    def __init__(self, app, *, workspace: Path, port: int, database_instance_id: str | None = None, validate_write_identity=None):
         self.app = app
+        self.validate_write_identity = validate_write_identity
         self.database_instance_id = database_instance_id
         self.token = CapabilityToken(workspace)
         self.token.read_or_create()
@@ -190,6 +191,11 @@ class LocalSecurity:
                 message = {**message, "body": b""}
             await send(message)
 
+        if not error and self.validate_write_identity and scope["method"] in UNSAFE_METHODS and scope["path"].startswith("/v1/"):
+            try:
+                self.validate_write_identity()
+            except AppError as conflict:
+                error = conflict
         if error:
             return await JSONResponse(error.payload(), status_code=error.status_code)(scope, receive, secure_send)
         if scope["method"] == "OPTIONS":
