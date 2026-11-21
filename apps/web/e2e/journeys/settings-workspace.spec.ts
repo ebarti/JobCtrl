@@ -155,11 +155,13 @@ test("Settings saves a budget before model setup, retains another pane's invalid
     page.getByText("Configured · verify model access", { exact: true }),
   ).toHaveCount(1);
   await expect(page.getByText("Ready", { exact: true })).toHaveCount(0);
-  expect(reads).toEqual([
-    "/v1/credentials",
-    "/v1/providers/status",
-    "/v1/credentials",
-  ]);
+  // The earlier settings save can deliver an event during this check and
+  // refresh local metadata. Only the explicit button can contact the provider.
+  const providerStatus = "/v1/providers/status";
+  expect(reads.filter((path) => path === providerStatus)).toHaveLength(1);
+  const providerRead = reads.indexOf(providerStatus);
+  expect(reads.slice(0, providerRead)).toContain("/v1/credentials");
+  expect(reads.slice(providerRead + 1)).toContain("/v1/credentials");
   expect(
     providerCalls()
       .slice(initialCalls)
