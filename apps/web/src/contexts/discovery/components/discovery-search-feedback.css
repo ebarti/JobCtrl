@@ -1,0 +1,17 @@
+.discovery-search-feedback { display: flex; flex-direction: column; align-items: stretch; gap: .625rem; min-width: 0; color: var(--muted-foreground); font-size: .8125rem; line-height: 1.6; }
+.discovery-search-feedback p { margin: 0; max-width: 95ch; overflow-wrap: anywhere; }
+.discovery-search-status { display: flex; flex-direction: column; gap: .625rem; min-width: 0; }
+.discovery-search-status-row { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem 1rem; }
+.discovery-search-feedback .discovery-search-status h2 { margin: 0; color: var(--foreground); font-size: .875rem; font-weight: var(--jh-type-label-weight); line-height: 1.6; }
+.discovery-search-counts { display: flex; flex-wrap: wrap; gap: .25rem 1rem; font-variant-numeric: tabular-nums; }
+.discovery-search-progress { width: min(100%, 28rem); }
+.discovery-search-progress [data-slot="progress-track"] { height: .25rem; }
+.discovery-search-progress [data-slot="progress-indicator"] { width: 35%; animation: discovery-search-progress 1.5s ease-in-out infinite; }
+.discovery-search-actions, .discovery-search-recovery { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; min-width: 0; }
+.discovery-search-actions:empty { display: none; }
+.discovery-search-details { min-width: 0; }
+.discovery-search-details > summary { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.discovery-search-details > p { margin-top: .5rem; overflow-wrap: anywhere; font-size: .75rem; }
+@keyframes discovery-search-progress { 0% { transform: translateX(-100%); } 100% { transform: translateX(285%); } }
+@media (prefers-reduced-motion: reduce) { .discovery-search-progress [data-slot="progress-indicator"] { animation: none; width: 100%; opacity: .55; } }
+@media (max-width: 700px) { .discovery-search-actions { align-items: flex-start; } .discovery-search-status-row { flex-direction: column; gap: .125rem; } }

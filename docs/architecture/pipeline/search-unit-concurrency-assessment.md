@@ -1,5 +1,10 @@
 # Search-Unit Concurrency Assessment (#899)
 
+> Historical measurement of the pre-transformation implementation. “Current”
+> below means the measured snapshot, not the Python target or an integrated
+> performance claim. Re-measure the transformed candidate before using these
+> results to set capacity.
+
 **Decision:** keep durable broad-board search units sequential. The bounded
 synthetic evidence does not justify a runtime pool, lease change, provider-policy
 change, or another `claim_next` consumer.

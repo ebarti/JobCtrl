@@ -1,7 +1,7 @@
 import { IconAlertTriangle, IconArrowRight } from "@tabler/icons-react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 
-import { useOutcomeAnalyticsQuery } from "../../contexts/operations/hooks/useOutcomeAnalyticsQuery.js";
+import { useOutcomeAnalyticsQuery } from "../../contexts/apply/outcomes.js";
 import {
   ANALYTICS_DIMENSIONS,
   type AnalyticsDimension,

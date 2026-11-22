@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 
-import { sampleProfileResponse } from "../../../test/fixtures/projections.js";
+import { sampleProfileResponse } from "../../../../.storybook/fixtures/projections.js";
 import { recordAt, type JsonRecord } from "../lib/json-record.js";
 import { StructuredProfileEditor } from "./StructuredProfileEditor.js";
 

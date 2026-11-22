@@ -14,7 +14,7 @@ import tempfile
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Mapping, MutableMapping, Sequence
+from typing import Callable, Literal, Mapping, MutableMapping, Sequence
 
 NATIVE_CREDENTIAL_SERVICE = "JobCtrl"
 MACOS_SECURITY_BINARY = "/usr/bin/security"
@@ -299,32 +299,42 @@ class MigrationResult:
     already_completed: bool
 
 
-def migrate_persistent_env_credentials(
+def _require_absent_sources(paths: Sequence[Path]) -> None:
+    """Fail closed if a skipped, unlocked source appeared or cannot be checked.
+
+    Other users or external editors do not share JobCtrl's locks; this check
+    cannot be an atomic compare-and-swap against them creating a file later.
+    """
+    for path in paths:
+        try:
+            path.lstat()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise NativeCredentialMigrationError("credential source absence could not be verified") from exc
+        raise NativeCredentialMigrationError("an unlocked credential source exists or appeared; check access and retry")
+
+
+def migrate_explicit_env_credentials(
     paths: Sequence[Path],
     marker_path: Path,
     *,
-    store: NativeCredentialStore | None = None,
+    store: NativeCredentialStore,
+    check_skipped: Callable[[], None] | None = None,
 ) -> MigrationResult:
-    """Move fixed allowlisted secrets from exact env files into the native store."""
+    """Migrate exact source files under the caller's native mutation/marker locks.
 
-    with _exclusive_migration_lock(marker_path):
-        return _migrate_persistent_env_credentials(paths, marker_path, store=store)
-
-
-def _migrate_persistent_env_credentials(
-    paths: Sequence[Path],
-    marker_path: Path,
-    *,
-    store: NativeCredentialStore | None = None,
-) -> MigrationResult:
-    """Run one migration while the caller holds the marker-scoped lock."""
+    The application supplies its explicit native adapter and workspace policy;
+    this leaf owns atomic source replacement, ACL preservation and rollback.
+    It never imports runtime settings or chooses a global credential namespace.
+    """
 
     if marker_path.is_symlink():
         raise NativeCredentialMigrationError("credential migration refuses a symbolic-link marker")
     if marker_path.exists():
         _validate_completion_marker(marker_path)
         return MigrationResult((), (), True)
-    active_store = store or NativeCredentialStore()
+    active_store = store
     if active_store.kind is None:
         raise NativeCredentialMigrationError("native credential storage is unsupported")
 
@@ -351,6 +361,8 @@ def _migrate_persistent_env_credentials(
             continue
         effective[key] = values[-1]
     if not effective:
+        if check_skipped is not None:
+            check_skipped()
         _write_marker(marker_path, ())
         return MigrationResult((), tuple(str(path) for path, _, _ in sources), False)
 
@@ -392,6 +404,8 @@ def _migrate_persistent_env_credentials(
                 expected=_fingerprint(original, metadata),
             )
             rewritten.append((path, original, metadata, updated, path.stat()))
+        if check_skipped is not None:
+            check_skipped()
         _write_marker(marker_path, tuple(sorted(effective)))
     except Exception as exc:
         recovery_failed = False

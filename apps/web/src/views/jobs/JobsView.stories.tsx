@@ -15,7 +15,7 @@ import {
   makeJobsPage,
   sampleJob,
   sampleSecondaryJob,
-} from "../../test/fixtures/projections.js";
+} from "../../../.storybook/fixtures/projections.js";
 import { JobsView } from "./JobsView.js";
 
 const meta = {

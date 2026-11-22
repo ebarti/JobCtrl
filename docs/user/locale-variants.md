@@ -1,10 +1,10 @@
 ---
-description: "Generate source-linked resume and cover-letter translations, review terminology and formatting separately, and export an accepted locale snapshot."
+description: "Generate source-linked resume translations, review terminology and formatting separately, and export an accepted locale snapshot."
 ---
 
 # Reviewed Locale Variants
 
-Open **Job Detail → Locale variants** after a resume or cover letter has been
+Open **Job Detail → Locale variants** after a resume has been
 accepted. Select the accepted source, its source language and the target language,
 then choose **Generate locale variant**. Supported language codes are `en`, `es`,
 `fr`, `de`, `it`, `pt` and `ca`. Region-specific codes and other languages are

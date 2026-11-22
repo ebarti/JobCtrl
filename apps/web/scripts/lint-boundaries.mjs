@@ -306,13 +306,12 @@ export function lintProgram(
         context(path) &&
         context(target) &&
         context(path) !== context(target) &&
-        context(target) !== "operations" &&
         /\/(hooks|stores)\//.test(target)
       ) {
         report(
           node,
           "aggregate-state",
-          `Do not import another aggregate's hooks/stores (${target}); compose public hooks in a view or consume Operations reads.`,
+          `Do not import another feature's private hooks/stores (${target}); compose public interfaces in a view.`,
         );
       }
     }
@@ -443,7 +442,7 @@ export function lintProgram(
         report(
           dep.node,
           "api-adapter",
-          "Use context-owned hooks and ApiClientPort; only the transport error class JobCtrlApiError may be imported directly.",
+          "Use feature-owned hooks and HttpPort; only the transport error class JobCtrlApiError may be imported directly.",
         );
       }
       if (
@@ -516,6 +515,7 @@ export function lintProgram(
         context: "context",
         ports: "ports",
         api: "api",
+        http: "api",
         queryClient: "query",
       }[key];
       return kind ? origin(kind) : undefined;
@@ -605,7 +605,7 @@ export function lintProgram(
     const slots = {
       loader: { context: "context" },
       context: { ports: "ports", queryClient: "query" },
-      ports: { api: "api" },
+      ports: { api: "api", http: "api" },
     };
     const capabilityTrace = capabilityTracer(source);
     const capability = (node) => capabilityTrace.trace(node);
@@ -726,13 +726,13 @@ export function lintProgram(
           for (const decl of symbol?.declarations ?? []) {
             const path = localPath(decl.getSourceFile().fileName);
             if (
-              path === "shared/ports/ApiClientPort.ts" &&
-              symbol.name === "ApiClientPort"
+              path === "shared/ports/HttpPort.ts" &&
+              symbol.name === "HttpPort"
             )
               values.push(origin("api"));
             if (
               path === "shared/providers/PortsProvider.tsx" &&
-              symbol.name === "Ports"
+              (symbol.name === "Ports" || symbol.name === "ResolvedPorts")
             )
               values.push(origin("ports"));
             if (path === "router.ts" && symbol.name === "RouterContext")
@@ -1048,9 +1048,7 @@ export function lintProgram(
             "QueryClient access belongs in context-owned hooks, including clients obtained through router context.",
           );
         const api = declarations.some(
-          (decl) =>
-            localPath(decl.getSourceFile().fileName) ===
-            "shared/ports/ApiClientPort.ts",
+          (decl) => localPath(decl.getSourceFile().fileName) === "shared/ports/HttpPort.ts",
         );
         if (composer && api && !exempt("capabilities", path, name))
           report(

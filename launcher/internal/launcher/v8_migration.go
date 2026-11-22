@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"time"
 )
@@ -54,7 +53,7 @@ func buildSealedV8Candidate(candidate launchContext, pair databasePair, journalI
 	if sourceVersion == legacyJobCtrlSchemaVersion {
 		arguments = append(arguments, "--migration-at", time.Now().UTC().Format(time.RFC3339Nano))
 	}
-	command := exec.Command(python, arguments...)
+	command := payloadCommand(candidate.Environment, python, arguments...)
 	command.Env = candidate.Environment
 	command.Dir = candidate.Instance.StateDir
 	output, err := command.Output()
@@ -81,7 +80,7 @@ func buildSealedV8Candidate(candidate launchContext, pair databasePair, journalI
 		cleanupV8Candidate(candidate.Instance.StateDir, journalID)
 		return "", errors.New("sealed v8 candidate digest verification failed")
 	}
-	version, versionErr := sqliteUserVersion(python, path)
+	version, versionErr := sqliteUserVersion(python, path, candidate.Environment)
 	if versionErr != nil || version != previousJobCtrlSchemaVersion {
 		cleanupV8Candidate(candidate.Instance.StateDir, journalID)
 		return "", errors.New("sealed v8 candidate schema verification failed")
@@ -127,7 +126,7 @@ func installSealedV8Candidate(candidate launchContext, candidatePath string) err
 		return err
 	}
 	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
-	if version, err := sqliteUserVersion(python, live); err != nil || version != previousJobCtrlSchemaVersion {
+	if version, err := sqliteUserVersion(python, live, candidate.Environment); err != nil || version != previousJobCtrlSchemaVersion {
 		return errors.New("installed v8 database did not reopen at the exact schema version")
 	}
 	return nil

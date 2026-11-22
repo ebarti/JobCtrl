@@ -5,7 +5,7 @@ import {
   emptyEmployerAnalysis,
   populatedEmployerAnalysis,
   populatedRequirementFitReport,
-} from "../../../test/fixtures/materials-inspector.js";
+} from "../../../../.storybook/fixtures/materials-inspector.js";
 import { EmployerAnalysisPanel } from "./EmployerAnalysisPanel.js";
 
 const meta = {

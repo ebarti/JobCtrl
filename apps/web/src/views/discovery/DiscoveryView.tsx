@@ -4,6 +4,9 @@ import {
 } from "../../contexts/discovery/components/DiscoveryProductControls.js";
 import { DiscoveryRuntimeSettingsPanel } from "../../contexts/discovery/components/DiscoveryRuntimeSettingsPanel.js";
 import { DiscoveryAutomationSettingsPanel } from "../../contexts/discovery/components/DiscoveryAutomationSettingsPanel.js";
+import { DiscoveryRunsPanel } from "../../contexts/discovery/components/DiscoveryRunsPanel.js";
+import { DiscoveryExplicitTargets } from "../../contexts/discovery/components/DiscoveryExplicitTargets.js";
+import { DiscoveryTargetPlan } from "../../contexts/discovery/components/DiscoveryTargetPlan.js";
 import { TargetSearchSettingsPanel } from "../../contexts/profile/components/TargetSearchSettingsPanel.js";
 import { PageHead } from "../../shared/ui/page-head.js";
 
@@ -16,6 +19,7 @@ export function DiscoveryView({
     <>
       <PageHead eyebrow="Pipeline" title="Discovery" />
       <div className="discovery-view-stack discovery-workspace">
+        <DiscoveryRunsPanel />
         <nav className="discovery-section-nav" aria-label="Discovery sections">
           <a data-typography="control" href="#discovery-target-search">
             Target search
@@ -32,6 +36,8 @@ export function DiscoveryView({
         </nav>
         <div className="discovery-task-section" id="discovery-target-search">
           <TargetSearchSettingsPanel />
+          <DiscoveryTargetPlan />
+          <DiscoveryExplicitTargets />
         </div>
         <div className="discovery-task-section" id="discovery-automation">
           <DiscoveryAutomationSettingsPanel />

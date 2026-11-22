@@ -9,6 +9,7 @@ import { outreachKeys } from "../queryKeys.js";
 
 export interface RejectDraftVariables extends RejectOutreachDraftRequest {
   draftId: string;
+  expectedFingerprint: string;
 }
 
 /**
@@ -22,13 +23,15 @@ export function useRejectDraftMutation(
   jobId?: string,
 ): UseMutationResult<OutreachThreadResponse, Error, RejectDraftVariables> {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   const threadForContactKey = outreachKeys.threadForContact(tenantId, contactId, jobId ?? null);
   return useMutation(
     createOptimisticMutation<OutreachThreadResponse, RejectDraftVariables>(queryClient, {
       mutationKey: outreachKeys.thread(tenantId, threadId),
-      mutationFn: ({ draftId, ...body }) => api.rejectOutreachDraft(threadId, draftId, body),
+      mutationFn: ({ draftId, ...body }) => http.json<OutreachThreadResponse>(
+        "POST", `/v1/outreach/threads/${encodeURIComponent(threadId)}/drafts/${encodeURIComponent(draftId)}/reject`, { body },
+      ),
       optimisticUpdates: ({ draftId }) => [
         {
           queryKey: threadForContactKey,

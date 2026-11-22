@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
-import { makeGateResultsBlocked, makeGateResultsPassing } from "../../../test/fixtures/outreach.js";
+import { makeGateResultsBlocked, makeGateResultsPassing } from "../../../../.storybook/fixtures/outreach.js";
 import { DraftGateResultsPanel } from "./DraftGateResultsPanel.js";
 
 const meta = {

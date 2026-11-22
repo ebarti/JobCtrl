@@ -18,7 +18,7 @@ import {
   makeResumeTemplateState,
   sampleArtifact,
   sampleJob,
-} from "../../test/fixtures/projections.js";
+} from "../../../.storybook/fixtures/projections.js";
 import { JobDetailDrawer } from "./JobDetailDrawer.js";
 
 const meta = {
@@ -79,8 +79,6 @@ export const ArtifactLifecycle: Story = {
                   { ...sampleArtifact, artifactId: "older-pdf", type: "resume_pdf", generation: 1, status: "approved" },
                   { ...sampleArtifact, artifactId: "newer-resume", type: "tailored_resume", generation: 3, status: "approved", resumeTemplate: makeResumeTemplateState("modern", "Modern") },
                   { ...sampleArtifact, artifactId: "newer-pdf", type: "resume_pdf", generation: 3, status: "approved" },
-                  { ...sampleArtifact, artifactId: "draft-cover", type: "cover_letter", generation: 4, status: "candidate" },
-                  { ...sampleArtifact, artifactId: "failed-cover", type: "cover_letter_pdf", generation: 4, status: "rejected" },
                 ],
               },
             ),

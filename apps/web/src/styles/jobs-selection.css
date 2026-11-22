@@ -1,0 +1,251 @@
+/* Jobs selection is an action group. Feature workflows live in their own
+ * bounded dialogs, and preparation history uses one quiet row per run. */
+.jobs-selection {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-inline-size: 0;
+}
+
+.jobs-selection__count {
+  flex: 0 0 auto;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.jobs-selection__actions {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.jobs-selection-dialog {
+  inline-size: min(760px, calc(100vw - 32px));
+  max-inline-size: min(760px, calc(100vw - 32px));
+  max-block-size: calc(100dvh - 48px);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 20px;
+  overflow: hidden;
+  padding: 24px;
+}
+
+.jobs-selection-dialog__body {
+  min-inline-size: 0;
+  min-block-size: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.jobs-selection-dialog[hidden],
+.selected-job-preparation [data-slot="tabs-content"][hidden] {
+  display: none;
+}
+
+.jobs-selection-dialog__matches > .card {
+  margin: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
+}
+
+.jobs-selection-dialog__matches > .card > h2 {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.selected-job-preparation,
+.preparation-actions,
+.preparation-run-list,
+.preparation-run-detail {
+  display: grid;
+  gap: 16px;
+  min-inline-size: 0;
+}
+
+.selected-job-preparation [data-slot="tabs-content"] {
+  margin-block-start: 20px;
+}
+
+.preparation-actions__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.preparation-actions__option {
+  display: flex;
+  align-items: start;
+  gap: 8px;
+}
+
+.preparation-actions__option > input {
+  flex: 0 0 auto;
+  margin-block-start: 4px;
+}
+
+.preparation-run-list > h3,
+.preparation-run-detail h3 {
+  margin: 0;
+}
+
+.preparation-run-list__rows {
+  min-inline-size: 0;
+}
+
+.preparation-run-row {
+  min-inline-size: 0;
+  border-block-end: 1px solid var(--border);
+}
+
+.preparation-run-row:first-child {
+  border-block-start: 1px solid var(--border);
+}
+
+.preparation-run-row__summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-inline-size: 0;
+  padding-block: 10px;
+}
+
+.preparation-run-row__toggle {
+  flex: 1 1 auto;
+  justify-content: space-between;
+  min-inline-size: 0;
+  min-block-size: 44px;
+  block-size: auto;
+  padding: 6px 8px;
+  text-align: start;
+  white-space: normal;
+}
+
+.preparation-run-row__name {
+  display: grid;
+  gap: 4px;
+  min-inline-size: 0;
+}
+
+.preparation-run-row__metadata {
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+
+.preparation-run-row__toggle > svg {
+  flex: 0 0 auto;
+  transition: transform 140ms ease;
+}
+
+.preparation-run-row__toggle[aria-expanded="true"] > svg {
+  transform: rotate(180deg);
+}
+
+.preparation-run-row__outcomes {
+  padding: 8px 8px 18px;
+}
+
+.preparation-run-outcomes,
+.preparation-run-outcomes__steps {
+  display: grid;
+  gap: 12px;
+  min-inline-size: 0;
+}
+
+.preparation-run-outcomes__steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.preparation-run-outcomes__steps > li {
+  display: grid;
+  gap: 4px;
+}
+
+.preparation-run-outcomes__stage,
+.preparation-run-detail__heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.preparation-run-outcomes__steps p {
+  margin: 0;
+}
+
+.preparation-run-outcomes__steps p[data-typography="metadata"] {
+  color: var(--muted-foreground);
+}
+
+.preparation-run-outcomes__error {
+  color: var(--destructive-text);
+}
+
+.preparation-run-outcomes__identity {
+  color: var(--muted-foreground);
+}
+
+.preparation-run-outcomes__identity summary {
+  cursor: pointer;
+}
+
+.preparation-run-outcomes__identity dl {
+  display: grid;
+  gap: 8px;
+  margin-block: 12px 0;
+}
+
+.preparation-run-outcomes__identity dl > div {
+  display: grid;
+  grid-template-columns: 90px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.preparation-run-outcomes__identity dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .jobs-selection {
+    align-items: start;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .jobs-selection .jobs-selection__actions > button,
+  .selected-job-preparation .preparation-actions__buttons > button,
+  .preparation-run-row .preparation-run-row__summary > button {
+    min-block-size: 44px;
+  }
+
+  .jobs-selection-dialog {
+    max-block-size: calc(100dvh - 32px);
+    padding: 20px;
+  }
+
+  .preparation-run-row__summary {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+
+  .preparation-run-row__toggle {
+    flex-basis: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preparation-run-row__toggle > svg {
+    transition: none;
+  }
+}

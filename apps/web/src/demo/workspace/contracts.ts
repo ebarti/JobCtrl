@@ -1,6 +1,11 @@
-import type { DomainEventUnion } from "@jobctrl/domain-types";
+import type {
+  DemoEvent as DomainEventUnion,
+  DemoOutcomeSuggestionDecidedPayload as OutcomeSuggestionDecidedPayload,
+} from "../events.js";
+import type { ApplicationOutcome, OutcomeSuggestion, OutcomeSuggestionDecisionRequest } from "@jobctrl/contracts";
 
 import type { MaterializedDemoSeed } from "../clock.js";
+import type { DemoFeatureState } from "../DemoFeatureHttpAdapter.js";
 import type {
   DemoExternalRehearsalOperation,
   DemoReceipt,
@@ -53,6 +58,17 @@ export interface DemoWorkspaceEventRecord {
   readonly event: DomainEventUnion;
 }
 
+/** Local-only authority; private request/fact text never enters domain events. */
+export interface DemoSuggestionDecisionReceipt {
+  readonly request: OutcomeSuggestionDecisionRequest;
+  readonly fact: {
+    readonly suggestion: Pick<OutcomeSuggestion, "suggestionId" | "jobKey" | "evidenceId" | "suggestedKind" | "status" | "decidedAt" | "decisionReason" | "decidedOutcomeId">;
+    readonly outcome: ApplicationOutcome | null;
+  };
+  readonly event: OutcomeSuggestionDecidedPayload;
+  readonly eventSequence: number;
+}
+
 /**
  * The complete mutable browser-local aggregate. Its `state` is the sole
  * canonical copy of the P0 projection seed; Query is deliberately a cache,
@@ -80,7 +96,12 @@ export interface DemoWorkspaceSnapshot {
    */
   readonly blobIds: readonly string[];
   readonly state: {
+    /** Recovery CAS slots are separate from accepted feature revisions/events. */
+    draftSlots?: Record<string, string>;
+    draftSlotsRevision?: number;
+    features?: DemoFeatureState;
     actionReceipts?: Record<string, { occurredAtOmitted: boolean; outcomeId: string }>;
+    suggestionDecisionReceipts?: Record<string, DemoSuggestionDecisionReceipt>;
     readonly title: string;
     readonly generatedAt: string;
     readonly artifacts: MaterializedDemoSeed["artifacts"];

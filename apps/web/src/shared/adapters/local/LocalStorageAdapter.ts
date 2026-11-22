@@ -7,6 +7,11 @@ export class LocalStorageAdapter implements StoragePort {
     return `${this.prefix}${key}`;
   }
 
+  readRaw(key: string): string | null {
+    if (typeof window === "undefined") return null;
+    return window.localStorage.getItem(this.key(key));
+  }
+
   get<T = unknown>(key: string): T | null {
     if (typeof window === "undefined") {
       return null;

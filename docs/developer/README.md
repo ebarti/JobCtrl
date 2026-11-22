@@ -32,10 +32,10 @@ tooling.
 
 | If you are changing… | Read first |
 | --- | --- |
-| Runtime processes or the TypeScript/Python split | [Runtime & Processes](../architecture/runtime.md) |
-| Shared domain types, REST DTOs, JSON-RPC, or client boundaries | [Contracts, Types & API Boundaries](../architecture/contracts-types-and-api-boundaries.md) |
+| Runtime processes or the Python application/worker boundary | [Runtime & Processes](../architecture/runtime.md) |
+| Feature services, REST DTOs, or client boundaries | [Contracts, Types & API Boundaries](../architecture/contracts-types-and-api-boundaries.md) |
 | SQLite authority, domain events, projections, SSE, or telemetry separation | [Data, Events & Projections](../architecture/data-events-and-projections.md) |
-| A browser-facing route or response | [Local TypeScript API](../local-ts-api.md), then its focused API reference |
+| A browser-facing route or response | [Local Python API](../local-ts-api.md), then its focused API reference |
 | Temporal workflows, activities, retries, or stage execution | [Job Pipeline](../architecture/pipeline/index.md) |
 | Backend aggregates, ports, or bounded-context language | [Backend Domain Model](../architecture/domain-model/index.md) |
 | Frontend state, contexts, ports, or realtime invalidation | [Frontend Architecture](../architecture/frontend/index.md) |
@@ -52,7 +52,9 @@ tooling.
 - [`docs/plans/`](../plans/) contains active delivery plans and implemented
   records. It is project history, not the source of current product behavior.
 
-Current behavior belongs in the owning guide and in live code, but requirements
+The Python transformation is in progress; a target contract or route declaration
+is not proof of integrated behavior. Current behavior belongs in the owning guide
+and in live code, but requirements
 and accepted decisions can be normative. When they disagree, reconcile the
 conflict: fix a regression in implementation or explicitly amend the decision
 before updating the canonical guide. Implemented plans remain historical

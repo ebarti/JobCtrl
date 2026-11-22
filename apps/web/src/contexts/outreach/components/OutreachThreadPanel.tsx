@@ -10,6 +10,7 @@ import { Empty } from "../../../shared/ui/empty.js";
 import { ReviseDraftForm } from "../forms/revise-draft-form.js";
 import { SendLogForm } from "../forms/send-log-form.js";
 import { useOutreachThreadQuery } from "../hooks/useOutreachThreadQuery.js";
+import type { ThreadDetail, ThreadDraft } from "../contracts.js";
 import { outreachDraftKindLabel } from "../lib/draft-copy.js";
 import { outreachKeys } from "../queryKeys.js";
 import { ApproveDraftButton } from "./ApproveDraftButton.js";
@@ -20,6 +21,7 @@ import { DraftStatusBadge } from "./DraftStatusBadge.js";
 import { FollowUpPanel } from "./FollowUpPanel.js";
 import { GenerateDraftButton } from "./GenerateDraftButton.js";
 import { OutreachSendLogList } from "./OutreachSendLogList.js";
+import { OutreachDeterminations } from "./OutreachDeterminations.js";
 import { RetainedOutreachSessions } from "./RetainedOutreachSessions.js";
 import { RejectDraftButton } from "./RejectDraftButton.js";
 
@@ -30,15 +32,15 @@ export interface OutreachThreadPanelProps {
   offerRevisionId?: string;
 }
 
-type Revision = { threadId: string; target: "approved" | "candidate"; bodyText: string };
+type Revision = { threadId: string; draftId: string; target: "approved" | "candidate"; bodyText: string; fingerprint: string; kind: OutreachDraftKind };
 
 type DraftDecision = "approve" | "reject";
 
-function approvedDraftOf(thread: OutreachThreadDetail): OutreachDraftDto | undefined {
+function approvedDraftOf(thread: ThreadDetail): ThreadDraft | undefined {
   return thread.drafts.find((draft) => draft.status === "approved");
 }
 
-function candidateUnderReviewOf(thread: OutreachThreadDetail): OutreachDraftDto | undefined {
+function candidateUnderReviewOf(thread: ThreadDetail): ThreadDraft | undefined {
   return thread.drafts
     .filter((draft) => draft.status === "candidate")
     .sort((first, second) => second.generation - first.generation)
@@ -77,7 +79,7 @@ function OutreachThreadBody({
 }: {
   revision: Revision | null;
   onRevisionChange: (revision: Revision | null) => void;
-  thread: OutreachThreadDetail;
+  thread: ThreadDetail;
   contactId: string;
   jobId?: string;
 }): JSX.Element {
@@ -93,7 +95,7 @@ function OutreachThreadBody({
   const approved = approvedDraftOf(thread);
   const candidate = candidateUnderReviewOf(thread);
   const history = historyNewestFirst(thread);
-  const canApprove = candidate ? candidate.gateResults.passed && candidate.offerSourcesCurrent !== false : false;
+  const canApprove = candidate ? candidate.gateResults.passed && candidate.sourcesCurrent === true && candidate.reviewAuthorityVerified === true : false;
   const revisingApproved = revisionTarget === "approved";
   const revisingCandidate = revisionTarget === "candidate";
   const threadActionPending = pendingDecision !== null || activeThreadMutations > 0;
@@ -147,11 +149,12 @@ function OutreachThreadBody({
       {approved ? (
         <div className="outreach-approved-draft">
           <h4>Approved message</h4>
-          {approved.offerSourcesCurrent === false ? <p role="status">Offer terms or decision changed. This approved message remains in history; generate and review a new offer draft before copying.</p> : null}
+          {approved.sourcesCurrent !== true ? <p role="status">The message sources changed or are unavailable. This approved message remains in history; verify a new draft before copying.</p> : null}
+          {approved.reviewAuthorityVerified !== true ? <p role="status">The recorded review authority is unavailable or cannot be verified{approved.reviewAuthorityFailure ? `: ${approved.reviewAuthorityFailure}` : "."} This message remains in history.</p> : null}
           <DraftMeta draft={approved} timestamp={`approved ${formatDateTime(approved.approvedAt)}`} />
           <DraftBody bodyText={approved.bodyText} />
           <div className="outreach-draft-actions">
-            <CopyDraftButton draft={approved} contactId={contactId} {...(jobId ? { jobId } : {})} />
+            <CopyDraftButton draft={approved} threadId={thread.threadId} expectedFingerprint={thread.fingerprint} sourcesCurrent={approved.sourcesCurrent === true} reviewAuthorityVerified={approved.reviewAuthorityVerified === true} />
             <Button
               type="button"
               variant="outline"
@@ -159,7 +162,7 @@ function OutreachThreadBody({
               disabled={revisionToggleDisabled("approved")}
               onClick={() => {
                 if (revisionToggleDisabled("approved")) return;
-                onRevisionChange(revisingApproved ? null : { threadId: thread.threadId, target: "approved", bodyText: approved.bodyText });
+                onRevisionChange(revisingApproved ? null : { threadId: thread.threadId, draftId: approved.draftId, target: "approved", bodyText: approved.bodyText, fingerprint: thread.fingerprint, kind: approved.kind });
               }}
             >
               {revisingApproved ? "Cancel revision" : "Revise approved message"}
@@ -170,6 +173,7 @@ function OutreachThreadBody({
             <summary>Provenance and gate results</summary>
             <DraftClaimProvenanceList provenance={approved.provenance} />
             <DraftGateResultsPanel gateResults={approved.gateResults} />
+            <OutreachDeterminations threadId={thread.threadId} draftId={approved.draftId} expectedIds={approved.gateResults.determinationIds} />
           </details>
         </div>
       ) : null}
@@ -181,7 +185,7 @@ function OutreachThreadBody({
           here so the thread reflects it.
         </p>
         <OutreachSendLogList thread={thread} />
-        {approved || loggingSend ? (
+        {(approved?.sourcesCurrent === true && approved.reviewAuthorityVerified === true) || loggingSend ? (
           <div className="outreach-send-log-actions">
             <Button
               type="button"
@@ -208,6 +212,7 @@ function OutreachThreadBody({
         threadId={thread.threadId}
         contactId={contactId}
         followUp={thread.followUp}
+        expectedFingerprint={thread.fingerprint}
         {...(jobId ? { jobId } : {})}
       />
 
@@ -218,16 +223,19 @@ function OutreachThreadBody({
           <DraftBody bodyText={candidate.bodyText} />
           <DraftGateResultsPanel gateResults={candidate.gateResults} />
           <DraftClaimProvenanceList provenance={candidate.provenance} />
+          <OutreachDeterminations threadId={thread.threadId} draftId={candidate.draftId} expectedIds={candidate.gateResults.determinationIds} />
           {!canApprove ? (
             <p className="muted outreach-approve-note">
-              Approval is disabled until the truthfulness gates pass.
+              Approval requires current sources, verified review authority, and passing claim and quality reviews.
             </p>
           ) : null}
+          {candidate.reviewAuthorityVerified !== true && candidate.reviewAuthorityFailure ? <p role="status">Review authority: {candidate.reviewAuthorityFailure}</p> : null}
           <div className="outreach-draft-actions">
             <ApproveDraftButton
               threadId={thread.threadId}
               contactId={contactId}
               draftId={candidate.draftId}
+              expectedFingerprint={thread.fingerprint}
               disabled={!canApprove || decisionControlsDisabled}
               onActionStart={() => beginDecision("approve")}
               onActionSettled={() => settleDecision("approve")}
@@ -237,6 +245,7 @@ function OutreachThreadBody({
               threadId={thread.threadId}
               contactId={contactId}
               draftId={candidate.draftId}
+              expectedFingerprint={thread.fingerprint}
               disabled={decisionControlsDisabled}
               onActionStart={() => beginDecision("reject")}
               onActionSettled={() => settleDecision("reject")}
@@ -249,7 +258,7 @@ function OutreachThreadBody({
               disabled={revisionToggleDisabled("candidate")}
               onClick={() => {
                 if (revisionToggleDisabled("candidate")) return;
-                onRevisionChange(revisingCandidate ? null : { threadId: thread.threadId, target: "candidate", bodyText: candidate.bodyText });
+                onRevisionChange(revisingCandidate ? null : { threadId: thread.threadId, draftId: candidate.draftId, target: "candidate", bodyText: candidate.bodyText, fingerprint: thread.fingerprint, kind: candidate.kind });
               }}
             >
               {revisingCandidate ? "Cancel revision" : "Revise draft"}
@@ -270,6 +279,7 @@ function OutreachThreadBody({
                 <DraftBody bodyText={draft.bodyText} />
                 <DraftGateResultsPanel gateResults={draft.gateResults} />
                 <DraftClaimProvenanceList provenance={draft.provenance} />
+                <OutreachDeterminations threadId={thread.threadId} draftId={draft.draftId} expectedIds={draft.gateResults.determinationIds} />
               </details>
             </li>
           ))}
@@ -303,11 +313,11 @@ function OutreachThreadPanelSession({ contactId, jobId, draftKind, offerRevision
     <section className="section outreach-thread-panel" aria-label="Outreach">
       <div className="outreach-thread-head">
         <h3>Outreach</h3>
-        <GenerateDraftButton contactId={contactId} {...(jobId ? { jobId } : {})} {...(draftKind ? { kind: draftKind } : {})} {...(offerRevisionId ? { offerRevisionId, label: "Generate offer draft" } : {})} />
+        <GenerateDraftButton contactId={contactId} threadReady={Boolean(query.data) && !query.isFetching && !query.error} {...(query.data ? { expectedFingerprint: thread?.fingerprint ?? null } : {})} {...(jobId ? { jobId } : {})} {...(draftKind ? { kind: draftKind } : {})} {...(offerRevisionId ? { offerRevisionId, label: "Generate offer draft" } : {})} />
       </div>
       {errorMessage ? <div className="banner inline">{errorMessage}</div> : null}
       {!thread && !errorMessage ? (
-        <Empty title="No outreach drafts yet. Generate one to review it before you send." />
+        <Empty title={query.isPending ? "Loading outreach thread." : "No outreach drafts yet. Generate one to review it before you send."} />
       ) : null}
       {revision ? (
         <div className="outreach-retained-revision">
@@ -316,6 +326,10 @@ function OutreachThreadPanelSession({ contactId, jobId, draftKind, offerRevision
             threadId={revision.threadId}
             contactId={contactId}
             initialBodyText={revision.bodyText}
+            initialFingerprint={revision.fingerprint}
+            initialKind={revision.kind}
+            sourceDraftId={revision.draftId}
+            {...(thread?.threadId === revision.threadId ? { currentFingerprint: thread.fingerprint } : {})}
             onRevised={() => setRevision(null)}
             onDiscard={() => setRevision(null)}
             {...(jobId ? { jobId } : {})}

@@ -8,6 +8,7 @@ export interface ApproveDraftButtonProps {
   contactId: string;
   jobId?: string;
   draftId: string;
+  expectedFingerprint?: string;
   disabled?: boolean;
   onActionStart?: () => boolean;
   onActionSettled?: () => void;
@@ -20,6 +21,7 @@ export function ApproveDraftButton({
   contactId,
   jobId,
   draftId,
+  expectedFingerprint,
   disabled = false,
   onActionStart,
   onActionSettled,
@@ -28,11 +30,11 @@ export function ApproveDraftButton({
   const errorMessage = mutation.error instanceof Error ? mutation.error.message : "";
 
   function onApprove(): void {
-    if (disabled || mutation.isPending || (onActionStart && !onActionStart())) {
+    if (!expectedFingerprint || disabled || mutation.isPending || (onActionStart && !onActionStart())) {
       return;
     }
     mutation.mutate(
-      { draftId },
+      { draftId, expectedFingerprint },
       {
         onSettled: () => onActionSettled?.(),
       },
@@ -43,7 +45,7 @@ export function ApproveDraftButton({
     <div className="approve-draft">
       <Button
         type="button"
-        disabled={disabled || mutation.isPending}
+        disabled={!expectedFingerprint || disabled || mutation.isPending}
         onClick={onApprove}
       >
         {mutation.isPending ? "Approving…" : "Approve draft"}

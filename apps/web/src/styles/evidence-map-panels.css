@@ -1,0 +1,75 @@
+.evidence-map-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 20px;
+}
+.evidence-map-view > label {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+.evidence-map-panel {
+  display: grid;
+  min-width: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.evidence-map-panel > h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.evidence-map-panel > :is(h3, h4, p, dl),
+.evidence-map-panel > ul > li :is(h3, h4, p, dl) {
+  margin: 0;
+}
+.evidence-map-panel > h3,
+.evidence-map-panel > ul > li h3 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.evidence-map-panel > h4,
+.evidence-map-panel > ul > li h4 {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.evidence-map-panel > ul {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.evidence-map-panel > ul > li {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+}
+.evidence-map-panel > ul > li > section {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+.evidence-map-panel > ul ul {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+  padding-left: 20px;
+}
+.evidence-map-panel > ul dd {
+  margin: 4px 0 12px;
+}
+.evidence-map-panel > ul blockquote {
+  margin: 8px 0 0;
+  border-left: 2px solid var(--border);
+  padding-left: 12px;
+  white-space: pre-wrap;
+}

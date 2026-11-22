@@ -1,6 +1,6 @@
+import { filterJob as sharedFilterJob } from "./job-query.js";
 import {
   JobListQuerySchema,
-  filterJob as sharedFilterJob,
   type JobListQuery,
   type JobSummary,
 } from "@jobctrl/contracts";
@@ -13,7 +13,9 @@ const CLOSED_ACTIVE_STATES = new Set([
 ]);
 
 export function isActiveDemoJob(job: JobSummary): boolean {
-  return !job.deletedAt && !job.hiddenAt && !CLOSED_ACTIVE_STATES.has(job.activeState);
+  return (
+    !job.deletedAt && !job.hiddenAt && !CLOSED_ACTIVE_STATES.has(job.activeState)
+  );
 }
 
 export function filterDemoJob(

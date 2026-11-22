@@ -46,7 +46,7 @@ source and a resolving pointer.
 
 | Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
 | --- | --- | --- | --- | --- | --- | --- |
-| CL-009 | The supported operator surface is a local React/Vite web application backed by the local TypeScript API and Python/Temporal worker. Its first-party routes cover Profile, Discovery, Pipelines, Dashboard, Jobs and job-detail audit, Apply Review, Runs, Artifacts, Evidence, Analytics, Outreach, Preferences, and Debug; mutations go through the API and server-side changes refresh through SSE-backed invalidation. | Comparison (Graphical user interface); Tour; README | Current | repo owner | [frontend architecture](architecture/frontend/index.md); [product tour](user/product-tour.md); `apps/web/src/routes/`; `apps/web/src/contexts/operations/invalidation-router.ts` | 2026-07-09 |
+| CL-009 | The supported operator surface is a local React/Vite web application backed by a local API and durable worker. Its first-party routes cover Profile, Discovery, Pipelines, Dashboard, Jobs and job-detail audit, Apply Review, Runs, Artifacts, Evidence, Analytics, Outreach, Preferences, and Debug; mutations go through the API and server-side changes refresh through SSE-backed invalidation. | Comparison (Graphical user interface); Tour; README | Current | repo owner | [frontend architecture](architecture/frontend/index.md); [product tour](user/product-tour.md); `apps/web/src/routes/`; `apps/web/src/contexts/operations/invalidation-router.ts` | 2026-07-09 |
 
 ### Discovery and enrichment
 
@@ -89,12 +89,6 @@ source and a resolving pointer.
 | CL-025 | A failed material refresh (including a template change) preserves the last accepted artifacts instead of destroying them. | Data & Safety (Auto-Apply Safety) | Current | repo owner | `TR-032`, `BR-041` (requirements.md) | 2026-07-09 |
 | CL-026 | Resume PDF style templates are editable in Preferences with a default template and a per-job override, without modifying candidate profile data. | Materials & Tailoring (What You Can See And Control) | Current | repo owner | [materials](architecture/materials.md) | 2026-07-09 |
 | CL-027 | Apply Review can compare a freshly rendered resume draft against the last accepted artifact before approval, using the same rendered text and keyword-coverage source the audit uses; the comparison is read-only and does not replace the accepted artifact. | Tour (Apply Review) | Current | repo owner | [materials](architecture/materials.md) (rendered text + coverage source); `apps/web/src/contexts/materials/selectors/compareCoverage.ts` | 2026-07-09 |
-
-### Cover letters
-
-| Claim ID | Claim (neutral) | Surfaces | Status | Owner | Verification pointer | Last verified |
-| --- | --- | --- | --- | --- | --- | --- |
-| CL-042 | Cover letters require an approved tailored resume and use canonical profile evidence. Each generated line has a source anchor and independent claim-verification and quality determinations. Rejected refreshes preserve the last accepted letter and remain inspectable; provider or budget failure cannot approve a draft. | Hero (Audited Materials); README (What It Does); Normal Flows (Generate And Inspect Materials) | Current | repo owner | [materials](architecture/materials.md) (Cover-letter truthfulness gate); `workers/automation/src/jobctrl/scoring/cover_letter.py`; `.../domain/materials/use_cases.py` (`GenerateCoverLetterUseCase`); `scan_cover_letter` (`.../domain/materials/fabrication_detector.py`) | 2026-10-07 |
 
 ### Career evidence map
 

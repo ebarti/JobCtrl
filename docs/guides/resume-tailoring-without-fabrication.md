@@ -19,7 +19,7 @@ JobCtrl keeps four inputs separate:
 
 | Input | What it is allowed to do |
 | --- | --- |
-| Candidate Profile snapshot | Prove experience, skills, dates, employers, titles, metrics, and other candidate facts |
+| Candidate Profile snapshot | Prove experience, education, skills, Language / Proficiency, dates, employers, titles, metrics, and other candidate facts |
 | Posting and accepted employer analysis | Describe the target role, requirements, priorities, and employer wording |
 | Requirement-fit record | Connect a requirement to direct, strong, transferable, missing, or blocked profile evidence |
 | Tailoring policy and preferences | Control selection, structure, style, models, templates, and validation thresholds |
@@ -27,32 +27,55 @@ JobCtrl keeps four inputs separate:
 The generated resume is a new presentation of profile evidence. Neither the
 posting nor a model response becomes a new candidate fact.
 
-## Tailoring Is A Candidate-selection Pipeline
+## Prepare And Review Source-Bound Material
 
-JobCtrl does not save the first block of prose returned by one prompt. The
-current workflow:
+Preparation binds the resume to saved Profile and job sources. Code checks
+identifiers, verbatim quotations, exact values, schemas and versions. Semantic
+judgments use recorded source-bound model determinations; words in a line do not
+create evidence. Failed refreshes preserve the last accepted material.
 
-1. binds the accepted posting interpretation, profile version, requirement-fit
-   determinations and confirmed permissions;
-2. generates structured candidates with an evidence and requirement anchor for
-   every line;
-3. validates identifiers and assembles the actual output;
-4. asks a separate claim verifier to determine every claim's support and applies
-   the artifact rubric;
-5. asks the independent quality judge for a pass/fail decision;
-6. repairs cited failures within the attempt budget;
-7. re-verifies and re-judges any voice rewrite on its final text;
-8. persists accepted artifacts, determination versions, model identity, input
-   fingerprints and line anchors together.
+The [accepted transformation target](../user/materials-and-tailoring.md#how-jobctrl-chooses-a-resume)
+retains the full approved baseline and separates factual fit from document
+coverage. It is an implementation target pending integration verification.
 
-Code checks IDs, verbatim quotations, exact values, schemas and versions. Models
-own semantic judgments. Requirement coverage follows recorded requirement IDs;
-words in a line never create evidence. Provider unavailability, budget denial or
-invalid output blocks the stage and preserves the last accepted generation.
+## Reuse Approved Expression Deliberately
 
-The artifact inspector and Apply Review expose those recorded bindings. A line
-without an anchor says **No recorded source**. The human reviewer remains the
-final authority for application approval.
+The current Python source keeps factual support separate from approved wording
+coverage. A person can meet a requirement while no approved variant expresses
+it; that document gap does not lower factual fit. Requirements with the same
+qualified meaning can reuse their recorded assessment and exact current wording
+relations across jobs.
+A current match supported in its own Skills, Education or Languages section
+does not create an achievement-wording gap. Reusable wording coverage concerns
+Skills/Professional Experience meanings; job-local Education/Languages demands
+never enter achievement authoring. Language proficiency comes only from authored
+Language / Proficiency records, and an explicitly offered education experience
+route does not assert a degree.
+
+Saving Profile facts, sources or wording approval starts no follow-on work.
+After saving, choose **Update affected matches** when you want those changes
+reviewed. Fit considers an achievement's relevant requirement set together and
+prepares a grouped proposal only for meaningful supported expression gaps.
+It reuses approved expression and does not rewrite already covered content for
+stylistic variation. New wording needs an actual unsupported expression need
+and factual achievement support.
+Profile's **Approve exact wording** action authorizes that precise text for
+reuse; rejected and deferred proposals remain recorded rather than being
+regenerated for each job. See the
+[wording library](../user/candidate-profile.md#approved-wording-library) for
+editing and approval, and the [update guide](../user/candidate-profile.md#update-affected-matches)
+for finite limits, costs, partial outcomes and explicit retries.
+
+The real Plate baseline editor remains part of Profile. Reviewing a wording
+proposal does not replace that editor or rewrite an accepted resume. Document
+composition, rendering and acceptance remain separate actions with their own
+recorded inputs. Source behavior and the synthetic walkthrough do not establish
+installed-release availability or a hosted deployment.
+The complete baseline retains every section, including structured Language /
+Proficiency through Plate and supported exports. Tailoring changes only approved
+achievement wording. Each eligible canonical meaning receives one internal
+composition policy point, followed by complementary depth and stable ties;
+those points are not importance attributed to the posting.
 
 ## Missing Evidence Stays Missing
 
@@ -68,21 +91,14 @@ role does not upgrade a prior title. If important experience is missing from
 the Candidate Profile, correct the profile from your real evidence and create a
 new version before generating again.
 
-The master profile is an evidence inventory, not the desired length of every
-tailored resume. Unless you explicitly mark a bullet required, JobCtrl may omit
-it when it adds no distinct evidence for the target role. A per-role maximum is
-an upper bound, not a request to fill the resume to that number.
-
 See [Candidate Profile](../user/candidate-profile.md) for evidence ownership and
 [Scoring](../user/scoring-and-employer-analysis.md) for the distinction between
 direct, strong, transferable, missing, and blocked requirement fit.
 
 ## Inspect The Accepted Resume, Not Just The Prompt
 
-The Artifacts workspace preserves more than a PDF. Its inspector can expose the
-tailoring plan, policy version, candidate attempts, validation, provenance,
-verifier-recorded requirement coverage, independent quality findings, claim verification, voice
-measures, template, risk metadata, and same-job generations.
+The Artifacts workspace preserves more than a PDF. Inspect the recorded source
+references, requirement coverage and review findings for the accepted material.
 
 Warnings are tied to their lifecycle. A warning may have caused a repair, been
 accepted as residual on the selected candidate, or appeared after acceptance
@@ -100,7 +116,7 @@ The current user-facing controls and artifact lifecycle are documented in
 ## Failed Re-tailoring Does Not Destroy Good Work
 
 A retry is an audit event, not permission to hide the current accepted resume.
-If a new candidate fails grounding, judge review, rendering, or persistence,
+If a replacement fails validation, rendering, or persistence,
 JobCtrl keeps the last accepted generation available for review. A successful
 replacement supersedes it while preserving history.
 
@@ -113,6 +129,9 @@ Use the [synthetic live demo](https://demo.jobctrl.dev) to inspect requirement
 evidence and generated materials without connecting a provider. To tailor your
 own profile, follow [Getting Started](../user/getting-started.md), create and
 review a versioned Candidate Profile, then run a bounded Discover workflow.
+The updated source-built **Demo guide** → **Explore matching and wording** walkthrough
+illustrates requirement reuse and grouped proposals without model calls or
+saved workspace changes; the actual update action is unavailable there.
 Always read the rendered resume and its evidence before using it.
 
 Related reading:

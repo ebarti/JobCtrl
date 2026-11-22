@@ -5,9 +5,10 @@ import { Empty } from "../../../shared/ui/empty.js";
 import { CandidateReviewCard } from "./CandidateReviewCard.js";
 import { ResearchTaskStatusBadge } from "./ResearchTaskStatusBadge.js";
 import { ResearchSourceAttemptList } from "./ResearchSourceAttemptList.js";
+import { ResearchDeterminations } from "./ResearchDeterminations.js";
 
 export interface CandidateReviewListProps {
-  task: ContactResearchTaskDetail;
+  task: ContactResearchTaskDetail & { revision?: number };
 }
 
 // Supervised review surface (INV-4): renders every proposed candidate with its
@@ -31,6 +32,7 @@ export function CandidateReviewList({ task }: CandidateReviewListProps): JSX.Ele
             <CandidateReviewCard
               key={candidate.candidateId}
               taskId={task.taskId}
+              {...(typeof task.revision === "number" ? { taskRevision: task.revision } : {})}
               candidate={candidate}
             />
           ))}
@@ -40,6 +42,7 @@ export function CandidateReviewList({ task }: CandidateReviewListProps): JSX.Ele
         <summary>Sources attempted</summary>
         <ResearchSourceAttemptList attempts={task.sourceAttempts} />
       </details>
+      <ResearchDeterminations taskId={task.taskId} expectedIds={[...new Set(task.sourceAttempts.flatMap((attempt) => attempt.determinationId ? [attempt.determinationId] : []))]} />
     </div>
   );
 }

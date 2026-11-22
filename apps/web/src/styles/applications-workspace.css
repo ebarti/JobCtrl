@@ -1,0 +1,353 @@
+/* Application review: navigation stays compact while the selected task gets the room it needs. */
+.application-workspace {
+  display: grid;
+  grid-template-columns: minmax(15rem, 19rem) minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+  min-width: 0;
+}
+
+.application-queue,
+.application-review-workspace,
+.application-workspace-empty {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.application-queue {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  position: sticky;
+  top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+}
+
+.application-queue-header,
+.screening-library-heading,
+.screening-content-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.application-queue-header h2,
+.application-selected-header h2 {
+  margin: 0;
+  font-size: var(--jh-type-section-title-size);
+  font-weight: var(--jh-type-section-title-weight);
+  line-height: var(--jh-type-section-title-line-height);
+}
+
+.application-queue-header p,
+.application-selected-header p,
+.application-queue-filter,
+.screening-content-heading p,
+.screening-capture-heading p,
+.screening-question-list > p {
+  color: var(--muted-foreground);
+}
+
+.application-queue-header p,
+.application-selected-header p,
+.screening-content-heading p,
+.screening-capture-heading p {
+  margin: 4px 0 0;
+}
+
+.application-queue-filter,
+.screening-capture label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.application-queue-filter > span,
+.screening-capture label {
+  color: var(--foreground);
+  font-weight: var(--jh-type-label-weight);
+}
+
+.application-queue-list {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.application-queue-item {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  gap: 3px;
+  padding: 11px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--foreground);
+  cursor: pointer;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.application-queue-item:hover {
+  background: var(--muted);
+}
+.application-queue-item:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.application-queue-item[aria-pressed="true"] {
+  border-color: var(--border);
+  background: var(--accent);
+}
+.application-queue-item > span {
+  color: var(--muted-foreground);
+}
+.application-queue-status {
+  font-size: var(--jh-type-metadata-size);
+}
+.application-queue-toggle {
+  display: none;
+}
+
+.application-selected-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px 16px;
+}
+
+.application-selected-header details {
+  margin-top: 8px;
+  color: var(--muted-foreground);
+  font-size: var(--jh-type-metadata-size);
+}
+.application-selected-header summary,
+.screening-library-content summary {
+  cursor: pointer;
+}
+.application-task-tabs {
+  display: flex;
+  width: 100%;
+  height: auto;
+  overflow-x: auto;
+  padding: 0 12px;
+}
+.application-task-tabs [data-slot="tabs-trigger"] {
+  min-height: 42px;
+}
+.application-review-workspace [data-slot="tabs-content"] {
+  min-width: 0;
+  margin-top: 0;
+}
+.application-review-workspace [data-slot="tabs-content"][hidden] {
+  display: none;
+}
+.application-review-workspace
+  [data-slot="tabs-content"]
+  .section
+  > [data-slot="button"] {
+  justify-self: start;
+}
+.application-workspace-empty {
+  padding: 24px;
+  color: var(--muted-foreground);
+}
+
+/* Preparation is the only unpadded child beside the independently inset resume. */
+.application-resume-workspace > .job-preparation-task {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  padding: 20px 24px 0;
+}
+.application-resume-workspace > .job-preparation-task > p,
+.application-resume-workspace > .job-preparation-task > [role="alert"] {
+  max-width: 72ch;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.application-resume-workspace > .job-preparation-task > div[role="alert"] {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+.application-resume-workspace .job-preparation-inspection {
+  min-width: 0;
+  padding-block: 12px 0;
+}
+.application-resume-workspace .job-preparation-inspection summary {
+  cursor: pointer;
+}
+.application-resume-workspace .job-preparation-inspection > label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.application-resume-workspace .job-preparation-inspection > label > input {
+  flex: 0 0 auto;
+  margin-block-start: 4px;
+}
+.application-resume-workspace
+  .job-preparation-inspection
+  > details
+  > .preparation-actions {
+  margin-block-start: 12px;
+}
+.application-resume-workspace .preparation-run-list__rows:empty {
+  display: none;
+}
+
+.screening-library-heading {
+  align-items: center;
+  flex-wrap: wrap;
+}
+.screening-library-heading h3 {
+  margin: 0;
+}
+.screening-library-content {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+  padding: 20px 24px 24px;
+}
+.screening-library .screening-library-content {
+  padding: 20px 0 0;
+}
+.screening-content-heading h3,
+.screening-capture-heading h4,
+.screening-question-list h4,
+.screening-question h5 {
+  margin: 0;
+}
+.screening-content-heading p {
+  max-width: 65ch;
+  color: var(--foreground);
+}
+.screening-capture-heading {
+  margin-bottom: -8px;
+}
+.screening-capture {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  max-width: 64rem;
+}
+.screening-attempt-field {
+  grid-column: 1 / -1;
+  max-width: 28rem;
+}
+.screening-capture textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+.screening-capture > [role="alert"] {
+  grid-column: 1 / -1;
+}
+.screening-capture > [data-slot="button"] {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+.screening-question-list {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+.screening-question {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-wrap: anywhere;
+}
+.screening-question > [data-slot="button"],
+.screening-question form > [data-slot="button"] {
+  justify-self: start;
+}
+.screening-question label {
+  min-width: 0;
+}
+.screening-question pre,
+.screening-record-details pre {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.screening-record-details {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+.screening-record-details > details {
+  margin: 12px 0 0 12px;
+}
+
+@media (max-width: 800px) {
+  .application-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .application-queue-toggle {
+    display: inline-flex;
+    justify-self: start;
+  }
+  .application-queue {
+    display: none;
+    position: static;
+    max-height: none;
+  }
+  .application-queue[data-mobile-open="true"] {
+    display: grid;
+  }
+  .application-selected-header {
+    padding: 18px 16px 14px;
+  }
+  .application-resume-workspace > .job-preparation-task {
+    padding: 16px 16px 0;
+  }
+  .application-resume-workspace .job-preparation-task__controls > button {
+    max-width: 100%;
+    height: auto;
+    min-height: 44px;
+    white-space: normal;
+    text-align: center;
+  }
+  .screening-library-content {
+    padding: 18px 16px 20px;
+  }
+}
+
+@media (max-width: 560px) {
+  .application-task-tabs {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0;
+    overflow: visible;
+    padding: 0 8px;
+  }
+  .application-task-tabs [data-slot="tabs-trigger"] {
+    min-width: 0;
+    min-height: 48px;
+    height: auto;
+    padding: 4px;
+    white-space: normal;
+    line-height: 1.2;
+    text-align: center;
+  }
+  .screening-content-heading {
+    flex-wrap: wrap;
+  }
+  .screening-capture {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .screening-attempt-field {
+    max-width: none;
+  }
+}

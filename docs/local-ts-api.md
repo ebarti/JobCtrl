@@ -1,559 +1,257 @@
-# Local TypeScript API
+# Local Python API
 
-The local Fastify API is the browser-facing boundary for JobCtrl. It serves
-projection-backed and canonical detail reads, accepts explicit commands, starts Temporal workflows,
-and streams domain-event invalidations to the web app.
+The local Python HTTP application is the browser-facing boundary for JobCtrl's
+transformed source runtime. This page keeps its existing documentation URL.
+Feature routes call the same application services as CLI and durable workers;
+there is no Fastify business authority or TypeScript/Python JSON-RPC hop.
 
-**Read this first** for the shape of the API. Follow a route-family link for the
-common contracts, or open the [complete field-level contract](api/complete-contract.md)
-when implementing or debugging a specific endpoint.
+## Shared routes
 
-## In 30 Seconds
-
-- Personal reads come from SQLite-backed projections and authorized canonical
-  detail state; clients do not reconstruct domain state from raw events.
-- Workflow-starting commands normally return `202 Accepted`. That means queued,
-  not completed.
-- Synchronous reads and commands return `200 OK`; invalid input, unavailable
-  workers, and start failures return an error instead of a misleading `202`.
-- Browser updates arrive through `GET /v1/events/stream`; TanStack Query exact-
-  patches truthful detail payloads and boundedly refetches affected projections
-  when membership, aggregation, or missing event data requires reconciliation.
-- Credentials are handled through the local credential boundary, never through
-  ordinary settings payloads.
-
-## Choose A Route Family
-
-| You need to… | Start here |
+| Route | Contract |
 | --- | --- |
-| Read or update the candidate profile, preferences, discovery settings, or credentials | [Profile & Settings](api/profile-and-settings.md) |
-| List jobs, inspect score/material evidence, review applications, or work with contacts | [Jobs & Materials](api/jobs-and-materials.md) |
-| Start/cancel workflows, inspect current pipeline operations, inspect health, or consume realtime events | [Operations & Events](api/operations-and-events.md) |
-| Check every field, status code, precedence rule, and cadence | [Complete Contract](api/complete-contract.md) |
-
-## API At A Glance
-
-| Boundary | Representative routes | Response model |
-| --- | --- | --- |
-| Profile and configuration | `/v1/profile`, `/v1/settings`, `/v1/credentials`, `/v1/providers/models`, `/v1/discovery/settings`, `/v1/browser-capabilities`, `/v1/extension/pairing-token`, `/v1/discovery/browser-extension/status` | Synchronous reads, validated patches, and live extension readiness |
-| Career learning | `/v1/evidence-map/learning` | Local recorded reads, no-model cohort preview and explicitly requested comparison/milestone commands |
-| Jobs and evidence | `/v1/jobs`, `/v1/jobs/:jobKey`, `/v1/evidence-map`, `/v1/artifacts` | Projection-backed reads |
-| Interviews | `/v1/interviews/catalog`, `/v1/interviews/questions/:questionId`, per-job prep history and interview notes | Asset-backed public reads; tenant/job-scoped prep and revisioned private notes |
-| Scoring keywords and feedback learning | `/v1/scoring/keywords`, `/v1/learning/recommendations`, `/v1/learning/policies/materials` | Current score-version aggregation plus explicit review and versioned policy history |
-| Review and outcomes | `/v1/apply/review-queue`, `/v1/jobs/:jobKey/apply-review/decision`, `/v1/jobs/:jobKey/repeat-application/override`, `/v1/outcomes` | Explicit review commands plus read models |
-| Workflow operations | `/v1/pipeline/actions/run-stage`, `/v1/pipeline/operations`, `/v1/workflow-runs`, `/v1/health` | `202` for accepted asynchronous work; `200` for projection-backed and runtime-backed reads/sync commands |
-| Realtime | `/v1/events/stream` | Server-Sent Events with replay and reconnect support |
-
-Dashboard source-health and digest blocked-source entries retain stable
-`sourceId` values and may include `displayName` from the source registry.
-Clients prefer that name, including current JobStreaming board labels for
-historical source keys. Names do not change source-health or quarantine facts.
-Digest job counts require the local tenant's canonical JobId, and date filters
-compare instants at millisecond precision. The explicit acknowledgement route
-serializes with Python writers and commits the watermark and review event
-together; passive digest reads do not acknowledge.
-
-## Profile And Preferences
-
-Profile reads expose a bounded legacy-confirmation review notice and computed
-evidence authority flags. The private original/review history stays out of SSE;
-review decisions use the stopped-runtime local command. See the
-[Profile & Settings contract](api/profile-and-settings.md#candidate-profile).
-
-Profile data, preferences, discovery controls, settings, and credentials have
-different owners even though the UI presents them together. See
-[Profile & Settings](api/profile-and-settings.md) for that ownership map and the
-routes used by autosave, resume preview, source administration, and native-store-backed
-credentials.
-
-Existing resume-template updates carry an expected active version and fail
-closed on a stale or missing precondition; see [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-resume-templates).
-
-Discovery settings reads and updates report invalid persisted search settings
-instead of replacing them with defaults; see the
-[Discovery controls contract](api/complete-contract.md#discovery-controls).
-
-Target Search can request role suggestions through
-`POST /v1/profile/target-role-suggestions`. The web sends only the last saved
-`profileVersion`; it never sends the current browser form draft. The TypeScript
-API checks that version before and after one synchronous Python RPC call, and
-the worker builds a bounded payload from saved experience titles, achievement
-evidence, and skills. Contact details, voluntary EEO values, compensation,
-attestations, raw PDF data, and raw profile content logs are excluded. Results
-remain transient until the user edits/selects them and accepts an append through
-the normal `PATCH /v1/profile` path with `expectedProfileVersion`.
-
-The RPC also carries app-directory and database identity derived from the API's
-trusted runtime context. The worker rejects a mismatch before it reads a
-snapshot. Current managed provider SDKs do not enforce the required output-token
-and maximum-call-cost bounds, so this production route makes no provider call.
-It returns deterministic direct titles from compatible saved experience and a
-small set of adjacent titles only when linked achievement evidence supports
-their full substantive wording; an empty result is valid. Historical location
-and work-model proposals come only from explicit experience location text.
-Every role and historical preference proposal starts unselected. The
-`provider_token_or_cost_bound_unsupported` warning records the provider gate.
-Synthetic adapter tests cover the model response validator without claiming a
-production model run; broader inference still requires bounded provider
-support and semantic validation.
-
-## Artifacts And Tailoring Audit
-
-Artifact list/detail/preview routes and canonical tailoring evidence are grouped
-with job reads in [Jobs & Materials](api/jobs-and-materials.md). The complete
-contract documents every generation, template, provenance, layout, and audit
-field.
-
-## Jobs Read Model And Lifecycle
-
-The jobs list supports globally paginated `stages` membership alongside legacy
-scalar `stage`. The shared API client serializes arrays as comma-separated query
-values, including an empty array as `stages=`. Membership, precedence, metadata,
-and bulk-selection semantics are owned by [Jobs & Materials](api/jobs-and-materials.md)
-and the [complete contract](api/complete-contract.md).
-The Jobs removed-selection action uses `GET /v1/jobs/reviewable-list` and
-`POST /v1/jobs/permanent-delete-selection` to bind the confirmed cohort to its
-observed lifecycle state before permanent deletion.
-The Operations browser adapter validates the raw stage array with the shared
-schema before merging stage-local pages. It preserves explicit empty arrays,
-scalar fallback for invalid or oversized arrays, and the requested scalar in
-response metadata. Its input contract accepts readonly stage arrays.
-Text sorts use lowercase locale comparison consistent with the browser merger.
-Discovery sorts preserve the browser's locale comparison of raw timestamp
-strings, including mixed fractional/offset notation, rather than instant order.
-Source/company filters match literal Unicode-lowercased substrings on
-summary-equivalent scalar values. All searches and sorts use SQLite selection
-over the app-owned, rebuildable
-[query index](architecture/read-model.md#job-list-sqlite-selection).
-Timestamp cutoffs compare precomputed instants inclusively at JavaScript
-millisecond precision, including the OR of two cutoffs. Lists and all-matching
-bulk selection share those predicates. Index refresh, totals, page selection
-and selected-summary joins stay within one SQLite transaction; only the
-returned page receives DTO hydration, availability and template reads.
-
-Jobs list/detail include Enrichment's persisted `availability` observation:
-latest attempt/verdict, last successful verification, next due, acquisition
-evidence and computed overdue/in-progress state. These GETs never fetch an
-employer posting. `POST /v1/jobs/:jobId/actions/check-availability` accepts an
-empty strict body and a canonical JobId, dispatches runtime-bound JSON-RPC
-`check_posting_availability`, and returns `202` with workflow/run IDs.
-`JobAvailabilityObserved` invalidates the selected detail and tenant job lists.
-Job-scoped `AvailabilityLeaseChanged` command-deferral records invalidate the
-same reads. Only explicit requests own coalesced deferral feedback; automatic
-and preflight refusals do not create user requests or employer observations.
-See [Jobs & Materials](api/jobs-and-materials.md#saved-posting-availability)
-and the [field contract](api/complete-contract.md#saved-posting-availability).
-
-The jobs list and detail routes read stable projections. Lifecycle changes—hide,
-restore, delete, score correction, stage retry, and per-job actions—are explicit
-commands. A stale-score reset leaves the accepted score visibly stale while
-replacement work is pending. See [Jobs & Materials](api/jobs-and-materials.md).
-
-On job detail, Enrich stage summaries can carry a separate, allow-listed
-`applyUrlOutcome` (`code`, `message`, `retryable`, and `method`). It reports
-application-target readiness without changing posting-content trust or stage
-success; raw browser/resolver errors are not exposed.
-
-Employer-analysis requirements on job detail expose `coverage_scope` as
-`resume`, `eligibility`, `logistics`, `employer_condition`, or `null` for
-historical analyses. Both projection builders normalize missing historical
-values to `null`, so the TypeScript and Python read models remain identical.
-
-Internal list/detail identity is the tenant-scoped stable `JobId`; posting URLs
-are locators resolved only at explicit import or API boundaries. Employer and
-Source remain independent facts. `GET /v1/scoring/keywords` aggregates indexed,
-normalized keywords from the current score version, and `GET /v1/jobs` accepts
-an exact `normalizedScoreKeyword` filter using those returned keys.
-
-## Interview Catalog, Preparation, And Notes
-
-The global catalog/detail routes serve the same versioned public JSON packaged
-for Python and TypeScript. They remain available without a database, selected
-job, live worker, or provider call. The job action extends the existing explicit
-`generate_interview_prep` workflow with a bounded selected-question/context
-request. Prep history and independent revisioned notes use authorized
-job-scoped reads/saves. A failed refresh preserves accepted prep; a stale note
-revision returns an explicit conflict instead of overwriting the newer edit.
-
-These contracts keep public guidance, accepted personal evidence, generated
-outlines, and unverified user edits separate. Read the
-[Jobs & Materials route guide](api/jobs-and-materials.md#interviews-catalog-preparation-and-notes)
-and [complete interview contract](api/complete-contract.md#interview-catalog-preparation-and-notes)
-for route fields, limits, errors, legacy cases, and stale-input semantics.
-
-## Feedback Learning And Policy History
-
-`GET /v1/learning/recommendations` and its evidence route expose only bounded,
-privacy-safe derived evidence. The review route requires an explicit accepted
-or rejected decision. Acceptance creates a versioned Materials policy revision;
-rejection changes no policy. `GET /v1/learning/policies/materials` exposes the
-allowlisted current/superseded history, while the rollback route appends a new
-user-requested revision only against the reviewed current version and returns
-the recorded receipt on a matching retry, even after later changes. These routes never
-start scoring, tailoring, Apply, or artifact work. See
-[Jobs & Materials](api/jobs-and-materials.md#feedback-learning-and-materials-policy).
-
-## Dashboard, Analytics, And Operational Metrics
-
-`GET /v1/dashboard/summary`, `GET /v1/analytics/outcomes`, `GET /v1/digest`, and
-`GET /v1/debug/activity` expose read-side summaries. Their exact filters and
-shapes live in the [complete contract](api/complete-contract.md#dashboard-analytics-and-operational-metrics).
-
-`GET /v1/pipeline/operations` is the dedicated current-operations read model.
-It selects the active or draining Discover execution, falling back to the
-latest terminal execution, and combines immutable execution membership,
-pipeline-step and per-job stage projections, fresh worker capacity, approximate
-Temporal task-queue statistics, bounded active-work detail, and a conservative
-typed ETA. A stale same-queue worker leaves ETA contention unbounded. It is a
-current snapshot, not a historical reconstruction endpoint.
-See [Operations & Events](api/operations-and-events.md#pipeline-operations-snapshot).
-
-## Discovery Controls
-
-Source registry, quarantine, locator candidates, manual capture, schedules, and
-role-match feedback are covered in
-[Profile & Settings](api/profile-and-settings.md#discovery-controls).
-Source-locator GET uses a read-only database connection and never promotes.
-History proposals join saved source-control receipts and registry overlaps;
-review writes and durable coordinate decisions commit atomically. The history
-scan and explicit suppression reset are CLI-owned.
-
-`POST /v1/jobs/import-url` accepts `{ "url": "https://…" }` and awaits the
-worker-owned `JobUrlImportWorkflow`. It returns either the canonical imported
-`jobKey` or a typed `manual_capture_required` outcome with the pending queue
-item and reason. The API never fetches the remote page itself.
-
-Job-detail Enrich stages expose optional `fetchFailure` diagnostics (cause,
-host, observed time, bounded recheck status/count/times). The audit history
-includes `EnrichmentFetchRechecked`; raw request URLs remain outside this
-diagnostic DTO. See [fetch diagnostics](api/jobs-and-materials.md#jobs-and-evidence).
-
-## Live Discovery Browser Bridge
-
-`GET /v1/discovery/browser-extension/status` returns the memory-only bridge
-snapshot: `connected`, `installationBound`, the non-secret
-`installationIdSuffix`, `lastSeenAt`, `extensionVersion`, `pendingTasks`, and
-`activeTasks`. A heartbeat is current for 45 seconds. A pairing token can exist
-while `connected` is false; token presence is not readiness. `POST
-/v1/extension/discovery/claim` binds one extension-local installation UUID.
-The automatic background claim cannot establish or replace that selection;
-saving the token in the extension sends the explicit replacement claim.
-
-The paired extension and local worker share a bounded task protocol under
-`/v1/extension/discovery/tasks`:
-
-- `GET /v1/extension/discovery/tasks/next?extensionVersion=…` heartbeats and
-  leases the next task to the authenticated, selected extension installation;
-- `GET /v1/extension/discovery/tasks/:taskId/lease?leaseId=…` refreshes the
-  selected installation heartbeat and tells the extension whether the exact
-  lease remains active, allowing prompt worker cancellation;
-- `POST /v1/extension/discovery/tasks` lets only a token-authenticated local
-  non-browser worker create an execution-bound task;
-- `GET /v1/extension/discovery/tasks/:taskId` lets that worker poll the result;
-- `POST /v1/extension/discovery/tasks/:taskId/result` accepts the extension's
-  exact lease result after final-URL validation; and
-- `DELETE /v1/extension/discovery/tasks/:taskId` lets the worker cancel/forget
-  its task.
-
-Task schemas allow public HTTP(S) `GET`/`POST` or rendered-page acquisition,
-cap request bodies at 2 MB of UTF-8 data and response text/HTML at 4 MB of
-UTF-8 data each, cap timeouts at 120 seconds, and forbid browser-owned
-cookie/user-agent/origin plus `Sec-*`/`Proxy-*` headers. The broker is
-process-memory-only, idempotently binds a task ID to its workflow/run request
-fingerprint, separates a 30-second pending/admission window from the execution
-timeout that starts on lease, and admits at most four active/pending tasks for
-the extension's four executors. Active lease checks keep the 45-second bridge
-heartbeat current. Cancellation deletes the lease; the next control check
-aborts Chrome work and closes a tab when one exists. The API validates DNS at
-creation and again immediately before lease. HTTP/API tasks execute in the
-extension service worker with redirects disabled; rendered-page tasks use
-tab-scoped DNR rules that allow the exact source origin and block cross-origin
-main-frame redirects before dispatch without restricting page-owned fetch/XHR.
-Blocked cross-origin rendered navigation returns non-retryable `unsafe_redirect`
-promptly via a task-scoped navigation-error listener. Response streaming stops
-at its byte limit rather than buffering an unbounded body. Rotating the pairing
-token clears the selected
-installation and immediately marks the old extension disconnected. `POST
-/v1/pipeline/actions/run-stage` and the job-level and bulk Enrich run/retry
-routes do not require an extension heartbeat: worker-ready, eligible requests
-dispatch with the extension offline and return the normal `202`
-queued/accepted response, while worker readiness
-(`503 worker_runtime_unavailable`), stage eligibility, and authorization gates
-still apply. Each acquisition setup then prefers the connected extension after
-a bounded status probe and otherwise selects guarded public HTTP or anonymous
-Playwright; a fetch failure never switches transport. Top-level `enrich`,
-including mixed-stage requests containing it, is rejected with `400` by the
-request schema; Discovery owns the pipeline enrichment drain.
-
-## Compensation
-
-Posted compensation, market estimates, source controls, and refresh actions are
-job evidence. Start with [Jobs & Materials](api/jobs-and-materials.md#compensation).
-
-## Workflow Runs
-
-List, detail, cancel, and workflow-start semantics are in
-[Operations & Events](api/operations-and-events.md#workflow-runs).
-
-`GET /v1/workflow-runs` accepts the normal pagination and sort parameters plus
-an exact `workflowType` match, inclusive `startedSince`, and exclusive
-`startedBefore`. Timestamp bounds must be UTC ISO-8601 timestamps; malformed
-optional filter values are ignored. The list response echoes the effective
-filters in its `filter` object (`null` when an optional filter is inactive).
-
-`GET /v1/workflow-runs/:runId` returns `failureDiagnostics` when available.
-`automaticRetryable` describes Temporal retry behavior; `manualRecoveryAvailable`
-describes whether the canonical Tailor stage is failed/retryable or exhausted
-for a failed JobPreparation Tailor run, so a new recovery can be started. Its optional
-`providerFailures` summary is limited to safe provider/model/operation failure
-dimensions, counts, and the latest correlated attempt; it excludes all prompt,
-generated-content, SDK-message, path, URL, and secret data.
-For matching pre-instrumentation Codex records only, the exact legacy
-`parse_error: "builder error"` shape is returned with `source: "legacy_inferred"`;
-per-call retryability and structured provider fields remain unavailable.
-
-Discover, job preparation, and Apply share the same statuses, lifecycle
-timeline, terminal-state rules, and cancellation command. Cancellation is
-cooperative and idempotent: repeated requests do not replace terminal results
-or emit duplicate cancellation transitions.
-
-## Profile Resume Preview
-
-`GET /v1/profile/preview.html` and `GET /v1/profile/preview.pdf` render the
-baseline profile resume. Per-job generated artifacts use the artifact preview
-routes described in [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-resume-templates).
-
-## Apply Review And Outcomes
-
-Apply review is a user decision boundary, not a background side effect. The
-review queue, editable resume-review drafts, approval decisions, outcomes, and
-bounded Gmail suggestion flow are summarized in
-[Jobs & Materials](api/jobs-and-materials.md#apply-review-and-outcomes). Gmail scan summaries
-and feedback events carry canonical `jobId` values; the wire fields are defined
-in the [complete contract](api/complete-contract.md). Gmail scan worker failures
-carry a safe `failureCode` through the HTTP route without returning mail text.
-
-Manual outcomes, interview reflections and user-attested send logs use a
-client-provided request identity to return the original result after a retry.
-See the [manual action retry contract](api/complete-contract.md#manual-action-retry-contract).
-
-The queue and job-detail read models include `repeatApplication`: its current
-status, summary, evaluation time, evidence fingerprint, related confirmed prior
-applications, matching reason and identity evidence, matching one-attempt
-override, and bounded audit trail. `POST
-/v1/jobs/:jobKey/repeat-application/override` accepts
-`evidenceFingerprint`, `priorJobKey`, a 10–400 character `reason`, and
-`confirmedBy`; it records intent but does not dispatch Apply. Stale evidence,
-prior mismatch, already-consumed confirmation, and live apply without required
-confirmation return `409` with stable repeat-application error codes. Dry-run
-dispatch does not require this confirmation because it cannot submit.
-
-## Contacts
-
-Contact facts, reviewed CSV/vCard import, supervised research, candidate
-confirmation, outreach drafts, send logs, and follow-ups share one route family. See
-[Jobs & Materials](api/jobs-and-materials.md#contacts-and-outreach).
-Contact edits require the fingerprint from the detail read; a stale base returns
-409 without replacing newer facts. See the [contact contract](api/complete-contract.md#contacts).
-Research source attempts distinguish acquisition failures from a successful page
-with no candidates; their detailed outcomes and recovery text are returned on
-the research task detail read. Model, spend and structural failures are distinct
-from an accepted empty decision. An overlapping failed attempt refreshes the
-open review without replacing its accepted proposals.
-
-<a id="contact-research"></a>
-<a id="outreach-drafts"></a>
-
-## Pipeline And Preparation Actions
-
-Global and per-job stage runs, rescore/re-tailor, retry, mark-applied, and
-mark-skipped commands are summarized in
-[Operations & Events](api/operations-and-events.md#starting-work).
-Stale-score reset advice is returned and recorded as an executable explicit
-rescore command; the reset itself does not dispatch scoring.
-
-Apply resets refuse recorded intent, Applied and unresolved verification evidence,
-retained policy skips, and unsettled admitted or skipped-queued work independently
-of the current local stage label. A successful explicit reset records its validated
-Skip-history release frontier; automatic `StageReset` events carry no such authority.
-Verified native retirement may restore the stopped stage from a stale running
-label only for the same claim and run with no conflicting outcome or intent.
-That recovery preserves Skip; a separate safe reset releases it.
-Apply dispatch binds a writer-serialized event frontier, and the claim writer
-rejects a job with a later manual Skip or its later authorized reset. A targeted
-request after reset has a distinct workflow generation; an older workflow cannot
-reuse its request authority. Legacy workflows without a frontier remain eligible
-only for jobs without retained manual Skip history. Standing workflows renew the
-frontier between completed polls. Historical local API skips are identified only
-by their exact machine-authored message on an Apply `StageSkipped` event; the
-user-provided reason in the event payload is not interpreted as a marker.
-Historical score-policy skips are recognized from the producer's structured
-score fields and exact generated event message, not a user-provided reason.
-
-Enrichment resets use the synchronous Python application service through
-`reset_enrichment`; its transaction and preservation rules are defined in
-[Enrichment Retry Ownership](architecture/contracts-types-and-api-boundaries.md#enrichment-retry-ownership).
-
-## Discovery Target Search
-
-Discovery reads the saved profile target, location, and work-model preferences.
-The precedence and filter details remain in the
-[complete contract](api/complete-contract.md#discovery-target-search).
-
-## Worker Runtime And Health
-
-Use `GET /v1/health` before starting work that needs Temporal and the Python
-worker. See [Operations & Events](api/operations-and-events.md#health-and-json-rpc)
-for the readiness boundary.
-
-## Settings And Credentials
-
-Ordinary settings and secrets deliberately use separate routes and storage.
-See [Profile & Settings](api/profile-and-settings.md#settings-and-credentials).
-Credential mutation ownership is shared across local API processes and can
-return a bounded `busy` response while another update is active. Unverified
-process identity fails closed as `ownership_unverified`.
-`GET /v1/providers/models` returns sanitized ready-provider catalogs through
-the Python JSON-RPC boundary. `PATCH /v1/settings` accepts `preferredModels`,
-validates every non-null choice against that current catalog, and persists only
-the canonical `preferred_models` provider/model mapping; `null` clears one
-provider without requiring it to be ready.
-The saved `defaultLlmModel` route and explicit material generator and judge choices use the same catalog boundary
-before any settings bytes change. Clearing them or selecting provider-neutral
-`default` does not require provider availability.
-`defaultLlmModel` persists as `default_llm_model`; it binds newly acquired core
-adapters and the optional writing pass without changing explicit workflow pins.
-Codex catalog models also expose optional `supportedReasoningEfforts` and
-`defaultReasoningEffort` capabilities. Settings accepts model-specific
-`codexReasoningEfforts` patches validated against those live options; null
-entries clear offline. The optional `reasoning_effort` in determination envelopes
-records an explicit saved choice and participates in the determination identity.
-Legacy envelopes without the field remain readable.
-
-`GET/PATCH /v1/settings` also carries effective-source and activation metadata
-for launch controls. Environment-owned fields are read-only. Discovery runtime
-and schedule controls use `GET/PATCH /v1/discovery/settings`; Apply-browser
-adoption uses `GET /v1/browser-capabilities` plus capability-specific `POST`
-enable and disable routes. The older profile-copy route remains API-compatible
-for existing installations but is not exposed by current Settings and does not
-start LinkedIn recovery. Extension pairing uses
-`GET /v1/extension/pairing-token` and `POST /v1/extension/pairing-token/rotate`;
-live current-profile readiness uses
-`GET /v1/discovery/browser-extension/status`. Integrated Discovery and Enrich
-never read an adopted executable or copied profile.
-
-## Related Packages
-
-The contracts package owns shared API types, the API-client package owns typed
-browser calls, and `apps/api` owns HTTP/JSON-RPC/SSE transport. Source pointers
-are collected in [Operations & Events](api/operations-and-events.md#implementation-map).
-
-## Commands
-
-Use `corepack pnpm api:dev` for the API, `corepack pnpm web:dev` for the web app,
-and `corepack pnpm dev` for the complete attached local stack. The full setup and
-verification sequence is in [Local Development](local-development.md).
-
-## Server-Sent Events — `GET /v1/events/stream`
-
-The endpoint tails tenant-scoped `job_events`, emits typed SSE frames, and uses
-event IDs for replay. If the event database cannot be opened or read, the stream
-signals that it is unavailable and retains each subscriber's cursor. It retries
-without terminating the API; a detected database change sends a cursor-reset
-signal and stays degraded until stopped-runtime recovery and a fresh UI
-subscription. The browser shows the recovery steps. Path checks cannot identify
-an A → B → A replacement during initial SQLite open; stop JobCtrl before any
-database restore or replacement. The invalidation router
-maps each event type to the smallest safe query-key set. See
-[Operations & Events](api/operations-and-events.md#server-sent-events) and the
-[frontend realtime architecture](architecture/frontend/realtime.md).
-
-Internal `ArchivedSmartPostingPrepared` receipts retain private captured posting
-bytes for recovery and are excluded entirely from SSE. Capture completion and
-source-owner notifications contain references only; they do not expose that
-private journal body.
-
-### Request
-
-The browser opens one long-lived `GET` request. A reconnect may include
-`Last-Event-ID`; the server resumes after that event when it is still available.
-
-### Response Framing
-
-Frames include an `id`, typed `event`, JSON `data`, and a reconnect cadence.
-`DryRunCompleted` is a distinct typed apply event: it refreshes dry-run status
-without implying submission. Its [payload contract](api/complete-contract.md#dry-run-completion)
-retains the launcher's snake_case lifecycle fields.
-Clients validate the payload before dispatching it to the invalidation router.
-
-### Tenant Filtering (COALESCE On The Row, Not The Request)
-
-Tenant compatibility is resolved against each stored row. The request tenant is
-never broadened to turn a tenant-scoped stream into an unscoped one.
-
-### Resume-Position Precedence
-
-Resume and replay positions follow the explicit request/header contract before
-falling back to the current tail. See the complete contract for the exact order.
-
-### Cadences
-
-The server polls for durable events and sends keepalive traffic on separate,
-bounded cadences so quiet connections remain observable.
-
-### Reconnect Backstop
-
-Native `EventSource` reconnect plus durable event IDs is the normal recovery
-path. Projection refetches remain the correctness backstop if a client misses an
-invalidation.
-
-Workflow-run detail also returns the selected Apply run's durable event
-summaries separately from workflow lifecycle events. Their identities and
-privacy boundary are documented in [Operations & Events](api/operations-and-events.md#workflow-runs).
-
-### Required-Bullet Coaching
-
-The opt-in `POST /v1/profile/required-bullet-suggestions` route calls the configured
-LLM through the synchronous `profile_required_bullet_suggestions` worker RPC.
-Findings bind to canonical saved sources and the expected profile version;
-provider failures have no heuristic fallback. Typed budget denials return 429
-with daily/profile-lane scope; provider setup/authentication failures return 503;
-invalid output or other provider failures return 502 with safe actionable messages.
-This route uses observed daily/profile-lane admission, not a hard per-call token or
-cost ceiling; input/response bounds do not cap an in-flight provider charge.
-Only an exact model-proposed whitespace cleanup can be accepted through the ordinary fenced profile save.
-See [Profile & Settings](api/profile-and-settings.md) and the
-[complete contract](api/complete-contract.md#candidate-profile) for bounds and errors.
-
-
-## Semantic Determination Authority
-
-Semantic read envelopes and citations are shared in Contracts. Discovery executes saved provider searches and ingests structurally valid fetched listings without a separate intake gate; `/v1/extension/autofill/mapping` uses paired sync RPC; saved resume rendering requires model review of that exact revision. Target-role suggestions are model-backed pending determinations. Version-fenced profile saves may carry `acceptedCandidateInterpretationId` to record confirmation. Repeat checks persist equivalence before live Apply eligibility is read.
-
-See [the decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
-
-Private screening-answer reads and commands use the generated endpoint clients and registered `screening_answers` Python RPC. See [Jobs and Materials](api/jobs-and-materials.md#screening-answers).
-
-The existing Job Detail and daily digest reads also expose optional saved [company briefings](user/company-briefings.md). They perform no fetch/model work; configuration and refresh are explicit local CLI commands. See [the wire contract](api/complete-contract.md#company-briefings).
-
-## Provider Endpoint Registration
-
-`GET /v1/providers/status`, `GET /v1/providers/models`, and
-`POST /v1/providers/codex/verify` share the existing endpoint specification,
-registered feature handlers and generated checked clients. Legacy query/body
-values remain ignored. The [provider contract](api/profile-and-settings.md#provider-endpoint-compatibility)
-defines status/error compatibility; the [migration recipe](architecture/contracts-types-and-api-boundaries.md#incremental-endpoint-migration)
-shows how to adopt later families without changing the #954 envelope boundary.
-
-## Accepted DOCX Export
-
-Job Detail exports original accepted resume and cover-letter text through the
-strict `material-exports` endpoint and runtime-bound Python RPC. Registered DOCX
-downloads verify owned paths and output hashes. See [Jobs & Materials](api/jobs-and-materials.md#artifacts-and-resume-templates)
-and the [complete contract](api/complete-contract.md#accepted-material-docx-exports)
-for request fields, source fences and errors.
-
-Actual offer terms and accepted/declined decisions use the private per-job
-`/v1/jobs/:jobId/offer` route family; [Jobs & Materials API → Actual Offers](api/jobs-and-materials.md#actual-offers)
-owns its source, expected-revision and correction semantics. Offer communication
-uses the existing reviewed outreach routes and manual-send boundary.
+| `GET /v1/health` | Application/schema/workspace identity, selected features, live dispatch readiness and model accounting. |
+| `GET /v1/setup/status` | Public Profile/provider/browser/Temporal/policy readiness; configuration and verified readiness are distinct. |
+| `GET /v1/settings` | Direct non-secret settings snapshot with integer `revision` and derived read-only `modelAccounting` (selected provider/model, availability, cost source and exact quote). Derivation does not contact providers or inspect credentials. |
+| `PATCH /v1/settings` | Partial top-level values plus required `expectedRevision`; returns a new snapshot or 409 for stale input. Nested maps replace the supplied map. |
+| `GET /v1/credentials` | Credential configuration/status metadata and shared settings revision; never secret values. |
+| `PATCH /v1/credentials` or `/v1/credentials/batch` | Requires `expectedRevision`; stale input performs no native mutation. |
+| `DELETE /v1/credentials/{key}` | Requires `?expectedRevision=N`; UI normally uses the batch operation. |
+| `/v1/providers/status`, `/v1/providers/models` | Provider readiness and live supported model catalogs. |
+| `POST /v1/actions/{action}` | Direct feature payload; optional `Idempotency-Key`; 202 only after confirmed Temporal admission. |
+| `GET /v1/action-runs` | Newest-first `{runs,nextCursor,hasMore}`; optional `before` run ID and `limit` from 1 to 200. |
+| `GET /v1/action-runs/{runId}` | Current admission/execution result and cancellation state. |
+| `GET /v1/action-runs/summary` | Recorded status counts, total, active and pending cancellation counts. |
+| `GET /v1/action-runs/by-idempotency-key?action=...` | Exact `Idempotency-Key` header lookup without returning its request payload; a missing row is only an observation at read time. |
+| `POST /v1/action-runs/{runId}/cancel` | Empty object; records cancellation before requesting Temporal cancellation. |
+| `GET /v1/events/stream` | Committed SSE, replay cursors and optional ordinary-message envelopes. |
+| `GET /v1/activity` or `/v1/events` | Newest-first `{events,nextCursor,hasMore}`; optional `before` event ID and bounded `limit`. |
+| `GET /v1/activity/{eventId}` | One committed event envelope or 404. |
+
+The health `llmSpend` read model separates `costStatus` and `tokenStatus`, each
+`complete`, `unavailable`, `pending` or `unresolved`. A settled native call can
+have unavailable monetary cost and complete token usage. `costUsd` is nullable
+unless the complete monetary total is known; `knownCostUsd` is only the recorded
+subtotal. `costAuthority` describes monetary evidence, while
+`accountingComplete` requires both dimensions complete. `activeCalls` counts all
+running model receipts with a live owner, including calls admitted on earlier
+UTC days. `dailyActiveCalls`, each `lanes[].active` count, both usage statuses,
+amounts, `unresolvedCalls`, `unavailableCostCalls` and `unavailableTokenCalls`
+relate to calls admitted on the reported UTC day. Predecessor responses omit
+`dailyActiveCalls` and count only today's running calls in `activeCalls`.
+`unlimited` reflects the current zero-dollar-cap setting. These are
+read-only classifications and do not change receipt or admission policy.
+`dailyBudgetUsd`, `accountingBlocked`, `monetaryAccountingBlocked` and
+`tokenAccountingBlockedLanes` derive from the same settings/receipt snapshot.
+The blockers describe historical uncertain or unavailable usage under enabled
+limits, not running-call progress or known usage reaching a ceiling. An empty
+blocked-lane list means no finite token lane lacks the evidence required for
+admission. Digest carries these blockers plus both active counts and the daily unresolved count; unknown
+history alone no longer makes its budget status incomplete. Exact amounts and
+knowledge statuses remain unchanged even when accounting does not block work.
+
+Feature-owned routes cover Profile, Jobs, Requirements, Fit, Resumes and the
+retained optional capabilities. Their owners validate input and publish exact
+DTOs. Missing optional features remove their routes; unknown API paths return an
+explicit 404, including when static frontend assets are served.
+
+The Jobs URL form submits `POST /v1/actions/jobs.capture_url` with `{ "url": "…" }`,
+an `Idempotency-Key` and `Expected-Database-Instance-Id`. The 202 response
+identifies the durable run. `GET /v1/jobs/url-imports` returns its source URL,
+run ID, current status, cancellation state, failure code and captured job ID.
+The mounted Jobs feature advertises `jobs.url_import_queue` in the health
+response’s `capabilities` array when it supports this projection. For older
+servers the form uses the same action receipt and links to the filtered native
+run history at `GET /v1/action-runs?action=jobs.capture_url`.
+An active matching URL returns `action_scope_busy` with the existing run ID.
+Transient lane or monetary serialization is visible as `waiting_for_capacity`.
+The synchronous `POST /v1/jobs/import-url` returns a captured posting or an
+immediate error for clients that explicitly use it.
+
+`GET /v1/jobs/{job_id}/requirements/attempts/latest` reads the latest attempt
+and any recorded refusal details, even before a job has accepted Requirements.
+The snapshot read still returns null until an accepted revision exists.
+
+The reusable requirement library reads `/v1/requirements`,
+`/v1/requirements/{id}` and bounded `/v1/requirements/{id}/history` pages
+(`kind=revisions|occurrences`, `limit` up to 200, `offset`). Original posting
+occurrences remain distinct from canonical meanings and expose accepted-snapshot
+and current-source status separately. `/v1/fit/requirement-library` joins the
+catalog to recorded achievement assessments and exact approved-wording coverage;
+it also lists explicit user associations labeled unassessed. An absent Profile
+returns `readiness: "profile_required"` without hiding the catalog.
+
+`POST /v1/fit/associations` requires a stable client association ID, expected
+Profile revision, exact requirement revision, achievement source pins and any
+optional exact wording binding. The same ID and payload reuse the saved result.
+`POST /v1/fit/associations/{id}/state` soft-removes or restores under
+`expected_revision`; restoration retains original pins and may remain stale.
+Only one active association per achievement/requirement pair is allowed;
+`POST /v1/fit/associations/{id}/revisions` changes its optional wording or exact
+source pins with a fresh Profile/association revision fence. The bounded
+`/{id}/history` reader preserves earlier revisions. These are
+user-intent records, never qualification, coverage, wording approval or model
+admission. See the [Fit owner reference](../workers/automation/src/jobctrl/features/fit/README.md)
+and [Requirements owner reference](../workers/automation/src/jobctrl/features/requirements/README.md)
+for exact fields and source-authority boundaries.
+
+`requirements.correct_occurrences` is a version-fenced durable correction of
+1–20 selected reusable occurrence meanings; its direct route is
+`POST /v1/jobs/{job_id}/requirements/corrections`. It preserves unselected
+meaning, binding, evidence and authority, uses a single source-bound revision
+batch followed by complete-catalog matching, and records separate correction
+provenance. Reasons are guidance rather than evidence. See
+[the typed Requirements API](api/jobs-and-materials.md#typed-job-requirements)
+for payload, retention and durable call limits.
+
+Maintained wording is separately exposed in the Fit library's `current_wordings`
+and `wording_assignments`. `POST /v1/fit/current-wordings` selects an exact
+approved variant with a current positive coverage receipt under Profile and
+assignment revision fences. Each achievement/requirement pair has one head.
+Manual changes cannot introduce multiple maintained alternatives; the existing
+manual affected-matches workflow must record a complete grouped justification.
+`/{id}/state` removes or source-validates restoration, and bounded `/{id}/history`
+retains earlier assignment revisions. Selection changes invalidate their
+fingerprint without changing Profile approvals, coverage receipts or accepted
+document bytes.
+
+`fit.refresh` declares one active admission per profile. A different idempotency
+key for an already pending, queued or running scope receives
+`action_scope_busy` with the existing `runId`; an exact retry uses its original
+identity. Its required saved-input stamp prevents queued work from absorbing
+later edits. Cancellation and transport recovery finalize the feature's
+operation receipt in the same transaction as the action transition. See the
+[Fit reference](../workers/automation/src/jobctrl/features/fit/README.md) for
+scope, progress and limit fields.
+
+`discovery.search` also registers one active admission scope per workspace.
+The scope check and insertion share the SQLite write transaction, including
+`pending`, `start_failed`, `queued` and `running`. A competing new identity gets
+409 `action_scope_busy` with the existing `runId`; exact same-key/same-body
+retries return their original run before this check. A lost acknowledgement
+retains its key until exact reconciliation. The Jobs launch pins both the saved
+Profile revision and the database incarnation used to read its preferences.
+
+`GET /v1/discovery/sources` returns boards from the installed JobStreaming registry and their local state. Change an existing board with `PATCH /v1/discovery/sources/{source_id}/state` and its `expectedRevision`. A preview reads saved observations. Automatic searches run exclusively through JobStreaming. Jobs independently owns the durable `jobs.capture_url` action for a supplied posting URL.
+
+`GET /v1/discovery/runs` includes the canonical run's `failures` list alongside
+its counts and status. Board failures identify `sourceFamily`, `unitId`, `boards`, `code` and a safe actionable `message`. Historical records retain their original source identifiers. The action result carries the same recorded failures.
+New SDK board access failures keep the code `discovery_provider_authentication_configuration`.
+Their optional `diagnostic` is `missing_credential`, `provider_access_denied`,
+`tls_configuration`, `proxy_configuration`, or `authentication_or_configuration`.
+An identified HTTP denial includes `httpStatus` (401 or 403). A committed
+`DiscoveryRunUpdated` warning at stage `board_search` includes the same
+failure in `payload.sourceFailure` before the SDK acknowledges the event.
+SDK board rate limits use `discovery_provider_rate_limited` and set
+`diagnostic` to `rate_limited` in the warning and run result. The run list also explains rate
+limits from historical records that stored this code with a generic message.
+Historical action receipts and already-published events retain their original fields.
+`partial` means at least one source unit completed or reached the new-job limit
+while another failed. A completed source may return no jobs. Reaching the limit
+records `budget_exhausted`, without asserting upstream provider completion.
+If every selected unit fails, the run is `failed`. Per-board request adaptation preserves saved search settings;
+see the [Discovery reference](../workers/automation/src/jobctrl/features/discovery/README.md)
+for cutoff, checkpoint and restart behavior.
+
+`GET /v1/discovery/runs/{run_id}/jobs/{job_id}/role-target` reads the current
+saved job's judgment against that run's frozen role preferences. A missing
+decision is `null`. `POST` on the same route takes `expectedPostingRevision`
+and can assess a saved job from an earlier run that recorded a target plan.
+The response identifies the posting revision, source hash, plan, verdict,
+source citations and model receipt. Review preserves the job, its original
+admission and its Fit score. Foreign run membership, absent frozen targets and
+stale writes are refused. Repeating a POST for the same revision returns its
+recorded decision or failure. An in-flight or interrupted role call returns
+`discovery_role_call_unsettled` and its outcome needs review.
+
+In the complete product, the same `discovery.search` identity stays active
+through Preparation's initial fit-only `search` recipe. Source status remains
+independent: the composite result exposes `acquisitionStatus` and its own
+`status`, with `ok: false` for a partial outcome. If acquisition failed after
+committing new jobs, those exact retained jobs are still assessed and the
+composite is partial; the canonical source run remains failed. The separate
+`preparation` summary and explicit selected-job `assess` recipe are defined in
+[Operations and events](api/operations-and-events.md#starting-work).
+Cancelled/failed action terminalization seals interrupted preparation in the
+same transaction, including recovery without re-entering the feature handler.
+It never settles model accounting. Completed failed/blocked stages retain their
+original outcome on same-run replay; an explicit new retry admits further work.
+
+## Action and error semantics
+
+Synchronous operations return 200/201. A durable command returns, for example:
+
+```json
+{"runId":"uuid","workflowId":"workspace-scoped-id","status":"queued"}
+```
+
+Queued is not completed. Run status is `pending`, `queued`, `running`,
+`succeeded`, `failed`, `cancelled` or `start_failed`. A failed start confirmation
+may be uncertain. Retry with the same idempotency key and payload, which reuse the
+same Temporal identity. A different payload with that key returns 409.
+Recovery clients retain the non-secret `databaseInstanceId` from health and send
+`Expected-Database-Instance-Id` on status reads and writes. A mismatch returns
+`workspace_changed` 409 before route execution, preventing an uncertain request
+from being admitted into a replacement database at the same workspace path.
+
+Errors use `{"error":{"code":"...","message":"...","details":{}}}`;
+`details` is optional. Stale saves preserve the accepted version. Provider or
+renderer failures preserve the previous accepted artifact and expose the failed
+attempt separately. Cancellation can be requested while an external action is
+settling; its owner reports a truthful final or ambiguous outcome.
+
+## Settings and security
+
+Settings include explicit provider/model selection, Codex reasoning effort,
+lane concurrency/token limits, daily spend policy, worker capacity, Apply limits,
+qualification threshold/guidance, resume mode and AI execution policy. Tailored
+resume composition is the default. Explicit baseline mode remains available and
+requires no resume model call. Automatic approved-Applications execution is off
+by default and still requires exact existing approvals when enabled.
+
+Requests must have a loopback Host and actual loopback peer. Browser mutations
+require a configured first-party local origin; native clients use the private
+local capability token. Extension routes require the paired token and have
+additional task/installation admission. An extension origin cannot read arbitrary
+Profile or credential endpoints.
+
+Credential reads serialize with the OS-user mutation lock. Missing mutation
+revisions return 428; stale revisions return 409. Native-only writes increment
+the shared settings revision without storing secret values in SQLite. Unknown
+helper ownership returns `credential_store_unavailable` with
+`details.reason=ownership_unverified`, preserving the recovery record.
+
+## Committed events
+
+Each event contains `eventId`, `type`, `feature`, `aggregateId`, `tenantId`,
+`occurredAt`, explicit `level`, nullable `stage`, and a bounded identifier/invalidation `payload`. SSE uses the event
+ID as `id`. Default `event` is the named event type; `?envelope=1` uses `message`
+while retaining the type in the JSON body. Reconnect uses `Last-Event-ID` or the
+`after` query parameter. A replaced database emits `workspace_changed` and closes
+the subscription.
+`after=latest` starts at a snapshot of the current committed cursor; a reconnect's
+`Last-Event-ID` takes precedence. HEAD returns finite stream headers without
+starting an event loop.
+
+Activity supports literal `feature`, `type`, `level`, `stage`, `aggregateId`,
+`since`, `until` and `q` filters. Search does not interpret SQL wildcard characters.
+Run lists support literal `status`, `action`, `since` and `until` filters. Health
+provides the configured Temporal namespace and a nullable explicit UI base URL;
+clients omit workflow links when the UI address is unknown.
+
+Only committed rows are visible. Rollback cannot produce an event for an
+uncommitted mutation. The web shell owns one connection and features own their
+invalidation rules. Activity is an operational history, not a source of inferred
+business or semantic authority.
+
+See [runtime](architecture/runtime.md), [storage](architecture/storage.md), and
+[contract ownership](architecture/contracts-types-and-api-boundaries.md).
+
+The local `/v1/health` response includes `runtimeIdentity` with the startup
+build fingerprint, workspace, database instance, workflow history and queue.
+An unavailable worker supplies an actionable `message` and `reason`.
+Health, setup and pipeline telemetry use the same bounded check of the selected
+Temporal namespace and the worker's workflow and activity pollers. A refused
+new action creates no receipt. If confirmation of a start is lost, the 503
+includes the run ID and idempotency key. Sending the same payload and key
+reuses its workflow ID. A previously confirmed receipt can be read during
+a service outage.

@@ -10,7 +10,7 @@ import { JobCtrlApiError } from "@jobctrl/api-client";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type JSX } from "react";
 
-import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeAuditPins.js";
+import { ResumeStandalonePlateEditor } from "../../materials/components/ResumeStandalonePlateEditor.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Field, FieldGroup, FieldLabel } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
@@ -309,6 +309,7 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
         layout,
       },
       makeDefault,
+      ...(templatesQuery.data ? { expectedDefaultRevision: templatesQuery.data.preferenceRevision } : {}),
       maySetDefault: (saved) => {
         const observed = observedTemplates.current[sourceKey];
         return !observed || observed.activeVersion.versionId === saved.template.activeVersion.versionId
@@ -356,9 +357,9 @@ export function ResumeTemplatePanel({ profileHtmlPreviewUrl }: ResumeTemplatePan
   };
 
   const chooseDefault = (templateId: string, versionId: string, expectedActiveVersionId: string) => {
-    if (isSaving || needsReview || defaultReadUnconfirmed) return;
+    if (isSaving || needsReview || defaultReadUnconfirmed || !templatesQuery.data) return;
     setDefaultWrites((previous) => new Set(previous).add(tenantId));
-    void setDefaultTemplate.mutateAsync({ templateId, versionId, expectedActiveVersionId }).then(() => {
+    void setDefaultTemplate.mutateAsync({ templateId, versionId, expectedActiveVersionId, expectedRevision: templatesQuery.data.preferenceRevision }).then(() => {
       setDefaultFailures((previous) => ({ ...previous, [tenantId]: null }));
     }).catch((error: unknown) => {
       const cause = error instanceof UnconfirmedTemplateDefaultError ? error.cause : error;

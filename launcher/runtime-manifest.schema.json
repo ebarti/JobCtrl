@@ -4,18 +4,38 @@
   "title": "JobCtrl launcher runtime manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "launcherProtocol", "ports", "components", "health"],
+  "required": [
+    "schemaVersion",
+    "launcherProtocol",
+    "ports",
+    "components",
+    "health"
+  ],
   "properties": {
-    "schemaVersion": { "const": 1 },
-    "launcherProtocol": { "const": 2 },
+    "schemaVersion": {
+      "const": 1
+    },
+    "launcherProtocol": {
+      "const": 2
+    },
     "ports": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["temporalGrpc", "temporalUi", "api"],
+      "required": [
+        "temporalGrpc",
+        "temporalUi",
+        "api"
+      ],
       "properties": {
-        "temporalGrpc": { "const": 7233 },
-        "temporalUi": { "const": 8233 },
-        "api": { "const": 8766 }
+        "temporalGrpc": {
+          "const": 7233
+        },
+        "temporalUi": {
+          "const": 8233
+        },
+        "api": {
+          "const": 8766
+        }
       }
     },
     "components": {
@@ -24,36 +44,120 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name", "executable", "arguments"],
+        "required": [
+          "name",
+          "executable",
+          "arguments"
+        ],
         "properties": {
-          "name": { "enum": ["temporal", "worker", "api"] },
-          "executable": { "type": "string" },
-          "arguments": { "type": "array", "items": { "type": "string" } }
-        }
+          "name": {
+            "enum": [
+              "temporal",
+              "worker",
+              "api"
+            ]
+          },
+          "executable": {
+            "type": "string"
+          },
+          "arguments": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "name": {
+                  "const": "api"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "executable": {
+                  "const": "python/bin/python3"
+                },
+                "arguments": {
+                  "contains": {
+                    "const": "jobctrl.app.server"
+                  }
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "name": {
+                  "const": "worker"
+                }
+              }
+            },
+            "then": {
+              "properties": {
+                "executable": {
+                  "const": "python/bin/python3"
+                },
+                "arguments": {
+                  "contains": {
+                    "const": "jobctrl.app.worker"
+                  }
+                }
+              }
+            }
+          }
+        ]
       }
     },
     "health": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["temporal", "api"],
+      "required": [
+        "temporal",
+        "api"
+      ],
       "properties": {
         "temporal": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["component", "arguments"],
+          "required": [
+            "component",
+            "arguments"
+          ],
           "properties": {
-            "component": { "const": "temporal" },
-            "arguments": { "type": "array", "items": { "type": "string" } }
+            "component": {
+              "const": "temporal"
+            },
+            "arguments": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         },
         "api": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["path", "requireWorkerHealthy", "requireWorkerPid"],
+          "required": [
+            "path",
+            "requireWorkerHealthy",
+            "requireWorkerPid"
+          ],
           "properties": {
-            "path": { "const": "/v1/health" },
-            "requireWorkerHealthy": { "const": true },
-            "requireWorkerPid": { "const": true }
+            "path": {
+              "const": "/v1/health"
+            },
+            "requireWorkerHealthy": {
+              "const": true
+            },
+            "requireWorkerPid": {
+              "const": true
+            }
           }
         }
       }

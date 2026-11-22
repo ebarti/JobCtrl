@@ -1,4 +1,4 @@
-import { prefetchOutcomeAnalytics } from "../contexts/operations/readQueries.js";
+import { prefetchOutcomeAnalytics } from "../contexts/apply/outcomes.js";
 import { createFileRoute } from "@tanstack/react-router";
 
 import { AnalyticsView } from "../views/analytics/AnalyticsView.js";

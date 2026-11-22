@@ -1,4 +1,5 @@
 export { outreachKeys } from "./queryKeys.js";
+export { outreachEvents } from "./events.js";
 
 export { useContactsListQuery } from "./hooks/useContactsListQuery.js";
 export { useContactDetailQuery } from "./hooks/useContactDetailQuery.js";
@@ -54,26 +55,5 @@ export { ReviseDraftForm } from "./forms/revise-draft-form.js";
 export { SendLogForm } from "./forms/send-log-form.js";
 
 export { useOutreachImportStore } from "./stores/outreach-import-store.js";
-
-export {
-  contactCreatedHandler,
-  contactUpdatedHandler,
-  contactAttributeRecordedHandler,
-  contactDeletedHandler,
-  warmIntroIdentifiedHandler,
-  contactResearchTaskStartedHandler,
-  contactCandidateProposedHandler,
-  contactResearchTaskNeedsReviewHandler,
-  contactResearchTaskCompletedHandler,
-  contactResearchTaskFailedHandler,
-  outreachDraftGeneratedHandler,
-  outreachDraftRevisedHandler,
-  outreachDraftApprovedHandler,
-  outreachDraftRejectedHandler,
-  outreachSendLoggedHandler,
-  followUpScheduledHandler,
-  followUpCompletedHandler,
-  followUpDismissedHandler,
-} from "./handlers.js";
 
 export { OfferCommunication } from "./components/OfferCommunication.js";

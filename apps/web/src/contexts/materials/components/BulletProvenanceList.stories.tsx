@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
-import { annotatedChanges, provenanceEntries } from "../../../test/fixtures/materials-inspector.js";
+import { annotatedChanges, provenanceEntries } from "../../../../.storybook/fixtures/materials-inspector.js";
 import { BulletProvenanceList } from "./BulletProvenanceList.js";
 
 const meta = {

@@ -1,5 +1,7 @@
 export interface StoragePort {
   get<T = unknown>(key: string): T | null;
+  /** Strict legacy-record inspection. Recovery callers must never render bytes. */
+  readRaw?(key: string): string | null;
   set<T = unknown>(key: string, value: T): void;
   remove(key: string): void;
   /** Compare and update one durable record in a cross-tab transaction.

@@ -87,6 +87,10 @@ earlier first-party-only choice, so existing visitors are asked again once.
 The data controller for the public demo is Eloi Barti, acting as an individual.
 For privacy questions, contact me[at]eloibarti.com (replace [at] with @).
 
+Returning visitors with valid consent and an active visitor cookie receive a new
+session when their browser discards its session cookie. The existing consent
+expiry still applies.
+
 After acceptance, Cloudflare sets a versioned consent cookie plus random
 HttpOnly visitor and session identifiers. JobCtrl's persistent cookies expire
 within six months, the session cookie at the end of the browser session, and raw
@@ -115,10 +119,43 @@ is a future design for [#885](https://github.com/ebarti/JobCtrl/issues/885).
 It is **PROPOSED**, awaits owner decisions, and does not change the current
 consent gate, retention, or deletion behavior described above.
 
-After entry, the compact **Demo guide** links to seeded scoring evidence,
-tailored-material review, Apply Review/dry-run, and run history. Every shortcut
-and action is simulated; it does not contact employers, send messages, or make
-external changes. **Reset synthetic demo data** asks for confirmation, then
+After entry, the compact **Demo guide** links to ordinary synthetic workspaces,
+saved evidence, document/application review and history. Supported local edits
+change only the synthetic browser workspace; simulated and unavailable external
+actions are labeled. The demo does not contact employers, send messages or make
+external application changes.
+
+The Original redesign source-built demo also connects **Jobs**, **My profile**
+and **Settings**, including peer Profile fields, local role/achievement removal
+and restore, proposed wording revision/history, the standalone Requirements
+library and Settings appearance. Its requirement meanings and posting
+occurrences are authored synthetic examples. Manual links remain **user /
+unassessed**. No assessed current-wording assignment or coverage is invented;
+the demo retains its authored original wording and pending proposal separately.
+Model refresh, meaning correction, current-assignment decisions, live job search
+and Photon lookup remain unavailable. Typed location text stays unverified.
+Supported real Plate editing/render/export remains browser-local synthetic work.
+These source changes do not establish a hosted deployment.
+The typed-requirement source candidate keeps reusable Skills/Professional
+Experience examples separate from job-local Education/Languages demands, with
+authored Language / Proficiency Profile rows and an equal-item formula. A
+supported Skills section is not represented as a missing achievement expression.
+These synthetic records cannot establish real-provider support or a live
+workspace upgrade.
+
+The updated source-built demo also offers **Explore matching and wording**,
+which opens **How matching and wording work**, an interactive illustration with
+synthetic catalog, evidence and
+wording choices. Those choices change only the example: they make no model calls
+and do not save Profile, match or approval changes to the browser-local workspace.
+The actual **Update affected matches** action remains unavailable in the demo
+and requires the local application. See the
+[Product Tour](product-tour.md#affected-matches) for the entry path and the
+[Profile update guide](candidate-profile.md#update-affected-matches) for the
+real action's limits and recovery behavior. Source changes do not establish a
+hosted deployment.
+
+**Reset synthetic demo data** asks for confirmation, then
 replaces the browser-local workspace with the original examples.
 Stage retry and rescoring are unavailable in the demo, including for retained
 synthetic histories that recorded a retryable failure.
@@ -141,24 +178,55 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 
 | Path | Contents |
 | --- | --- |
-| `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, discovery settings, events, projections, artifact metadata, review drafts, contacts, private offer terms/decisions and sources, and workflows. Treat all three files as one database. |
+| `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, discovery settings, events, projections, artifact metadata, import receipt bindings, review drafts, contacts, private offer terms/decisions and sources, and workflows. Treat all three files as one database. |
+| `.jobctrl.db.llm-spend-pending/` | Private pending or unresolved provider-usage receipts. They contain model, lane and reported token counts, without prompts or completions. Keep them with the workspace when investigating incomplete accounting. |
 | `temporal.db` plus `-wal` / `-shm` | Shared Temporal history for new workspaces; earlier source workspaces may retain `temporal/temporal.db`. Treat the history and `jobctrl.db` as one pair. |
-| `config.json` | Non-secret Settings values: general controls, provider configuration metadata, preferred model IDs, compensation source policy, and browser-adoption metadata. No API keys or feed contents. |
+| `jobctrl.db` feature settings | Revisioned shared settings plus Profile, Discovery, Compensation and other feature-owned preferences. The historical `config.json` is not the current Python settings authority. No credential secret belongs in these records. |
 | `.env` | Legacy/plaintext provider credentials used by remaining compatibility paths. Not encrypted at rest. |
 | `codex_home/` | Stable JobCtrl-owned Codex CLI state. `auth.json` is outside the prompt-readable `workspace/` subtree. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated or separately acquired provider runtime state. |
-| `tailored_resumes/`, `cover_letters/` | Generated text, HTML, and PDF artifacts. |
+| `tailored_resumes/` | Generated text, HTML, and PDF artifacts. |
+| `profile-imports/` | Uploaded import PDFs retained for retry. The corresponding source-attempt bindings, which contain the digest and observed style but no PDF bytes, are in `jobctrl.db`. |
 | `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state, including CAPTCHA usage metadata when applicable. |
 | `browser-profiles/` | Consented copied profiles retained for separate compatibility capabilities. Integrated `DiscoverWorkflow` never reads or launches them. Non-secret adoption metadata lives in `config.json`. |
 | `extension-capability-token`, `extension-discovery-installation-id` | Private local browser-extension pairing secret and the extension installation selected for Discovery. Discovery bridge task bodies and results are memory-only and are not stored beside them. |
-| `backups/` | Database snapshots: `pair-<id>/` from installed operations; `source-pair-<id>/` from automatic source upgrades; application-only `jobctrl-<timestamp>.db` snapshots; and job-data purge recovery bundles. See [Back Up And Restore](#back-up-and-restore). |
+| `backups/` | Current installed `pair-<id>/` database snapshots and application-only `jobctrl-<timestamp>.db` snapshots. Older source-upgrade or purge bundles may remain from earlier releases; the Python application does not create automatic legacy-migration backups. See [Back Up And Restore](#back-up-and-restore). |
 | `gmail/` | Gmail OAuth client and token files. |
 | Baseline/legacy resume files | `resume.txt`, `resume.pdf`, and older local style/template files. |
 
 The resume-import wizard also keeps its selected PDF and filename in the web
 app's browser-local storage, outside `JOBCTRL_DIR`. Cancel keeps that selection;
 earlier-version import data remains separately stored even after current cleanup.
-removal and failure recovery are described in [Candidate Profile](candidate-profile.md#current-import-limitation).
+The extracted review draft is also saved in browser-local storage until it is
+accepted or rejected. New drafts contain the reviewable fields, the saved values needed
+to compare personal details, the profile version, and extraction receipt IDs and
+warnings; they do not contain the complete saved profile or resume text preview.
+Older retained review drafts may still contain the complete saved profile,
+including its password field, and the extraction text preview. They are preserved
+on reload, and a complete copy is retained within the draft if it is rebased.
+After acceptance or rejection, Profile exposes the preserved legacy review as
+JSON for inspection and copying; it stays in browser storage until site data is
+cleared.
+The completed request remains in app memory until reload. Removal and failure
+recovery are described in [Candidate Profile](candidate-profile.md#review-an-imported-resume).
+
+The redesigned editor recovery is separate from import-review records and from
+minimal request-recovery metadata. Profile and retained application/resume
+preference editors use version-2 non-secret changed-field patches rather than
+full Profile/base snapshots. Those patches can still contain private experience
+or resume text; protect browser storage and exports. Password/credential edits
+stay only in session/tenant/section-scoped memory, survive ordinary navigation
+and require saving before reload or close. The browser warns before reload/close while
+they are unsaved; no secret-reload durability is promised. Safe restoration
+preserves a canonical saved password.
+
+Editing pauses until a retained copy is restored or discarded. Valid older
+editor recovery migrates to a safe projection before the old key is removed;
+malformed data stays paused with generic retry/explicit discard and is not
+exposed as raw JSON. Owner/revision checks handle conflicting tabs. Plate offers
+its own explicit restore/discard/retry controls. Synthetic demo copies use a
+separate workspace/reset namespace and reset clears them. App appearance is a
+separate presentation preference.
 
 PDFs created with a Plate editor's **Export PDF** control are ordinary browser
 downloads, so their destination is the download location selected by the
@@ -170,22 +238,69 @@ directory; treat those logs as sensitive too.
 
 ### Back Up And Restore
 
-Legacy achievement recovery uses only a trustworthy pre-cutover native paired
-backup with `pair.json` and both database files. Independently captured app,
-Temporal and file copies do not establish a stopped pair. The local
-[legacy confirmation review](candidate-profile.md#review-legacy-confirmations)
-command validates backup bytes, inventories original/current evidence for
-explicit review and never restores databases or overwrites newer edits. If a
-trustworthy pair is unavailable, record that uncertainty explicitly and review
-current cells; no record is automatically reconfirmed.
+<a id="typed-requirements-upgrade"></a>
+
+The `requirements-v2` source upgrade is a separate generation boundary inside
+the Python application. Before operational rollout, stop every old application
+and worker writer and take a consistent workspace backup, including workflow
+history and referenced accepted artifacts. Verify ownership and stopped
+processes; do not treat a database-only snapshot as that complete backup.
+A source implementation alone does not establish a release or operational rollout.
+
+The new generation starts with an empty active Skills/Professional Experience
+catalog. Legacy accepted rows, job revision ordering and accepted resume bytes
+remain retained, while old results require refresh for the changed contract.
+They cannot prove current ranking or composition readiness. Ordinary reads or
+Profile saves do not run a conversion or model cascade. Incompatible old
+operations are refused rather than resumed with mixed semantics.
+
+After new-generation writes, rollback restores the verified pre-upgrade backup
+as one workspace unit with compatible application/workflow state. Installing an
+older binary alone is unsafe. Keep the backup and historical accepted artifacts
+until the deliberate rollout and recovery checks have succeeded. No development
+or QA instruction authorizes restoring or resetting a real user's workspace.
+
+The later capability-consolidation policy stays within `requirements-v2` and
+adds separate normalization records. It does not reset the catalog on startup.
+Before adopting the source update, stop the owned writers and verify the same
+paired workspace backup. **Consolidate skills** is an explicit model operation
+over the complete retained catalog, including deleted-job sources. A successful
+operation records stable identities, aliases and combined job demands atomically;
+earlier meanings, assessments, approvals and accepted resume bytes remain
+history. Refused, interrupted or cancelled work cannot partially replace them.
+Changed derivations require an explicitly admitted refresh before they establish
+current authority. Reads and Profile saves never start that work. See the
+[Requirements library](requirements-library.md) for the action and recovery
+behavior. After publication, rollback requires the compatible workspace backup
+and workflow state together; an older binary alone is insufficient.
+
+The Python target does not upgrade or restore a pre-Python legacy database into place.
+The explicit `profile-transfer` command reads the old workspace and requires a
+complete browser Profile source/attachment export through `--browser-sources`,
+a nonexistent target outside the source, and `--confirm-profile-only-reset`.
+It retains the full Profile and supporting sources, starts other application
+data fresh, and writes a transfer receipt without selecting the new workspace.
+Verify the receipt and source inventory before deliberately selecting the target;
+never perform a real-user reset during development or QA. See the current
+[cutover boundary](getting-started.md#update-roll-back-or-remove-jobctrl).
+
+In the target, `legacy-evidence list` shows retained original/current evidence.
+`recover --payload FILE` inventories a Profile recovery bundle or records
+explicitly unavailable authority with an expected Profile version; `decide
+--payload FILE` records a human decision against the exact displayed source and
+review token. These commands do not restore databases, overwrite newer cells,
+or automatically reconfirm uncertain history. Preserve historical paired
+backups as evidence; independently captured files do not establish a stopped
+application/Temporal pair or human confirmation authority.
 
 
 ```bash
 jobctrl backup
 ```
 
-The installed command snapshots `jobctrl.db` and `temporal.db` together into a
-new `backups/pair-<id>/` directory. If JobCtrl is running, it stops for the
+For an admitted Python workspace, the installed command snapshots `jobctrl.db`
+and `temporal.db` together into a new `backups/pair-<id>/` directory. A legacy
+workspace is refused and preserved for explicit Profile transfer. If JobCtrl is running, it stops for the
 snapshot and starts again afterward. If a source development fleet is running,
 stop it first; the installed backup command does not replace it with the
 installed app. `--output` takes an absolute directory.
@@ -193,6 +308,17 @@ The two files are one restore unit: never restore just one of them. The
 launcher has no restore command for these pairs; updates and rollbacks write and
 restore their own, as described in
 [Update, Roll Back, Or Remove JobCtrl](getting-started.md#update-roll-back-or-remove-jobctrl).
+The pair does not include pending or unresolved spend receipts; preserve those
+separately and reconcile accounting when restoring a different database version.
+After stopping managed processes, rollback and transition recovery check that
+no spend receipt remains before restoring a pair or starting an older release.
+If accounting is unresolved or its receipt directory cannot be verified, JobCtrl
+stops before the next restore or startup step. A late refusal can happen after
+the current database pair was replaced. Preserve the current pair, pre-rollback
+and other paired backups, journal, and receipts; compare the receipts with the
+ledger and provider records. Whether recovery can be retried depends on the
+transition state. An absent, empty, or safe lock-only receipt directory does not
+block recovery.
 
 When a release promotion performs automatic release cleanup, JobCtrl keeps
 releases referenced by paired backups in the current workspace `backups/` and
@@ -224,14 +350,21 @@ its safety policy and the paired files must pass verification.
 
 In a source checkout, `uv --project workers/automation run jobctrl backup`
 writes one consistent copy of `jobctrl.db` to `backups/jobctrl-<timestamp>.db`
-with SQLite `VACUUM INTO`. It is safe while the app runs and never deletes
-anything; `--output` takes a file or directory. This is an application-database
+through SQLite's backup API, checks its integrity and refuses to overwrite an
+existing destination. It is safe while the app runs and never deletes source
+data; `--output` takes a file or directory. This is an application-database
 snapshot, not a stopped and verified application/Temporal backup pair. It is
 not sufficient to restore a workspace with workflow history. Preserve the live
 databases and their WAL/SHM companions; do not delete companions or replace one
-database in isolation. The source checkout does not currently offer a paired
-restore command. See [Local Development](../local-development.md#schema-migrations-and-source-updates)
-for automatic source upgrades and recovery limitations.
+database in isolation. The snapshot does not include pending or unresolved
+spend receipts; preserve those separately and reconcile accounting when
+restoring a different database version. The source checkout does not currently
+offer a paired restore command. Neither database-only backup is a complete
+archive of renderer artifacts or other workspace files; preserve those files
+alongside the database evidence. See
+[Local Development](../local-development.md#schema-migrations-and-source-updates)
+for fresh-target admission and recovery limitations. Source startup never
+silently migrates an old application database.
 
 After restoring or replacing a database, restart JobCtrl (or rerun
 `corepack pnpm dev` in a source checkout) and reload any open JobCtrl browser
@@ -243,23 +376,20 @@ substitute for a verified workspace recovery.
 
 #### Interrupted first database creation
 
-If startup reports an unresolved database publication, do not delete or open
-`jobctrl.db` or its `-wal`, `-shm`, or `-journal` companions while JobCtrl is
-running. Stop every JobCtrl process and independently confirm that no process
-has the workspace database open. Keep a private copy of the database, all
-companions, and the `.jobctrl-init-*` staging directories before changing any
-of them. The workspace defaults to `~/.jobctrl/`; use the configured
-`JOBCTRL_DIR` instead when it is set.
+If startup refuses an unsafe database, unknown companions or an incompatible
+identity, preserve `jobctrl.db`, its `-wal`, `-shm` and `-journal` companions,
+and any staging files. Do not delete or open them while JobCtrl is running.
+Stop owned processes and independently confirm the workspace has no open
+database handles before inspecting recovery evidence. The workspace defaults
+to `~/.jobctrl/`; use its configured location when different.
 
-If no companions exist, identify the retained staging directory whose regular
-`candidate.db` is the **same device and inode** as the regular `jobctrl.db`.
-Only when that directory contains exactly that one file, and the database has
-been independently verified as a readable exact-schema database, removing the
-staged hard link and its now-empty directory permits startup to retry. Do not
-remove `jobctrl.db`. If any companion exists, the files are not the same inode,
-the directory has other contents, or process ownership or database integrity is
-uncertain, preserve everything and seek help or use a verified backup. Native
-backups restore the JobCtrl and Temporal databases as a pair.
+The current initializer uses private `.jobctrl-python-*.sqlite3` staging files
+and admits only the exact Python application identity. The older
+`.jobctrl-init-*/candidate.db` hard-link cleanup procedure is not a recovery
+procedure for this application. Do not remove links or rewrite schema markers
+to bypass admission. Preserve uncertain state and seek help or use a verified
+compatible backup. Legacy databases require the explicit read-only Profile
+transfer into a fresh target, not manual repair in place.
 
 #### Runtime cleanup failures
 
@@ -307,8 +437,9 @@ scope; migration does not erase old backups or vendor-managed auth files.
 
 ::: tip Protected by default
 The normal workspace is outside the repository. `.gitignore` and the release
-privacy scan add safeguards. From a source checkout, use `corepack pnpm
-qa:seed` for anything you intend to share.
+privacy scan add safeguards. For shareable QA evidence, use the current
+`corepack pnpm e2e` harness and inspect its synthetic output before sharing.
+The former `qa:seed` command is retired; it is not a privacy or isolation control.
 :::
 
 ### Contacts And Outreach
@@ -372,12 +503,13 @@ and live interview assistance are not shipped by this integration. See
 | --- | --- | --- |
 | LLM providers | Scoring, employer analysis, materials, contact extraction, stored interview prep, offer communication drafts, opted-in Required-bullet coaching | Posting text, relevant profile evidence, generated text, or opted-in fetched page text. Offer communication includes confirmed actual terms and quotations, the decision attestation and recorded compensation evidence; saving or reading an offer does not call a provider. Required-bullet coaching sends selected saved Required bullets, their role/company context and matching achievement evidence to your configured provider. Candidate interpretation and target-role suggestions send minimized saved profile sources to the configured Profile provider after spend preflight. Every suggestion cites source IDs and verbatim spans and needs your confirmation; provider or budget failure reports unavailable without a lexical substitute. |
 | Job boards, ATS APIs, posting pages | Discovery and Enrich prefer the connected paired extension; otherwise acquisition uses guarded public HTTP or anonymous Playwright | Both modes send search terms, URLs, and page/API requests. Connected Chrome may also send cookies or session state belonging to that site; its cookie values are never copied into worker tasks or results, and its user-agent string is returned as transport metadata. Anonymous acquisition uses no personal Chrome profile or ambient netrc credentials. |
-| Apply model and browser | Apply/dry-run work you start, or a standing loop you enable | The reviewed application URL and the page content observed during the transport-locked inspection. Profile fields, job-description prose, resume and cover-letter text, local artifact paths, and upload authority are excluded; see [Apply](apply.md#approval-and-automation-modes). |
+| Apply model and browser | Apply/dry-run work you start, or a standing loop you enable | The reviewed application URL and the page content observed during the transport-locked inspection. Profile fields, job-description prose, resume text, local artifact paths, and upload authority are excluded; see [Apply](apply.md#approval-and-automation-modes). |
 | Salary data sources | At the end of a Discover run, only for benchmark slices that are missing or past their seven-day freshness window; Levels.fyi or Glassdoor only when their Settings policy permits | Requests for public benchmark data from Euro Top Tech, ECB exchange rates when a currency conversion is needed, and Eurostat price levels when a slice has no direct benchmark. Levels.fyi public-page URLs name the role and location being benchmarked. |
 | Gmail | Authenticated verification, bounded outcome feedback, or an approved email application | Scoped queries/evidence or the exact approved recipient/attachment. |
 | Google Maps | Profile location autocomplete with a configured key | Address text typed into the location field. |
+| Photon / OpenStreetMap place lookup | Only after **Search map** in Search preferences; unavailable in the offline demo | Only the chosen location query. Typing, navigation and ordinary saves make no lookup request. Selecting a result saves its identity, coordinates and user-selection provenance locally; later label edits clear that binding. |
 | CAPTCHA provider | Supported widget during an apply run you explicitly start or a standing loop you enable, with a configured solver | Site key and page URL through the owned local tool. |
-| Langfuse/OpenTelemetry | Explicitly configured telemetry | Metadata-only LLM, workflow, and JSON-RPC spans: provider/model, operation/stage, outcome, token counts, and safe sizes. |
+| Langfuse/OpenTelemetry | Explicitly configured telemetry | Metadata-only LLM and workflow spans: provider/model, operation/stage, outcome, token counts, and safe sizes. |
 
 When using the connected paired extension, Discovery and Enrich capture HTML
 and text from your current Chrome session. If you are signed in, those snapshots
@@ -456,8 +588,8 @@ Current estimated spend appears on the health surface.
 
 ## Telemetry
 
-Langfuse export is off unless configured. Its default is metadata-only LLM,
-workflow and JSON-RPC spans. Set `LANGFUSE_DISABLE=1` to force opt-out.
+Langfuse export is off unless configured. Its default is metadata-only LLM and
+workflow spans. Set `LANGFUSE_DISABLE=1` to force opt-out.
 
 For deliberate debugging, `JOBCTRL_TRACE_CONTENT=1` additionally captures LLM
 messages and returned completions on their generation spans. When supplied by the
@@ -474,8 +606,9 @@ logs, databases and exception messages are not added by this opt-in.
 Use synthetic data. Never attach real profiles/resumes, databases, secrets,
 OAuth tokens, generated artifacts, local paths, raw logs, or prompt traces.
 
-From a source checkout, `corepack pnpm qa:seed` creates a disposable workspace.
-The release privacy
+From a source checkout, `corepack pnpm e2e` creates owned disposable synthetic
+workspaces and records bounded evidence. It does not sanitize unrelated private
+files. The release privacy
 check scans for secret/profile needles, blocked file types, and unsafe
 distribution paths before publication, but it cannot protect a private file you
 manually copy into a new tracked path.
@@ -509,14 +642,6 @@ preserves them and reports their retained `career_learning_records` count.
 They are not sent in general SSE events or converted into Profile skills,
 readiness, fit scores, application approvals or submission authority.
 
-## Retained Source Proposal History
+## Historical Discovery records
 
-The opt-in `source-proposals from-history` command checks source hostnames through
-DNS; it sends no saved posting content to a model and fetches no remote page.
-Its local source-control receipts retain original posting/Job/run identifiers,
-input URLs, extraction hashes and bounded saved-content samples. These receipts
-and rejection/reset decisions survive job deletion and job-data purge, alongside
-the source registry and locator queue. `source-proposals list` reads that history
-without network access or mutations. See
-[Discovery](discovery.md#propose-sources-from-saved-posting-history) for review and
-explicit suppression reset.
+Upgrading keeps saved jobs, posting snapshots and earlier run receipts in the local workspace. JobStreaming supplies the board catalog for subsequent searches. A user-initiated posting URL import belongs to Jobs and retains its own receipt. [Discovery](discovery.md#capture-a-known-posting).

@@ -5,6 +5,7 @@
 /* Shared product tokens are the authority for palette, type and geometry.
    Article text keeps VitePress's comfortable reading size and line length. */
 @import "../../../apps/web/src/styles/tokens.css";
+@import "../../../apps/web/src/styles/typefaces.css";
 
 :root {
   --vp-font-family-base: var(--jh-font-sans);

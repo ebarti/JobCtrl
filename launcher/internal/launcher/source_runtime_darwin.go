@@ -108,7 +108,7 @@ func RunSource(executable string, args, env []string, stdout, stderr io.Writer) 
 		return runSourceInsideScope(ctx, script, args[2:], stdout, stderr)
 	}
 	ctx.SourcePython = filepath.Join(root, "workers", "automation", ".venv", "bin", "python")
-	if err := automaticSourceMigration(ctx, stderr); err != nil {
+	if err := checkPythonApplicationWorkspace(ctx); err != nil {
 		return err
 	}
 	store, err := release.Open(inst.RuntimeHome)
@@ -187,7 +187,7 @@ func runSourceInsideScope(ctx launchContext, script string, targets []string, st
 		}
 	}()
 	arguments := append([]string{script, "run"}, targets...)
-	child := exec.Command("/bin/bash", arguments...)
+	child := payloadCommand(ctx.Environment, "/bin/bash", arguments...)
 	child.Dir = filepath.Dir(filepath.Dir(script))
 	child.Env = make([]string, 0, len(ctx.Environment)+2)
 	for _, pair := range ctx.Environment {
@@ -284,24 +284,22 @@ func sourceWorkerReady(ctx launchContext) bool {
 	}
 	defer response.Body.Close()
 	var result struct {
-		OK     bool   `json:"ok"`
-		DBPath string `json:"dbPath"`
-		AppDir string `json:"appDir"`
-		Worker struct {
-			Status    string `json:"status"`
-			Heartbeat *struct {
-				PID int `json:"pid"`
-			} `json:"heartbeat"`
+		OK          bool   `json:"ok"`
+		Application string `json:"application"`
+		WorkspaceID string `json:"workspaceId"`
+		Worker      struct {
+			Status string `json:"status"`
+			PID    int    `json:"pid"`
 		} `json:"worker"`
 	}
 	if response.StatusCode != http.StatusOK || json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&result) != nil ||
-		!result.OK || result.Worker.Status != "healthy" || result.Worker.Heartbeat == nil || result.Worker.Heartbeat.PID <= 0 {
+		!result.OK || result.Application != "jobctrl-python" || result.Worker.Status != "healthy" || result.Worker.PID <= 0 {
 		return false
 	}
-	if !sourcePathMatches(result.DBPath, filepath.Join(ctx.Instance.StateDir, "jobctrl.db")) || !sourcePathMatches(result.AppDir, ctx.Instance.StateDir) {
+	if result.WorkspaceID != ctx.Instance.ID {
 		return false
 	}
-	pid := result.Worker.Heartbeat.PID
+	pid := result.Worker.PID
 	before, err := processStartIdentity(pid)
 	if err != nil {
 		return false

@@ -2,6 +2,7 @@ import type { OutreachThreadDetail } from "@jobctrl/contracts";
 import type { JSX } from "react";
 
 import { formatDateTime } from "../../../shared/lib/formatters.js";
+import { formatOutreachDate } from "../lib/outreach-date.js";
 import { Empty } from "../../../shared/ui/empty.js";
 
 export interface OutreachSendLogListProps {
@@ -25,7 +26,7 @@ export function OutreachSendLogList({ thread }: OutreachSendLogListProps): JSX.E
         return (
           <li key={log.sendLogId} className="outreach-send-log-item">
             <span className="tag">{log.channel}</span>
-            <span>sent {formatDateTime(log.sentAt)}</span>
+            <span>sent {formatOutreachDate(log.sentAt)}</span>
             <span className="mono">
               {generation ? `gen ${generation}` : `draft ${log.draftId}`}
             </span>

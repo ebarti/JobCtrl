@@ -1,12 +1,4 @@
-import type {
-  CredentialKey,
-  ProfileUpdateRequest,
-} from "@jobctrl/contracts";
-
-import type {
-  CredentialsResponse,
-  ProfileConfigResponse,
-} from "@jobctrl/contracts";
+import type { ProfileConfigResponse, ProfileUpdateRequest } from "@jobctrl/contracts";
 
 function isProfileResponse(value: unknown): value is ProfileConfigResponse {
   return (
@@ -15,15 +7,6 @@ function isProfileResponse(value: unknown): value is ProfileConfigResponse {
     "profile" in value &&
     "style" in value &&
     "templateText" in value
-  );
-}
-
-function isCredentialsResponse(value: unknown): value is CredentialsResponse {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "credentials" in value &&
-    Array.isArray((value as CredentialsResponse).credentials)
   );
 }
 
@@ -65,28 +48,4 @@ export function patchProfileResponse(
     next["templateText"] = body.templateText;
   }
   return next;
-}
-
-export { patchSettingsResponse } from "../../../shared/lib/settings-patches.js";
-
-export function patchCredentialConfigured(
-  current: unknown,
-  key: CredentialKey,
-  configured: boolean,
-): unknown {
-  if (!isCredentialsResponse(current)) {
-    return current;
-  }
-  return {
-    ...current,
-    credentials: current.credentials.map((entry) =>
-      entry.key === key
-        ? {
-            ...entry,
-            configured,
-            effectiveSource: configured ? "native_store" as const : "absent" as const,
-          }
-        : entry,
-    ),
-  };
 }

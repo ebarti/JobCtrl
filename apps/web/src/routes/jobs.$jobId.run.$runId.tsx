@@ -1,16 +1,14 @@
-import { IconArrowLeft } from "@tabler/icons-react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 
-import { ApplyRunTimeline } from "../contexts/apply/components/ApplyRunTimeline.js";
-import { RunStatusBadge } from "../contexts/apply/components/RunStatusBadge.js";
-import { useWorkflowRunDetailQuery } from "../contexts/operations/hooks/useWorkflowRunDetailQuery.js";
-import { formatDateTime } from "../shared/lib/formatters.js";
+import {
+  ApplyRunTimeline,
+  prefetchApplicationRun,
+} from "../contexts/apply/index.js";
 import { buttonVariants } from "../shared/ui/button.js";
-import { RouteWorkspace } from "../shared/ui/route-workspace.js";
-import { Section } from "../shared/ui/section.js";
-import { StatusBadge } from "../shared/ui/status-badge.js";
 
 export const Route = createFileRoute("/jobs/$jobId/run/$runId")({
+  loader: ({ context, params }) =>
+    prefetchApplicationRun(context, params.jobId, params.runId),
   component: JobRunTimelineRoute,
 });
 
@@ -23,148 +21,35 @@ export interface JobRunTimelineWorkspaceProps {
   readonly jobId: string;
   readonly runId: string;
 }
-
 export function JobRunTimelineWorkspace({
   jobId,
   runId,
 }: JobRunTimelineWorkspaceProps) {
-  const { data: run, isLoading, error } = useWorkflowRunDetailQuery(runId, jobId);
-  const message = error instanceof Error ? error.message : null;
-
   return (
-    <div
-      className="route-page route-page--job-run-detail"
-      aria-label="Apply run details"
+    <main
+      className="route-page route-page--job-run-detail grid gap-6"
+      aria-label="Application run details"
     >
-      <RouteWorkspace
-        aria-label="Apply run details"
-        className="job-run-workspace"
-        contentLabel="Apply run timeline"
-        inspectorLabel="Apply run facts and failure details"
-        header={
-          <div className="job-run-workspace__header">
-            <Link
-              aria-label="Back to job details"
-              className={buttonVariants({
-                className: "workspace-back",
-                size: "sm",
-                variant: "ghost",
-              })}
-              params={{ jobId }}
-              search={(prev) => prev}
-              to="/jobs/$jobId"
-            >
-              <IconArrowLeft aria-hidden="true" size={16} stroke={1.9} />
-              Job details
-            </Link>
-            {run ? (
-              <RunStatusBadge status={run.status} />
-            ) : (
-              <StatusBadge tone="muted">
-                {isLoading ? "loading" : "status unavailable"}
-              </StatusBadge>
-            )}
-            <div className="job-run-workspace__title">
-              <small>{run?.workflowType || "apply workflow"}</small>
-              <h1 data-typography="page-title">Apply run timeline</h1>
-              <p>
-                {run?.title ? `${run.title} · ` : ""}
-                <span className="mono">{runId}</span>
-              </p>
-            </div>
-          </div>
-        }
-        inspector={
-          <div className="job-run-workspace__inspector">
-            <Section title="Run details">
-              <dl className="detail-list">
-                <div>
-                  <dt>Run id</dt>
-                  <dd className="mono">{runId}</dd>
-                </div>
-                <div>
-                  <dt>Job</dt>
-                  <dd>
-                    <Link
-                      className="title-link"
-                      params={{ jobId }}
-                      search={(prev) => prev}
-                      to="/jobs/$jobId"
-                    >
-                      {run?.title || jobId}
-                    </Link>
-                  </dd>
-                </div>
-                {run ? (
-                  <>
-                    <div>
-                      <dt>Workflow id</dt>
-                      <dd className="mono">{run.workflowId}</dd>
-                    </div>
-                    <div>
-                      <dt>Type</dt>
-                      <dd>{run.workflowType || "-"}</dd>
-                    </div>
-                    <div>
-                      <dt>Status</dt>
-                      <dd>{run.status}</dd>
-                    </div>
-                    <div>
-                      <dt>Started</dt>
-                      <dd>{formatDateTime(run.startedAt)}</dd>
-                    </div>
-                    <div>
-                      <dt>Finished</dt>
-                      <dd>
-                        {run.finishedAt ? formatDateTime(run.finishedAt) : "-"}
-                      </dd>
-                    </div>
-                    {run.temporalRunId ? (
-                      <div>
-                        <dt>Temporal run id</dt>
-                        <dd className="mono">{run.temporalRunId}</dd>
-                      </div>
-                    ) : null}
-                    <div>
-                      <dt>Mode</dt>
-                      <dd>{run.dryRun ? "dry-run" : "live"}</dd>
-                    </div>
-                  </>
-                ) : null}
-              </dl>
-              {message ? <div className="banner inline">{message}</div> : null}
-            </Section>
-            {run && (run.errorMessage || run.errorCode) ? (
-              <Section title="Failure">
-                <dl className="detail-list">
-                  {run.errorCode ? (
-                    <div>
-                      <dt>Error code</dt>
-                      <dd className="mono">{run.errorCode}</dd>
-                    </div>
-                  ) : null}
-                  {run.errorMessage ? (
-                    <div>
-                      <dt>Message</dt>
-                      <dd>{run.errorMessage}</dd>
-                    </div>
-                  ) : null}
-                  <div>
-                    <dt>Retryable</dt>
-                    <dd>{run.retryable ? "yes" : "no"}</dd>
-                  </div>
-                </dl>
-              </Section>
-            ) : null}
-          </div>
-        }
-      >
-        <div className="job-run-workspace__timeline">
-          <Section title="Timeline">
-            <ApplyRunTimeline jobId={jobId} runId={runId} events={run?.events ?? []} applyEvents={run?.applyEvents ?? []} />
-          </Section>
-        </div>
-      </RouteWorkspace>
-    </div>
+      <header className="page-header">
+        <Link
+          className={buttonVariants({ variant: "ghost", size: "sm" })}
+          to="/jobs/$jobId"
+          params={{ jobId }}
+        >
+          Back to job details
+        </Link>
+        <h1>Application run timeline</h1>
+        <p className="mono break-all">{runId}</p>
+        <Link to="/apply-review" search={{ jobKey: jobId }}>
+          Open application review
+        </Link>
+      </header>
+      <ApplyRunTimeline jobId={jobId} runId={runId} />
+      <p>
+        A cancellation request does not establish an external outcome. Review
+        the saved application intent, receipt and actual outcome before
+        considering another action.
+      </p>
+    </main>
   );
 }

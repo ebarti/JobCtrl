@@ -3,6 +3,7 @@ import {
   Fragment,
   useEffect,
   useRef,
+  useState,
   type InputHTMLAttributes,
   type ReactNode,
   type TextareaHTMLAttributes,
@@ -10,13 +11,13 @@ import {
 import {
   IconArrowDown,
   IconArrowUp,
-  IconExternalLink,
   IconPlus,
   IconSortDescending,
   IconTrash,
 } from "@tabler/icons-react";
 
 import { Alert, AlertDescription } from "../../../shared/ui/alert.js";
+import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import {
   AdaptiveFieldGrid,
   AdaptiveFieldSpan,
@@ -29,7 +30,12 @@ import {
   CardTitle,
 } from "../../../shared/ui/card.js";
 import { Checkbox } from "../../../shared/ui/checkbox.js";
-import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
+import {
+  DisclosureSection,
+  type DisclosureSectionProps,
+} from "../../../shared/ui/disclosure-section.js";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
+import { AchievementWordings } from "./WordingLibrary.js";
 import {
   Field,
   FieldContent,
@@ -51,12 +57,6 @@ import {
   SelectValue,
 } from "../../../shared/ui/select.js";
 import { Separator } from "../../../shared/ui/separator.js";
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "../../../shared/ui/tabs.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
 
 import {
@@ -102,34 +102,23 @@ interface TargetSearchOptionGroup {
   options: readonly TargetSearchOption[];
 }
 
-const TARGET_TRACK_GROUPS: readonly TargetSearchOptionGroup[] = [{
-  label: "Track", options: Object.entries(SEMANTIC_TAXONOMY.track).map(([value,label]) => ({value,label})),
-}];
-
-const TARGET_SENIORITY_GROUPS: readonly TargetSearchOptionGroup[] = [{
-  label: "Seniority", options: Object.entries(SEMANTIC_TAXONOMY.seniority).map(([value,label]) => ({value,label})),
-}];
-
-const BASELINE_NON_INVENTING_CLAIM_MODE = "adjacent_translation";
-const INVENTED_ADJACENT_CLAIM_MODE = "draft_requires_confirmation";
-const DEFAULT_AUTO_APPROVABLE_CLAIM_MODES = ["verified_only", "evidence_reframing"] as const;
-const CLAIM_MODE_PATH = "resume.tailoring_rules.tailoring_policy.claim_mode";
-const AUTO_APPROVABLE_CLAIM_MODES_PATH =
-  "resume.tailoring_rules.tailoring_policy.auto_approvable_claim_modes";
-const ALLOW_MINOR_INFERENCE_PATH = "resume.tailoring_rules.tailoring_policy.allow_minor_inference";
-const ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH =
-  "resume.tailoring_rules.tailoring_policy.allow_adjacent_achievement_drafts";
-
-const KEYWORD_EMPHASIS_OPTIONS: Array<[string, string]> = [
-  ["natural", "Natural"],
-  ["moderate", "Moderate"],
-  ["high", "High"],
+const TARGET_TRACK_GROUPS: readonly TargetSearchOptionGroup[] = [
+  {
+    label: "Track",
+    options: Object.entries(SEMANTIC_TAXONOMY.track).map(([value, label]) => ({
+      value,
+      label,
+    })),
+  },
 ];
 
-const BULLET_STANDARD_OPTIONS: Array<[string, string]> = [
-  ["impact", "Impact"],
-  ["technical_depth", "Technical depth"],
-  ["leadership", "Leadership"],
+const TARGET_SENIORITY_GROUPS: readonly TargetSearchOptionGroup[] = [
+  {
+    label: "Seniority",
+    options: Object.entries(SEMANTIC_TAXONOMY.seniority).map(
+      ([value, label]) => ({ value, label }),
+    ),
+  },
 ];
 
 const ROLE_AREA_LABEL = "Role areas";
@@ -150,19 +139,96 @@ type StructuredTextareaAttributes = Omit<
   "onChange" | "placeholder" | "value"
 >;
 
-function editorControlId(scope: "profile" | "style", path: string, suffix = "") {
-  const normalizedPath = path.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+function editorControlId(
+  scope: "profile" | "style",
+  path: string,
+  suffix = "",
+) {
+  const normalizedPath = path
+    .replace(/[^a-z0-9]+/gi, "-")
+    .replace(/^-|-$/g, "");
   return `structured-${scope}-${normalizedPath}${suffix ? `-${suffix}` : ""}`;
 }
 
+export type ProfileActiveSection =
+  "experience" | "skills" | "education" | "languages" | "personal" | "resume";
+
+/** Peer Profile content remains mounted, without a whole-section disclosure. */
+function ProfileSection({
+  children,
+  title,
+  description,
+  actions,
+  id,
+  className,
+  hidden,
+}: DisclosureSectionProps & { hidden?: boolean }) {
+  return (
+    <section
+      className={`form-section profile-peer-section ${className ?? ""}`}
+      id={id}
+      hidden={hidden}
+    >
+      <div className="profile-peer-section__header">
+        <div>
+          <h2>{title}</h2>
+          <p className="muted">{description}</p>
+        </div>
+        {actions}
+      </div>
+      <fieldset disabled={hidden} className="profile-editing-boundary">
+        {children}
+      </fieldset>
+    </section>
+  );
+}
+
+function AchievementSource({
+  initiallyEmpty,
+  children,
+}: {
+  initiallyEmpty: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(initiallyEmpty);
+  return (
+    <details
+      className="profile-achievement-source"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+    >
+      <summary>Edit facts</summary>
+      <p className="muted">
+        Record what you did, including scope and results. Saving facts updates
+        this achievement’s source and may require wording review. Earlier
+        wording and approvals remain recorded.
+      </p>
+      {children}
+    </details>
+  );
+}
+
 export interface StructuredProfileEditorProps {
+  activeSection?: ProfileActiveSection;
+  roleId?: string;
+  achievementId?: string;
+  achievementContent?: (achievementId: string, roleId: string) => ReactNode;
+  achievementWordings?: (achievementId: string, roleId: string) => ReactNode;
   applicationConfigurationFields?: ReactNode;
   mode?: "profile" | "preferences" | "target-search";
   showSectionHeading?: boolean;
   profile: JsonRecord | null;
+  onSkillSaveTrackerChange?: (tracker: ProfileSkillSaveTracker | null) => void;
+  draftResetToken?: number;
   style: JsonRecord | null;
   onProfileChange: (value: JsonRecord) => void;
+  onProfileSaveRequest?: () => void;
   onStyleChange: (value: JsonRecord) => void;
+}
+
+export interface ProfileSkillSaveTracker {
+  /** Capture row identities from this exact submission, then accept its real receipt. */
+  captureSubmission(profile: JsonRecord | null): (acceptedProfile: JsonRecord | null) => void;
 }
 
 function TargetPreferenceCard({
@@ -191,35 +257,97 @@ function TargetPreferenceCard({
   );
 }
 
-function hasRequiredExperienceBullets(profile: JsonRecord, id: string): boolean {
-  const pins = recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id");
-  return asTextArray(pins[id]).some((bullet) => bullet.trim().length > 0);
-}
-
-function effectiveRequiredExperienceIds(profile: JsonRecord): string[] {
-  const configured = textArrayAt(profile, "resume.tailoring_rules.required_experience_entry_ids");
-  const known = recordArrayAt(profile, "resume.experience_entries")
-    .map((entry) => textFrom(entry["id"]))
-    .filter(Boolean);
-  const included = new Set(configured.length > 0 ? configured : known);
-  for (const id of known) {
-    if (hasRequiredExperienceBullets(profile, id)) included.add(id);
-  }
-  return Array.from(included);
-}
-
 export function StructuredProfileEditor({
   applicationConfigurationFields,
+  activeSection = "experience",
+  roleId,
+  achievementId,
+  achievementContent,
+  achievementWordings,
   mode = "profile",
   showSectionHeading = true,
   profile,
+  onSkillSaveTrackerChange,
+  draftResetToken = 0,
   style,
   onProfileChange,
+  onProfileSaveRequest,
   onStyleChange,
 }: StructuredProfileEditorProps) {
+  const { requestIdentity, storage } = usePorts();
+  const tenantId = useTenantId();
+  const roleSelectionKey = `profile-selected-role:v1:${tenantId}`;
+  const [selectedRoleId, setSelectedRoleId] = useState(() => {
+    try {
+      return roleId ?? storage.get<string>(roleSelectionKey) ?? "";
+    } catch {
+      return roleId ?? "";
+    }
+  });
+  useEffect(() => {
+    if (roleId) setSelectedRoleId(roleId);
+  }, [roleId]);
+  const selectRole = (id: string) => {
+    setSelectedRoleId(id);
+    try {
+      storage.set(roleSelectionKey, id);
+    } catch {
+      /* Editing remains available without selection persistence. */
+    }
+  };
+  const [identityError, setIdentityError] = useState("");
   const focusTargetsRef = useRef(new Map<string, HTMLElement>());
+  const achievementTargetsRef = useRef(new Map<string, HTMLDivElement>());
+  useEffect(() => {
+    if (achievementId && activeSection === "experience") {
+      const target = achievementTargetsRef.current.get(achievementId);
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "center" });
+    }
+  }, [achievementId, activeSection, selectedRoleId]);
   const pendingFocusKeyRef = useRef<string | null>(null);
   const reservedRepeatIdsRef = useRef(new Set<string>());
+  const [newSkillFields, setNewSkillFields] = useState<Record<string, string>>({});
+  // These objects identify draft rows independently of their current list index.
+  const newSkillOriginsRef = useRef(new Map<string, Map<number, object>>());
+
+  useEffect(() => {
+    newSkillOriginsRef.current.clear();
+    setNewSkillFields({});
+  }, [draftResetToken]);
+
+  useEffect(() => {
+    onSkillSaveTrackerChange?.({
+      captureSubmission(submittedProfile) {
+        const submittedCategories = recordArrayAt(submittedProfile, "resume.skill_categories");
+        const rows = submittedCategories.flatMap((category, categoryIndex) => {
+          const categoryKey = textFrom(category["id"]) || `category-${categoryIndex}`;
+          const skills = editableTextArrayAt(category, "items");
+          return Array.from(newSkillOriginsRef.current.get(categoryKey) ?? []).flatMap(([index, origin]) => {
+            const value = skills[index];
+            return value?.trim() ? [{ categoryKey, index, origin, value }] : [];
+          });
+        });
+        return (acceptedProfile) => {
+          const acceptedCategories = recordArrayAt(acceptedProfile, "resume.skill_categories");
+          for (const row of rows) {
+            const acceptedCategory = acceptedCategories.find((category, index) =>
+              (textFrom(category["id"]) || `category-${index}`) === row.categoryKey);
+            if (editableTextArrayAt(acceptedCategory, "items")[row.index] !== row.value) continue;
+            const origins = newSkillOriginsRef.current.get(row.categoryKey);
+            if (!origins) continue;
+            // A row can move or be edited during the request. Retire only the
+            // same captured object, never a replacement at its former index.
+            for (const [index, origin] of origins) {
+              if (origin === row.origin) origins.delete(index);
+            }
+            if (!origins.size) newSkillOriginsRef.current.delete(row.categoryKey);
+          }
+        };
+      },
+    });
+    return () => onSkillSaveTrackerChange?.(null);
+  }, [onSkillSaveTrackerChange]);
 
   useEffect(() => {
     const focusKey = pendingFocusKeyRef.current;
@@ -235,15 +363,16 @@ export function StructuredProfileEditor({
     if (element instanceof HTMLInputElement) {
       element.select();
     }
-  }, [profile]);
+  }, [profile, newSkillFields]);
 
-  const registerFocusTarget = (key: string) => (element: HTMLElement | null) => {
-    if (element) {
-      focusTargetsRef.current.set(key, element);
-    } else {
-      focusTargetsRef.current.delete(key);
-    }
-  };
+  const registerFocusTarget =
+    (key: string) => (element: HTMLElement | null) => {
+      if (element) {
+        focusTargetsRef.current.set(key, element);
+      } else {
+        focusTargetsRef.current.delete(key);
+      }
+    };
 
   const focusAfterDraftUpdate = (key: string) => {
     pendingFocusKeyRef.current = key;
@@ -253,33 +382,16 @@ export function StructuredProfileEditor({
     return (
       <Alert className="banner inline">
         <AlertDescription>
-          The structured editor needs valid profile data. Reload the profile after fixing the saved data.
+          The structured editor needs valid profile data. Reload the profile
+          after fixing the saved data.
         </AlertDescription>
       </Alert>
     );
   }
 
-  const normalizePreferencesClaimPolicy = (draft: JsonRecord) => {
-    if (mode !== "preferences") {
-      return;
-    }
-    const allowsInventedAdjacent =
-      Boolean(getPathValue(draft, ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH)) ||
-      textAt(draft, CLAIM_MODE_PATH) === INVENTED_ADJACENT_CLAIM_MODE;
-    setPathValue(
-      draft,
-      CLAIM_MODE_PATH,
-      allowsInventedAdjacent ? INVENTED_ADJACENT_CLAIM_MODE : BASELINE_NON_INVENTING_CLAIM_MODE,
-    );
-    setPathValue(draft, ALLOW_MINOR_INFERENCE_PATH, true);
-    setPathValue(draft, ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH, allowsInventedAdjacent);
-    setPathValue(draft, AUTO_APPROVABLE_CLAIM_MODES_PATH, [...DEFAULT_AUTO_APPROVABLE_CLAIM_MODES]);
-  };
-
   const updateProfileDraft = (updater: (draft: JsonRecord) => void) => {
     const draft = structuredClone(profile);
     updater(draft);
-    normalizePreferencesClaimPolicy(draft);
     onProfileChange(draft);
   };
 
@@ -293,31 +405,17 @@ export function StructuredProfileEditor({
     onStyleChange(draft);
   };
 
-  const setRequiredId = (path: string, id: string, checked: boolean) => {
-    if (!id) {
-      return;
-    }
-    updateProfileDraft((draft) => {
-      const isExperience = path === "resume.tailoring_rules.required_experience_entry_ids";
-      const values = new Set(isExperience ? effectiveRequiredExperienceIds(draft) : textArrayAt(draft, path));
-      if (isExperience && !checked && (
-        hasRequiredExperienceBullets(draft, id) || (values.has(id) && values.size === 1)
-      )) return;
-      if (checked) {
-        values.add(id);
-      } else {
-        values.delete(id);
-      }
-      setPathValue(draft, path, Array.from(values));
-    });
-  };
-
-  const setRequiredBullet = (entryId: string, bullet: string, checked: boolean) => {
+  const setRequiredBullet = (
+    entryId: string,
+    bullet: string,
+    checked: boolean,
+  ) => {
     if (!entryId || !bullet) {
       return;
     }
     updateProfileDraft((draft) => {
-      const mapPath = "resume.tailoring_rules.required_bullets_by_experience_id";
+      const mapPath =
+        "resume.tailoring_rules.required_bullets_by_experience_id";
       const existing = recordAt(draft, mapPath);
       const values = new Set(asTextArray(existing[entryId]));
       if (checked) {
@@ -325,41 +423,10 @@ export function StructuredProfileEditor({
       } else {
         values.delete(bullet);
       }
-      setPathValue(draft, mapPath, { ...existing, [entryId]: Array.from(values) });
-    });
-  };
-
-  const setRequiredSkill = (categoryId: string, skill: string, checked: boolean) => {
-    if (!categoryId || !skill) {
-      return;
-    }
-    updateProfileDraft((draft) => {
-      const mapPath = "resume.tailoring_rules.required_skills_by_category_id";
-      const existing = recordAt(draft, mapPath);
-      const values = new Set(asTextArray(existing[categoryId]));
-      if (checked) {
-        values.add(skill);
-      } else {
-        values.delete(skill);
-      }
-      setPathValue(draft, mapPath, { ...existing, [categoryId]: Array.from(values) });
-    });
-  };
-
-  const allowsInventedAdjacentExperience = () =>
-    Boolean(getPathValue(profile, ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH)) ||
-    textAt(profile, CLAIM_MODE_PATH) === INVENTED_ADJACENT_CLAIM_MODE;
-
-  const setInventedAdjacentExperienceAllowed = (checked: boolean) => {
-    updateProfileDraft((draft) => {
-      setPathValue(
-        draft,
-        CLAIM_MODE_PATH,
-        checked ? INVENTED_ADJACENT_CLAIM_MODE : BASELINE_NON_INVENTING_CLAIM_MODE,
-      );
-      setPathValue(draft, ALLOW_MINOR_INFERENCE_PATH, true);
-      setPathValue(draft, ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH, checked);
-      setPathValue(draft, AUTO_APPROVABLE_CLAIM_MODES_PATH, [...DEFAULT_AUTO_APPROVABLE_CLAIM_MODES]);
+      setPathValue(draft, mapPath, {
+        ...existing,
+        [entryId]: Array.from(values),
+      });
     });
   };
 
@@ -368,7 +435,12 @@ export function StructuredProfileEditor({
       const items = recordArrayAt(draft, path);
       // Identity is structural and allocated once, never derived from labels.
       // Keep removed draft IDs reserved and avoid imported/required identities.
-      for (const entryPath of ["resume.experience_entries", "resume.education_entries", "resume.skill_categories"]) {
+      for (const entryPath of [
+        "resume.experience_entries",
+        "resume.education_entries",
+        "resume.skill_categories",
+        "resume.language_entries",
+      ]) {
         for (const entry of recordArrayAt(draft, entryPath)) {
           reservedRepeatIdsRef.current.add(textFrom(entry["id"]));
         }
@@ -391,18 +463,17 @@ export function StructuredProfileEditor({
         }
       }
       const item = defaultRepeatItem(path, reservedRepeatIdsRef.current);
+      // New identities never recycle a removed record after remount/reload.
+      // Retained/imported IDs keep their existing value.
+      item["id"] = requestIdentity.create();
+      if (path === "resume.experience_entries") {
+        item["bullets"] = [];
+        item["achievement_ids"] = [];
+      }
       const id = textFrom(item["id"]);
       if (id) reservedRepeatIdsRef.current.add(id);
+      if (path === "resume.experience_entries" && id) selectRole(id);
       setPathValue(draft, path, [...items, item]);
-      if (path === "resume.experience_entries" && id) {
-        const requiredPath = "resume.tailoring_rules.required_experience_entry_ids";
-        const configured = textArrayAt(draft, requiredPath);
-        const included = new Set(configured.length > 0 ? configured : items
-          .map((entry) => textFrom(entry["id"]))
-          .filter(Boolean));
-        included.add(id);
-        setPathValue(draft, requiredPath, Array.from(included));
-      }
     });
   };
 
@@ -416,9 +487,15 @@ export function StructuredProfileEditor({
         items.filter((_, itemIndex) => itemIndex !== index),
       );
       if (path === "resume.experience_entries" && removedId) {
-        const requiredPath = "resume.tailoring_rules.required_experience_entry_ids";
-        setPathValue(draft, requiredPath, textArrayAt(draft, requiredPath).filter((id) => id !== removedId));
-        const bulletPath = "resume.tailoring_rules.required_bullets_by_experience_id";
+        const requiredPath =
+          "resume.tailoring_rules.required_experience_entry_ids";
+        setPathValue(
+          draft,
+          requiredPath,
+          textArrayAt(draft, requiredPath).filter((id) => id !== removedId),
+        );
+        const bulletPath =
+          "resume.tailoring_rules.required_bullets_by_experience_id";
         const requiredBullets = { ...recordAt(draft, bulletPath) };
         delete requiredBullets[removedId];
         setPathValue(draft, bulletPath, requiredBullets);
@@ -454,57 +531,192 @@ export function StructuredProfileEditor({
     if (ordered.every((entry, index) => entry === experienceEntries[index])) {
       return;
     }
-    updateProfileDraft((draft) => setPathValue(draft, "resume.experience_entries", ordered));
+    updateProfileDraft((draft) =>
+      setPathValue(draft, "resume.experience_entries", ordered),
+    );
   };
 
   const addBullet = (entryIndex: number) => {
     updateProfileDraft((draft) => {
       const path = `resume.experience_entries.${entryIndex}.bullets`;
-      setPathValue(draft, path, [...editableTextArrayAt(draft, path), ""]);
+      const idsPath = `resume.experience_entries.${entryIndex}.achievement_ids`;
+      const bullets = editableTextArrayAt(draft, path);
+      const ids = getPathValue(draft, idsPath);
+      if (
+        !Array.isArray(ids) ||
+        ids.length !== bullets.length ||
+        ids.some((id) => typeof id !== "string" || !id)
+      ) {
+        setIdentityError(
+          "Achievement identities are unavailable. Reload the saved Profile before changing bullet structure.",
+        );
+        return;
+      }
+      setIdentityError("");
+      focusAfterDraftUpdate(bulletFocusKey(entryIndex, bullets.length, "text"));
+      setPathValue(draft, path, [...bullets, ""]);
+      setPathValue(draft, idsPath, [...ids, requestIdentity.create()]);
     });
   };
 
-  const bulletFocusKey = (entryIndex: number, bulletIndex: number, control: "up" | "down" | "text") =>
-    JSON.stringify(["bullet", entryIndex, bulletIndex, control]);
+  const bulletFocusKey = (
+    entryIndex: number,
+    bulletIndex: number,
+    control: "up" | "down" | "text",
+  ) => JSON.stringify(["bullet", entryIndex, bulletIndex, control]);
 
-  const moveBullet = (entryIndex: number, bulletIndex: number, offset: -1 | 1) => {
+  const moveBullet = (
+    entryIndex: number,
+    bulletIndex: number,
+    offset: -1 | 1,
+  ) => {
     const path = `resume.experience_entries.${entryIndex}.bullets`;
     const bullets = editableTextArrayAt(profile, path);
+    const idsPath = `resume.experience_entries.${entryIndex}.achievement_ids`;
+    const ids = getPathValue(profile, idsPath);
+    if (
+      !Array.isArray(ids) ||
+      ids.length !== bullets.length ||
+      ids.some((id) => typeof id !== "string" || !id)
+    ) {
+      setIdentityError(
+        "Achievement identities are unavailable. Reload the saved Profile before changing bullet structure.",
+      );
+      return;
+    }
     const targetIndex = bulletIndex + offset;
     if (targetIndex < 0 || targetIndex >= bullets.length) {
       return;
     }
-    const reachedEnd = offset === -1 ? targetIndex === 0 : targetIndex === bullets.length - 1;
-    focusAfterDraftUpdate(bulletFocusKey(entryIndex, targetIndex, reachedEnd ? "text" : offset === -1 ? "up" : "down"));
-    [bullets[bulletIndex], bullets[targetIndex]] = [bullets[targetIndex]!, bullets[bulletIndex]!];
-    updateProfilePath(path, bullets);
+    const reachedEnd =
+      offset === -1 ? targetIndex === 0 : targetIndex === bullets.length - 1;
+    focusAfterDraftUpdate(
+      bulletFocusKey(
+        entryIndex,
+        targetIndex,
+        reachedEnd ? "text" : offset === -1 ? "up" : "down",
+      ),
+    );
+    [bullets[bulletIndex], bullets[targetIndex]] = [
+      bullets[targetIndex]!,
+      bullets[bulletIndex]!,
+    ];
+    const nextIds = [...ids];
+    [nextIds[bulletIndex], nextIds[targetIndex]] = [
+      nextIds[targetIndex]!,
+      nextIds[bulletIndex]!,
+    ];
+    setIdentityError("");
+    updateProfileDraft((draft) => {
+      setPathValue(draft, path, bullets);
+      setPathValue(draft, idsPath, nextIds);
+    });
   };
 
   const removeBullet = (entryIndex: number, bulletIndex: number) => {
     updateProfileDraft((draft) => {
       const path = `resume.experience_entries.${entryIndex}.bullets`;
+      const idsPath = `resume.experience_entries.${entryIndex}.achievement_ids`;
+      const bullets = editableTextArrayAt(draft, path);
+      const ids = getPathValue(draft, idsPath);
+      if (
+        !Array.isArray(ids) ||
+        ids.length !== bullets.length ||
+        ids.some((id) => typeof id !== "string" || !id)
+      ) {
+        setIdentityError(
+          "Achievement identities are unavailable. Reload the saved Profile before changing bullet structure.",
+        );
+        return;
+      }
+      setIdentityError("");
       setPathValue(
         draft,
         path,
-        editableTextArrayAt(draft, path).filter((_, index) => index !== bulletIndex),
+        bullets.filter((_, index) => index !== bulletIndex),
+      );
+      setPathValue(
+        draft,
+        idsPath,
+        ids.filter((_, index) => index !== bulletIndex),
       );
     });
   };
 
+  const skillCategoryKey = (categoryIndex: number) =>
+    textFrom(recordArrayAt(profile, "resume.skill_categories")[categoryIndex]?.["id"])
+      || `category-${categoryIndex}`;
+  const skillFocusKey = (categoryKey: string, skillIndex: number) =>
+    `skill:${categoryKey}:${skillIndex}`;
+  const removeLocalSkillOrigin = (categoryKey: string, skillIndex: number) => {
+    const origins = newSkillOriginsRef.current.get(categoryKey);
+    if (!origins) return;
+    newSkillOriginsRef.current.set(categoryKey, new Map(Array.from(origins)
+      .filter(([index]) => index !== skillIndex)
+      .map(([index, authored]) => [index > skillIndex ? index - 1 : index, authored] as const)));
+  };
+
   const addSkill = (categoryIndex: number) => {
-    updateProfileDraft((draft) => {
+    const categoryKey = skillCategoryKey(categoryIndex);
+    const skills = editableTextArrayAt(profile, `resume.skill_categories.${categoryIndex}.items`);
+    const emptyIndex = skills.findIndex((skill) => !skill.trim());
+    if (emptyIndex >= 0) {
+      focusTargetsRef.current.get(skillFocusKey(categoryKey, emptyIndex))?.focus();
+      return;
+    }
+    focusAfterDraftUpdate(skillFocusKey(categoryKey, skills.length));
+    // An empty field is an editing affordance, not an authored Profile skill.
+    setNewSkillFields((current) => ({ ...current, [categoryKey]: current[categoryKey] ?? "" }));
+  };
+
+  const updateSkill = (categoryIndex: number, skillIndex: number, value: string, newField: boolean) => {
+    const categoryKey = skillCategoryKey(categoryIndex);
+    const origins = newSkillOriginsRef.current.get(categoryKey) ?? new Map<number, object>();
+    const origin = origins.get(skillIndex);
+    if (newField && !value.trim()) {
+      setNewSkillFields((current) => ({ ...current, [categoryKey]: value }));
+      return;
+    }
+    if (origin && !value.trim()) {
       const path = `resume.skill_categories.${categoryIndex}.items`;
-      setPathValue(draft, path, [...editableTextArrayAt(draft, path), ""]);
+      const remaining = editableTextArrayAt(profile, path).filter((_, index) => index !== skillIndex);
+      removeLocalSkillOrigin(categoryKey, skillIndex);
+      setNewSkillFields((current) => ({ ...current, [categoryKey]: value }));
+      focusAfterDraftUpdate(skillFocusKey(categoryKey, remaining.length));
+      updateProfilePath(path, remaining);
+      return;
+    }
+    if (newField || origin) {
+      origins.set(skillIndex, newField ? {} : origin!);
+      newSkillOriginsRef.current.set(categoryKey, origins);
+    }
+    if (newField) setNewSkillFields((current) => {
+      const next = { ...current };
+      delete next[categoryKey];
+      return next;
     });
+    updateProfilePath(`resume.skill_categories.${categoryIndex}.items.${skillIndex}`, value);
   };
 
   const removeSkill = (categoryIndex: number, skillIndex: number) => {
+    const path = `resume.skill_categories.${categoryIndex}.items`;
+    const categoryKey = skillCategoryKey(categoryIndex);
+    if (skillIndex >= editableTextArrayAt(profile, path).length) {
+      setNewSkillFields((current) => {
+        const next = { ...current };
+        delete next[categoryKey];
+        return next;
+      });
+      return;
+    }
+    removeLocalSkillOrigin(categoryKey, skillIndex);
     updateProfileDraft((draft) => {
-      const path = `resume.skill_categories.${categoryIndex}.items`;
       setPathValue(
         draft,
         path,
-        editableTextArrayAt(draft, path).filter((_, index) => index !== skillIndex),
+        editableTextArrayAt(draft, path).filter(
+          (_, index) => index !== skillIndex,
+        ),
       );
     });
   };
@@ -518,7 +730,10 @@ export function StructuredProfileEditor({
     const { helperText, valueKind, ...inputAttrs } = attrs;
     const id = inputAttrs.id ?? editorControlId("profile", path);
     const descriptionId = helperText ? `${id}-description` : undefined;
-    const describedBy = [inputAttrs["aria-describedby"], descriptionId].filter(Boolean).join(" ") || undefined;
+    const describedBy =
+      [inputAttrs["aria-describedby"], descriptionId]
+        .filter(Boolean)
+        .join(" ") || undefined;
     return (
       <Field className="field">
         <FieldLabel htmlFor={id}>{label}</FieldLabel>
@@ -532,12 +747,18 @@ export function StructuredProfileEditor({
             updateProfilePath(
               path,
               type === "number"
-                ? constrainedNumberOrEmpty(event.target.value, attrs, valueKind === "text")
+                ? constrainedNumberOrEmpty(
+                    event.target.value,
+                    attrs,
+                    valueKind === "text",
+                  )
                 : event.target.value,
             )
           }
         />
-        {helperText ? <FieldDescription id={descriptionId}>{helperText}</FieldDescription> : null}
+        {helperText ? (
+          <FieldDescription id={descriptionId}>{helperText}</FieldDescription>
+        ) : null}
       </Field>
     );
   };
@@ -557,7 +778,9 @@ export function StructuredProfileEditor({
       <GoogleAddressSearchField
         apiKey={GOOGLE_MAPS_API_KEY}
         value={textAt(profile, "personal.address")}
-        onAddressChange={(value) => updateProfilePath("personal.address", value)}
+        onAddressChange={(value) =>
+          updateProfilePath("personal.address", value)
+        }
         onAddressSelect={applyAddressSelection}
       />
     );
@@ -577,7 +800,10 @@ export function StructuredProfileEditor({
     }
     const min = typeof attrs["min"] === "number" ? attrs["min"] : undefined;
     const max = typeof attrs["max"] === "number" ? attrs["max"] : undefined;
-    const constrained = Math.min(max ?? parsed, Math.max(min ?? parsed, parsed));
+    const constrained = Math.min(
+      max ?? parsed,
+      Math.max(min ?? parsed, parsed),
+    );
     return keepText ? String(constrained) : constrained;
   };
 
@@ -588,81 +814,96 @@ export function StructuredProfileEditor({
     value: ProfileMonthValue,
     onChange: (value: ProfileMonthValue) => void,
     disabled = false,
+    controlPrefix = label,
   ) => {
     const emptyMonthValue = "__empty-month__";
     const emptyYearValue = "__empty-year__";
     const monthItems = [
       { label: "Month", value: emptyMonthValue },
-      ...PROFILE_MONTHS.map((month) => ({ label: month.label, value: month.value })),
+      ...PROFILE_MONTHS.map((month) => ({
+        label: month.label,
+        value: month.value,
+      })),
     ];
     const yearItems = [
       { label: "Year", value: emptyYearValue },
       ...years.map((year) => ({ label: year, value: year })),
     ];
     return (
-    <FieldSet className="month-selector">
-      <FieldLegend variant="label">{label}</FieldLegend>
-      <div className="month-selector-controls">
-        <Select
-          disabled={disabled}
-          items={monthItems}
-          value={value.month || emptyMonthValue}
-          onValueChange={(month) =>
-            onChange({
-              ...value,
-              month: month === null || month === emptyMonthValue ? "" : month,
-            })
-          }
-        >
-          <SelectTrigger aria-label={`${label} month`} className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {monthItems.map((month) => (
-                <SelectItem key={month.value} value={month.value}>
-                  {month.label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-        <Select
-          disabled={disabled}
-          items={yearItems}
-          value={value.year || emptyYearValue}
-          onValueChange={(year) =>
-            onChange({
-              ...value,
-              year: year === null || year === emptyYearValue ? "" : year,
-            })
-          }
-        >
-          <SelectTrigger aria-label={`${label} year`} className="w-full">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {yearItems.map((year) => (
-                <SelectItem key={year.value} value={year.value}>
-                  {year.label}
-                </SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-      </div>
-    </FieldSet>
+      <FieldSet className="month-selector">
+        <FieldLegend variant="label">{label}</FieldLegend>
+        <div className="month-selector-controls">
+          <Select
+            disabled={disabled}
+            items={monthItems}
+            value={value.month || emptyMonthValue}
+            onValueChange={(month) =>
+              onChange({
+                ...value,
+                month: month === null || month === emptyMonthValue ? "" : month,
+              })
+            }
+          >
+            <SelectTrigger
+              aria-label={`${controlPrefix} month`}
+              className="w-full"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {monthItems.map((month) => (
+                  <SelectItem key={month.value} value={month.value}>
+                    {month.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+          <Select
+            disabled={disabled}
+            items={yearItems}
+            value={value.year || emptyYearValue}
+            onValueChange={(year) =>
+              onChange({
+                ...value,
+                year: year === null || year === emptyYearValue ? "" : year,
+              })
+            }
+          >
+            <SelectTrigger
+              aria-label={`${controlPrefix} year`}
+              className="w-full"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {yearItems.map((year) => (
+                  <SelectItem key={year.value} value={year.value}>
+                    {year.label}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </div>
+      </FieldSet>
     );
   };
 
-  const monthField = (path: string, label: string) => {
+  const monthField = (path: string, label: string, controlPrefix = label) => {
     const value = parseProfileMonth(textAt(profile, path));
     return (
       <Field className="field month-field">
-        <FieldTitle>{label}</FieldTitle>
         <div className="month-field-body">
-          {monthSelector(label, value, (next) => updateProfilePath(path, formatProfileMonth(next)))}
+          {monthSelector(
+            label,
+            value,
+            (next) => updateProfilePath(path, formatProfileMonth(next)),
+            false,
+            controlPrefix,
+          )}
           <Button
             disabled={!value.month && !value.year}
             onClick={() => updateProfilePath(path, "")}
@@ -685,13 +926,20 @@ export function StructuredProfileEditor({
     };
     const presentId = editorControlId("profile", path, "present");
     return (
-      <Field className="field date-range-field wide" data-invalid={hasError || undefined}>
+      <Field
+        className="field date-range-field wide"
+        data-invalid={hasError || undefined}
+      >
         <FieldTitle>{label}</FieldTitle>
         <div className={`date-range-body${hasError ? " invalid" : ""}`}>
-          {monthSelector("Start", value.start, (start) => updateDateRange({ start }))}
+          {monthSelector("Start", value.start, (start) =>
+            updateDateRange({ start }),
+          )}
           {value.present
             ? null
-            : monthSelector("End", value.end, (end) => updateDateRange({ end, present: false }))}
+            : monthSelector("End", value.end, (end) =>
+                updateDateRange({ end, present: false }),
+              )}
           <Field className="choice date-range-present" orientation="horizontal">
             <Checkbox
               id={presentId}
@@ -721,7 +969,9 @@ export function StructuredProfileEditor({
             Clear
           </Button>
         </div>
-        {hasError ? <FieldError>End date must be after start date.</FieldError> : null}
+        {hasError ? (
+          <FieldError>End date must be after start date.</FieldError>
+        ) : null}
       </Field>
     );
   };
@@ -737,55 +987,41 @@ export function StructuredProfileEditor({
       value: Array.isArray(option) ? option[0] : option,
     }));
     return (
-    <Field className="field">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Select
-        items={items}
-        value={textAt(profile, path)}
-        onValueChange={(value) => updateProfilePath(path, value)}
-      >
-        <SelectTrigger id={id} aria-label={label} className="w-full">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectGroup>
-            {items.map((item) => (
+      <Field className="field">
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        <Select
+          items={items}
+          value={textAt(profile, path)}
+          onValueChange={(value) => updateProfilePath(path, value)}
+        >
+          <SelectTrigger id={id} aria-label={label} className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {items.map((item) => (
                 <SelectItem key={item.value} value={item.value}>
                   {item.label}
                 </SelectItem>
               ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-    </Field>
-    );
-  };
-
-  const inventedAdjacentExperienceField = () => {
-    const id = editorControlId("profile", ALLOW_ADJACENT_ACHIEVEMENT_DRAFTS_PATH);
-    return (
-    <Field className="field check" orientation="horizontal">
-      <Checkbox
-        id={id}
-        checked={allowsInventedAdjacentExperience()}
-        onCheckedChange={setInventedAdjacentExperienceAllowed}
-      />
-      <FieldLabel htmlFor={id}>Enable profile enhancement</FieldLabel>
-    </Field>
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </Field>
     );
   };
 
   const checkboxField = (path: string, label: string) => {
     const id = editorControlId("profile", path);
     return (
-    <Field className="field check" orientation="horizontal">
-      <Checkbox
-        id={id}
-        checked={Boolean(getPathValue(profile, path))}
-        onCheckedChange={(checked) => updateProfilePath(path, checked)}
-      />
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-    </Field>
+      <Field className="field check" orientation="horizontal">
+        <Checkbox
+          id={id}
+          checked={Boolean(getPathValue(profile, path))}
+          onCheckedChange={(checked) => updateProfilePath(path, checked)}
+        />
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      </Field>
     );
   };
 
@@ -795,21 +1031,23 @@ export function StructuredProfileEditor({
     const answer = textAt(profile, path);
     const isUnanswered = answer === "";
     return (
-    <Field className="field check" orientation="horizontal">
-      <Checkbox
-        aria-describedby={descriptionId}
-        id={id}
-        checked={answer === "Yes"}
-        indeterminate={isUnanswered}
-        onCheckedChange={(checked) => updateProfilePath(path, checked ? "Yes" : "No")}
-      />
-      <FieldContent>
-        <FieldLabel htmlFor={id}>{label}</FieldLabel>
-        <FieldDescription id={descriptionId} aria-live="polite">
-          {isUnanswered ? "Not answered" : `Selected: ${answer}`}
-        </FieldDescription>
-      </FieldContent>
-    </Field>
+      <Field className="field check" orientation="horizontal">
+        <Checkbox
+          aria-describedby={descriptionId}
+          id={id}
+          checked={answer === "Yes"}
+          indeterminate={isUnanswered}
+          onCheckedChange={(checked) =>
+            updateProfilePath(path, checked ? "Yes" : "No")
+          }
+        />
+        <FieldContent>
+          <FieldLabel htmlFor={id}>{label}</FieldLabel>
+          <FieldDescription id={descriptionId} aria-live="polite">
+            {isUnanswered ? "Not answered" : `Selected: ${answer}`}
+          </FieldDescription>
+        </FieldContent>
+      </Field>
     );
   };
 
@@ -819,7 +1057,10 @@ export function StructuredProfileEditor({
     attrs: { min: number; max: number; step: number; defaultValue: number },
   ) => {
     const value = getPathValue(profile, path);
-    const displayedValue = value === undefined || value === null || value === "" ? attrs.defaultValue : value;
+    const displayedValue =
+      value === undefined || value === null || value === ""
+        ? attrs.defaultValue
+        : value;
     const id = editorControlId("profile", path);
     return (
       <Field className="field">
@@ -833,7 +1074,10 @@ export function StructuredProfileEditor({
           value={textFrom(displayedValue)}
           onChange={(event) => {
             const parsed = constrainedNumberOrEmpty(event.target.value, attrs);
-            updateProfilePath(path, typeof parsed === "number" ? Math.round(parsed) : parsed);
+            updateProfilePath(
+              path,
+              typeof parsed === "number" ? Math.round(parsed) : parsed,
+            );
           }}
         />
       </Field>
@@ -846,8 +1090,13 @@ export function StructuredProfileEditor({
     attrs: { min: number; max: number; step: number; defaultValue: number },
   ) => {
     const rawValue = getPathValue(profile, path);
-    const ratioValue = rawValue === undefined || rawValue === null || rawValue === "" ? attrs.defaultValue : Number(rawValue);
-    const percentValue = Number.isFinite(ratioValue) ? Math.round(ratioValue * 100) : Math.round(attrs.defaultValue * 100);
+    const ratioValue =
+      rawValue === undefined || rawValue === null || rawValue === ""
+        ? attrs.defaultValue
+        : Number(rawValue);
+    const percentValue = Number.isFinite(ratioValue)
+      ? Math.round(ratioValue * 100)
+      : Math.round(attrs.defaultValue * 100);
     const id = editorControlId("profile", path);
     return (
       <Field className="field">
@@ -861,7 +1110,10 @@ export function StructuredProfileEditor({
           value={textFrom(percentValue)}
           onChange={(event) => {
             const parsed = constrainedNumberOrEmpty(event.target.value, attrs);
-            updateProfilePath(path, typeof parsed === "number" ? Math.round(parsed) / 100 : parsed);
+            updateProfilePath(
+              path,
+              typeof parsed === "number" ? Math.round(parsed) / 100 : parsed,
+            );
           }}
         />
       </Field>
@@ -877,7 +1129,12 @@ export function StructuredProfileEditor({
         data-disabled
         orientation="horizontal"
       >
-        <Checkbox aria-describedby={descriptionId} id={id} checked={false} disabled />
+        <Checkbox
+          aria-describedby={descriptionId}
+          id={id}
+          checked={false}
+          disabled
+        />
         <FieldContent>
           <FieldLabel htmlFor={id}>{label}</FieldLabel>
           <FieldDescription id={descriptionId}>{reason}</FieldDescription>
@@ -894,30 +1151,32 @@ export function StructuredProfileEditor({
   ) => {
     const id = attrs.id ?? editorControlId("profile", path);
     return (
-    <Field className="field wide">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Textarea
-        {...attrs}
-        id={id}
-        placeholder={placeholder}
-        value={textAt(profile, path)}
-        onChange={(event) => updateProfilePath(path, event.target.value)}
-      />
-    </Field>
+      <Field className="field wide">
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        <Textarea
+          {...attrs}
+          id={id}
+          placeholder={placeholder}
+          value={textAt(profile, path)}
+          onChange={(event) => updateProfilePath(path, event.target.value)}
+        />
+      </Field>
     );
   };
 
   const listField = (path: string, label: string) => {
     const id = editorControlId("profile", path);
     return (
-    <Field className="field wide">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Textarea
-        id={id}
-        value={textArrayAt(profile, path).join("\n")}
-        onChange={(event) => updateProfilePath(path, lines(event.target.value))}
-      />
-    </Field>
+      <Field className="field wide">
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        <Textarea
+          id={id}
+          value={textArrayAt(profile, path).join("\n")}
+          onChange={(event) =>
+            updateProfilePath(path, lines(event.target.value))
+          }
+        />
+      </Field>
     );
   };
 
@@ -925,7 +1184,11 @@ export function StructuredProfileEditor({
     path: string,
     label: string,
     addLabel: string,
-    options: { compact?: boolean; hideTitle?: boolean; placeholder?: string } = {},
+    options: {
+      compact?: boolean;
+      hideTitle?: boolean;
+      placeholder?: string;
+    } = {},
   ) => {
     const values = delimitedListAt(textAt(profile, path));
     const focusKey = (index: number) => `${path}:${index}`;
@@ -946,7 +1209,9 @@ export function StructuredProfileEditor({
     };
     return (
       <Field className="field wide inline-list-field">
-        <FieldTitle className={options.hideTitle ? "sr-only" : undefined}>{label}</FieldTitle>
+        <FieldTitle className={options.hideTitle ? "sr-only" : undefined}>
+          {label}
+        </FieldTitle>
         <div className={`inline-list${options.compact ? " compact" : ""}`}>
           {values.map((value, index) => (
             <div className="inline-list-row" key={`${path}-${index}`}>
@@ -975,13 +1240,23 @@ export function StructuredProfileEditor({
                 title="Remove"
                 type="button"
                 variant="ghost"
-                onClick={() => updateValues(values.filter((_, itemIndex) => itemIndex !== index))}
+                onClick={() =>
+                  updateValues(
+                    values.filter((_, itemIndex) => itemIndex !== index),
+                  )
+                }
               >
                 <IconTrash size={14} aria-hidden="true" />
               </Button>
             </div>
           ))}
-          <Button className="add-bullet" onClick={appendValue} size="sm" type="button" variant="secondary">
+          <Button
+            className="add-bullet"
+            onClick={appendValue}
+            size="sm"
+            type="button"
+            variant="secondary"
+          >
             <IconPlus size={14} aria-hidden="true" />
             {addLabel}
           </Button>
@@ -997,11 +1272,17 @@ export function StructuredProfileEditor({
     presentation: { hideLegend?: boolean } = {},
   ) => {
     const options = groups.flatMap((group) => group.options);
-    const values = delimitedListAt(textAt(profile, path)).map((value) => value.trim()).filter(Boolean);
+    const values = delimitedListAt(textAt(profile, path))
+      .map((value) => value.trim())
+      .filter(Boolean);
     const selected = new Set(
-      values.map((value) => normalizeTargetSearchOption(value, options)).filter((value): value is string => Boolean(value)),
+      values
+        .map((value) => normalizeTargetSearchOption(value, options))
+        .filter((value): value is string => Boolean(value)),
     );
-    const customValues = values.filter((value) => !normalizeTargetSearchOption(value, options));
+    const customValues = values.filter(
+      (value) => !normalizeTargetSearchOption(value, options),
+    );
     const updateSelection = (optionValue: string, checked: boolean) => {
       const next = new Set(selected);
       if (checked) {
@@ -1009,20 +1290,34 @@ export function StructuredProfileEditor({
       } else {
         next.delete(optionValue);
       }
-      const orderedKnownValues = options.map((option) => option.value).filter((value) => next.has(value));
-      updateProfilePath(path, [...orderedKnownValues, ...customValues].join("; "));
-    };
-    const removeCustomValue = (customValue: string) => {
-      const orderedKnownValues = options.map((option) => option.value).filter((value) => selected.has(value));
+      const orderedKnownValues = options
+        .map((option) => option.value)
+        .filter((value) => next.has(value));
       updateProfilePath(
         path,
-        [...orderedKnownValues, ...customValues.filter((value) => value !== customValue)].join("; "),
+        [...orderedKnownValues, ...customValues].join("; "),
+      );
+    };
+    const removeCustomValue = (customValue: string) => {
+      const orderedKnownValues = options
+        .map((option) => option.value)
+        .filter((value) => selected.has(value));
+      updateProfilePath(
+        path,
+        [
+          ...orderedKnownValues,
+          ...customValues.filter((value) => value !== customValue),
+        ].join("; "),
       );
     };
 
     return (
       <FieldSet className="field wide checkbox-group-field">
-        <FieldLegend className={presentation.hideLegend ? "sr-only" : undefined}>{label}</FieldLegend>
+        <FieldLegend
+          className={presentation.hideLegend ? "sr-only" : undefined}
+        >
+          {label}
+        </FieldLegend>
         <FieldGroup className="checkbox-group-list">
           {groups.map((group) => {
             const optionFields = (
@@ -1036,9 +1331,13 @@ export function StructuredProfileEditor({
                     <Checkbox
                       id={editorControlId("profile", path, option.value)}
                       checked={selected.has(option.value)}
-                      onCheckedChange={(checked) => updateSelection(option.value, checked)}
+                      onCheckedChange={(checked) =>
+                        updateSelection(option.value, checked)
+                      }
                     />
-                    <FieldLabel htmlFor={editorControlId("profile", path, option.value)}>
+                    <FieldLabel
+                      htmlFor={editorControlId("profile", path, option.value)}
+                    >
                       {option.label}
                     </FieldLabel>
                   </Field>
@@ -1088,7 +1387,9 @@ export function StructuredProfileEditor({
     );
   };
 
-  const targetLocationWorkModelField = (options: { hideTitle?: boolean } = {}) => {
+  const targetLocationWorkModelField = (
+    options: { hideTitle?: boolean } = {},
+  ) => {
     const locationPath = "experience.target_locations";
     const workModelPath = "experience.target_work_models";
     const locations = delimitedListAt(textAt(profile, locationPath));
@@ -1098,17 +1399,33 @@ export function StructuredProfileEditor({
       location: locations[index] ?? "",
       workModel: workModels[index] ?? "",
     }));
-    const locationFocusKey = (index: number) => `${locationPath}:location:${index}`;
-    const workModelOptions = Object.entries(SEMANTIC_TAXONOMY.workModel).filter(([code]) => code !== "unknown");
+    const locationFocusKey = (index: number) =>
+      `${locationPath}:location:${index}`;
+    const workModelOptions = Object.entries(SEMANTIC_TAXONOMY.workModel).filter(
+      ([code]) => code !== "unknown",
+    );
 
-    const updateRows = (nextRows: Array<{ location: string; workModel: string }>) => {
+    const updateRows = (
+      nextRows: Array<{ location: string; workModel: string }>,
+    ) => {
       updateProfileDraft((draft) => {
-        setPathValue(draft, locationPath, nextRows.map((row) => row.location).join("; "));
-        setPathValue(draft, workModelPath, nextRows.map((row) => row.workModel).join("; "));
+        setPathValue(
+          draft,
+          locationPath,
+          nextRows.map((row) => row.location).join("; "),
+        );
+        setPathValue(
+          draft,
+          workModelPath,
+          nextRows.map((row) => row.workModel).join("; "),
+        );
       });
     };
     const emptyRow = { location: "", workModel: "" };
-    const insertRowAfter = (index: number, rowPatch: Partial<{ location: string; workModel: string }>) => {
+    const insertRowAfter = (
+      index: number,
+      rowPatch: Partial<{ location: string; workModel: string }>,
+    ) => {
       const insertionIndex = index + 1;
       const next = [...rows];
       next[index] = { ...(next[index] ?? emptyRow), ...rowPatch };
@@ -1120,7 +1437,12 @@ export function StructuredProfileEditor({
       focusAfterDraftUpdate(locationFocusKey(rows.length));
       updateRows([...rows, { location: "", workModel: "" }]);
     };
-    const toggleWorkModel = (index: number, value: string, label: string, checked: boolean) => {
+    const toggleWorkModel = (
+      index: number,
+      value: string,
+      label: string,
+      checked: boolean,
+    ) => {
       const selected = new Set(commaListAt(rows[index]?.workModel ?? ""));
       selected.delete(value);
       selected.delete(label);
@@ -1128,16 +1450,24 @@ export function StructuredProfileEditor({
         selected.add(value);
       }
       const next = [...rows];
-      next[index] = { ...(next[index] ?? emptyRow), workModel: Array.from(selected).join(", ") };
+      next[index] = {
+        ...(next[index] ?? emptyRow),
+        workModel: Array.from(selected).join(", "),
+      };
       updateRows(next);
     };
 
     return (
       <Field className="field wide target-location-model-field">
-        <FieldTitle className={options.hideTitle ? "sr-only" : undefined}>{TARGET_LOCATION_LABEL}</FieldTitle>
+        <FieldTitle className={options.hideTitle ? "sr-only" : undefined}>
+          {TARGET_LOCATION_LABEL}
+        </FieldTitle>
         <div className="target-location-model-list">
           {rows.map((row, index) => (
-            <div className="target-location-model-row" key={`${locationPath}-${index}`}>
+            <div
+              className="target-location-model-row"
+              key={`${locationPath}-${index}`}
+            >
               <Input
                 aria-label={`Target location ${index + 1}`}
                 ref={registerFocusTarget(locationFocusKey(index))}
@@ -1153,16 +1483,26 @@ export function StructuredProfileEditor({
                     return;
                   }
                   event.preventDefault();
-                  insertRowAfter(index, { location: event.currentTarget.value });
+                  insertRowAfter(index, {
+                    location: event.currentTarget.value,
+                  });
                 }}
               />
               <FieldSet className="target-work-model-group">
-                <FieldLegend className="sr-only">Target work model {index + 1}</FieldLegend>
+                <FieldLegend className="sr-only">
+                  Target work model {index + 1}
+                </FieldLegend>
                 <FieldGroup className="target-work-model-options">
                   {[
                     ...workModelOptions,
                     ...Array.from(new Set(commaListAt(row.workModel)))
-                      .filter((value) => !workModelOptions.some(([code, label]) => code === value || label === value))
+                      .filter(
+                        (value) =>
+                          !workModelOptions.some(
+                            ([code, label]) =>
+                              code === value || label === value,
+                          ),
+                      )
                       .map((value) => [value, value] as const),
                   ].map(([value, label], optionIndex) => {
                     const checkboxId = `target-work-model-${index}-${optionIndex}`;
@@ -1174,8 +1514,12 @@ export function StructuredProfileEditor({
                       >
                         <Checkbox
                           id={checkboxId}
-                          checked={commaListAt(row.workModel).some((saved) => saved === value || saved === label)}
-                          onCheckedChange={(checked) => toggleWorkModel(index, value, label, checked)}
+                          checked={commaListAt(row.workModel).some(
+                            (saved) => saved === value || saved === label,
+                          )}
+                          onCheckedChange={(checked) =>
+                            toggleWorkModel(index, value, label, checked)
+                          }
                         />
                         <FieldLabel htmlFor={checkboxId}>{label}</FieldLabel>
                       </Field>
@@ -1190,7 +1534,9 @@ export function StructuredProfileEditor({
                 title="Remove"
                 type="button"
                 variant="ghost"
-                onClick={() => updateRows(rows.filter((_, itemIndex) => itemIndex !== index))}
+                onClick={() =>
+                  updateRows(rows.filter((_, itemIndex) => itemIndex !== index))
+                }
               >
                 <IconTrash size={14} aria-hidden="true" />
               </Button>
@@ -1211,153 +1557,6 @@ export function StructuredProfileEditor({
     );
   };
 
-  const bulletStandardsField = () => (
-    <FieldSet className="field wide checkbox-group-field bullet-standards-group">
-      <FieldLegend>Bullet standards</FieldLegend>
-      <a
-        className="configuration-help-link"
-        data-typography="control"
-        href="https://jobctrl.dev/architecture/tailoring#inputs-to-tailoring"
-        rel="noreferrer"
-        target="_blank"
-      >
-        Guide
-        <IconExternalLink aria-hidden="true" size={12} />
-      </a>
-      <FieldGroup className="checkbox-options">
-        {BULLET_STANDARD_OPTIONS.map(([value, label]) => {
-          const id = editorControlId("profile", "bullet-standard", value);
-          const descriptionId = `${id}-description`;
-          return (
-            <Field
-              className="choice target-choice required-choice locked-choice"
-              data-disabled
-              key={value}
-              orientation="horizontal"
-            >
-              <Checkbox
-                aria-describedby={descriptionId}
-                id={id}
-                checked
-                disabled
-                name="bullet-standard"
-                value={value}
-              />
-              <FieldContent>
-                <FieldLabel htmlFor={id}>{label}</FieldLabel>
-                <FieldDescription id={descriptionId}>
-                  Required for evidence-quality resumes and cannot be disabled.
-                </FieldDescription>
-              </FieldContent>
-            </Field>
-          );
-        })}
-      </FieldGroup>
-      <FieldDescription>
-        Required evidence-quality standards; these cannot be disabled.
-      </FieldDescription>
-    </FieldSet>
-  );
-
-  const adjacentExperienceClaimsGroup = () => (
-    <FieldSet className="field wide checkbox-group-field tailoring-control-group">
-      <FieldLegend>Adjacent experience claims</FieldLegend>
-      <AdaptiveFieldGrid>
-        <AdaptiveFieldSpan span="wide">
-          {inventedAdjacentExperienceField()}
-        </AdaptiveFieldSpan>
-      </AdaptiveFieldGrid>
-    </FieldSet>
-  );
-
-  const generationPermissionsGroup = () => (
-    <FieldSet className="field wide checkbox-group-field tailoring-control-group">
-      <FieldLegend>Generation permissions</FieldLegend>
-      <FieldGroup className="checkbox-options vertical">
-        {checkboxField(
-          "resume.tailoring_rules.tailoring_policy.allow_summary_rewrite",
-          "Rewrite executive summary",
-        )}
-        {checkboxField(
-          "resume.tailoring_rules.tailoring_policy.allow_achievement_rewriting",
-          "Rewrite achievement bullets",
-        )}
-        {checkboxField(
-          "resume.tailoring_rules.tailoring_policy.allow_skill_reordering",
-          "Select and order existing skills",
-        )}
-        {disabledCheckboxField(
-          "Change experience titles",
-          "Experience titles remain fixed to profile evidence during tailoring.",
-        )}
-      </FieldGroup>
-    </FieldSet>
-  );
-
-  const writingStyleGroup = () => (
-    <FieldSet className="field wide checkbox-group-field tailoring-control-group tailoring-writing-style-group">
-      <FieldLegend>Writing style</FieldLegend>
-      <AdaptiveFieldGrid>
-        {selectField("resume.tailoring_rules.writing_style.tone", "Writing tone", [
-          ["direct", "Direct"],
-          ["executive", "Executive"],
-          ["technical", "Technical"],
-          ["confident", "Confident"],
-          ["warm", "Warm"],
-        ])}
-        {selectField("resume.tailoring_rules.writing_style.verbosity", "Verbosity", [
-          ["concise", "Concise"],
-          ["balanced", "Balanced"],
-          ["detailed", "Detailed"],
-        ])}
-        {selectField("resume.tailoring_rules.writing_style.keyword_density", "Keyword emphasis", KEYWORD_EMPHASIS_OPTIONS)}
-        {checkboxField(
-          "resume.tailoring_rules.writing_style.avoid_first_person",
-          "Avoid first-person language",
-        )}
-      </AdaptiveFieldGrid>
-    </FieldSet>
-  );
-
-  const revisionPolicyGroup = () => (
-    <FieldSet className="field wide checkbox-group-field tailoring-control-group revision-policy-group">
-      <FieldLegend>Revision policy</FieldLegend>
-      <AdaptiveFieldGrid>
-        {numberField("resume.tailoring_rules.revision_gates.min_fit_score", "Minimum fit score", {
-          min: 1,
-          max: 10,
-          step: 1,
-          defaultValue: 8,
-        })}
-        {percentField("resume.tailoring_rules.revision_gates.must_have_coverage", "Must-have coverage (%)", {
-          min: 0,
-          max: 100,
-          step: 1,
-          defaultValue: 0.85,
-        })}
-        {numberField("resume.tailoring_rules.revision_gates.max_revision_attempts", "Revision attempts", {
-          min: 0,
-          max: 10,
-          step: 1,
-          defaultValue: 1,
-        })}
-      </AdaptiveFieldGrid>
-    </FieldSet>
-  );
-
-  const additionalGuidanceGroup = () => (
-    <AdaptiveFieldGrid className="tailoring-additional-guidance-group">
-      <AdaptiveFieldSpan span="full">
-        {textareaField(
-          "resume.tailoring_rules.custom_tailoring_prompt",
-          "Additional guidance",
-          "Writing and positioning guidance; evidence rules still apply.",
-          { maxLength: 1200 },
-        )}
-      </AdaptiveFieldSpan>
-    </AdaptiveFieldGrid>
-  );
-
   const targetSearchSection = () => (
     <section
       className={
@@ -1366,13 +1565,29 @@ export function StructuredProfileEditor({
     >
       {showSectionHeading ? <h3>Target search</h3> : null}
       <FieldGroup className="target-preferences-grid">
-        <TargetPreferenceCard id="target-tracks-card-title" title="Target tracks">
-          {targetSearchCheckboxGroup("experience.target_track", "Target tracks", TARGET_TRACK_GROUPS, {
-            hideLegend: true,
-          })}
-          {delimitedListField("experience.target_role", "Target roles", "Add role", { compact: true })}
+        <TargetPreferenceCard
+          id="target-tracks-card-title"
+          title="Target tracks"
+        >
+          {targetSearchCheckboxGroup(
+            "experience.target_track",
+            "Target tracks",
+            TARGET_TRACK_GROUPS,
+            {
+              hideLegend: true,
+            },
+          )}
+          {delimitedListField(
+            "experience.target_role",
+            "Target roles",
+            "Add role",
+            { compact: true },
+          )}
         </TargetPreferenceCard>
-        <TargetPreferenceCard id="seniority-floors-card-title" title="Seniority floors">
+        <TargetPreferenceCard
+          id="seniority-floors-card-title"
+          title="Seniority floors"
+        >
           {targetSearchCheckboxGroup(
             "experience.target_seniority_floor",
             "Seniority floors",
@@ -1380,80 +1595,104 @@ export function StructuredProfileEditor({
             { hideLegend: true },
           )}
         </TargetPreferenceCard>
-        <TargetPreferenceCard id="role-areas-card-title" title={ROLE_AREA_LABEL}>
-          {delimitedListField("experience.target_functions", ROLE_AREA_LABEL, "Add role area", {
-            compact: true,
-            hideTitle: true,
-            placeholder: ROLE_AREA_PLACEHOLDER,
-          })}
-          {delimitedListField("experience.target_specializations", "Specializations", "Add specialization", {
-            compact: true,
-          })}
+        <TargetPreferenceCard
+          id="role-areas-card-title"
+          title={ROLE_AREA_LABEL}
+        >
+          {delimitedListField(
+            "experience.target_functions",
+            ROLE_AREA_LABEL,
+            "Add role area",
+            {
+              compact: true,
+              hideTitle: true,
+              placeholder: ROLE_AREA_PLACEHOLDER,
+            },
+          )}
+          {delimitedListField(
+            "experience.target_specializations",
+            "Specializations",
+            "Add specialization",
+            {
+              compact: true,
+            },
+          )}
         </TargetPreferenceCard>
-        <TargetPreferenceCard id="locations-work-models-card-title" title={TARGET_LOCATION_LABEL}>
+        <TargetPreferenceCard
+          id="locations-work-models-card-title"
+          title={TARGET_LOCATION_LABEL}
+        >
           {targetLocationWorkModelField({ hideTitle: true })}
         </TargetPreferenceCard>
       </FieldGroup>
     </section>
   );
 
-  const styleSelect = (path: string, label: string, options: Array<[string, string]>) => {
+  const styleSelect = (
+    path: string,
+    label: string,
+    options: Array<[string, string]>,
+  ) => {
     const id = editorControlId("style", path);
     const items = options.map(([value, text]) => ({ label: text, value }));
     return (
-    <Field className="field">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Select
-        items={items}
-        value={textAt(style, path)}
-        onValueChange={(value) => updateStylePath(path, value)}
-      >
-        <SelectTrigger id={id} aria-label={label} className="w-full">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectGroup>
-            {items.map((item) => (
-              <SelectItem key={item.value} value={item.value}>
-                {item.label}
-              </SelectItem>
-            ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
-    </Field>
+      <Field className="field">
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        <Select
+          items={items}
+          value={textAt(style, path)}
+          onValueChange={(value) => updateStylePath(path, value)}
+        >
+          <SelectTrigger id={id} aria-label={label} className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {items.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </Field>
     );
   };
 
-  const styleNumber = (path: string, label: string, min: number, max: number, step: number) => {
+  const styleNumber = (
+    path: string,
+    label: string,
+    min: number,
+    max: number,
+    step: number,
+  ) => {
     const id = editorControlId("style", path);
     return (
-    <Field className="field">
-      <FieldLabel htmlFor={id}>{label}</FieldLabel>
-      <Input
-        id={id}
-        type="number"
-        min={min}
-        max={max}
-        step={step}
-        value={textAt(style, path)}
-        onChange={(event) => updateStylePath(path, numberOrEmpty(event.target.value))}
-      />
-    </Field>
+      <Field className="field">
+        <FieldLabel htmlFor={id}>{label}</FieldLabel>
+        <Input
+          id={id}
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          value={textAt(style, path)}
+          onChange={(event) =>
+            updateStylePath(path, numberOrEmpty(event.target.value))
+          }
+        />
+      </Field>
     );
   };
 
   const experienceEntries = recordArrayAt(profile, "resume.experience_entries");
   const educationEntries = recordArrayAt(profile, "resume.education_entries");
   const skillCategories = recordArrayAt(profile, "resume.skill_categories");
-  const requiredExperienceIds = new Set(effectiveRequiredExperienceIds(profile));
-  const requiredEducationIds = new Set(
-    textArrayAt(profile, "resume.tailoring_rules.required_education_entry_ids"),
+  const languageEntries = recordArrayAt(profile, "resume.language_entries");
+  const showProvinceStateField = isUnitedStatesAddressCountry(
+    textAt(profile, "personal.country"),
   );
-  const requiredSkillIds = new Set(
-    textArrayAt(profile, "resume.tailoring_rules.required_skill_category_ids"),
-  );
-  const showProvinceStateField = isUnitedStatesAddressCountry(textAt(profile, "personal.country"));
 
   return (
     <div
@@ -1465,76 +1704,56 @@ export function StructuredProfileEditor({
             : "profile-sections"
       }
     >
+      {identityError ? <p role="alert">{identityError}</p> : null}
       {mode === "profile" ? (
         <>
-          <DisclosureSection
+          <ProfileSection
             className="profile-disclosure profile-disclosure--personal"
             collapsedSummary="Contact · address · professional links"
             defaultOpen
             description="Contact, address, and professional links"
             headingLevel={3}
             id="profile-personal"
-            title="Personal information"
+            hidden={activeSection !== "personal"}
+            title="Personal details"
           >
             <AdaptiveFieldGrid>
-              {textField("personal.full_name", "Full name", "text", { required: true })}
+              {textField("personal.full_name", "Full name", "text", {
+                required: true,
+              })}
               {textField("personal.preferred_name", "Preferred name")}
-              {textField("personal.email", "Email", "email", { required: true })}
+              {textField("personal.email", "Email", "email", {
+                required: true,
+              })}
               {textField("personal.phone", "Phone", "tel")}
               {addressSearchField()}
-              {textField("personal.city", "City", "text", { autoComplete: "address-level2" })}
+              {textField("personal.city", "City", "text", {
+                autoComplete: "address-level2",
+              })}
               {showProvinceStateField
-                ? textField("personal.province_state", "State / province", "text", {
-                    autoComplete: "address-level1",
-                  })
+                ? textField(
+                    "personal.province_state",
+                    "State / province",
+                    "text",
+                    {
+                      autoComplete: "address-level1",
+                    },
+                  )
                 : null}
-              {textField("personal.country", "Country", "text", { autoComplete: "country-name" })}
-              {textField("personal.postal_code", "Postal code", "text", { autoComplete: "postal-code" })}
+              {textField("personal.country", "Country", "text", {
+                autoComplete: "country-name",
+              })}
+              {textField("personal.postal_code", "Postal code", "text", {
+                autoComplete: "postal-code",
+              })}
               {textField("personal.linkedin_url", "LinkedIn URL", "url")}
               {textField("personal.github_url", "GitHub URL", "url")}
               {textField("personal.portfolio_url", "Portfolio URL", "url")}
               {textField("personal.website_url", "Website URL", "url")}
             </AdaptiveFieldGrid>
-          </DisclosureSection>
+          </ProfileSection>
 
-          <DisclosureSection
-            className="profile-disclosure profile-disclosure--baseline"
-            collapsedSummary="Experience · executive profile · bullet limits"
-            defaultOpen
-            description="Default experience summary and tailoring limits"
-            headingLevel={3}
-            id="profile-baseline"
-            title="Resume baseline"
-          >
-            <AdaptiveFieldGrid>
-              {textField("experience.years_of_experience_total", "Total years of experience", "number", {
-                min: 0,
-                step: 1,
-                valueKind: "text",
-              })}
-              {textField("experience.education_level", "Education level")}
-              {textField("experience.current_job_title", "Current job title")}
-              {textField("experience.current_company", "Current company")}
-              {textField(
-                "resume.tailoring_rules.max_experience_bullets",
-                "Max bullets per role",
-                "number",
-                {
-                  min: 1,
-                  max: 99,
-                  step: 1,
-                  helperText: "Hard maximum per role. Tailoring keeps as many applicable baseline accomplishments as possible within this limit.",
-                },
-              )}
-            </AdaptiveFieldGrid>
-            <AdaptiveFieldGrid>
-              <AdaptiveFieldSpan span="full">
-                {textareaField("resume.executive_profile.baseline_text", "Executive profile baseline")}
-              </AdaptiveFieldSpan>
-            </AdaptiveFieldGrid>
-          </DisclosureSection>
-
-          <DisclosureSection
+          <ProfileSection
             actions={
               <Button
                 onClick={sortExperienceEntriesNewestFirst}
@@ -1551,265 +1770,442 @@ export function StructuredProfileEditor({
               experienceEntries.length === 1 ? "entry" : "entries"
             }`}
             defaultOpen={false}
-            description="Roles, dates, optional position summaries, bullets, and required content"
+            description="Roles, dates, optional position summaries and achievements"
             headingLevel={3}
             id="profile-experience"
-            title="Experience entries"
+            hidden={activeSection !== "experience"}
+            title="Experience"
           >
-            <FieldGroup className="repeat-list">
-              <FieldDescription className="experience-order-description">
-                The resume follows this order. Sort by date, or move individual roles into a custom
-                sequence.
-              </FieldDescription>
-              <FieldDescription>
-                All roles appear by default. Uncheck a role to let tailoring omit it.
-                Roles with Required bullets stay included. At least one role stays required;
-                new experiences start included.
-              </FieldDescription>
-              {experienceEntries.map((entry, index) => {
-                const entryId = textFrom(entry["id"]);
-                const entryLabel =
-                  [textFrom(entry["company"]), textFrom(entry["title"])]
-                    .filter(Boolean)
-                    .join(" - ") || `Experience ${index + 1}`;
-                const bullets = editableTextArrayAt(profile, `resume.experience_entries.${index}.bullets`);
-                const requiredBullets = new Set(
-                  asTextArray(
-                    recordAt(profile, "resume.tailoring_rules.required_bullets_by_experience_id")[entryId],
-                  ),
-                );
-                const requiredEntryId = editorControlId("profile", `experience-${index}`, "required");
-                return (
-                  <Fragment key={entryId || `experience-${index}`}>
-                    {index > 0 ? <Separator className="repeat-section-separator" /> : null}
-                    <FieldSet className="repeat-section experience-repeat-section">
-                      <FieldLegend className="experience-entry-legend">
-                        <span aria-hidden="true" className="experience-order-index">
-                          {index + 1}
-                        </span>
-                        <span>{entryLabel}</span>
-                      </FieldLegend>
-                      <div className="repeat-controls">
-                        <div aria-label={`Order ${entryLabel}`} className="experience-order-controls" role="group">
-                          <Button
-                            aria-label={`Move ${entryLabel} up`}
-                            className="experience-order-button"
-                            disabled={index === 0}
-                            onClick={() => moveExperienceEntry(index, -1)}
-                            size="icon"
-                            title="Move up"
-                            type="button"
-                            variant="outline"
+            <div className="profile-experience-workspace">
+              <nav className="profile-career-list" aria-label="Career roles">
+                {experienceEntries.map((entry) => {
+                  const id = textFrom(entry["id"]);
+                  const selected =
+                    id ===
+                    (experienceEntries.some(
+                      (role) => textFrom(role["id"]) === selectedRoleId,
+                    )
+                      ? selectedRoleId
+                      : textFrom(experienceEntries[0]?.["id"]));
+                  return (
+                    <Button
+                      key={id}
+                      type="button"
+                      variant="ghost"
+                      aria-current={selected ? "true" : undefined}
+                      onClick={() => selectRole(id)}
+                      className="profile-career-role"
+                    >
+                      <strong>
+                        {textFrom(entry["title"]) || "Untitled role"}
+                      </strong>
+                      <span>
+                        {textFrom(entry["company"]) || "Add employer"}
+                      </span>
+                      <span>
+                        {textFrom(entry["date_range"]) || "Dates not set"}
+                      </span>
+                      <small>
+                        {editableTextArrayAt(entry, "bullets").length}{" "}
+                        achievements
+                      </small>
+                    </Button>
+                  );
+                })}
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => addRepeatItem("resume.experience_entries")}
+                >
+                  Add role
+                </Button>
+              </nav>
+              <FieldGroup className="repeat-list profile-selected-experience">
+                <FieldDescription className="experience-order-description">
+                  The resume follows this order. Sort by date, or move
+                  individual roles into a custom sequence.
+                </FieldDescription>
+                <FieldDescription>
+                  Every role and achievement remains in the composed resume.
+                  Mark a bullet for optional coaching without changing its
+                  inclusion.
+                </FieldDescription>
+                {experienceEntries.map((entry, index) => {
+                  const entryId = textFrom(entry["id"]);
+                  const entryLabel =
+                    [textFrom(entry["company"]), textFrom(entry["title"])]
+                      .filter(Boolean)
+                      .join(" - ") || `Experience ${index + 1}`;
+                  const bullets = editableTextArrayAt(
+                    profile,
+                    `resume.experience_entries.${index}.bullets`,
+                  );
+                  const requiredBullets = new Set(
+                    asTextArray(
+                      recordAt(
+                        profile,
+                        "resume.tailoring_rules.required_bullets_by_experience_id",
+                      )[entryId],
+                    ),
+                  );
+                  return (
+                    <Fragment key={entryId || `experience-${index}`}>
+                      {index > 0 ? (
+                        <Separator className="repeat-section-separator" />
+                      ) : null}
+                      <FieldSet
+                        className="repeat-section experience-repeat-section"
+                        hidden={
+                          entryId !==
+                          (experienceEntries.some(
+                            (role) => textFrom(role["id"]) === selectedRoleId,
+                          )
+                            ? selectedRoleId
+                            : textFrom(experienceEntries[0]?.["id"]))
+                        }
+                      >
+                        <FieldLegend className="experience-entry-legend">
+                          <span
+                            aria-hidden="true"
+                            className="experience-order-index"
                           >
-                            <IconArrowUp aria-hidden="true" size={14} />
-                          </Button>
-                          <Button
-                            aria-label={`Move ${entryLabel} down`}
-                            className="experience-order-button"
-                            disabled={index === experienceEntries.length - 1}
-                            onClick={() => moveExperienceEntry(index, 1)}
-                            size="icon"
-                            title="Move down"
-                            type="button"
-                            variant="outline"
+                            {index + 1}
+                          </span>
+                          <span>{entryLabel}</span>
+                        </FieldLegend>
+                        <div className="repeat-controls">
+                          <div
+                            aria-label={`Order ${entryLabel}`}
+                            className="experience-order-controls"
+                            role="group"
                           >
-                            <IconArrowDown aria-hidden="true" size={14} />
-                          </Button>
-                        </div>
-                        <Field
-                          className="choice"
-                          data-disabled={!entryId || undefined}
-                          orientation="horizontal"
-                        >
-                          <Checkbox
-                            id={requiredEntryId}
-                            checked={requiredExperienceIds.has(entryId)}
-                            disabled={!entryId || hasRequiredExperienceBullets(profile, entryId)
-                              || (requiredExperienceIds.has(entryId) && requiredExperienceIds.size === 1)}
-                            onCheckedChange={(checked) =>
-                              setRequiredId(
-                                "resume.tailoring_rules.required_experience_entry_ids",
-                                entryId,
-                                checked,
+                            <Button
+                              aria-label={`Move ${entryLabel} up`}
+                              className="experience-order-button"
+                              disabled={index === 0}
+                              onClick={() => moveExperienceEntry(index, -1)}
+                              size="icon"
+                              title="Move up"
+                              type="button"
+                              variant="outline"
+                            >
+                              <IconArrowUp aria-hidden="true" size={14} />
+                            </Button>
+                            <Button
+                              aria-label={`Move ${entryLabel} down`}
+                              className="experience-order-button"
+                              disabled={index === experienceEntries.length - 1}
+                              onClick={() => moveExperienceEntry(index, 1)}
+                              size="icon"
+                              title="Move down"
+                              type="button"
+                              variant="outline"
+                            >
+                              <IconArrowDown aria-hidden="true" size={14} />
+                            </Button>
+                          </div>
+                          <Button
+                            onClick={() =>
+                              removeRepeatItem(
+                                "resume.experience_entries",
+                                index,
                               )
                             }
-                          />
-                          <FieldLabel htmlFor={requiredEntryId}>Must appear in final resume</FieldLabel>
-                        </Field>
-                        <Button
-                          onClick={() => removeRepeatItem("resume.experience_entries", index)}
-                          size="sm"
-                          type="button"
-                          variant="outline"
-                        >
-                          Remove experience
-                        </Button>
-                      </div>
-                      <AdaptiveFieldGrid>
-                        {dateRangeField(`resume.experience_entries.${index}.date_range`, "Date range")}
-                        {textField(`resume.experience_entries.${index}.title`, "Title")}
-                        {textField(`resume.experience_entries.${index}.company`, "Company")}
-                        {textField(`resume.experience_entries.${index}.location`, "Location")}
-                        <AdaptiveFieldSpan span="full">
-                          {textareaField(
-                            `resume.experience_entries.${index}.summary`,
-                            "Position summary (optional)",
-                            "Briefly summarize the role, scope, or mandate shown before its achievements.",
-                            { rows: 3 },
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            Remove experience
+                          </Button>
+                        </div>
+                        <AdaptiveFieldGrid>
+                          {dateRangeField(
+                            `resume.experience_entries.${index}.date_range`,
+                            "Date range",
                           )}
-                        </AdaptiveFieldSpan>
-                      </AdaptiveFieldGrid>
-                      <Separator />
-                      <FieldGroup className="bullet-list">
-                        <FieldDescription>
-                          Keep each achievement and its numbers together. JobCtrl extracts metrics
-                          from the bullet and keeps them bound to that achievement when tailoring.
-                        </FieldDescription>
-                        {bullets.map((bullet, bulletIndex) => {
-                          const requiredBulletId = editorControlId(
-                            "profile",
-                            `experience-${index}-bullet-${bulletIndex}`,
-                            "required",
-                          );
-                          return (
-                            <Field className="bullet-row" key={`${entryId}-${bulletIndex}`}>
-                              <div className="bullet-row-top">
-                                <FieldTitle className="bullet-label">Bullet {bulletIndex + 1}</FieldTitle>
-                                <Field
-                                  className="choice bullet-choice"
-                                  data-disabled={!entryId || !bullet || undefined}
-                                  orientation="horizontal"
-                                >
-                                  <Checkbox
-                                    id={requiredBulletId}
-                                    checked={requiredBullets.has(bullet)}
-                                    disabled={!entryId || !bullet}
-                                    onCheckedChange={(checked) =>
-                                      setRequiredBullet(entryId, bullet, checked)
-                                    }
-                                  />
-                                  <FieldLabel htmlFor={requiredBulletId}>Required</FieldLabel>
-                                </Field>
-                              </div>
-                              <Textarea
-                                aria-label={`Bullet ${bulletIndex + 1}`}
-                                ref={registerFocusTarget(bulletFocusKey(index, bulletIndex, "text"))}
-                                value={bullet}
-                                onChange={(event) =>
-                                  updateProfilePath(
-                                    `resume.experience_entries.${index}.bullets.${bulletIndex}`,
-                                    event.target.value,
-                                  )
-                                }
-                              />
-                              <div
-                                aria-label={`Actions for bullet ${bulletIndex + 1} in ${entryLabel}`}
-                                className="bullet-row-actions"
-                                role="group"
+                          {textField(
+                            `resume.experience_entries.${index}.title`,
+                            "Title",
+                          )}
+                          {textField(
+                            `resume.experience_entries.${index}.company`,
+                            "Company",
+                          )}
+                          {textField(
+                            `resume.experience_entries.${index}.location`,
+                            "Location",
+                          )}
+                          <AdaptiveFieldSpan span="full">
+                            {textareaField(
+                              `resume.experience_entries.${index}.summary`,
+                              "Position summary (optional)",
+                              "Briefly summarize the role, scope, or mandate shown before its achievements.",
+                              { rows: 3 },
+                            )}
+                          </AdaptiveFieldSpan>
+                        </AdaptiveFieldGrid>
+                        <Separator />
+                        <FieldGroup className="bullet-list">
+                          <FieldDescription>
+                            Keep each achievement and its numbers together. Each
+                            bullet keeps its own stable identity.
+                          </FieldDescription>
+                          {bullets.map((bullet, bulletIndex) => {
+                            const achievementIdentity = getPathValue(
+                              profile,
+                              `resume.experience_entries.${index}.achievement_ids.${bulletIndex}`,
+                            );
+                            const requiredBulletId = editorControlId(
+                              "profile",
+                              `experience-${index}-bullet-${bulletIndex}`,
+                              "required",
+                            );
+                            return (
+                              <Field
+                                className="bullet-row profile-achievement"
+                                aria-label={`Achievement ${bulletIndex + 1}`}
+                                key={String(
+                                  achievementIdentity ??
+                                    `${entryId}-${bulletIndex}`,
+                                )}
+                                tabIndex={-1}
+                                ref={(element) => {
+                                  if (typeof achievementIdentity === "string") {
+                                    if (element)
+                                      achievementTargetsRef.current.set(
+                                        achievementIdentity,
+                                        element,
+                                      );
+                                    else
+                                      achievementTargetsRef.current.delete(
+                                        achievementIdentity,
+                                      );
+                                  }
+                                }}
                               >
-                                <Button
-                                  aria-label={`Move bullet ${bulletIndex + 1} up`}
-                                  disabled={bulletIndex === 0}
-                                  onClick={() => moveBullet(index, bulletIndex, -1)}
-                                  ref={registerFocusTarget(bulletFocusKey(index, bulletIndex, "up"))}
-                                  size="icon"
-                                  title="Move bullet up"
-                                  type="button"
-                                  variant="outline"
-                                >
-                                  <IconArrowUp aria-hidden="true" data-icon="inline-start" />
-                                </Button>
-                                <Button
-                                  aria-label={`Move bullet ${bulletIndex + 1} down`}
-                                  disabled={bulletIndex === bullets.length - 1}
-                                  onClick={() => moveBullet(index, bulletIndex, 1)}
-                                  ref={registerFocusTarget(bulletFocusKey(index, bulletIndex, "down"))}
-                                  size="icon"
-                                  title="Move bullet down"
-                                  type="button"
-                                  variant="outline"
-                                >
-                                  <IconArrowDown aria-hidden="true" data-icon="inline-start" />
-                                </Button>
-                                <Button
-                                  className="icon-button"
-                                  aria-label={`Remove bullet ${bulletIndex + 1}`}
-                                  size="icon"
-                                  title="Remove bullet"
-                                  type="button"
-                                  variant="ghost"
-                                  onClick={() => removeBullet(index, bulletIndex)}
-                                >
-                                  <IconTrash size={14} aria-hidden="true" />
-                                </Button>
-                              </div>
-                            </Field>
-                          );
-                        })}
-                        <Button className="add-bullet" onClick={() => addBullet(index)} size="sm" type="button" variant="secondary">
-                          <IconPlus size={14} aria-hidden="true" />
-                          Add bullet
-                        </Button>
-                      </FieldGroup>
-                    </FieldSet>
-                  </Fragment>
-                );
-              })}
-              <Button
-                onClick={() => addRepeatItem("resume.experience_entries")}
-                size="sm"
-                type="button"
-                variant="secondary"
-              >
-                Add experience
-              </Button>
-            </FieldGroup>
-          </DisclosureSection>
+                                {typeof achievementIdentity === "string" ? (
+                                  achievementWordings ? (
+                                    achievementWordings(
+                                      achievementIdentity,
+                                      entryId,
+                                    )
+                                  ) : (
+                                    <AchievementWordings
+                                      achievementId={achievementIdentity}
+                                    />
+                                  )
+                                ) : null}
+                                <div className="profile-achievement-tools">
+                                  {typeof achievementIdentity === "string"
+                                    ? achievementContent?.(
+                                        achievementIdentity,
+                                        entryId,
+                                      )
+                                    : null}
+                                  <AchievementSource
+                                    initiallyEmpty={!bullet.trim()}
+                                  >
+                                    <Textarea
+                                      aria-label={`Achievement ${bulletIndex + 1}`}
+                                      ref={registerFocusTarget(
+                                        bulletFocusKey(
+                                          index,
+                                          bulletIndex,
+                                          "text",
+                                        ),
+                                      )}
+                                      value={bullet}
+                                      onChange={(event) =>
+                                        updateProfilePath(
+                                          `resume.experience_entries.${index}.bullets.${bulletIndex}`,
+                                          event.target.value,
+                                        )
+                                      }
+                                    />
+                                  </AchievementSource>
+                                  <details className="profile-achievement-options">
+                                    <summary>Achievement options</summary>
+                                    <Field
+                                      className="choice bullet-choice"
+                                      data-disabled={
+                                        !entryId || !bullet || undefined
+                                      }
+                                      orientation="horizontal"
+                                    >
+                                      <Checkbox
+                                        id={requiredBulletId}
+                                        checked={requiredBullets.has(bullet)}
+                                        disabled={!entryId || !bullet}
+                                        onCheckedChange={(checked) =>
+                                          setRequiredBullet(
+                                            entryId,
+                                            bullet,
+                                            checked,
+                                          )
+                                        }
+                                      />
+                                      <FieldLabel htmlFor={requiredBulletId}>
+                                        Include in coaching
+                                      </FieldLabel>
+                                    </Field>
+                                    <div
+                                      aria-label={`Actions for bullet ${bulletIndex + 1} in ${entryLabel}`}
+                                      className="bullet-row-actions"
+                                      role="group"
+                                    >
+                                      <Button
+                                        aria-label={`Move bullet ${bulletIndex + 1} up`}
+                                        disabled={bulletIndex === 0}
+                                        onClick={() =>
+                                          moveBullet(index, bulletIndex, -1)
+                                        }
+                                        ref={registerFocusTarget(
+                                          bulletFocusKey(
+                                            index,
+                                            bulletIndex,
+                                            "up",
+                                          ),
+                                        )}
+                                        size="icon"
+                                        title="Move bullet up"
+                                        type="button"
+                                        variant="outline"
+                                      >
+                                        <IconArrowUp
+                                          aria-hidden="true"
+                                          data-icon="inline-start"
+                                        />
+                                      </Button>
+                                      <Button
+                                        aria-label={`Move bullet ${bulletIndex + 1} down`}
+                                        disabled={
+                                          bulletIndex === bullets.length - 1
+                                        }
+                                        onClick={() =>
+                                          moveBullet(index, bulletIndex, 1)
+                                        }
+                                        ref={registerFocusTarget(
+                                          bulletFocusKey(
+                                            index,
+                                            bulletIndex,
+                                            "down",
+                                          ),
+                                        )}
+                                        size="icon"
+                                        title="Move bullet down"
+                                        type="button"
+                                        variant="outline"
+                                      >
+                                        <IconArrowDown
+                                          aria-hidden="true"
+                                          data-icon="inline-start"
+                                        />
+                                      </Button>
+                                      <Button
+                                        className="icon-button"
+                                        aria-label={`Remove achievement ${bulletIndex + 1}`}
+                                        size="icon"
+                                        title="Remove achievement"
+                                        type="button"
+                                        variant="ghost"
+                                        onClick={() =>
+                                          removeBullet(index, bulletIndex)
+                                        }
+                                      >
+                                        <IconTrash
+                                          size={14}
+                                          aria-hidden="true"
+                                        />
+                                      </Button>
+                                    </div>
+                                  </details>
+                                </div>
+                              </Field>
+                            );
+                          })}
+                          <Button
+                            className="add-bullet"
+                            onClick={() => addBullet(index)}
+                            size="sm"
+                            type="button"
+                            variant="secondary"
+                          >
+                            <IconPlus size={14} aria-hidden="true" />
+                            Add achievement
+                          </Button>
+                        </FieldGroup>
+                      </FieldSet>
+                    </Fragment>
+                  );
+                })}
+              </FieldGroup>
+            </div>
+          </ProfileSection>
 
-          <DisclosureSection
+          <ProfileSection
+            className="profile-disclosure profile-disclosure--baseline"
+            collapsedSummary="Experience · executive profile · bullet limits"
+            defaultOpen
+            description="Default experience summary and baseline content"
+            headingLevel={3}
+            id="profile-baseline"
+            hidden={activeSection !== "experience"}
+            title="Professional summary"
+          >
+            <AdaptiveFieldGrid>
+              {textField(
+                "experience.years_of_experience_total",
+                "Total years of experience",
+                "number",
+                {
+                  min: 0,
+                  step: 1,
+                  valueKind: "text",
+                },
+              )}
+              {textField("experience.education_level", "Education level")}
+              {textField("experience.current_job_title", "Current job title")}
+              {textField("experience.current_company", "Current company")}
+            </AdaptiveFieldGrid>
+            <AdaptiveFieldGrid>
+              <AdaptiveFieldSpan span="full">
+                {textareaField(
+                  "resume.executive_profile.baseline_text",
+                  "Executive profile baseline",
+                )}
+              </AdaptiveFieldSpan>
+            </AdaptiveFieldGrid>
+          </ProfileSection>
+
+          <ProfileSection
             className="profile-disclosure profile-disclosure--education"
             collapsedSummary={`${educationEntries.length} ${
               educationEntries.length === 1 ? "entry" : "entries"
             }`}
             defaultOpen={false}
-            description="Degrees, institutions, completion dates, and required content"
+            description="Degrees, institutions and completion dates. Education is included in every resume."
             headingLevel={3}
             id="profile-education"
+            hidden={activeSection !== "education"}
             title="Education"
           >
             <FieldGroup className="repeat-list">
               {educationEntries.map((entry, index) => {
                 const entryId = textFrom(entry["id"]);
-                const requiredEntryId = editorControlId("profile", `education-${index}`, "required");
                 return (
                   <Fragment key={`${entryId || "education"}-${index}`}>
-                    {index > 0 ? <Separator className="repeat-section-separator" /> : null}
+                    {index > 0 ? (
+                      <Separator className="repeat-section-separator" />
+                    ) : null}
                     <FieldSet className="repeat-section">
                       <FieldLegend>
                         {textFrom(entry["degree"]) || `Education ${index + 1}`}
                       </FieldLegend>
                       <div className="repeat-controls">
-                        <Field
-                          className="choice"
-                          data-disabled={!entryId || undefined}
-                          orientation="horizontal"
-                        >
-                          <Checkbox
-                            id={requiredEntryId}
-                            checked={requiredEducationIds.has(entryId)}
-                            disabled={!entryId}
-                            onCheckedChange={(checked) =>
-                              setRequiredId(
-                                "resume.tailoring_rules.required_education_entry_ids",
-                                entryId,
-                                checked,
-                              )
-                            }
-                          />
-                          <FieldLabel htmlFor={requiredEntryId}>Must appear in final resume</FieldLabel>
-                        </Field>
                         <Button
-                          onClick={() => removeRepeatItem("resume.education_entries", index)}
+                          onClick={() =>
+                            removeRepeatItem("resume.education_entries", index)
+                          }
                           size="sm"
                           type="button"
                           variant="outline"
@@ -1818,10 +2214,23 @@ export function StructuredProfileEditor({
                         </Button>
                       </div>
                       <AdaptiveFieldGrid>
-                        {monthField(`resume.education_entries.${index}.date`, "Completion month")}
-                        {textField(`resume.education_entries.${index}.degree`, "Degree")}
-                        {textField(`resume.education_entries.${index}.institution`, "Institution")}
-                        {textField(`resume.education_entries.${index}.location`, "Location")}
+                        {monthField(
+                          `resume.education_entries.${index}.date`,
+                          "Completion month",
+                          "Completion",
+                        )}
+                        {textField(
+                          `resume.education_entries.${index}.degree`,
+                          "Degree",
+                        )}
+                        {textField(
+                          `resume.education_entries.${index}.institution`,
+                          "Institution",
+                        )}
+                        {textField(
+                          `resume.education_entries.${index}.location`,
+                          "Location",
+                        )}
                       </AdaptiveFieldGrid>
                     </FieldSet>
                   </Fragment>
@@ -1836,58 +2245,102 @@ export function StructuredProfileEditor({
                 Add education
               </Button>
             </FieldGroup>
-          </DisclosureSection>
+          </ProfileSection>
 
-          <DisclosureSection
+          <ProfileSection
+            className="profile-disclosure profile-disclosure--languages"
+            collapsedSummary={`${languageEntries.length} ${languageEntries.length === 1 ? "language" : "languages"}`}
+            defaultOpen={false}
+            description="Your languages and proficiency, included in every resume"
+            headingLevel={3}
+            id="profile-languages"
+            hidden={activeSection !== "languages"}
+            title="Languages"
+          >
+            <FieldGroup className="repeat-list">
+              {languageEntries.length === 0 ? <p className="muted">Add the languages you use and describe your proficiency in your own words.</p> : null}
+              {languageEntries.map((entry, index) => (
+                <FieldSet className="repeat-section" key={textFrom(entry["id"])} aria-label={`Language ${index + 1}`}>
+                  <AdaptiveFieldGrid>
+                    {textField(`resume.language_entries.${index}.language`, "Language")}
+                    {textField(`resume.language_entries.${index}.proficiency`, "Proficiency", "text", { placeholder: "For example, native or professional working proficiency" })}
+                  </AdaptiveFieldGrid>
+                  <div className="repeat-controls">
+                    <Button
+                      aria-label={`Remove language ${index + 1}`}
+                      onClick={() => removeRepeatItem("resume.language_entries", index)}
+                      size="sm" type="button" variant="outline"
+                    >Remove language</Button>
+                  </div>
+                </FieldSet>
+              ))}
+              <Button onClick={() => addRepeatItem("resume.language_entries")} size="sm" type="button" variant="secondary">
+                <IconPlus size={14} aria-hidden="true" /> Add language
+              </Button>
+            </FieldGroup>
+          </ProfileSection>
+
+          <ProfileSection
             className="profile-disclosure profile-disclosure--skills"
             collapsedSummary={`${skillCategories.length} ${
               skillCategories.length === 1 ? "category" : "categories"
             }`}
             defaultOpen={false}
-            description="Skill groups, individual skills, and required content"
+            description="Skill groups and individual skills. Skills are included in every resume."
             headingLevel={3}
             id="profile-skills"
-            title="Skill categories"
+            hidden={activeSection !== "skills"}
+            title="Skills"
           >
-            <FieldGroup className="repeat-list">
+            {/* These vertical fields do not consume this group's size queries.
+                Avoid containing the native fieldsets across row removals. */}
+            <FieldGroup className="repeat-list" style={{ containerType: "normal" }}>
               {skillCategories.map((entry, index) => {
                 const entryId = textFrom(entry["id"]);
-                const skills = editableTextArrayAt(profile, `resume.skill_categories.${index}.items`);
-                const requiredSkills = new Set(
-                  asTextArray(
-                    recordAt(profile, "resume.tailoring_rules.required_skills_by_category_id")[entryId],
-                  ),
+                const skills = editableTextArrayAt(
+                  profile,
+                  `resume.skill_categories.${index}.items`,
                 );
-                const requiredEntryId = editorControlId("profile", `skills-${index}`, "required");
+                const categoryKey = skillCategoryKey(index);
+                const skillFields = categoryKey in newSkillFields
+                  ? [...skills, newSkillFields[categoryKey]!]
+                  : skills;
                 return (
                   <Fragment key={`${entryId || "skills"}-${index}`}>
-                    {index > 0 ? <Separator className="repeat-section-separator" /> : null}
-                    <FieldSet className="repeat-section">
-                      <FieldLegend>
-                        {textFrom(entry["label"]) || `Skill category ${index + 1}`}
+                    {index > 0 ? (
+                      <Separator className="repeat-section-separator" />
+                    ) : null}
+                    <FieldSet
+                      className="repeat-section"
+                      aria-label={
+                        textFrom(entry["label"]) ||
+                        `Skill category ${index + 1}`
+                      }
+                    >
+                      <FieldLegend className="profile-skill-group-heading">
+                        <Input
+                          aria-label="Skill group title"
+                          className="profile-skill-group-title"
+                          data-typography="component-title"
+                          id={editorControlId(
+                            "profile",
+                            `resume.skill_categories.${index}.label`,
+                          )}
+                          placeholder={`Skill category ${index + 1}`}
+                          value={textFrom(entry["label"])}
+                          onChange={(event) =>
+                            updateProfilePath(
+                              `resume.skill_categories.${index}.label`,
+                              event.target.value,
+                            )
+                          }
+                        />
                       </FieldLegend>
                       <div className="repeat-controls">
-                        <Field
-                          className="choice"
-                          data-disabled={!entryId || undefined}
-                          orientation="horizontal"
-                        >
-                          <Checkbox
-                            id={requiredEntryId}
-                            checked={requiredSkillIds.has(entryId)}
-                            disabled={!entryId}
-                            onCheckedChange={(checked) =>
-                              setRequiredId(
-                                "resume.tailoring_rules.required_skill_category_ids",
-                                entryId,
-                                checked,
-                              )
-                            }
-                          />
-                          <FieldLabel htmlFor={requiredEntryId}>Must appear in final resume</FieldLabel>
-                        </Field>
                         <Button
-                          onClick={() => removeRepeatItem("resume.skill_categories", index)}
+                          onClick={() =>
+                            removeRepeatItem("resume.skill_categories", index)
+                          }
                           size="sm"
                           type="button"
                           variant="outline"
@@ -1895,48 +2348,38 @@ export function StructuredProfileEditor({
                           Remove skill category
                         </Button>
                       </div>
-                      <AdaptiveFieldGrid>
-                        <AdaptiveFieldSpan span="wide">
-                          {textField(`resume.skill_categories.${index}.label`, "Label")}
-                        </AdaptiveFieldSpan>
-                      </AdaptiveFieldGrid>
                       <Separator />
-                      <FieldGroup className="skill-list">
-                        {skills.map((skill, skillIndex) => {
+                      <FieldGroup className="skill-list" style={{ containerType: "normal" }}>
+                        {skillFields.map((skill, skillIndex) => {
                           const skillId = editorControlId(
                             "profile",
                             `skill-category-${index}-skill-${skillIndex}`,
                           );
-                          const requiredSkillId = `${skillId}-required`;
                           return (
-                            <Field className="skill-row" key={`${entryId}-${skillIndex}`}>
+                            <Field
+                              className="skill-row"
+                              key={`${entryId}-${skillIndex}`}
+                            >
                               <Field className="skill-input field">
-                                <FieldLabel htmlFor={skillId}>Skill {skillIndex + 1}</FieldLabel>
+                                <FieldLabel className="sr-only" htmlFor={skillId}>
+                                  Skill {skillIndex + 1}
+                                </FieldLabel>
                                 <Input
                                   id={skillId}
+                                  ref={registerFocusTarget(skillFocusKey(categoryKey, skillIndex))}
                                   value={skill}
-                                  onChange={(event) =>
-                                    updateProfilePath(
-                                      `resume.skill_categories.${index}.items.${skillIndex}`,
-                                      event.target.value,
-                                    )
-                                  }
+                                  onChange={(event) => updateSkill(index, skillIndex, event.target.value, skillIndex === skills.length)}
+                                  onKeyDown={(event) => {
+                                    if (event.key !== "Enter") return;
+                                    event.stopPropagation();
+                                    // Enter must remain available to confirm native IME composition.
+                                    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+                                    event.preventDefault();
+                                    if (event.repeat || !event.currentTarget.value.trim()) return;
+                                    onProfileSaveRequest?.();
+                                    addSkill(index);
+                                  }}
                                 />
-                              </Field>
-                              <Field
-                                className="choice skill-choice"
-                                data-disabled={!entryId || !skill || undefined}
-                                orientation="horizontal"
-                              >
-                                <Checkbox
-                                  id={requiredSkillId}
-                                  checked={requiredSkills.has(skill)}
-                                  disabled={!entryId || !skill}
-                                  onCheckedChange={(checked) =>
-                                    setRequiredSkill(entryId, skill, checked)
-                                  }
-                                />
-                                <FieldLabel htmlFor={requiredSkillId}>Required</FieldLabel>
                               </Field>
                               <Button
                                 className="icon-button"
@@ -1952,7 +2395,13 @@ export function StructuredProfileEditor({
                             </Field>
                           );
                         })}
-                        <Button className="add-bullet" onClick={() => addSkill(index)} size="sm" type="button" variant="secondary">
+                        <Button
+                          className="add-bullet"
+                          onClick={() => addSkill(index)}
+                          size="sm"
+                          type="button"
+                          variant="secondary"
+                        >
                           <IconPlus size={14} aria-hidden="true" />
                           Add skill
                         </Button>
@@ -1970,24 +2419,28 @@ export function StructuredProfileEditor({
                 Add skill category
               </Button>
             </FieldGroup>
-          </DisclosureSection>
+          </ProfileSection>
 
-          <DisclosureSection
+          <ProfileSection
             className="profile-disclosure profile-disclosure--eeo"
             collapsedSummary="Gender · race or ethnicity · veteran status · disability status"
             defaultOpen={false}
             description="Optional demographic information"
             headingLevel={3}
             id="profile-eeo"
+            hidden={activeSection !== "personal"}
             title="Voluntary EEO"
           >
             <AdaptiveFieldGrid>
               {textField("eeo_voluntary.gender", "Gender")}
               {textField("eeo_voluntary.race_ethnicity", "Race / ethnicity")}
               {textField("eeo_voluntary.veteran_status", "Veteran status")}
-              {textField("eeo_voluntary.disability_status", "Disability status")}
+              {textField(
+                "eeo_voluntary.disability_status",
+                "Disability status",
+              )}
             </AdaptiveFieldGrid>
-          </DisclosureSection>
+          </ProfileSection>
         </>
       ) : mode === "target-search" ? (
         targetSearchSection()
@@ -2018,53 +2471,101 @@ export function StructuredProfileEditor({
                     "work_authorization.require_sponsorship",
                     "Requires sponsorship",
                   )}
-                  {textField("work_authorization.work_permit_type", "Work permit type", "text", {
-                    helperText: "For example, EU citizen, permanent resident, or permit name.",
-                  })}
-                  {textField("personal.password", "Job-site login password", "password", {
-                    autoComplete: "new-password",
-                    helperText: "Used only for local application workflows that require a saved login.",
-                  })}
+                  {textField(
+                    "work_authorization.work_permit_type",
+                    "Work permit type",
+                    "text",
+                    {
+                      helperText:
+                        "For example, EU citizen, permanent resident, or permit name.",
+                    },
+                  )}
+                  {textField(
+                    "personal.password",
+                    "Job-site login password",
+                    "password",
+                    {
+                      autoComplete: "new-password",
+                      helperText:
+                        "Used only for local application workflows that require a saved login.",
+                    },
+                  )}
                 </AdaptiveFieldGrid>
               </FieldSet>
               <FieldSet className="preferences-field-group preferences-field-group--availability">
                 <FieldLegend>Availability</FieldLegend>
                 <AdaptiveFieldGrid className="preferences-two-column-grid">
-                  {textField("availability.earliest_start_date", "Earliest start date", "date", {
-                    helperText: "Leave blank when your start date is flexible.",
-                  })}
-                  {yesNoCheckboxField("availability.available_for_full_time", "Available full-time")}
-                  {yesNoCheckboxField("availability.available_for_contract", "Available for contract")}
+                  {textField(
+                    "availability.earliest_start_date",
+                    "Earliest start date",
+                    "date",
+                    {
+                      helperText:
+                        "Leave blank when your start date is flexible.",
+                    },
+                  )}
+                  {yesNoCheckboxField(
+                    "availability.available_for_full_time",
+                    "Available full-time",
+                  )}
+                  {yesNoCheckboxField(
+                    "availability.available_for_contract",
+                    "Available for contract",
+                  )}
                 </AdaptiveFieldGrid>
               </FieldSet>
               <FieldSet className="preferences-field-group preferences-field-group--compensation">
                 <FieldLegend>Compensation</FieldLegend>
                 <AdaptiveFieldGrid className="preferences-two-column-grid">
-                  {textField("compensation.salary_expectation", "Salary expectation", "number", {
-                    helperText: "Annual gross amount in the selected currency.",
-                    inputMode: "numeric",
-                    min: 0,
-                    step: 1,
-                    valueKind: "text",
-                  })}
-                  {textField("compensation.salary_currency", "Salary currency", "text", {
-                    autoCapitalize: "characters",
-                    helperText: "Three-letter currency code, such as EUR or USD.",
-                  })}
-                  {textField("compensation.salary_range_min", "Salary range min", "number", {
-                    helperText: "Annual gross minimum in the selected currency.",
-                    inputMode: "numeric",
-                    min: 0,
-                    step: 1,
-                    valueKind: "text",
-                  })}
-                  {textField("compensation.salary_range_max", "Salary range max", "number", {
-                    helperText: "Annual gross maximum in the selected currency.",
-                    inputMode: "numeric",
-                    min: 0,
-                    step: 1,
-                    valueKind: "text",
-                  })}
+                  {textField(
+                    "compensation.salary_expectation",
+                    "Salary expectation",
+                    "number",
+                    {
+                      helperText:
+                        "Annual gross amount in the selected currency.",
+                      inputMode: "numeric",
+                      min: 0,
+                      step: 1,
+                      valueKind: "text",
+                    },
+                  )}
+                  {textField(
+                    "compensation.salary_currency",
+                    "Salary currency",
+                    "text",
+                    {
+                      autoCapitalize: "characters",
+                      helperText:
+                        "Three-letter currency code, such as EUR or USD.",
+                    },
+                  )}
+                  {textField(
+                    "compensation.salary_range_min",
+                    "Salary range min",
+                    "number",
+                    {
+                      helperText:
+                        "Annual gross minimum in the selected currency.",
+                      inputMode: "numeric",
+                      min: 0,
+                      step: 1,
+                      valueKind: "text",
+                    },
+                  )}
+                  {textField(
+                    "compensation.salary_range_max",
+                    "Salary range max",
+                    "number",
+                    {
+                      helperText:
+                        "Annual gross maximum in the selected currency.",
+                      inputMode: "numeric",
+                      min: 0,
+                      step: 1,
+                      valueKind: "text",
+                    },
+                  )}
                   <AdaptiveFieldSpan span="full">
                     {textField(
                       "compensation.currency_conversion_note",
@@ -2083,53 +2584,19 @@ export function StructuredProfileEditor({
 
           <DisclosureSection
             className="preferences-disclosure preferences-disclosure--tailoring"
-            collapsedSummary="Content rules · writing style · quality gates"
+            collapsedSummary="Full baseline · approved wording · review"
             defaultOpen
-            description="Control what JobCtrl may change and how generated resumes are evaluated"
+            description="How resume composition uses your saved Profile"
             headingLevel={3}
             id="preferences-tailoring"
-            title="Tailoring controls"
+            title="Resume composition"
           >
-            <Tabs className="tailoring-control-tabs" defaultValue="content-rules">
-              <TabsList
-                aria-label="Tailoring control sections"
-                className="tailoring-control-tabs__list"
-              >
-                <TabsTrigger value="content-rules">Content rules</TabsTrigger>
-                <TabsTrigger value="writing-style">Writing style</TabsTrigger>
-                <TabsTrigger value="quality-gates">Quality gates</TabsTrigger>
-              </TabsList>
-              <TabsContent
-                className="tailoring-tab-panel tailoring-tab-panel--content-rules"
-                forceMount
-                value="content-rules"
-              >
-                <FieldGroup className="tailoring-controls-grid tailoring-controls-grid--content">
-                  {adjacentExperienceClaimsGroup()}
-                  {generationPermissionsGroup()}
-                  {bulletStandardsField()}
-                </FieldGroup>
-              </TabsContent>
-              <TabsContent
-                className="tailoring-tab-panel tailoring-tab-panel--writing-style"
-                forceMount
-                value="writing-style"
-              >
-                <FieldGroup className="tailoring-controls-grid tailoring-controls-grid--writing">
-                  {writingStyleGroup()}
-                  {additionalGuidanceGroup()}
-                </FieldGroup>
-              </TabsContent>
-              <TabsContent
-                className="tailoring-tab-panel tailoring-tab-panel--quality-gates"
-                forceMount
-                value="quality-gates"
-              >
-                <FieldGroup className="tailoring-controls-grid tailoring-controls-grid--quality">
-                  {revisionPolicyGroup()}
-                </FieldGroup>
-              </TabsContent>
-            </Tabs>
+            <p>
+              Every authored role and achievement stays in the composed resume.
+              JobCtrl chooses only among wording you have approved and offers
+              one advisory coherence review. Baseline copy is available in
+              Settings and on each job.
+            </p>
           </DisclosureSection>
 
           <DisclosureSection
@@ -2176,7 +2643,13 @@ export function StructuredProfileEditor({
                 ["letterpaper", "Letter"],
               ])}
               {styleNumber("page_scale", "Page scale", 0.7, 1, 0.01)}
-              {styleNumber("hints_column_width_cm", "Date column width (cm)", 1.5, 5, 0.1)}
+              {styleNumber(
+                "hints_column_width_cm",
+                "Date column width (cm)",
+                1.5,
+                5,
+                0.1,
+              )}
             </AdaptiveFieldGrid>
           </DisclosureSection>
         </>
@@ -2199,9 +2672,15 @@ function commaListAt(value: string): string[] {
   if (!value.trim()) {
     return [];
   }
-  return value.split(",").map((item) => item.trim()).filter(Boolean);
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
-function normalizeTargetSearchOption(value: string, options: readonly TargetSearchOption[]): string | null {
+function normalizeTargetSearchOption(
+  value: string,
+  options: readonly TargetSearchOption[],
+): string | null {
   return options.find((option) => option.value === value)?.value ?? null;
 }

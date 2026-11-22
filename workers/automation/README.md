@@ -1,20 +1,11 @@
 # JobCtrl Automation Worker
 
 This package contains JobCtrl's Python automation engine and CLI. It owns job
-discovery, enrichment, scoring, tailoring, cover letters, PDF generation,
+discovery, enrichment, scoring, tailoring, PDF generation,
 profile import, and local browser apply automation.
 
-Use it from the repository root through `uv`:
-
-```bash
-uv --project workers/automation run jobctrl doctor
-uv --project workers/automation run jobctrl run
-uv --project workers/automation run jobctrl worker
-```
-
-The full local application is normally started from the repository root with
-`corepack pnpm dev`, which runs Temporal, the TypeScript API, the React web app, and this
-worker together.
+See [Local Development](../../docs/local-development.md) for source setup and
+the commands used to start the application and worker.
 
 Provider generation runs through `agent-runtime-kit`. The worker owns the
 persistent async service and idle runtime cache; provider SDKs remain optional

@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { http, HttpResponse } from "msw";
 
-import { makeDueFollowUpSummary } from "../../../test/fixtures/outreach.js";
+import { makeDueFollowUpSummary } from "../../../../.storybook/fixtures/outreach.js";
 import { DueFollowUpsPanel } from "./DueFollowUpsPanel.js";
 
 const meta = {

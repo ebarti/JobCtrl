@@ -1,7 +1,7 @@
 import { LocalStorageAdapter } from "../src/shared/adapters/local/LocalStorageAdapter.js";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
-import { JobCtrlApiClient } from "@jobctrl/api-client";
+import { BrowserHttpAdapter } from "../src/shared/adapters/local/BrowserHttpAdapter.js";
 import { BrowserPdfExportAdapter } from "../src/shared/adapters/local/BrowserPdfExportAdapter.js";
 import type {
   ClipboardPort,
@@ -10,7 +10,6 @@ import type {
   EventStreamStatus,
   EventStreamSubscription,
   FeatureFlagPort,
-  OpenInOsPort,
   Session,
   SessionPort,
   StoragePort,
@@ -18,11 +17,8 @@ import type {
 } from "../src/shared/ports/index.js";
 import type { Ports } from "../src/shared/providers/PortsProvider.js";
 
-// Storybook-specific port factory. Mirrors `src/test/testPorts.ts` but
-// avoids the `vi` import — vitest's expect runtime extends globalThis with
-// JEST_MATCHERS_OBJECT and clashes with Storybook 10's bundled expect,
-// killing every iframe with `Cannot read properties of undefined
-// (reading 'customEqualityTesters')`.
+// Optional Storybook documentation uses local ports and explicit illustrative
+// data. Product verification belongs to the real Python E2E journeys.
 
 class FakeSubscription implements EventStreamSubscription {
   private readonly handlers = new Set<(event: DomainEventEnvelope) => void>();
@@ -103,28 +99,6 @@ class StoryClipboardPort implements ClipboardPort {
   async write(_text: string): Promise<void> {}
 }
 
-class StoryOpenInOsPort implements OpenInOsPort {
-  async open(artifactId: string) {
-    return {
-      ok: true as const,
-      artifact: {
-        artifactId,
-        jobKey: "job-1",
-        title: "Sample",
-        company: "Acme",
-        type: "resume_pdf",
-        status: "approved",
-        localPath: `/tmp/${artifactId}.pdf`,
-        createdAt: null,
-        sizeBytes: null,
-        size: "0",
-      },
-      opened: true as const,
-      path: `/tmp/${artifactId}.pdf`,
-    };
-  }
-}
-
 class StoryTelemetryPort implements TelemetryPort {
   event(_name: string, _payload?: Record<string, unknown>): void {}
   error(_err: unknown, _payload?: Record<string, unknown>): void {}
@@ -143,13 +117,11 @@ class StoryFeatureFlagPort implements FeatureFlagPort {
 
 export function buildStoryPorts(): Ports {
   return {
-    api: new JobCtrlApiClient(),
-    artifactDownload: { downloadDocx: async () => {} },
+    http: new BrowserHttpAdapter(),
     eventStream: new StoryEventStreamPort(),
     storage: new InMemoryStoragePort(),
     session: new StorySessionPort(),
     clipboard: new StoryClipboardPort(),
-    openInOs: new StoryOpenInOsPort(),
     pdfExport: new BrowserPdfExportAdapter(),
     telemetry: new StoryTelemetryPort(),
     featureFlags: new StoryFeatureFlagPort(),

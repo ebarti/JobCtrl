@@ -1,34 +1,41 @@
-import type { ActionRunResponse, ApplyJobRequest } from "@jobctrl/contracts";
-import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
-import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
-import { dashboardKeys } from "../../operations/dashboardKeys.js";
-import { jobsKeys } from "../../operations/jobsKeys.js";
-import type { JobId } from "../../operations/types.js";
+import { useTenantId } from "../../../shared/providers/TenantProvider.js";
+import { payloadApproval } from "./useApplyReviewSession.js";
+import { performApplicationCommand } from "./useApplyReviewMutations.js";
+import { applyKeys } from "../queryKeys.js";
+import { readApplication } from "../readQueries.js";
 
 export interface ApplyJobVariables {
-  readonly jobId: JobId;
-  readonly body?: Partial<ApplyJobRequest>;
+  readonly jobId: string;
+  readonly body?: unknown;
 }
-
-export function useApplyJobMutation(): UseMutationResult<
-  ActionRunResponse,
-  Error,
-  ApplyJobVariables
-> {
-  const tenantId = useTenantId();
-  const { api } = usePorts();
-  const queryClient = useQueryClient();
-  return useMutation(
-    createOptimisticMutation<ActionRunResponse, ApplyJobVariables>(queryClient, {
-      mutationFn: ({ jobId, body }) => api.applyJob(jobId, body ?? {}),
-      settle: ({ jobId }) => [
-        jobsKeys.detail(tenantId, jobId),
-        jobsKeys.lists(tenantId),
-        dashboardKeys.summary(tenantId),
-      ],
-    }),
-  );
+export function useApplyJobMutation() {
+  const tenant = useTenantId();
+  const { http, requestIdentity } = usePorts();
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ jobId }: ApplyJobVariables) => {
+      const application = await readApplication(http, jobId);
+      const approval = payloadApproval(application);
+      if (!application.payload || !approval)
+        throw new Error(
+          "Review and approve the exact application payload before executing it.",
+        );
+      const result = await performApplicationCommand(http, tenant, jobId, {
+        kind: "execute",
+        payloadId: application.payload.payloadId,
+        approvalId: approval.decisionId,
+        idempotencyKey: requestIdentity.create(),
+      });
+      if (!result.run)
+        throw new Error("The application run receipt is missing.");
+      return result.run;
+    },
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: applyKeys.all(tenant) });
+    },
+    meta: { suppressGlobalErrorToast: true },
+  });
 }

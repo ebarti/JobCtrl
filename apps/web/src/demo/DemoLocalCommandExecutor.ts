@@ -1,9 +1,4 @@
-import { JobCtrlApiError } from "@jobctrl/api-client";
-import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema, ResumeTemplateDefaultSelectionRequestSchema, ResumeTemplateVersionSaveRequestSchema } from "@jobctrl/contracts";
-import type { ApplyReviewApprovalGateReason, ContactDetail } from "@jobctrl/contracts";
-import { demoContactFingerprint } from "./contact-fingerprint.js";
 import {
-  LOCAL_TENANT,
   createContactCreated,
   createContactAttributeRecorded,
   createContactResearchTaskCompleted,
@@ -31,23 +26,35 @@ import {
   createResumeTemplateVersionSaved,
   createScoreCorrected,
   createScoreRescoreRequested,
-  createSourceLocationCandidatePromoted,
-  createSourceRegistryEntryCreated,
   createSourceRegistryEntryUpdated,
   createSourceStateChanged,
   createStageCanceled,
   createStageSkipped,
   createWorkflowCanceled,
-  type ApplicationOutcomeKindValue,
-  type ApplyReviewDecisionValue,
-  type DomainEventUnion,
-  type OutcomeSuggestionDecisionValue,
-} from "@jobctrl/domain-types";
+  type DemoEvent as DomainEventUnion,
+} from "./events.js";
+import { JobCtrlApiError } from "@jobctrl/api-client";
+import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema, ManualCaptureDismissSchema, OutcomeSuggestionDecisionRequestSchema, ResumeTemplateDefaultSelectionRequestSchema, ResumeTemplateVersionSaveRequestSchema, compareOutcomeSuggestionDecision } from "@jobctrl/contracts";
+import type { ApplicationOutcome, ApplyReviewApprovalGateReason, ContactDetail, OutcomeSuggestion } from "@jobctrl/contracts";
+import { demoContactFingerprint } from "./contact-fingerprint.js";
+import { demoProfileDocument, retainDemoProfile, reconcileDemoProfile, validateDemoProfileSave } from "./profile-library.js";
+import { demoRequirementAssociations } from "./requirement-library.js";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
-import type { ApiClientPort } from "../shared/ports/ApiClientPort.js";
+import type {
+  ApplicationOutcomeKind as ApplicationOutcomeKindValue,
+  ApplyReviewDecisionValue,
+  OutcomeSuggestionDecisionRequest,
+} from "@jobctrl/contracts";
+
+type OutcomeSuggestionDecisionValue =
+  OutcomeSuggestionDecisionRequest["decision"];
+
+import type { DemoApiClientPort } from "./DemoApi.js";
 import { DEMO_RESCORE_UNAVAILABLE_MESSAGE } from "./capabilities.js";
 import type { ApiClientResponse } from "./contracts.js";
 import { isActiveDemoJob, matchingDemoJobKeys } from "./job-filter.js";
+import { withDemoCaptureLifecycle } from "./manual-capture.js";
 import {
   purgeDemoJobProjections,
   recomputeDemoOperationalProjections,
@@ -59,6 +66,7 @@ import {
   type DemoWorkspaceSnapshot,
 } from "./workspace/index.js";
 import { captureLifecycleRevisions, changedLifecycleJobs } from "./workspace/lifecycleRevisions.js";
+import type { DemoSuggestionDecisionReceipt } from "./workspace/contracts.js";
 
 export interface DemoCommandClock {
   now(): Date;
@@ -90,14 +98,49 @@ interface DemoPermanentDeleteObservation {
 
 const systemClock: DemoCommandClock = { now: () => new Date() };
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isDemoSuggestionDecisionReceipt(value: unknown,
+): value is DemoSuggestionDecisionReceipt {
+  if (!isObjectRecord(value) || !isObjectRecord(value["event"])) return false;
+  const fact = value["fact"];
+  if (!isObjectRecord(fact)) return false;
+  return (
+    isObjectRecord(fact["suggestion"]) && (fact["outcome"] === null || isObjectRecord(fact["outcome"])));
+}
+
+function samePrivateValue(left: unknown, right: unknown): boolean {
+  try {
+    const encoded = JSON.stringify(left);
+    return typeof encoded === "string" && encoded === JSON.stringify(right);
+  } catch {
+    return false;
+  }
+}
+
+function demoSuggestionDecisionFact(suggestion: OutcomeSuggestion, outcome: ApplicationOutcome | null): DemoSuggestionDecisionReceipt["fact"] {
+  return {
+    suggestion: {
+      suggestionId: suggestion.suggestionId, jobKey: suggestion.jobKey, evidenceId: suggestion.evidenceId,
+      suggestedKind: suggestion.suggestedKind, status: suggestion.status, decidedAt: suggestion.decidedAt,
+      decisionReason: suggestion.decisionReason, decidedOutcomeId: suggestion.decidedOutcomeId,
+    },
+    outcome: outcome ? {
+      outcomeId: outcome.outcomeId, jobKey: outcome.jobKey, kind: outcome.kind, source: outcome.source,
+      note: outcome.note, occurredAt: outcome.occurredAt, recordedAt: outcome.recordedAt,
+      suggestionId: outcome.suggestionId, evidenceId: outcome.evidenceId,
+      interviewPrepGeneration: outcome.interviewPrepGeneration,
+    } : null,
+  };
+}
+
 const BROWSER_LOCAL_COMMANDS = [
   "acknowledgeDigest",
   "updateDiscoverySettings",
-  "upsertDiscoverySource",
   "patchDiscoverySourceState",
   "updateCompensationSourcePolicy",
-  "promoteSourceLocatorCandidate",
-  "rejectSourceLocatorCandidate",
   "decideDiscoveryQuarantine",
   "dismissManualCapture",
   "recordDiscoveryFeedback",
@@ -126,7 +169,6 @@ const BROWSER_LOCAL_COMMANDS = [
   "resetStaleScoresForRescore",
   "cancelWorkflowRun",
   "updateProfile",
-  "updateSettings",
   "createContact",
   "updateContact",
   "deleteContact",
@@ -138,7 +180,7 @@ const BROWSER_LOCAL_COMMANDS = [
   "dismissOutreachFollowUp",
   "cancelJobAction",
   "markSkipped",
-] as const satisfies readonly (keyof ApiClientPort)[];
+] as const satisfies readonly (keyof DemoApiClientPort)[];
 
 export type DemoBrowserLocalCommand = (typeof BROWSER_LOCAL_COMMANDS)[number];
 export { BROWSER_LOCAL_COMMANDS as DEMO_BROWSER_LOCAL_COMMANDS };
@@ -146,14 +188,12 @@ export { BROWSER_LOCAL_COMMANDS as DEMO_BROWSER_LOCAL_COMMANDS };
 export const DEMO_PRODUCTION_NO_EVENT_COMMANDS = [
   "updateDiscoverySettings",
   "updateCompensationSourcePolicy",
-  "rejectSourceLocatorCandidate",
   "dismissManualCapture",
   "decideRoleMatchFeedbackSuggestion",
   "createResumeReviewDraft",
   "saveResumeReviewDraftRevision",
   "seedResumeReviewCommentThreads",
   "replyToResumeReviewComment",
-  "updateSettings",
 ] as const satisfies readonly DemoBrowserLocalCommand[];
 
 export class DemoCommandPersistenceError extends Error {
@@ -168,15 +208,22 @@ export class DemoCommandPersistenceError extends Error {
 export class DemoLocalCommandExecutor {
   private readonly clock: DemoCommandClock;
   private readonly createId: (prefix: string) => string;
-  private readonly permanentDeleteSelections = new Map<string, DemoPermanentDeleteSelection>();
-  private readonly permanentDeleteObservations = new Map<string, DemoPermanentDeleteObservation>();
+  private readonly permanentDeleteSelections: Map<string, DemoPermanentDeleteSelection>;
+  private readonly permanentDeleteObservations: Map<string, DemoPermanentDeleteObservation>;
 
   constructor(
     private readonly workspace: DemoWorkspaceRepository,
     options: DemoLocalCommandExecutorOptions = {},
+    private readonly requestParent?: DemoLocalCommandExecutor,
   ) {
-    this.clock = options.clock ?? systemClock;
-    this.createId = options.createId ?? defaultId;
+    this.clock = requestParent?.clock ?? options.clock ?? systemClock;
+    this.createId = requestParent?.createId ?? options.createId ?? defaultId;
+    this.permanentDeleteSelections = requestParent?.permanentDeleteSelections ?? new Map();
+    this.permanentDeleteObservations = requestParent?.permanentDeleteObservations ?? new Map();
+  }
+
+  forWorkspace(workspace: DemoWorkspaceRepository): DemoLocalCommandExecutor {
+    return new DemoLocalCommandExecutor(workspace, {}, this);
   }
 
   observePermanentDeleteSelection(
@@ -206,8 +253,9 @@ export class DemoLocalCommandExecutor {
   }
 
   async preparePermanentDeleteSelection(
-    request: Parameters<ApiClientPort["preparePermanentDeleteSelection"]>[0],
-  ): ReturnType<ApiClientPort["preparePermanentDeleteSelection"]> {
+    request: Parameters<
+      DemoApiClientPort["preparePermanentDeleteSelection"]>[0],
+  ): ReturnType<DemoApiClientPort["preparePermanentDeleteSelection"]> {
     const observation = this.permanentDeleteObservations.get(request.observationId);
     this.permanentDeleteObservations.delete(request.observationId);
     const snapshot = await this.workspace.snapshot();
@@ -276,13 +324,18 @@ export class DemoLocalCommandExecutor {
   }
 
   dispose(): void {
+    if (this.requestParent) return;
     this.permanentDeleteSelections.clear();
     this.permanentDeleteObservations.clear();
   }
 
   async execute<TMethod extends DemoBrowserLocalCommand>(
     method: TMethod,
-    args: Parameters<ApiClientPort[TMethod]>,
+    args: Parameters<DemoApiClientPort[TMethod]>,
+    beforeCommit?: (
+      draft: DemoWorkspaceSnapshot,
+      context: DemoWorkspaceMutationContext,
+    ) => void,
   ): Promise<ApiClientResponse<TMethod>> {
     const selectionId = method === "permanentlyDeleteJobs"
       ? stringValue(record(args[0]).selectionId)
@@ -297,6 +350,7 @@ export class DemoLocalCommandExecutor {
     const now = this.clock.now().toISOString();
     const commit = await this.workspace.mutate(
       (draft, context) => {
+        beforeCommit?.(draft, context);
         if (update && (update.expectedFingerprint !== sourceFingerprint ||
           JSON.stringify(requireMapValue(draft.state.readModel.contacts.details, String(args[0])).contact) !== JSON.stringify(source))) {
           throw new JobCtrlApiError(409, "Conflict", "This contact changed. Review the latest contact before retrying your draft.", { error: "contact_revision_conflict" });
@@ -345,60 +399,9 @@ export class DemoLocalCommandExecutor {
           const metadata = draft.state.readModel.discovery.settings.effectiveSettings[
             field as keyof typeof draft.state.readModel.discovery.settings.effectiveSettings
           ];
-          if (metadata?.editable) Object.assign(metadata, { value, source: "persisted" });
+          if (record(metadata).editable === true) Object.assign(record(metadata), { value, source: "persisted" });
         }
         return draft.state.readModel.discovery.settings;
-      }
-      case "upsertDiscoverySource": {
-        const body = record(args[0]);
-        const sources = draft.state.readModel.discovery.sources.sources;
-        const sourceId = requiredString(body.sourceId, "sourceId");
-        let source = sources.find((candidate) => candidate.sourceId === sourceId);
-        const previous = source ? structuredClone(source) : null;
-        if (source) {
-          source.kind = requiredString(body.kind, "kind") as typeof source.kind;
-          source.displayName = requiredString(body.displayName, "displayName");
-          source.priority = requiredString(body.priority, "priority") as typeof source.priority;
-          source.state = requiredString(body.state, "state") as typeof source.state;
-        } else {
-          const base = structuredClone(sources[0]!);
-          source = Object.assign(base, {
-            sourceId,
-            kind: requiredString(body.kind, "kind") as typeof base.kind,
-            displayName: requiredString(body.displayName, "displayName"),
-            owner: "user",
-            priority: requiredString(body.priority, "priority") as typeof base.priority,
-            state: requiredString(body.state, "state") as typeof base.state,
-            policyId: `demo:${sourceId}`,
-            recommendedState: body.state === "disabled" ? "disabled" : "experimental",
-            lastRunId: null,
-            lastRunCompletedAt: null,
-            lastErrorClass: null,
-            consecutiveFailures: 0,
-            observedJobs: 0,
-            newJobs: 0,
-            duplicateRate: null,
-            activeVerificationRate: null,
-            fullDescriptionSuccessRate: null,
-            applyUrlSuccessRate: null,
-            qualityTrend: "unknown",
-          });
-          sources.push(source);
-        }
-        context.appendDomainEvent(previous
-          ? atTime(createSourceRegistryEntryUpdated(LOCAL_TENANT, {
-              sourceId,
-              changedFields: changedSourceFields(previous, source, body),
-              updatedAt: now,
-            }), now)
-          : atTime(createSourceRegistryEntryCreated(LOCAL_TENANT, {
-              sourceId,
-              kind: source.kind,
-              policyId: source.policyId,
-              state: source.state,
-              createdAt: now,
-            }), now));
-        return { ok: true, source };
       }
       case "patchDiscoverySourceState": {
         const sourceId = requiredString(args[0], "sourceId");
@@ -459,109 +462,6 @@ export class DemoLocalCommandExecutor {
         source.control = control as unknown as typeof source.control;
         return draft.state.readModel.discovery.compensationSources;
       }
-      case "promoteSourceLocatorCandidate": {
-        const candidateId = requiredString(args[0], "candidateId");
-        const sourceId = sourceIdForLocatorCandidate(candidateId);
-        const existing = draft.state.readModel.discovery.sources.sources.find(
-          (source) => source.sourceId === sourceId,
-        );
-        if (existing) {
-          const decision = [...draft.eventLog].reverse().find((entry) =>
-            entry.event.eventType === "SourceLocationCandidatePromoted" &&
-            entry.event.payload.candidateId === candidateId &&
-            entry.event.payload.sourceId === sourceId,
-          );
-          const decidedAt = decision?.event.eventType === "SourceLocationCandidatePromoted"
-            ? decision.event.payload.promotedAt
-            : undefined;
-          const persistedDecisionAt = decidedAt ??
-            draft.state.readModel.discovery.sourcePreviews[sourceId]?.generatedAt;
-          if (!persistedDecisionAt) {
-            throw new Error(`Demo source promotion ${candidateId} has no persisted decision evidence.`);
-          }
-          return { ok: true, candidateId, decision: "promote", source: existing, decidedAt: persistedDecisionAt };
-        }
-        const candidates = draft.state.readModel.discovery.locatorCandidates.candidates;
-        const candidate = requireById(candidates, "candidateId", candidateId);
-        draft.state.readModel.discovery.locatorCandidates.candidates = candidates.filter(
-          (item) => item.candidateId !== candidateId,
-        );
-        const base = structuredClone(draft.state.readModel.discovery.sources.sources[0]!);
-        const source = {
-          ...base,
-          sourceId,
-          kind: candidate.sourceKind,
-          displayName: `Promoted ${candidateId.replace(/^locator-demo-/, "")} source`,
-          owner: "user" as const,
-          priority: "standard" as const,
-          state: "active" as const,
-          policyId: `demo-policy:${sourceId}`,
-          recommendedState: "normal" as const,
-          lastRunId: null,
-          lastRunCompletedAt: null,
-          lastErrorClass: null,
-          consecutiveFailures: 0,
-          observedJobs: 0,
-          newJobs: 0,
-          duplicateRate: null,
-          activeVerificationRate: null,
-          fullDescriptionSuccessRate: null,
-          applyUrlSuccessRate: null,
-          qualityTrend: "unknown" as const,
-        };
-        draft.state.readModel.discovery.sources.sources.push(source);
-        mutableMap(draft.state.readModel.discovery.sourcePreviews)[sourceId] = {
-          ok: true,
-          sourceId,
-          leads: [{
-            candidateUrl: candidate.candidateUrl,
-            title: "Bundled promoted opportunity",
-            company: "Synthetic promoted workshop",
-            location: "Distributed",
-            estimatedConfidence: candidate.confidence,
-          }],
-          generatedAt: now,
-        };
-        const health = structuredClone(draft.state.readModel.dashboard.summary.sourceHealth[0]!);
-        Object.assign(health, {
-          sourceId,
-          recommendedState: "active",
-          runCount: 0,
-          failedRunCount: 0,
-          consecutiveFailures: 0,
-          observedJobs: 0,
-          newJobs: 0,
-          existingJobs: 0,
-          duplicateRate: null,
-          activeVerificationRate: null,
-          fullDescriptionSuccessRate: null,
-          applyUrlSuccessRate: null,
-          lastRunId: null,
-          updatedAt: now,
-        });
-        draft.state.readModel.dashboard.summary.sourceHealth.push(health);
-        context.appendDomainEvent(atTime(createSourceLocationCandidatePromoted(LOCAL_TENANT, {
-          candidateId,
-          sourceId,
-          promotedAt: now,
-        }), now));
-        return {
-          ok: true,
-          candidateId,
-          decision: "promote",
-          source,
-          decidedAt: now,
-        };
-      }
-      case "rejectSourceLocatorCandidate": {
-        const candidateId = requiredString(args[0], "candidateId");
-        const candidates = draft.state.readModel.discovery.locatorCandidates.candidates;
-        requireById(candidates, "candidateId", candidateId);
-        draft.state.readModel.discovery.locatorCandidates.candidates = candidates.filter(
-          (item) => item.candidateId !== candidateId,
-        );
-        return { ok: true, candidateId, decision: "reject", source: null, decidedAt: now };
-      }
       case "decideDiscoveryQuarantine": {
         const jobKey = requiredString(args[0], "jobKey");
         const decision = requiredString(record(args[1]).decision, "decision");
@@ -579,6 +479,19 @@ export class DemoLocalCommandExecutor {
       }
       case "dismissManualCapture": {
         const itemId = requiredString(args[0], "itemId");
+        const parsed = ManualCaptureDismissSchema.safeParse(args[1] ?? {});
+        if (!parsed.success) throw new JobCtrlApiError(400, "Bad Request");
+        if (!parsed.data.expectedLifecycleId) {
+          throw manualCaptureConflict("Refresh the queue and review this capture again.");
+        }
+        const matches = draft.state.readModel.discovery.manualCapture.items.filter((candidate) => candidate.itemId === itemId);
+        if (matches.length === 0) {
+          const message = `Manual capture item ${itemId} was not found.`;
+          throw new JobCtrlApiError(404, "Not Found", message, { ok: false, error: "not_found", message });
+        }
+        if (matches.length !== 1 || withDemoCaptureLifecycle(matches[0]!).lifecycleId !== parsed.data.expectedLifecycleId) {
+          throw manualCaptureConflict("This capture changed. Refresh the queue and review it again.");
+        }
         draft.state.readModel.discovery.manualCapture.items =
           draft.state.readModel.discovery.manualCapture.items.filter((item) => item.itemId !== itemId);
         return { ok: true, itemId, status: "dismissed", dismissedAt: now };
@@ -661,7 +574,10 @@ export class DemoLocalCommandExecutor {
               : decision === "reset"
                 ? "pending"
                 : "declined";
-        item.review.decision = decision === "reset" ? null : decision as typeof item.review.decision;
+        item.review.decision =
+          decision === "reset"
+            ? null
+            : (decision as typeof item.review.decision);
         item.review.decidedAt = decision === "reset" ? null : now;
         item.review.materialsGeneration = gate.materialsGeneration;
         item.review.profileVersion = gate.profileVersion;
@@ -976,8 +892,8 @@ export class DemoLocalCommandExecutor {
         }
         const effective = selected
           ? templateMetadata(selected, "job_override")
-          : draft.state.readModel.materials.resumeTemplates.defaultTemplate ??
-            draft.state.readModel.materials.resumeTemplates.builtInDefault;
+          : (draft.state.readModel.materials.resumeTemplates.defaultTemplate ??
+            draft.state.readModel.materials.resumeTemplates.builtInDefault);
         const templateState = {
           effective,
           snapshot: effective,
@@ -1001,7 +917,7 @@ export class DemoLocalCommandExecutor {
         requireMapValue(draft.state.readModel.jobs.details, jobKey);
         const body = ManualApplicationOutcomeRequestSchema.parse(args[1]);
         const key = JSON.stringify([jobKey, body.interviewPrepGeneration === undefined ? "manual-outcome" : "interview-reflection", body.requestId]);
-        const receipts = draft.state.actionReceipts ??= {};
+        const receipts = (draft.state.actionReceipts ??= {});
         const receipt = receipts[key];
         if (receipt) {
           const outcome = draft.state.readModel.analytics.outcomes.outcomes.find((outcome) => outcome.outcomeId === receipt.outcomeId && outcome.jobKey === jobKey);
@@ -1009,7 +925,7 @@ export class DemoLocalCommandExecutor {
             || outcome.kind !== body.kind || outcome.note !== (body.note ?? null)
             || outcome.interviewPrepGeneration !== (body.interviewPrepGeneration ?? null)
             || (body.occurredAt !== undefined && outcome.occurredAt !== body.occurredAt)) throw new Error("This request identity conflicts with a recorded action. Start a new action.");
-          return { ok: true, outcome };
+          return { ok: true, disposition: "replayed", outcome };
         }
         const kind = requiredOneOf(
           body.kind,
@@ -1024,6 +940,7 @@ export class DemoLocalCommandExecutor {
           jobKey,
           kind,
           source: "manual" as const,
+          recordedBy: "user" as const,
           note: body.note ?? null,
           occurredAt: stringValue(body.occurredAt) ?? now,
           recordedAt: now,
@@ -1046,32 +963,102 @@ export class DemoLocalCommandExecutor {
           interviewPrepGeneration: outcome.interviewPrepGeneration,
           notePresent: outcome.note !== null,
         }), now));
-        return { ok: true, outcome };
+        return { ok: true, disposition: "applied", outcome };
       }
       case "decideOutcomeSuggestion": {
         const suggestionId = requiredString(args[0], "suggestionId");
-        const body = record(args[1]);
-        const decision: OutcomeSuggestionDecisionValue = requiredOneOf(
-          body.decision,
-          ["accept", "correct", "ignore"] as const,
-          "decision",
-        );
+        const body = OutcomeSuggestionDecisionRequestSchema.parse(args[1]);
+        const decision: OutcomeSuggestionDecisionValue = body.decision;
         const suggestion = requireById(draft.state.readModel.analytics.outcomes.suggestions, "suggestionId", suggestionId);
         const perJob = requireMapValue(draft.state.readModel.analytics.jobOutcomes, suggestion.jobKey);
         const perJobSuggestion = requireById(perJob.suggestions, "suggestionId", suggestionId);
+        const receiptKey = JSON.stringify([LOCAL_TENANT, suggestion.jobKey, suggestionId]);
+        const rawReceipts: unknown = draft.state.suggestionDecisionReceipts;
+        const receipts = isObjectRecord(rawReceipts) ? rawReceipts : null;
+        const invalidReceipts = rawReceipts !== undefined && receipts === null;
+        const receiptPresent = receipts !== null && Object.hasOwn(receipts, receiptKey);
+        const rawReceipt = receipts?.[receiptKey];
+        const receipt = isDemoSuggestionDecisionReceipt(rawReceipt) ? rawReceipt : null;
+        const refuse = (error: "outcome_suggestion_conflict" | "outcome_suggestion_replay_unverifiable", outcome: ApplicationOutcome | null): never => {
+          throw new JobCtrlApiError(409, "Conflict", undefined, { ok: false, error, suggestion, outcome });
+        };
         if (suggestion.status !== "pending") {
           const replayOutcome = suggestion.decidedOutcomeId
-            ? draft.state.readModel.analytics.outcomes.outcomes.find((outcome) => outcome.outcomeId === suggestion.decidedOutcomeId) ?? null
+            ? (draft.state.readModel.analytics.outcomes.outcomes.find(
+                (outcome) => outcome.outcomeId === suggestion.decidedOutcomeId,
+              ) ?? null)
             : null;
-          return { ok: true, suggestion, outcome: replayOutcome };
+          if (!receipt || !Number.isSafeInteger(receipt.eventSequence) || receipt.eventSequence < 1 ||
+              receipt.eventSequence > draft.lastEventSequence || receipt.event.decisionRequestVersion !== 2 ||
+              typeof receipt.event.occurredAtProvided !== "boolean") {
+            return refuse("outcome_suggestion_replay_unverifiable", replayOutcome);
+          }
+          const retainedEvent = draft.eventLog.find((entry) => entry.sequence === receipt.eventSequence);
+          const firstEventSequence = draft.eventLog[0]?.sequence;
+          const retainedEventValue = retainedEvent ? record(retainedEvent.event) : null;
+          if (
+            (!retainedEvent && (firstEventSequence === undefined || receipt.eventSequence >= firstEventSequence)) ||
+            (retainedEventValue &&
+              (retainedEventValue["type"] !== "OutcomeSuggestionDecided" ||
+                !samePrivateValue(retainedEventValue["payload"], receipt.event)))
+          ) {
+            return refuse("outcome_suggestion_replay_unverifiable", replayOutcome);
+          }
+          const perJobOutcome = suggestion.decidedOutcomeId
+            ? (perJob.outcomes.find(
+                (item) => item.outcomeId === suggestion.decidedOutcomeId,
+              ) ?? null)
+            : null;
+          const savedRequest = OutcomeSuggestionDecisionRequestSchema.safeParse(receipt.request);
+          const provided = receipt.event.occurredAtProvided;
+          if (!samePrivateValue(receipt.fact, demoSuggestionDecisionFact(suggestion, replayOutcome)) ||
+              !samePrivateValue(receipt.fact, demoSuggestionDecisionFact(perJobSuggestion, perJobOutcome)) ||
+              !savedRequest.success || receipt.event.jobKey !== suggestion.jobKey || receipt.event.suggestionId !== suggestionId ||
+              receipt.event.evidenceId !== suggestion.evidenceId || receipt.event.decision !== savedRequest.data.decision ||
+              receipt.event.outcomeId !== suggestion.decidedOutcomeId || receipt.event.outcomeKind !== (replayOutcome?.kind ?? null) ||
+              receipt.event.notePresent !== Boolean(replayOutcome?.note) || receipt.event.reasonPresent !== Boolean(suggestion.decisionReason) ||
+              compareOutcomeSuggestionDecision(savedRequest.data, suggestion, replayOutcome, provided) !== "replayed") {
+            return refuse("outcome_suggestion_replay_unverifiable", replayOutcome);
+          }
+          const comparison = compareOutcomeSuggestionDecision(body, suggestion, replayOutcome, provided);
+          if (comparison === "replayed") return { ok: true, disposition: "replayed", suggestion, outcome: replayOutcome };
+          return refuse(comparison === "conflict" ? "outcome_suggestion_conflict" : "outcome_suggestion_replay_unverifiable", replayOutcome);
         }
+        if (
+          invalidReceipts || receiptPresent ||
+          draft.eventLog.some((entry) => {
+            const event = record(entry.event);
+            const payload = record(event["payload"]);
+            return (
+              event["type"] === "OutcomeSuggestionDecided" &&
+              payload["suggestionId"] === suggestionId &&
+              payload["jobKey"] === suggestion.jobKey
+            );
+          }) ||
+          suggestion.decidedAt !== null ||
+          suggestion.decisionReason !== null ||
+          suggestion.decidedOutcomeId !== null
+        ) {
+          return refuse("outcome_suggestion_replay_unverifiable", null);
+        }
+        const saveReceipt = (
+          event: ReturnType<typeof createOutcomeSuggestionDecided>,
+          outcome: ApplicationOutcome | null,
+        ) => {
+          const receipts = (draft.state.suggestionDecisionReceipts ??= {});
+          receipts[receiptKey] = {
+            request: structuredClone(body), fact: demoSuggestionDecisionFact(suggestion, outcome),
+            event: structuredClone(event.payload), eventSequence: draft.lastEventSequence + (outcome ? 2 : 1),
+          };
+          context.appendDomainEvent(atTime(event, now));
+        };
         suggestion.status = decision === "ignore" ? "ignored" : decision === "correct" ? "corrected" : "accepted";
         suggestion.decidedAt = now;
-        suggestion.decisionReason = stringValue(body.reason);
+        suggestion.decisionReason = body.reason ?? null;
         Object.assign(perJobSuggestion, suggestion);
         if (decision === "ignore") {
           recomputeDemoOutcomeProjections(draft);
-          context.appendDomainEvent(atTime(createOutcomeSuggestionDecided(LOCAL_TENANT, {
+          saveReceipt(createOutcomeSuggestionDecided(LOCAL_TENANT, {
             jobKey: suggestion.jobKey,
             suggestionId,
             evidenceId: suggestion.evidenceId,
@@ -1079,9 +1066,11 @@ export class DemoLocalCommandExecutor {
             outcomeId: null,
             outcomeKind: null,
             notePresent: stringValue(body.note) !== null,
-            reasonPresent: stringValue(body.reason) !== null,
-          }), now));
-          return { ok: true, suggestion, outcome: null };
+            reasonPresent: Boolean(body.reason),
+            decisionRequestVersion: 2,
+            occurredAtProvided: body.occurredAt !== undefined,
+          }), null);
+          return { ok: true, disposition: "applied", suggestion, outcome: null };
         }
         const outcome = {
           outcomeId: this.createId("outcome"),
@@ -1097,13 +1086,13 @@ export class DemoLocalCommandExecutor {
               )
             : suggestion.suggestedKind,
           source: "email_suggestion",
-          note: stringValue(body.note),
-          occurredAt: stringValue(body.occurredAt) ?? now,
+          note: body.note ?? null,
+          occurredAt: body.occurredAt ?? now,
           recordedAt: now,
           suggestionId,
           evidenceId: suggestion.evidenceId,
           interviewPrepGeneration: null,
-        } as unknown as typeof draft.state.readModel.analytics.outcomes.outcomes[number];
+        } as unknown as (typeof draft.state.readModel.analytics.outcomes.outcomes)[number];
         suggestion.decidedOutcomeId = outcome.outcomeId;
         Object.assign(perJobSuggestion, suggestion);
         draft.state.readModel.analytics.outcomes.outcomes.push(outcome);
@@ -1118,19 +1107,21 @@ export class DemoLocalCommandExecutor {
           suggestionId: outcome.suggestionId,
           evidenceId: outcome.evidenceId,
           interviewPrepGeneration: outcome.interviewPrepGeneration,
-          notePresent: outcome.note !== null,
+          notePresent: Boolean(outcome.note),
         }), now));
-        context.appendDomainEvent(atTime(createOutcomeSuggestionDecided(LOCAL_TENANT, {
+        saveReceipt(createOutcomeSuggestionDecided(LOCAL_TENANT, {
           jobKey: suggestion.jobKey,
           suggestionId,
           evidenceId: suggestion.evidenceId,
           decision,
           outcomeId: outcome.outcomeId,
           outcomeKind: outcome.kind,
-          notePresent: outcome.note !== null,
-          reasonPresent: suggestion.decisionReason !== null,
-        }), now));
-        return { ok: true, suggestion, outcome };
+          notePresent: Boolean(outcome.note),
+          reasonPresent: Boolean(suggestion.decisionReason),
+          decisionRequestVersion: 2,
+          occurredAtProvided: body.occurredAt !== undefined,
+        }), outcome);
+        return { ok: true, disposition: "applied", suggestion, outcome };
       }
       case "deleteJob":
       case "restoreJob":
@@ -1338,47 +1329,25 @@ export class DemoLocalCommandExecutor {
         const body = record(args[0]);
         const profile = draft.state.readModel.profile.config;
         const expectedVersion = numberValue(body.expectedProfileVersion);
-        if (expectedVersion !== null && expectedVersion !== profile.profileVersion) {
-          throw new Error(
-            `stale_profile_version: expected ${expectedVersion}, current ${profile.profileVersion ?? "none"}`,
-          );
-        }
+        if (expectedVersion === null || expectedVersion !== profile.profileVersion)
+          throw new JobCtrlApiError(409, "Conflict", "The Profile changed. Review its current version before saving.");
         const before = JSON.stringify(profile);
-        if (body.profile !== undefined) profile.profile = structuredClone(body.profile);
-        if (typeof body.profileText === "string") profile.profile = JSON.parse(body.profileText);
+        (draft.state.features ??= {}).requirementAssociations ??= demoRequirementAssociations(draft);
+        retainDemoProfile(draft);
+        if (body.profile !== undefined) profile.profile = validateDemoProfileSave(draft, body.profile);
+        if (typeof body.profileText === "string") profile.profile = validateDemoProfileSave(draft, JSON.parse(body.profileText));
         if (body.style !== undefined) profile.style = structuredClone(body.style);
         if (typeof body.styleText === "string") profile.style = JSON.parse(body.styleText);
         if (typeof body.templateText === "string") profile.templateText = body.templateText;
         if (JSON.stringify(profile) === before) return profile;
         profile.profileVersion = (profile.profileVersion ?? 0) + 1;
+        profile.profile = demoProfileDocument(profile.profile);
+        reconcileDemoProfile(draft);
         context.appendDomainEvent(atTime(createProfileUpdated(LOCAL_TENANT, {
           changedSections: Object.keys(body).filter((key) => key !== "expectedProfileVersion"),
           updatedAt: now,
         }), now));
         return profile;
-      }
-      case "updateSettings": {
-        const body = record(args[0]);
-        Object.assign(draft.state.readModel.settings.settings, body);
-        for (const [field, value] of Object.entries(body)) {
-          const metadata = draft.state.readModel.settings.effectiveSettings[
-            field as keyof typeof draft.state.readModel.settings.effectiveSettings
-          ];
-          if (metadata?.editable) {
-            Object.assign(metadata, { value, source: "persisted" });
-          }
-        }
-        const dailyBudgetUsd = numberValue(body.dailyBudgetUsd);
-        if (dailyBudgetUsd !== null) {
-          const spend = draft.state.readModel.dashboard.health.llmSpend;
-          spend.dailyBudgetUsd = dailyBudgetUsd;
-          spend.remainingUsd = Math.max(0, dailyBudgetUsd - spend.estimatedUsd);
-          const digestBudget = draft.state.readModel.dashboard.digest.budget;
-          digestBudget.dailyBudgetUsd = dailyBudgetUsd;
-          digestBudget.remainingUsd = Math.max(0, dailyBudgetUsd - digestBudget.estimatedUsd);
-        }
-        recomputeDemoOperationalProjections(draft);
-        return draft.state.readModel.settings;
       }
       case "createContact": {
         const body = record(args[0]);
@@ -1476,10 +1445,13 @@ export class DemoLocalCommandExecutor {
             const value = input.value.trim();
             const rawKey = JSON.stringify([kind, input.value]);
             const normalizedKey = JSON.stringify([kind, value]);
-            const kept = input.attributeId !== undefined
-              ? byId.get(input.attributeId)
-              : remaining.get(rawKey)?.shift() ??
-                (rawKey !== normalizedKey ? remaining.get(normalizedKey)?.shift() : undefined);
+            const kept =
+              input.attributeId !== undefined
+                ? byId.get(input.attributeId)
+                : (remaining.get(rawKey)?.shift() ??
+                  (rawKey !== normalizedKey
+                    ? remaining.get(normalizedKey)?.shift()
+                    : undefined));
             if (kept && kept.kind === kind &&
                 (kept.value === input.value || kept.value === value)) return structuredClone(kept);
             const parsed = ContactAttributeInputSchema.safeParse({ kind, value: input.value });
@@ -1498,7 +1470,7 @@ export class DemoLocalCommandExecutor {
                 confidence: 1,
                 userConfirmed: true,
               },
-            } as typeof contact.attributes[number];
+            } as (typeof contact.attributes)[number];
             createdAttributes.push(attribute);
             return attribute;
           });
@@ -1575,7 +1547,7 @@ export class DemoLocalCommandExecutor {
           attributes,
           createdAt: now,
           updatedAt: now,
-        } as typeof draft.state.readModel.contacts.details[string]["contact"];
+        } as (typeof draft.state.readModel.contacts.details)[string]["contact"];
         candidate.status = "confirmed";
         candidate.confirmedContactId = contactId;
         candidate.confirmedAt = now;
@@ -1636,14 +1608,24 @@ export class DemoLocalCommandExecutor {
         if (selected.status !== "candidate") {
           throw new TypeError(`Demo outreach draft ${draftId} is not awaiting review.`);
         }
+        if (approved) {
+          for (const prior of thread.drafts) {
+            if (prior.draftId !== draftId && prior.status === "approved")
+              prior.status = "superseded";
+          }
+        }
         selected.status = approved ? "approved" : "rejected";
         selected.approvedAt = approved ? now : null;
         selected.rejectedAt = approved ? null : now;
-        selected.reason = approved ? "" : stringValue(record(args[2]).reason) ?? "Rejected in the browser-local demo.";
+        selected.reason = approved
+          ? ""
+          : (stringValue(record(args[2]).reason) ??
+            "Rejected in the browser-local demo.");
         thread.approvedDraftId = approved
           ? draftId
           : thread.approvedDraftId === draftId
-            ? thread.drafts.find((item) => item.status === "approved")?.draftId ?? null
+            ? (thread.drafts.find((item) => item.status === "approved")
+                ?.draftId ?? null)
             : thread.approvedDraftId;
         thread.hasApprovedDraft = thread.drafts.some((item) => item.status === "approved");
         thread.latestStatus = selected.status;
@@ -1849,6 +1831,10 @@ export class DemoLocalCommandExecutor {
   }
 }
 
+function manualCaptureConflict(message: string): JobCtrlApiError {
+  return new JobCtrlApiError(409, "Conflict", message, { ok: false, error: "manual_capture_state_changed", message });
+}
+
 function permanentDeleteSelectionConflict(conflictingJobKeys?: string[], unprocessedJobKeys?: string[]): JobCtrlApiError {
   return new JobCtrlApiError(409, "Conflict", "The removed job selection changed. Refresh and select the jobs again.", {
     ok: false,
@@ -1862,24 +1848,6 @@ function defaultId(prefix: string): string {
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2);
   return `demo-${prefix}-${suffix}`;
-}
-
-function sourceIdForLocatorCandidate(candidateId: string): string {
-  return `demo-source:locator:${candidateId}`;
-}
-
-function changedSourceFields(
-  previous: DemoWorkspaceSnapshot["state"]["readModel"]["discovery"]["sources"]["sources"][number],
-  next: DemoWorkspaceSnapshot["state"]["readModel"]["discovery"]["sources"]["sources"][number],
-  input: Record<string, unknown>,
-): string[] {
-  const changed: string[] = [];
-  if (previous.kind !== next.kind) changed.push("kind");
-  if (previous.displayName !== next.displayName) changed.push("displayName");
-  if (previous.priority !== next.priority) changed.push("priority");
-  if (previous.state !== next.state) changed.push("state");
-  if (Object.hasOwn(input, "seedUrl")) changed.push("seedUrl");
-  return changed.length > 0 ? changed : ["updatedAt"];
 }
 
 function manualCaptureJobKey(itemId: string): string {
@@ -1909,7 +1877,7 @@ function manualCaptureImportResponse(
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : {};
 }
 

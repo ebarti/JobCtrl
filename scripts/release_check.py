@@ -62,7 +62,6 @@ MINIFIED_BUILD_SUFFIXES = {".cjs", ".js", ".mjs"}
 DEMO_PUBLIC_FIXTURE_FILENAMES = frozenset(
     {
         "application-preview.html",
-        "cover-letter.txt",
         "interview-notes.txt",
         "profile-resume.html",
         "profile-resume.pdf",
@@ -279,6 +278,21 @@ FORBIDDEN_TEXT = (
         "REQUIRED SUB-SKILL: Use " + "superpowers:",
         "private skill banner",
     ),
+)
+
+_PUBLIC_APPLYPILOT_REPOSITORY = (
+    "https://github.com/" + "-".join(("Pickle", "Pixel")) + "/ApplyPilot"
+)
+_PUBLIC_APPLYPILOT_COMMIT = "4a8d521f67f5139811c0a910ef37410f8e6d836a"
+# Reviewed public competitor references, not JobCtrl's repository provenance.
+# Keep the exact source pins and owning page explicit; the legacy-owner needle
+# still applies to every other occurrence, including elsewhere on that page.
+PUBLIC_COMPARISON_SOURCE_URLS = (
+    f"{_PUBLIC_APPLYPILOT_REPOSITORY}/tree/{_PUBLIC_APPLYPILOT_COMMIT}",
+    f"{_PUBLIC_APPLYPILOT_REPOSITORY}/releases/tag/v0.3.0",
+    f"{_PUBLIC_APPLYPILOT_REPOSITORY}/blob/{_PUBLIC_APPLYPILOT_COMMIT}/README.md",
+    f"{_PUBLIC_APPLYPILOT_REPOSITORY}/blob/{_PUBLIC_APPLYPILOT_COMMIT}"
+    "/src/applypilot/apply/launcher.py",
 )
 
 MINIFIED_BUILD_COLLISION_VALUES = frozenset(
@@ -654,7 +668,13 @@ def _is_public_demo_controller_build_asset(rel: Path) -> bool:
 
 
 def _redact_public_attribution(text: str, rel: Path, needle: ForbiddenNeedle) -> str:
-    """Exclude explicit public legal metadata from the private-name tripwire."""
+    """Exclude reviewed public attribution only from its matching tripwire."""
+    if needle.reason == "old repository owner" and rel == Path("docs/comparison.md"):
+        for url in PUBLIC_COMPARISON_SOURCE_URLS:
+            pattern = r"(^|[\s(\"'<])" + re.escape(url) + r"(?=$|[\s)\"'>])"
+            text = re.sub(pattern, r"\1<reviewed public competitor source>", text)
+        return text
+
     if needle.reason != "private first name":
         return text
 
@@ -776,6 +796,12 @@ def _version_parity_findings(root: Path, *, release_tag: str | None = None) -> l
 
     for rel in PACKAGE_VERSION_PATHS:
         manifest = root / rel
+        if rel == Path("apps/api/package.json"):
+            # A retired API has no tree; a retained tree still requires its
+            # manifest. A dangling directory symlink is not retirement.
+            api_tree = manifest.parent
+            if not api_tree.exists() and not api_tree.is_symlink():
+                continue
         version = None
         if manifest.is_file():
             try:

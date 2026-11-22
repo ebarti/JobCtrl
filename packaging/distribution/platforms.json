@@ -43,7 +43,6 @@
       ],
       "requiredComponents": [
         "jobctrl-launcher",
-        "jobctrl-api",
         "jobctrl-web",
         "jobctrl-worker",
         "jobctrl-release-metadata",

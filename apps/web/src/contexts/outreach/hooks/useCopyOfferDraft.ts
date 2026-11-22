@@ -1,32 +1,22 @@
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import type { OutreachDraftDto } from "@jobctrl/contracts";
 export function useCopyOfferDraft() {
-  const { api, clipboard } = usePorts();
+  const { http, clipboard } = usePorts();
   return async (
     draft: OutreachDraftDto,
-    contactId?: string,
-    jobId?: string,
+    threadId?: string,
+    expectedFingerprint?: string,
   ) => {
     if (draft.status !== "approved" || draft.offerSourcesCurrent === false)
       throw new Error("Review a current approved offer draft before copying.");
-    if (draft.kind.startsWith("offer_")) {
-      if (!contactId || !jobId)
-        throw new Error("Offer source binding is missing.");
-      const fresh = await api.outreachThread(contactId, { jobId });
-      const saved = fresh.thread?.drafts.find(
-        (value) => value.draftId === draft.draftId,
-      );
-      if (
-        !saved ||
-        saved.status !== "approved" ||
-        saved.offerSourcesCurrent !== true ||
-        saved.bodyText !== draft.bodyText
-      ) {
-        throw new Error(
-          "Offer terms or decision changed. Generate and review a new draft.",
-        );
-      }
+    if (!threadId || !expectedFingerprint) throw new Error("Refresh the outreach thread before copying.");
+    const saved = await http.json<{ ok: true; draftId: string; bodyText: string }>(
+      "POST", `/v1/outreach/threads/${encodeURIComponent(threadId)}/drafts/${encodeURIComponent(draft.draftId)}/copy`,
+      { body: { expectedFingerprint } },
+    );
+    if (saved.ok !== true || saved.draftId !== draft.draftId || saved.bodyText !== draft.bodyText) {
+      throw new Error("The approved message changed. Refresh and review it before copying.");
     }
-    await clipboard.write(draft.bodyText.trim());
+    await clipboard.write(saved.bodyText);
   };
 }

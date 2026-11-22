@@ -14,8 +14,7 @@ employer-facing actions cannot be retried casually.
 JobCtrl presents one local web application, but several processes collaborate:
 
 - the web app renders product state and sends structured actions;
-- the local TypeScript API validates requests and serves read models;
-- a JSON-RPC bridge starts Python-owned work;
+- the local API validates requests and serves read models;
 - the Python worker executes workflow activities;
 - Temporal records workflow history, timers, retries, and cancellation;
 - SQLite and registered local files hold domain facts and artifacts.
@@ -44,7 +43,7 @@ Representative workflow shapes include:
 | Workflow responsibility | Durable behavior |
 | --- | --- |
 | Discover | Coordinates source families, resumable search units, enrichment, and per-job preparation |
-| Job preparation | Runs the required score, tailor, cover, and PDF subset in canonical order for one job |
+| Job preparation | Runs the required score, tailor, and PDF subset in canonical order for one job |
 | Apply | Uses job-scoped identity and sink-specific retry rules for guarded application work |
 | Profile import and compensation refresh | Moves heavy operations off the long-lived request thread |
 | Durability probe | Uses an inert durable timer to prove recovery without network, model, browser, or Apply work |

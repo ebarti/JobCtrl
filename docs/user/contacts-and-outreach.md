@@ -39,8 +39,9 @@ evidence about you.
 
 ## What You Can See And Control
 
-Open **Contacts** at `/outreach`. The route name reflects the bounded context;
-the page title is Contacts. From there you can:
+Open **Jobs → Contacts** at `/outreach`, without selecting a job, or use the
+selected job's people/contact controls. The route name reflects the bounded
+context; the page title is Contacts. From there you can:
 
 - filter contacts by employer or linked job;
 - create, edit, or remove a contact;
@@ -54,6 +55,13 @@ while their save is pending, as described below.
 The Contact Detail route workspace at `/outreach/:contactId` shows each fact
 and its source, capture method, timestamp, confidence, and confirmation state.
 A Job Detail workspace also composes the contacts linked to that application.
+After you save or remove a contact, its list row changes when the save is
+confirmed. If a list cannot refresh, JobCtrl keeps the displayed contacts and
+marks the list as potentially out of date. Choose **Retry refresh** to check it
+again. Contact details retain the same warning and retry action after a failed
+detail refresh.
+If the first contact read fails, **Retry refresh** is available before any
+contact data has loaded.
 
 Supervised research proposes contacts for review. You start the run for an
 employer or job and may opt into a permitted public source. No public page is
@@ -80,6 +88,13 @@ send action. Follow-ups are editable reminders that you complete or dismiss
 yourself. The current cadence policy belongs to
 [Apply → Outreach Follow-Ups](apply.md#outreach-follow-ups) and is not duplicated
 here.
+
+::: info Python transformation in progress
+The target separates Contacts and Outreach while keeping the same manual-send
+boundary. Its in-progress implementation binds thread changes to an expected
+fingerprint and rechecks the approved draft's sources before copying. The
+target paths and UI still require integration verification.
+:::
 
 ## Editing A Contact That Changed Elsewhere
 
@@ -304,6 +319,7 @@ scoring or Apply decisions.
 | HTTP contract | `/v1/contacts`, supervised-research routes, contact/thread draft routes, send logs, and follow-up operations; see [Jobs & Materials API](../api/jobs-and-materials.md#contacts-and-outreach) and the [complete contacts contract](../api/complete-contract.md#contacts). |
 | API implementation | `apps/api/src/contacts.ts` and `apps/api/src/outreach.ts`; shared request/response types live in `packages/contracts`. |
 | Worker implementation | `workers/automation/src/jobctrl/domain/contact/`, `workers/automation/src/jobctrl/contact/`, and `workers/automation/src/jobctrl/infrastructure/contact/`. |
+| Python transformation (in progress) | `workers/automation/src/jobctrl/features/contacts/` and `workers/automation/src/jobctrl/features/outreach/`. |
 | Web implementation | `apps/web/src/contexts/outreach/`, `apps/web/src/views/outreach/`, and the `/outreach` route files. |
 | Deep architecture | [Stage Walkthrough → Contact Research](../architecture/pipeline/stages.md#contact-research-supervised-off-pipeline), [Outreach Draft Gates](../architecture/tailoring.md#outreach-draft-gates-reused-materials-stack), and [Sensitive Projection Families](../architecture/read-model.md#contacts-research-and-outreach). |
 

@@ -1,8 +1,6 @@
-import { DOMAIN_EVENT_TYPES, LOCAL_TENANT, type TenantId } from "@jobctrl/domain-types";
+import type { TenantId } from "@jobctrl/domain-types";
 
 import type { DomainEventEnvelope } from "../EventStreamPort.js";
-
-const KNOWN_EVENT_TYPES = new Set<string>(DOMAIN_EVENT_TYPES);
 
 export interface ParsedFrame {
   readonly eventType: string;
@@ -14,15 +12,13 @@ export type ParseDomainEventResult =
   | { readonly ok: false; readonly reason: ParseFailureReason; readonly eventType: string };
 
 export type ParseFailureReason =
-  | "unknown-event-type"
+  | "event-type-mismatch"
   | "missing-data"
   | "invalid-json"
+  | "invalid-envelope"
   | "non-object-payload";
 
 export function parseDomainEvent(frame: ParsedFrame): ParseDomainEventResult {
-  if (!KNOWN_EVENT_TYPES.has(frame.eventType)) {
-    return { ok: false, reason: "unknown-event-type", eventType: frame.eventType };
-  }
   if (typeof frame.data !== "string" || frame.data.length === 0) {
     return { ok: false, reason: "missing-data", eventType: frame.eventType };
   }
@@ -35,6 +31,16 @@ export function parseDomainEvent(frame: ParsedFrame): ParseDomainEventResult {
   if (!isRecord(parsed)) {
     return { ok: false, reason: "non-object-payload", eventType: frame.eventType };
   }
+  if (parsed.type !== frame.eventType) {
+    return { ok: false, reason: "event-type-mismatch", eventType: frame.eventType };
+  }
+  if (typeof parsed.eventId !== "string" || !parsed.eventId ||
+      typeof parsed.feature !== "string" || !parsed.feature ||
+      typeof parsed.tenantId !== "string" || !parsed.tenantId ||
+      typeof parsed.occurredAt !== "string" || !parsed.occurredAt ||
+      !(typeof parsed.aggregateId === "string" || parsed.aggregateId === null)) {
+    return { ok: false, reason: "invalid-envelope", eventType: frame.eventType };
+  }
   const payload = parsed["payload"];
   if (!isRecord(payload)) {
     return { ok: false, reason: "non-object-payload", eventType: frame.eventType };
@@ -43,8 +49,11 @@ export function parseDomainEvent(frame: ParsedFrame): ParseDomainEventResult {
     ok: true,
     envelope: {
       eventType: frame.eventType,
-      tenantId: readTenantId(parsed),
-      occurredAt: readOccurredAt(parsed),
+      tenantId: parsed.tenantId as TenantId,
+      occurredAt: parsed.occurredAt,
+      eventId: parsed.eventId,
+      feature: parsed.feature,
+      aggregateId: parsed.aggregateId,
       payload,
     },
   };
@@ -52,16 +61,4 @@ export function parseDomainEvent(frame: ParsedFrame): ParseDomainEventResult {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function readTenantId(payload: Record<string, unknown>): TenantId {
-  const candidate = payload["tenantId"];
-  return typeof candidate === "string" && candidate.length > 0
-    ? (candidate as TenantId)
-    : LOCAL_TENANT;
-}
-
-function readOccurredAt(payload: Record<string, unknown>): string | null {
-  const candidate = payload["occurredAt"];
-  return typeof candidate === "string" && candidate.length > 0 ? candidate : null;
 }

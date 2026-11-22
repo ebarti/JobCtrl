@@ -3,7 +3,6 @@ import {
   type ResumeReviewDraft,
   type ResumeLayoutBox,
   type ApplyReviewProfileSourceField,
-  type ResumeReviewDraftRenderResponse,
   type ResumeCommentThread,
   type ResumeCommentReplyDecision,
   type ResumeReviewCommentThreadSeedInput,
@@ -28,7 +27,6 @@ export interface ResumePlateEditorProps {
   readonly pdfFilename: string;
   readonly profileSourceFields?: readonly ApplyReviewProfileSourceField[];
   readonly renderError?: string | null;
-  readonly renderResult?: ResumeReviewDraftRenderResponse | null;
   readonly resumeText?: string | null;
   readonly saveError?: string | null;
   readonly replyError?: string | null;

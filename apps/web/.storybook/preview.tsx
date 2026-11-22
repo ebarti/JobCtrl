@@ -14,9 +14,9 @@ import { setupWorker } from "msw/browser";
 import { mswLoader } from "msw-storybook-addon/csf3";
 import { useEffect, useMemo, type ReactElement, type ReactNode } from "react";
 
-import { handlers } from "../src/test/msw/handlers.js";
+import { handlers } from "./fixtures/msw/handlers.js";
 import { buildStoryPorts } from "./storyPorts.js";
-import { EventStreamProvider } from "../src/contexts/operations/providers/EventStreamProvider.js";
+import { EventStreamProvider } from "../src/shared/providers/EventStreamProvider.js";
 import { DensityProvider } from "../src/shared/providers/DensityProvider.js";
 import { PortsProvider } from "../src/shared/providers/PortsProvider.js";
 import { QueryClientProvider } from "../src/shared/providers/QueryClientProvider.js";

@@ -13,10 +13,33 @@ market evidence or an extrapolated range as a direct observation.
 
 A configured model extracts what the posting states: amounts, currency, period and base/OTE/bonus/equity component, with verbatim citations and a rationale. Code checks exact numbers and quotes, then performs explicit annualization arithmetic. Missing or ambiguous pay remains visible; a nearby salary word or an annual-pay threshold cannot invent a period. The accepted fact cites its extraction determination.
 
-JobCtrl chooses the salary field first, then a current enriched description,
-the full posting description, and finally the short description. If that
-preferred source changes while extraction is running, the refresh is rejected
-and the previously accepted posted fact remains available.
+The numeric check accepts period-grouped amounts such as `55.000€` when the
+model's cited result identifies EUR 55,000. A decimal reading can also be
+verified when that is what the posting states. All bounds must fit one reading
+of the quoted numbers. Fractional amounts must match exactly.
+
+JobCtrl uses the first nonempty field among salary, enriched description, full
+description and short description, in that order. A listing with just a title
+uses the original title as its source.
+When the model finds no posted pay in the preferred field, it can also assess
+numeric title text that field did not include. A stated range in the preferred
+field retains priority. Each assessment cites the exact field it used, and an
+unstated period or pay component stays unknown. If the posting changes during
+extraction, the previously accepted fact remains available.
+
+As soon as JobCtrl verifies the employer's figures and citations, the posted
+range appears in Jobs. Market research can continue or fail independently.
+Each market estimate retains the exact posted-pay determination used for its
+comparison. A newer employer range can therefore appear alongside an earlier
+market estimate with its own source revision and freshness.
+
+When a refresh ends before market research completes, retrying it can recover
+an earlier verified posted-pay result without another model call for the same
+posting and model configuration. JobCtrl also applies this check to automatic
+refreshes. A changed posting receives a new assessment. An explicit refresh
+after both stages succeed asks the model to assess the pay again. If a prior
+call has no confirmed outcome, the refresh reports that reason before it can
+send the same request again.
 
 An explicitly stated annual amount stays unchanged; monthly amounts use 12
 months and hourly amounts use 2,080 work hours. An unknown period remains
@@ -148,11 +171,12 @@ source conflict is a warning to inspect, not a hidden decision rule.
 2. **Choose source policy.** Settings records which user-controlled reported
    sources a future automatic or explicit refresh may use. This step is
    network-free, and an absent preference is not consent.
-3. **Finish Discovery.** After terminal enrichment, `DiscoverWorkflow` invokes
-   the replay-safe `automatic_compensation_refresh` activity. It deduplicates
-   active role/level/country slices and skips every slice that is still fresh.
-   Healthy work renews its exact publication leases; cancellation and owner
-   replacement fence publication without withdrawing the last accepted result.
+3. **Queue changed postings.** The worker collects new and changed posting
+   events by job ID and starts one automatic compensation batch at a time.
+   Title-only cards with a citable number can be assessed automatically. Other
+   title-only cards wait for further posting text and remain unassessed.
+   An unchanged observation preserves the current evidence. The daily schedule
+   checks the full active backlog for missing or expired evidence.
 4. **Parse posted evidence.** The worker records a model-backed posted-fact
    state, normalized legal range fields when available, parser identity,
    confidence, and warnings without overwriting the raw salary.
@@ -168,7 +192,7 @@ source conflict is a warning to inspect, not a hidden decision rule.
 
 A per-job, all-jobs, or CLI action can also start the independent
 `CompensationRefreshWorkflow`; it does not rerun discovery, scoring, tailoring,
-cover generation, or Apply.
+or Apply.
 
 A later source-policy change affects later refreshes only. Previously persisted
 evidence remains an auditable snapshot of what supported that estimate at the

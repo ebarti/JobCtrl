@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { http, HttpResponse } from "msw";
 
-import { sampleDiscoverySettingsResponse } from "../../../test/fixtures/projections.js";
+import { sampleDiscoverySettingsResponse } from "../../../../.storybook/fixtures/projections.js";
 import { DiscoveryRuntimeSettingsPanel } from "./DiscoveryRuntimeSettingsPanel.js";
 
 const meta = {
@@ -21,11 +21,11 @@ export const EnvironmentManaged: Story = {
       handlers: [
         http.get("*/v1/discovery/settings", () => HttpResponse.json({
           ...sampleDiscoverySettingsResponse,
-          settings: { ...sampleDiscoverySettingsResponse.settings, maxParallelFamilies: 4 },
+          settings: { ...sampleDiscoverySettingsResponse.settings, hoursOld: 72 },
           effectiveSettings: {
             ...sampleDiscoverySettingsResponse.effectiveSettings,
-            maxParallelFamilies: {
-              value: 4,
+            hoursOld: {
+              value: 72,
               source: "environment",
               activation: "next_run",
               editable: false,

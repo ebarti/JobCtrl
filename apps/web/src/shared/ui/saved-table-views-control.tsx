@@ -48,6 +48,7 @@ export interface SavedTableViewsControlProps {
   snapshot: SavedTableViewSnapshot;
   onApplyView: (view: SavedTableView) => void;
   onPresentationChange: (presentation: SavedTablePresentation) => void;
+  useViewsStore?: typeof useSavedTableViewsStore;
 }
 
 const COLOR_RULE_OPERATORS = [
@@ -90,26 +91,28 @@ export function SavedTableViewsControl({
   snapshot,
   onApplyView,
   onPresentationChange,
+  useViewsStore = useSavedTableViewsStore,
 }: SavedTableViewsControlProps) {
-  const allViews = useSavedTableViewsStore((state) => state.views);
+  const allViews = useViewsStore((state) => state.views);
   const views = useMemo(
     () => allViews.filter((view) => view.tableId === tableId),
     [allViews, tableId],
   );
-  const activeViewId = useSavedTableViewsStore(
+  const activeViewId = useViewsStore(
     (state) =>
       state.activeViewIdByTable[tableId] ?? DEFAULT_SAVED_TABLE_VIEW_ID,
   );
-  const applyView = useSavedTableViewsStore((state) => state.applyView);
-  const createView = useSavedTableViewsStore((state) => state.createView);
-  const updateActiveView = useSavedTableViewsStore(
+  const applyView = useViewsStore((state) => state.applyView);
+  const createView = useViewsStore((state) => state.createView);
+  const updateActiveView = useViewsStore(
     (state) => state.updateActiveView,
   );
-  const renameView = useSavedTableViewsStore((state) => state.renameView);
-  const deleteView = useSavedTableViewsStore((state) => state.deleteView);
+  const renameView = useViewsStore((state) => state.renameView);
+  const deleteView = useViewsStore((state) => state.deleteView);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [renameOpen, setRenameOpen] = useState(false);
   const [columnOpen, setColumnOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [nameInput, setNameInput] = useState("");
   const [renameInput, setRenameInput] = useState("");
   const [ruleColumnId, setRuleColumnId] = useState("");
@@ -188,13 +191,13 @@ export function SavedTableViewsControl({
     updateActiveView(tableId, snapshot);
   };
 
-  const deleteCurrentView = () => {
-    if (!activeView || activeView.builtIn) return;
-    if (!window.confirm(`Delete saved view "${activeView.name}"?`)) return;
-    const deletingActive = activeView.id === activeViewId;
-    if (deleteView(tableId, activeView.id) && deletingActive && defaultView) {
-      onApplyView(defaultView);
-    }
+  const deleteConfirmedView = () => {
+    if (!deleteTarget) return;
+    const latest = useViewsStore.getState();
+    const deletingActive = (latest.activeViewIdByTable[tableId] ?? DEFAULT_SAVED_TABLE_VIEW_ID) === deleteTarget.id;
+    const fallback = latest.views.find((view) => view.tableId === tableId && view.id === DEFAULT_SAVED_TABLE_VIEW_ID);
+    if (deleteView(tableId, deleteTarget.id) && deletingActive && fallback) onApplyView(fallback);
+    setDeleteTarget(null);
   };
 
   const toggleColumn = (columnId: string) => {
@@ -390,15 +393,25 @@ export function SavedTableViewsControl({
           </form>
         </DialogContent>
       </Dialog>
-      <button
-        type="button"
-        aria-label="Delete view"
-        title="Delete view"
-        disabled={!activeView || activeView.builtIn}
-        onClick={deleteCurrentView}
-      >
-        <IconTrash size={14} aria-hidden="true" />
-      </button>
+      <Dialog open={Boolean(deleteTarget)} onOpenChange={(open) => {
+        if (open && activeView && !activeView.builtIn) setDeleteTarget({ id: activeView.id, name: activeView.name });
+        if (!open) setDeleteTarget(null);
+      }}>
+        <DialogTrigger asChild>
+          <button type="button" aria-label="Delete view" title="Delete view" disabled={!activeView || activeView.builtIn}>
+            <IconTrash size={14} aria-hidden="true" />
+          </button>
+        </DialogTrigger>
+        <DialogContent className="saved-table-view-dialog">
+          <DialogHeader><DialogTitle>Delete saved view?</DialogTitle>
+            <DialogDescription>Delete “{deleteTarget?.name}” from saved table views?</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <button type="button" onClick={() => setDeleteTarget(null)}>Cancel</button>
+            <button type="button" onClick={deleteConfirmedView}>Delete view</button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <Dialog open={columnOpen} onOpenChange={setColumnOpen}>
         <DialogTrigger asChild>
           <button

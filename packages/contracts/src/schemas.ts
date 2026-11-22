@@ -1,10 +1,11 @@
 import type { CompanyBriefingView, CompanyBriefingSummary } from "./company-briefings.js";
 import type { InterviewPrep, InterviewSelectionInput } from "@jobctrl/domain-types";
 import { z } from "zod";
-import { type DeterminationEnvelope, type DeterminationCitation, DeterminationCitationSchema, DeterminationEnvelopeSchema, TrackCodeSchema, SeniorityCodeSchema, WorkModelCodeSchema } from "./semantic-determinations.js";
+import { type DeterminationEnvelope, type DeterminationCitation, TrackCodeSchema, SeniorityCodeSchema } from "./semantic-determinations.js";
+import { ModelReceiptSchema } from "./model-receipt.js";
 import { CONTACT_ROLES, CONTACT_SOURCE_KINDS } from "@jobctrl/domain-types";
 
-export const STAGES = ["discover", "enrich", "score", "tailor", "cover", "apply"] as const;
+export const STAGES = ["discover", "enrich", "score", "tailor", "apply"] as const;
 export type Stage = (typeof STAGES)[number];
 /** Comma serialization and repeated query values share the JSON-array contract. */
 export const JobStagesFilterSchema = z.preprocess(
@@ -25,13 +26,13 @@ export const JobStagesFilterSchema = z.preprocess(
 // Accept undefined before array preprocessing so typed optional filters retain
 // scalar fallback; malformed optional arrays use the same absence value.
 const OptionalJobStagesFilterSchema = z.union([z.undefined(), JobStagesFilterSchema]).catch(undefined).optional();
-export const PIPELINE_RUN_STAGES = ["discover", "score", "tailor", "cover", "apply"] as const;
+export const PIPELINE_RUN_STAGES = ["discover", "score", "tailor", "apply"] as const;
 export type PipelineRunStage = (typeof PIPELINE_RUN_STAGES)[number];
 export const DEFAULT_PIPELINE_LLM_MODEL = "default" as const;
 export const PIPELINE_ACTION_JOB_KEY = "pipeline" as const;
 export const MIN_TAILORING_FIT_SCORE = 6 as const;
 
-export const MATERIAL_STAGES = ["tailor", "cover"] as const;
+export const MATERIAL_STAGES = ["tailor"] as const;
 export type MaterialStage = (typeof MATERIAL_STAGES)[number];
 export const PIPELINE_VALIDATION_MODES = ["strict", "normal", "lenient"] as const;
 export type PipelineValidationMode = (typeof PIPELINE_VALIDATION_MODES)[number];
@@ -148,7 +149,7 @@ export const ACTIVITY_SORT_FIELDS = [
 export type ActivitySortField = (typeof ACTIVITY_SORT_FIELDS)[number];
 
 export const SortDirectionSchema = z.enum(["asc", "desc"]).default("desc").catch("desc");
-export const TableIdSchema = z.enum(["jobs", "discovery-sources"]);
+export const TableIdSchema = z.enum(["jobs", "discovery-sources", "requirements"]);
 export type TableId = z.infer<typeof TableIdSchema>;
 
 export const SavedTableViewDensitySchema = z.enum(["compact", "regular", "comfy"]);
@@ -169,6 +170,23 @@ export const SavedTableViewGridFiltersSchema = z.record(
 );
 export type SavedTableViewGridFilters = z.infer<typeof SavedTableViewGridFiltersSchema>;
 
+export const PostedPayFilterSchema = z.enum(["all", "known", "unknown", "source_known", "source_unknown"]);
+export type PostedPayFilter = z.infer<typeof PostedPayFilterSchema>;
+
+/** Server-composed Jobs query criteria that are not represented by column filters. */
+export const SavedJobGridFiltersSchema = z.object({
+  jobState: z.string().trim().min(1).max(200).optional(),
+  fitState: z.enum(["all", "current", "stale", "unassessed"]).optional(),
+  postedMinEur: z.number().finite().nonnegative().optional(),
+  postedMaxEur: z.number().finite().nonnegative().optional(),
+  marketMinEur: z.number().finite().nonnegative().optional(),
+  marketMaxEur: z.number().finite().nonnegative().optional(),
+  postedKnown: PostedPayFilterSchema.optional(),
+  marketKnown: z.enum(["all", "known", "unknown"]).optional(),
+  compensationConfidence: z.string().max(200).optional(),
+  compensationWarnings: z.enum(["all", "present", "none"]).optional(),
+}).strict();
+
 export const SavedTableViewUrlFiltersSchema = z
   .object({
     q: z.string().optional().catch(undefined),
@@ -182,6 +200,7 @@ export const SavedTableViewUrlFiltersSchema = z
     maxFitScore: z.coerce.number().int().min(1).max(10).optional().catch(undefined),
     discoveredSince: z.string().trim().min(1).optional().catch(undefined),
     scoredSince: z.string().trim().min(1).optional().catch(undefined),
+    jobGrid: SavedJobGridFiltersSchema.optional().catch(undefined),
     sourceFilters: SavedTableViewGridFiltersSchema.optional().catch(undefined),
   })
   .strict();
@@ -341,7 +360,7 @@ export type BulkRescoreJobsNotOnCurrentScoringPolicyRequest = z.infer<
 export const RetailorJobRequestSchema = z
   .object({
     dryRun: z.boolean().default(false),
-    suppressExistingArtifacts: z.boolean().default(true),
+    suppressExistingArtifacts: z.boolean().default(false),
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
@@ -364,7 +383,7 @@ export const BulkRetailorCurrentPolicyRequestSchema = z
     limit: z.coerce.number().int().min(1).max(1000).default(100),
     jobKeys: z.array(z.string().trim().min(1)).max(5000).default([]),
     dryRun: z.boolean().default(false),
-    suppressExistingArtifacts: z.boolean().default(true),
+    suppressExistingArtifacts: z.boolean().default(false),
     reason: z.string().trim().max(400).optional(),
     tailorModels: z.array(z.string().trim().min(1).max(120)).max(5).default([]),
     tailorJudgeModel: z.string().trim().min(1).max(120).optional(),
@@ -419,7 +438,6 @@ export const ApplyReviewDecisionRequestSchema = z
     reason: z.string().trim().max(400).optional(),
     decidedBy: z.string().trim().min(1).max(120).default("user"),
     materialsGeneration: z.number().int().nonnegative().nullable().optional(),
-    coverLetterAcceptedVersion: z.string().regex(/^[a-f0-9]{64}$/).nullable().optional(),
     profileVersion: z.number().int().positive().nullable().optional(),
     applicationUrl: z.string().trim().min(1).max(2048).nullable().optional(),
     partialOverrideRunId: z.string().trim().min(1).max(120).optional(),
@@ -575,15 +593,12 @@ export interface ApplyReviewRequirementLedAudit {
 }
 
 export interface ApplyReviewMaterialsPreview {
-  coverLetter?: import("./cover-letter.js").CoverLetterAccepted | null;
-  coverLetterPdfError?: string | null;
   materialsGeneration: number | null;
   resumeText: string | null;
   resumeTextArtifactId: string | null;
   resumePdfArtifactId: string | null;
   resumePdfLayoutBoxes: ResumeLayoutBox[];
   profileSourceFields: ApplyReviewProfileSourceField[];
-  coverLetterText: string | null;
   requirementLedAudit?: ApplyReviewRequirementLedAudit | null;
   resumeTemplate?: ResumeTemplateState | null;
 }
@@ -622,6 +637,7 @@ export const RESUME_TEMPLATE_SECTIONS = [
   "experience",
   "education",
   "skills",
+  "languages",
 ] as const;
 export type ResumeTemplateSection = (typeof RESUME_TEMPLATE_SECTIONS)[number];
 
@@ -1004,7 +1020,6 @@ export interface ApplyReviewQueueItem {
   currentState: StageState;
   materials: {
     hasResume: boolean;
-    hasCoverLetter: boolean;
     hasPdf: boolean;
     ready: boolean;
   };
@@ -1304,9 +1319,11 @@ export type ResumeReviewCommentThreadSeedInput = z.infer<
   typeof ResumeReviewCommentThreadSeedInputSchema
 >;
 
+export const RESUME_REVIEW_COMMENT_SEED_BATCH_LIMIT = 100;
+
 export const ResumeReviewCommentThreadSeedRequestSchema = z
   .object({
-    threads: z.array(ResumeReviewCommentThreadSeedInputSchema).max(100).default([]),
+    threads: z.array(ResumeReviewCommentThreadSeedInputSchema).max(RESUME_REVIEW_COMMENT_SEED_BATCH_LIMIT).default([]),
   })
   .strict();
 export type ResumeReviewCommentThreadSeedRequest = z.infer<
@@ -1489,6 +1506,13 @@ export const OutcomeSuggestionDecisionRequestSchema = z
   .refine((value) => value.decision !== "correct" || value.outcomeKind !== undefined, {
     message: "outcomeKind is required when correcting a suggestion.",
     path: ["outcomeKind"],
+  })
+  .refine((value) => value.decision === "correct" || value.outcomeKind === undefined, {
+    message: "outcomeKind is only used when correcting a suggestion.",
+    path: ["outcomeKind"],
+  })
+  .refine((value) => value.decision !== "ignore" || (value.occurredAt === undefined && value.note === undefined), {
+    message: "An ignored suggestion cannot carry an outcome time or note.",
   });
 export type OutcomeSuggestionDecisionRequest = z.infer<
   typeof OutcomeSuggestionDecisionRequestSchema
@@ -1496,8 +1520,55 @@ export type OutcomeSuggestionDecisionRequest = z.infer<
 
 export interface OutcomeSuggestionDecisionResponse {
   ok: true;
+  disposition: "applied" | "replayed";
   suggestion: OutcomeSuggestion;
   outcome: ApplicationOutcome | null;
+}
+
+export interface OutcomeSuggestionDecisionConflict {
+  ok: false;
+  error: "outcome_suggestion_conflict" | "outcome_suggestion_replay_unverifiable";
+  suggestion: OutcomeSuggestion;
+  outcome: ApplicationOutcome | null;
+}
+
+export type OutcomeDecisionTimeProof = boolean | "invalid";
+
+/** Compare the fields that actually affected the recorded terminal decision. */
+export function compareOutcomeSuggestionDecision(
+  request: OutcomeSuggestionDecisionRequest,
+  suggestion: OutcomeSuggestion,
+  outcome: ApplicationOutcome | null,
+  occurredAtProvided: OutcomeDecisionTimeProof,
+): "replayed" | "conflict" | "unverifiable" {
+  const savedStatus = suggestion.status;
+  if (!suggestion.decidedAt || !["accepted", "corrected", "ignored"].includes(savedStatus)) return "unverifiable";
+  if (savedStatus === "ignored") {
+    if (suggestion.decidedOutcomeId !== null || outcome !== null || occurredAtProvided === true) return "unverifiable";
+  } else {
+    if (!outcome || outcome.outcomeId !== suggestion.decidedOutcomeId ||
+        outcome.suggestionId !== suggestion.suggestionId || outcome.jobKey !== suggestion.jobKey ||
+        outcome.evidenceId !== suggestion.evidenceId || outcome.source !== "email_suggestion" ||
+        (savedStatus === "accepted" && outcome.kind !== suggestion.suggestedKind) ||
+        (occurredAtProvided === false && outcome.occurredAt !== suggestion.decidedAt)) return "unverifiable";
+  }
+  const requestedStatus = request.decision === "accept" ? "accepted"
+    : request.decision === "correct" ? "corrected" : "ignored";
+  if (savedStatus !== requestedStatus || (request.reason ?? null) !== suggestion.decisionReason) {
+    return "conflict";
+  }
+  if (request.decision === "ignore") {
+    return occurredAtProvided === false ? "replayed" : "unverifiable";
+  }
+  if (!outcome) return "unverifiable";
+  const requestedKind = request.decision === "correct" ? request.outcomeKind : suggestion.suggestedKind;
+  if (outcome.kind !== requestedKind || outcome.note !== (request.note ?? null)) return "conflict";
+  const suppliedTime = request.occurredAt !== undefined;
+  if ((suppliedTime && request.occurredAt !== outcome.occurredAt) ||
+      (!suppliedTime && outcome.occurredAt !== suggestion.decidedAt)) return "conflict";
+  const recordedTimeProvided = typeof occurredAtProvided === "boolean" ? occurredAtProvided : null;
+  if (recordedTimeProvided === null) return "unverifiable";
+  return suppliedTime === recordedTimeProvided ? "replayed" : "conflict";
 }
 
 export interface ApplicationOutcomeListResponse {
@@ -1629,6 +1700,7 @@ export type BulkPermanentDeleteRequest = z.infer<typeof BulkPermanentDeleteReque
 
 export const BulkRetryFailedRequestSchema = BulkJobMutationRequestBaseSchema
   .extend({
+    resetAttempts: z.boolean().optional(),
     runAfter: z.boolean().default(false),
     workers: z.coerce.number().int().min(1).max(16).default(1),
     minScore: z.coerce.number().int().min(0).max(10).default(7),
@@ -1691,6 +1763,7 @@ const ProfilePersonalSchema = z
     website_url: z.string().default(""),
     password: z.string().default(""),
   })
+  .passthrough()
   .partial();
 
 const ProfileWorkAuthSchema = z
@@ -1699,6 +1772,7 @@ const ProfileWorkAuthSchema = z
     require_sponsorship: z.string().default(""),
     work_permit_type: z.string().default(""),
   })
+  .passthrough()
   .partial();
 
 const ProfileCompensationSchema = z
@@ -1709,6 +1783,7 @@ const ProfileCompensationSchema = z
     salary_range_max: z.string().default(""),
     currency_conversion_note: z.string().default(""),
   })
+  .passthrough()
   .partial();
 
 const ProfileAvailabilitySchema = z
@@ -1717,7 +1792,21 @@ const ProfileAvailabilitySchema = z
     available_for_full_time: z.string().default(""),
     available_for_contract: z.string().default(""),
   })
+  .passthrough()
   .partial();
+
+export const TargetLocationBindingSchema = z.object({
+  rowIndex: z.number().int().nonnegative().max(99),
+  text: z.string().trim().min(1).max(300),
+  provider: z.literal("photon"),
+  placeId: z.string().min(1).max(200),
+  displayName: z.string().trim().min(1).max(1000),
+  latitude: z.number().finite().min(-90).max(90),
+  longitude: z.number().finite().min(-180).max(180),
+  selectedAt: z.string().datetime({ offset: true }),
+  provenance: z.literal("user_selected"),
+}).strict();
+export type TargetLocationBinding = z.infer<typeof TargetLocationBindingSchema>;
 
 const ProfileExperienceMetadataSchema = z
   .object({
@@ -1731,8 +1820,10 @@ const ProfileExperienceMetadataSchema = z
     target_functions: z.string().default(""),
     target_specializations: z.string().default(""),
     target_locations: z.string().default(""),
+    target_location_bindings: z.array(TargetLocationBindingSchema).max(100).optional(),
     target_work_models: z.string().default(""),
   })
+  .passthrough()
   .partial();
 
 const ProfileEeoSchema = z
@@ -1742,6 +1833,7 @@ const ProfileEeoSchema = z
     veteran_status: z.string().default("Decline to self-identify"),
     disability_status: z.string().default("Decline to self-identify"),
   })
+  .passthrough()
   .partial();
 
 const ProfileAchievementEvidenceSchema = z.object({
@@ -1757,7 +1849,7 @@ const ProfileAchievementEvidenceSchema = z.object({
   user_confirmed: z.boolean().default(false),
   confirmation_review_required: z.boolean().optional(),
   tags: z.array(z.string()).default([]),
-});
+}).passthrough();
 
 const ProfileExperienceEntrySchema = z.object({
   id: z.string().min(1),
@@ -1767,8 +1859,9 @@ const ProfileExperienceEntrySchema = z.object({
   location: z.string().default(""),
   summary: z.string().default(""),
   bullets: z.array(z.string()).default([]),
+  achievement_ids: z.array(z.string()).optional(),
   achievement_evidence: z.array(ProfileAchievementEvidenceSchema).default([]),
-});
+}).passthrough();
 
 const ProfileEducationEntrySchema = z.object({
   id: z.string().min(1),
@@ -1776,13 +1869,19 @@ const ProfileEducationEntrySchema = z.object({
   institution: z.string().default(""),
   location: z.string().default(""),
   date: z.string().default(""),
-});
+}).passthrough();
 
 const ProfileSkillCategorySchema = z.object({
   id: z.string().min(1),
   label: z.string().min(1),
   items: z.array(z.string()).default([]),
-});
+}).passthrough();
+
+const ProfileLanguageEntrySchema = z.object({
+  id: z.string().min(1),
+  language: z.string().default(""),
+  proficiency: z.string().default(""),
+}).passthrough();
 
 const ProfileTailoringPolicySchema = z
   .object({
@@ -1796,52 +1895,8 @@ const ProfileTailoringPolicySchema = z
     auto_approvable_claim_modes: z.array(z.enum(CLAIM_MODES)).default(["verified_only", "evidence_reframing"]),
     allow_adjacent_achievement_drafts: z.boolean().default(false),
   })
-  .partial()
-  .default({})
-  .transform((policy) => normalizeProfileTailoringPolicy(policy));
-
-function normalizeProfileTailoringPolicy(policy: {
-  mode?: (typeof TAILORING_MODES)[number] | undefined;
-  allow_title_reframing?: boolean | undefined;
-  allow_achievement_rewriting?: boolean | undefined;
-  allow_skill_reordering?: boolean | undefined;
-  allow_summary_rewrite?: boolean | undefined;
-  allow_minor_inference?: boolean | undefined;
-  claim_mode?: (typeof CLAIM_MODES)[number] | undefined;
-  auto_approvable_claim_modes?: Array<(typeof CLAIM_MODES)[number]> | undefined;
-  allow_adjacent_achievement_drafts?: boolean | undefined;
-}) {
-  const mode = policy.mode ?? "balanced";
-  const hasExplicitClaimMode = policy.claim_mode !== undefined;
-  let claimMode: (typeof CLAIM_MODES)[number] = policy.claim_mode ?? "evidence_reframing";
-  if (!hasExplicitClaimMode && mode === "strict") {
-    claimMode = "verified_only";
-  } else if (!hasExplicitClaimMode && policy.allow_adjacent_achievement_drafts === true) {
-    claimMode = "draft_requires_confirmation";
-  } else if (!hasExplicitClaimMode && policy.allow_minor_inference === true) {
-    claimMode = "adjacent_translation";
-  }
-  const autoApprovable = (policy.auto_approvable_claim_modes ?? ["verified_only", "evidence_reframing"]).filter(
-    (claimMode): claimMode is (typeof AUTO_APPROVABLE_CLAIM_MODES)[number] =>
-      (AUTO_APPROVABLE_CLAIM_MODES as readonly string[]).includes(claimMode),
-  );
-  const normalized = {
-    mode,
-    allow_title_reframing: false,
-    allow_achievement_rewriting: policy.allow_achievement_rewriting ?? mode !== "strict",
-    allow_skill_reordering: policy.allow_skill_reordering ?? mode !== "strict",
-    allow_summary_rewrite: policy.allow_summary_rewrite ?? mode !== "strict",
-    allow_minor_inference: policy.allow_minor_inference ?? false,
-    claim_mode: claimMode,
-    auto_approvable_claim_modes: autoApprovable.length
-      ? autoApprovable
-      : mode === "strict" && policy.auto_approvable_claim_modes === undefined
-        ? (["verified_only"] as const)
-        : (["verified_only", "evidence_reframing"] as const),
-    allow_adjacent_achievement_drafts: claimMode === "draft_requires_confirmation",
-  };
-  return normalized;
-}
+  .passthrough()
+  .prefault({});
 
 const ProfileWritingStyleSchema = z
   .object({
@@ -1851,6 +1906,7 @@ const ProfileWritingStyleSchema = z
     keyword_density: z.enum(KEYWORD_DENSITIES).default("natural"),
     avoid_first_person: z.boolean().default(true),
   })
+  .passthrough()
   .partial();
 
 const ProfileRevisionGatesSchema = z
@@ -1859,6 +1915,7 @@ const ProfileRevisionGatesSchema = z
     must_have_coverage: z.number().min(0).max(1).default(0.85),
     max_revision_attempts: z.number().int().min(0).default(1),
   })
+  .passthrough()
   .partial();
 
 // z.record silently drops an own __proto__ key. Experience IDs are opaque
@@ -1887,11 +1944,13 @@ const ProfileTailoringRulesSchema = z
     writing_style: ProfileWritingStyleSchema.default({}),
     revision_gates: ProfileRevisionGatesSchema.default({}),
   })
+  .passthrough()
   .partial();
 
 const ProfileResumeMasterSchema = z.object({
   executive_profile: z
     .object({ baseline_text: z.string().default("") })
+    .passthrough()
     .partial()
     .default({}),
   experience_entries: z.array(ProfileExperienceEntrySchema).min(1, {
@@ -1899,13 +1958,15 @@ const ProfileResumeMasterSchema = z.object({
   }),
   education_entries: z.array(ProfileEducationEntrySchema).default([]),
   skill_categories: z.array(ProfileSkillCategorySchema).default([]),
+  language_entries: z.array(ProfileLanguageEntrySchema).default([]),
   tailoring_rules: ProfileTailoringRulesSchema.default({}),
-});
+}).passthrough();
 
 const ProfileResumeConstraintsSchema = z
   .object({
     real_metrics: z.array(z.string()).default([]),
   })
+  .passthrough()
   .partial();
 
 const NullableAttestationSchema = z.boolean().nullable().default(null);
@@ -1928,12 +1989,14 @@ const ProfileApplicationAttestationsSchema = z
       .record(z.string(), z.union([z.boolean(), z.string(), z.null()]))
       .default({}),
   })
+  .passthrough()
   .default(DEFAULT_APPLICATION_ATTESTATIONS);
 
 const ProfileApplicationPreferencesSchema = z
   .object({
     how_heard: z.string().default(""),
   })
+  .passthrough()
   .default({ how_heard: "" });
 
 /** Canonical profile shape. ``passthrough()`` preserves forward-compatible
@@ -1962,18 +2025,26 @@ export const ProfileUpdateRequestSchema = z
     style: z.unknown().optional(),
     styleText: z.string().optional(),
     templateText: z.string().optional(),
-    expectedProfileVersion: z.number().int().positive().optional(),
-    acceptedCandidateInterpretationId: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    expectedProfileVersion: z.number().int().positive().nullable().optional(),
+    acceptedCandidateInterpretationId: z.string().trim().min(1).max(240).optional(),
+    importStyleReceiptId: z.string().uuid().optional(),
+    importReview: z.object({
+      attemptId: z.string().uuid(),
+      determinationId: z.string().trim().min(1).max(240),
+      draftId: z.string().min(1).max(160),
+      sections: z.array(z.enum(["personal", "summary", "experience", "education", "skills", "style"]))
+        .min(1).max(6).refine((values) => new Set(values).size === values.length),
+      personalFields: z.array(z.enum(["full_name", "email", "phone", "linkedin_url", "github_url", "website_url", "city", "country"]))
+        .max(8).refine((values) => new Set(values).size === values.length),
+    }).strict().optional(),
   })
   .strict();
 export type ProfileUpdateRequest = z.infer<typeof ProfileUpdateRequestSchema>;
 
-const ProfileEvidenceIdSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(160)
-  .regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/, "invalid evidence id");
+const ProfileCitationSchema = z.object({
+  source_id: z.string().min(1),
+  quote: z.string().min(1),
+}).strict();
 
 export const TargetRoleSuggestionRequestSchema = z
   .object({
@@ -1985,13 +2056,13 @@ export type TargetRoleSuggestionRequest = z.infer<typeof TargetRoleSuggestionReq
 
 export const TargetRoleSuggestionSchema = z
   .object({
-    title: z.string().trim().min(1).max(100),
+    title: z.string().min(1).max(100),
     classification: z.enum(["direct", "adjacent"]),
     track: TrackCodeSchema,
     seniority: SeniorityCodeSchema,
-    evidenceIds: z.array(ProfileEvidenceIdSchema).min(1).max(8),
-    citations: z.array(DeterminationCitationSchema).min(1).max(8),
-    rationale: z.string().trim().min(1).max(240),
+    evidenceIds: z.array(z.string().min(1)).min(1).max(8),
+    citations: z.array(ProfileCitationSchema).min(1).max(8),
+    rationale: z.string().min(1).max(240),
   })
   .strict();
 export type TargetRoleSuggestion = z.infer<typeof TargetRoleSuggestionSchema>;
@@ -1999,40 +2070,45 @@ export type TargetRoleSuggestion = z.infer<typeof TargetRoleSuggestionSchema>;
 export const TargetPreferenceSuggestionSchema = z
   .object({
     location: z.string().max(100),
-    workModel: WorkModelCodeSchema,
-    evidenceIds: z.array(ProfileEvidenceIdSchema).min(1).max(8),
-    citations: z.array(DeterminationCitationSchema).min(1).max(8),
+    workModel: z.enum(["Remote", "Hybrid", "On-site", ""]),
+    evidenceIds: z.array(z.string().min(1)).min(1).max(8),
+    citations: z.array(ProfileCitationSchema).min(1).max(8),
     rationale: z.string().min(1).max(240),
   })
-  .strict()
-  .refine((value) => value.location.length > 0 || value.workModel.length > 0);
+  .strict().refine((value) => Boolean(value.location.trim() || value.workModel));
 export type TargetPreferenceSuggestion = z.infer<typeof TargetPreferenceSuggestionSchema>;
 
 export const TargetRoleSuggestionResultSchema = z
   .object({
     profileVersion: z.number().int().positive(),
-    determinationId: z.string().regex(/^[a-f0-9]{64}$/),
-    status: z.enum(["pending_confirmation", "confirmed"]),
+    determinationId: z.string().min(1),
+    provenance: ModelReceiptSchema,
+    status: z.literal("pending_confirmation"),
     suggestions: z.array(TargetRoleSuggestionSchema).max(5),
-    preferenceSuggestions: z.array(TargetPreferenceSuggestionSchema).max(5).default([]),
+    preferenceSuggestions: z.array(TargetPreferenceSuggestionSchema).max(5),
     strategy: z.literal("model"),
-    warnings: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
+    warnings: z.array(z.string()),
+    citations: z.array(ProfileCitationSchema).min(1),
+    rationale: z.string(),
   })
-  .strict();
+  .strict().refine((value) => value.determinationId === value.provenance.receipt_id);
 export type TargetRoleSuggestionResult = z.infer<typeof TargetRoleSuggestionResultSchema>;
 
 export const TargetRoleSuggestionResponseSchema = z
   .object({
     ok: z.literal(true),
     profileVersion: z.number().int().positive(),
-    determinationId: z.string().regex(/^[a-f0-9]{64}$/),
-    status: z.enum(["pending_confirmation", "confirmed"]),
+    determinationId: z.string().min(1),
+    provenance: ModelReceiptSchema,
+    status: z.literal("pending_confirmation"),
     suggestions: z.array(TargetRoleSuggestionSchema).max(5),
-    preferenceSuggestions: z.array(TargetPreferenceSuggestionSchema).max(5).optional(),
+    preferenceSuggestions: z.array(TargetPreferenceSuggestionSchema).max(5),
     strategy: z.literal("model"),
-    warnings: z.array(z.string().trim().min(1).max(120)).max(8).default([]),
+    warnings: z.array(z.string()),
+    citations: z.array(ProfileCitationSchema).min(1),
+    rationale: z.string(),
   })
-  .strict();
+  .strict().refine((value) => value.determinationId === value.provenance.receipt_id);
 export type TargetRoleSuggestionResponse = z.infer<typeof TargetRoleSuggestionResponseSchema>;
 
 export const RequiredBulletSuggestionRequestSchema = z
@@ -2045,13 +2121,13 @@ export type RequiredBulletSuggestionRequest = z.infer<typeof RequiredBulletSugge
 
 export const RequiredBulletSuggestionSourceSchema = z
   .object({
-    sourceId: z.string().min(1).max(240).refine((value) => value.trim().length > 0),
+    sourceId: z.string().min(1),
     identityKind: z.enum(["canonical_achievement", "snapshot_bullet"]),
-    excerpt: z.string().min(1).max(500),
-    fieldPath: z.string().trim().min(1).max(240),
-    experienceId: z.string().min(1).max(160).refine((value) => value.trim().length > 0),
-    experienceTitle: z.string().min(1).max(160).refine((value) => value.trim().length > 0),
-    experienceCompany: z.string().min(1).max(160).refine((value) => value.trim().length > 0),
+    excerpt: z.string().min(1),
+    fieldPath: z.string().min(1),
+    experienceId: z.string().min(1),
+    experienceTitle: z.string().min(1),
+    experienceCompany: z.string().min(1),
     bulletIndex: z.number().int().nonnegative(),
     requiredBulletIndex: z.number().int().nonnegative(),
   })
@@ -2062,11 +2138,12 @@ export const RequiredBulletSuggestionSchema = z
   .object({
     id: z.string().trim().min(1).max(320),
     kind: z.enum(["grammar", "relevance", "achievement_framing", "missing_evidence"]),
-    originalText: z.string().min(1).max(2_000),
-    proposedText: z.string().min(1).max(2_000).nullable(),
+    originalText: z.string().min(1),
+    proposedText: z.string().min(1).nullable(),
     canApply: z.boolean(),
-    guidance: z.string().trim().min(1).max(500),
+    guidance: z.string().min(1).max(500),
     source: RequiredBulletSuggestionSourceSchema,
+    citations: z.array(ProfileCitationSchema).min(1),
   })
   .strict()
   .superRefine((suggestion, context) => {
@@ -2088,9 +2165,15 @@ export const RequiredBulletSuggestionResponseSchema = z
     strategy: z.literal("model_v1"),
     modelUsed: z.boolean(),
     truncated: z.boolean(),
-    determination: DeterminationEnvelopeSchema.optional(),
+    citations: z.array(ProfileCitationSchema),
+    rationale: z.string(),
+    determinationId: z.string().min(1).optional(),
+    provenance: ModelReceiptSchema.optional(),
   })
-  .strict().refine(value=>!value.modelUsed || Boolean(value.determination), "A model judgment requires its persisted determination");
+  .strict().refine(
+    (value) => !value.modelUsed || (value.provenance !== undefined && value.determinationId === value.provenance.receipt_id && value.citations.length > 0),
+    "A model judgment requires its persisted receipt and citations",
+  );
 export type RequiredBulletSuggestionResponse = z.infer<typeof RequiredBulletSuggestionResponseSchema>;
 
 export const ProfileImportRequestSchema = z
@@ -2115,50 +2198,6 @@ export const LlmLaneValues = [
   "compensation",
 ] as const;
 export type LlmLane = (typeof LlmLaneValues)[number];
-
-const laneTokenLimitsSchema = z
-  .object({
-    discovery: z.number().int().min(0).optional(),
-    enrichment: z.number().int().min(0).optional(),
-    scoring: z.number().int().min(0).optional(),
-    tailoring: z.number().int().min(0).optional(),
-    apply: z.number().int().min(0).optional(),
-    contact: z.number().int().min(0).optional(),
-    interview: z.number().int().min(0).optional(),
-    profile: z.number().int().min(0).optional(),
-    compensation: z.number().int().min(0).optional(),
-  })
-  .strict();
-
-export const SettingsUpdateRequestSchema = z
-  .object({
-    applyConcurrency: z.coerce.number().int().min(1).max(16).optional(),
-    pipelineInternalConcurrency: z.coerce.number().int().min(1).max(16).optional(),
-    workerActivitySlots: z.coerce.number().int().min(1).max(64).optional(),
-    dailyBudgetUsd: z.coerce.number().min(0).optional(),
-    laneTokenLimits: laneTokenLimitsSchema.optional(),
-    analysisLegs: z.array(z.enum(["codex", "claude", "google"])).min(1).optional(),
-    defaultLlmModel: z.string().trim().min(1).max(160).nullable().optional(),
-    codexReasoningEfforts: z.record(z.string().trim().min(1).max(160), z.string().trim().min(1).max(40).nullable()).refine((value) => Object.keys(value).length <= 512).optional(),
-    tailoringGeneratorModels: z.array(z.string().trim().min(1).max(160)).min(1).nullable().optional(),
-    tailoringJudgeModel: z.string().trim().min(1).max(160).nullable().optional(),
-    resumeVoicePolish: z.boolean().optional(),
-    coverLetterGeneration: z.boolean().optional(),
-    applyMaxBudgetUsd: z.coerce.number().min(0).optional(),
-    applyTimeoutSeconds: z.coerce.number().int().min(60).max(3600).optional(),
-    scoreCriteria: z.string().max(8000).optional(),
-    targetCriteria: z.string().max(8000).optional(),
-    preferredModels: z
-      .object({
-        codex: z.string().trim().min(1).max(160).nullable().optional(),
-        claude: z.string().trim().min(1).max(160).nullable().optional(),
-        google: z.string().trim().min(1).max(160).nullable().optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
-export type SettingsUpdateRequest = z.infer<typeof SettingsUpdateRequestSchema>;
 
 export const CredentialKeys = [
   "OPENAI_API_KEY",
@@ -2410,208 +2449,6 @@ export const ScoringKeywordAggregationResponseSchema = z
   .strict();
 export type ScoringKeywordAggregationResponse = z.infer<typeof ScoringKeywordAggregationResponseSchema>;
 
-export const LearningRecommendationIdSchema = z
-  .string()
-  .regex(/^learning-recommendation:[a-f0-9]{64}$/);
-
-export const LearningRecommendationReviewIdSchema = z
-  .string()
-  .regex(/^learning-recommendation-review:[a-f0-9]{64}$/);
-
-const LearningEvidenceIdentifierSchema = z
-  .string()
-  .min(1)
-  .max(200)
-  .regex(/^[A-Za-z0-9_.:-]+$/);
-
-const LearningEvidenceJobIdSchema = z
-  .string()
-  .regex(
-    /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/,
-  );
-
-export const LearningPaginationQuerySchema = z
-  .object({
-    page: z.coerce.number().int().min(1).default(1).catch(1),
-    pageSize: z.coerce.number().int().min(1).max(100).optional().catch(undefined),
-    page_size: z.coerce.number().int().min(1).max(100).optional().catch(undefined),
-  })
-  .transform((value) => ({
-    page: value.page,
-    pageSize: value.pageSize ?? value.page_size ?? 50,
-  }));
-export type LearningPaginationQuery = z.infer<typeof LearningPaginationQuerySchema>;
-
-export const TailoringPolicyRevisionListQuerySchema = LearningPaginationQuerySchema;
-export type TailoringPolicyRevisionListQuery = z.infer<
-  typeof TailoringPolicyRevisionListQuerySchema
->;
-
-export const TailoringPolicyLearnedRuleSchema = z.discriminatedUnion("ruleKey", [
-  z
-    .object({
-      ruleKey: z.literal("style_guidance"),
-      ruleValue: z.literal("preserve_user_edit_pattern"),
-    })
-    .strict(),
-  z
-    .object({
-      ruleKey: z.literal("fact_handling"),
-      ruleValue: z.literal("require_source_match"),
-    })
-    .strict(),
-  z
-    .object({
-      ruleKey: z.literal("claim_policy"),
-      ruleValue: z.literal("omit_unsupported_claims"),
-    })
-    .strict(),
-  z
-    .object({
-      ruleKey: z.literal("keyword_strategy"),
-      ruleValue: z.literal("use_supported_terms_only"),
-    })
-    .strict(),
-  z
-    .object({
-      ruleKey: z.literal("provenance_policy"),
-      ruleValue: z.literal("require_direct_evidence"),
-    })
-    .strict(),
-]);
-export type TailoringPolicyLearnedRule = z.infer<typeof TailoringPolicyLearnedRuleSchema>;
-
-export const TailoringPolicyRestoreCommandIdSchema = z.string().regex(
-  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-);
-
-export const TailoringPolicyRevisionSummarySchema = z
-  .object({
-    context: z.literal("materials"),
-    policyKind: z.literal("tailoring_rule"),
-    version: z.number().int().positive(),
-    status: z.enum(["current", "superseded"]),
-    learnedRules: z.array(TailoringPolicyLearnedRuleSchema).max(5),
-    sourceReviewId: LearningRecommendationReviewIdSchema.nullable(),
-    sourceRecommendationId: LearningRecommendationIdSchema.nullable(),
-    rollbackOfVersion: z.number().int().positive().nullable(),
-    rollbackReasonCode: z.enum(["user_requested", "historical_or_unspecified"]).nullable(),
-    restoreCommandId: TailoringPolicyRestoreCommandIdSchema.optional(),
-    restoredFromCurrentVersion: z.number().int().positive().optional(),
-    createdAt: IsoTimestampSchema,
-  })
-  .strict()
-  .refine(
-    (value) => (value.sourceReviewId === null) === (value.sourceRecommendationId === null),
-    "Policy recommendation and review provenance must be present together.",
-  )
-  .refine(
-    (value) => (value.rollbackOfVersion === null) === (value.rollbackReasonCode === null),
-    "Policy rollback version and reason must be present together.",
-  )
-  .refine(
-    (value) => (value.restoreCommandId === undefined) === (value.restoredFromCurrentVersion === undefined),
-    "Restore command and reviewed predecessor must be present together.",
-  );
-export type TailoringPolicyRevisionSummary = z.infer<
-  typeof TailoringPolicyRevisionSummarySchema
->;
-
-export const TailoringPolicyRevisionListResponseSchema = z
-  .object({
-    ok: z.literal(true),
-    revisions: z.array(TailoringPolicyRevisionSummarySchema).max(100),
-    page: z.number().int().min(1),
-    pageSize: z.number().int().min(1).max(100),
-    total: z.number().int().nonnegative(),
-    totalPages: z.number().int().nonnegative(),
-  })
-  .strict()
-  .refine(
-    (value) => value.revisions.length <= value.pageSize,
-    "Policy revision page exceeds its declared page size.",
-  )
-  .refine(
-    (value) => value.revisions.filter((revision) => revision.status === "current").length <= 1,
-    "Policy revision page contains multiple current revisions.",
-  );
-export type TailoringPolicyRevisionListResponse = z.infer<
-  typeof TailoringPolicyRevisionListResponseSchema
->;
-
-export const LearningRecommendationSummarySchema = z
-  .object({
-    recommendationId: LearningRecommendationIdSchema,
-    derivationVersion: z.number().int().positive(),
-    evaluationFixtureVersion: z.number().int().positive(),
-    context: z.literal("materials"),
-    policyKind: z.literal("tailoring_rule"),
-    signalKind: z.enum([
-      "style_preference",
-      "factual_correction",
-      "claim_policy_correction",
-      "keyword_strategy",
-      "provenance_dispute",
-    ]),
-    ruleKey: z.string().min(1).max(80).regex(/^[a-z0-9_]+$/),
-    ruleValue: z.string().min(1).max(160).regex(/^[a-z0-9_]+$/),
-    allowlistVersion: z.number().int().positive(),
-    status: z.literal("pending"),
-    active: z.boolean(),
-    observedSignalCount: z.number().int().min(3),
-    observedJobCount: z.number().int().min(2),
-    minimumSignalCount: z.number().int().min(3),
-    minimumJobCount: z.number().int().min(2),
-    confidenceLimit: z.literal("sample_gated_no_population_inference"),
-    supportingEvidenceCount: z.number().int().min(3),
-    contradictingEvidenceCount: z.number().int().nonnegative(),
-    tombstoneCount: z.number().int().nonnegative(),
-    derivedAt: IsoTimestampSchema,
-  })
-  .strict();
-export type LearningRecommendationSummary = z.infer<
-  typeof LearningRecommendationSummarySchema
->;
-
-export const LearningRecommendationEvidenceListQuerySchema =
-  LearningPaginationQuerySchema;
-export type LearningRecommendationEvidenceListQuery = z.infer<
-  typeof LearningRecommendationEvidenceListQuerySchema
->;
-
-export const LearningRecommendationEvidenceLinkSchema = z
-  .object({
-    signalId: LearningEvidenceIdentifierSchema,
-    evidenceRole: z.enum(["supporting", "contradicting"]),
-    sourceKind: z.literal("tailoring_feedback_signal"),
-    sourceRevision: z.number().int().positive(),
-    jobId: LearningEvidenceJobIdSchema,
-    recordedAt: IsoTimestampSchema,
-  })
-  .strict();
-export type LearningRecommendationEvidenceLink = z.infer<
-  typeof LearningRecommendationEvidenceLinkSchema
->;
-
-export const LearningRecommendationEvidenceListResponseSchema = z
-  .object({
-    ok: z.literal(true),
-    recommendationId: LearningRecommendationIdSchema,
-    evidence: z.array(LearningRecommendationEvidenceLinkSchema).max(100),
-    page: z.number().int().min(1),
-    pageSize: z.number().int().min(1).max(100),
-    total: z.number().int().nonnegative(),
-    totalPages: z.number().int().nonnegative(),
-  })
-  .strict()
-  .refine(
-    (value) => value.evidence.length <= value.pageSize,
-    "Recommendation evidence page exceeds its declared page size.",
-  );
-export type LearningRecommendationEvidenceListResponse = z.infer<
-  typeof LearningRecommendationEvidenceListResponseSchema
->;
-
 export const ArtifactListQuerySchema = z
   .object({
     page: z.coerce.number().int().min(1).default(1).catch(1),
@@ -2751,6 +2588,8 @@ export interface WorkflowRunSummary {
 }
 
 export interface WorkflowRunTimelineEvent {
+  /** Recorded execution identity; absent only for legacy events. */
+  readonly temporalRunId?: string | null;
   readonly eventType: string;
   readonly occurredAt: string | null;
   readonly status: string | null;
@@ -3675,6 +3514,7 @@ export const PipelineEtaSchema = z.discriminatedUnion("status", [
         "unsupported",
         "unknown_scope",
         "contention_unbounded",
+        "accounting_incomplete",
       ]),
       asOf: z.string(),
     })
@@ -4104,8 +3944,8 @@ export interface DigestState {
 }
 
 export interface DailyDigestBudget {
-  status: "ok" | "over_budget";
-  estimatedUsd: number;
+  status: "ok" | "over_budget" | "incomplete";
+  estimatedUsd: number | null;
   dailyBudgetUsd: number;
   remainingUsd: number | null;
   unlimited: boolean;
@@ -4118,11 +3958,11 @@ export interface DailyDigest {
   since: string | null;
   highFitThreshold: number;
   newMatches: {
-    count: number;
-    highFitCount: number;
+    count: number | null;
+    highFitCount: number | null;
   };
   blockedSources: {
-    count: number;
+    count: number | null;
     sources: Array<{
       sourceId: string;
       displayName?: string;
@@ -4131,22 +3971,23 @@ export interface DailyDigest {
     }>;
   };
   reviewNeededMaterials: {
-    count: number;
+    count: number | null;
   };
   staleScores: {
-    count: number;
+    count: number | null;
   };
   pendingApprovals: {
-    count: number;
+    count: number | null;
   };
   followUpsDue: {
-    count: number;
+    count: number | null;
     derived: true;
     thresholdDays: typeof DIGEST_FOLLOW_UP_THRESHOLD_DAYS;
     dayBoundary: typeof DIGEST_DAY_BOUNDARY;
   };
   budget: DailyDigestBudget;
   deepLinks: Record<DailyDigestItemKey, string>;
+  unavailable: string[];
 }
 
 export const DigestAcknowledgeRequestSchema = z
@@ -4313,53 +4154,6 @@ export interface ArtifactDetail {
   layoutBoxes: ResumeLayoutBox[];
   determinations: DeterminationEnvelope[];
   tailoringExplanation: ArtifactTailoringExplanation | null;
-}
-
-export type ArtifactComparisonCoverageState =
-  | "recorded"
-  | "left_not_recorded"
-  | "right_not_recorded"
-  | "not_recorded";
-
-export interface CoverageDelta {
-  coverageRecorded: boolean;
-  state: ArtifactComparisonCoverageState;
-  computedAgainst: string | null;
-  newlyCovered: string[];
-  coverageLost: string[];
-  newlyDeclared: string[];
-  declaredLost: string[];
-  stillDeclared: string[];
-  stillMissing: string[];
-}
-
-export interface ArtifactComparisonSide {
-  artifactId: string;
-  label: string;
-  title: string;
-  status: string;
-  templateId: string | null;
-  templateName: string | null;
-  coverageRecorded: boolean;
-  coverageCounts: BulletCoverageAudit["counts"] | null;
-  riskLabels: string[];
-  validation: {
-    passed: boolean | null;
-    errorCount: number;
-    warningCount: number;
-  };
-  judge: {
-    passed: boolean | null;
-    verdict: string | null;
-    score: number | null;
-    issueCount: number;
-  };
-}
-
-export interface ArtifactComparison {
-  left: ArtifactComparisonSide;
-  right: ArtifactComparisonSide;
-  coverageDelta: CoverageDelta;
 }
 
 export interface ResumeLayoutBox {
@@ -4715,9 +4509,13 @@ export interface JobMutationResponse {
 }
 
 export interface BulkRetryFailedResponse extends JobMutationResponse {
+  /** Canonical job IDs, even when a request selected jobs by URL. */
+  jobKeys: string[];
   status: string;
   runAfter: boolean;
   stageCounts: Partial<Record<Stage, number>>;
+  /** Canonical job IDs requiring an explicit re-tailor. */
+  retailorRequiredJobKeys?: string[];
   actions: ActionRunResponse[];
   eventCursor?: string | null;
   message?: string;
@@ -4756,26 +4554,6 @@ export const CorrectScoreRequestSchema = z
 export type CorrectScoreRequest = z.infer<typeof CorrectScoreRequestSchema>;
 export type CorrectScoreResponse = JobDetail;
 
-export interface JobCtrlSettings {
-  applyConcurrency: number;
-  pipelineInternalConcurrency: number;
-  workerActivitySlots: number;
-  dailyBudgetUsd: number;
-  laneTokenLimits: Record<LlmLane, number>;
-  analysisLegs: ProviderId[];
-  defaultLlmModel: string | null;
-  codexReasoningEfforts: Record<string, string>;
-  tailoringGeneratorModels: string[] | null;
-  tailoringJudgeModel: string | null;
-  resumeVoicePolish: boolean;
-  coverLetterGeneration: boolean;
-  applyMaxBudgetUsd: number;
-  applyTimeoutSeconds: number;
-  scoreCriteria: string;
-  targetCriteria: string;
-  preferredModels: Partial<Record<ProviderId, string>>;
-}
-
 export const SETTING_ACTIVATIONS = [
   "live",
   "next_poll",
@@ -4804,88 +4582,6 @@ export type EffectiveSetting<T> = {
   activation: SettingActivation;
   editable: true;
 };
-
-export interface EffectiveJobCtrlSettings {
-  dailyBudgetUsd: EffectiveSetting<number>;
-  laneTokenLimits: EffectiveSetting<Record<LlmLane, number>>;
-  applyConcurrency: EffectiveSetting<number>;
-  pipelineInternalConcurrency: EffectiveSetting<number>;
-  workerActivitySlots: EffectiveSetting<number>;
-  analysisLegs: EffectiveSetting<ProviderId[]>;
-  defaultLlmModel: EffectiveSetting<string | null>;
-  codexReasoningEfforts: EffectiveSetting<Record<string, string>>;
-  tailoringGeneratorModels: EffectiveSetting<string[] | null>;
-  tailoringJudgeModel: EffectiveSetting<string | null>;
-  resumeVoicePolish: EffectiveSetting<boolean>;
-  coverLetterGeneration: EffectiveSetting<boolean>;
-  applyMaxBudgetUsd: EffectiveSetting<number>;
-  applyTimeoutSeconds: EffectiveSetting<number>;
-  scoreCriteria: EffectiveSetting<string>;
-  targetCriteria: EffectiveSetting<string>;
-}
-
-export const SettingsResponseSchema = z
-  .object({
-    ok: z.literal(true),
-    settings: z
-      .object({
-        applyConcurrency: z.number(),
-        pipelineInternalConcurrency: z.number(),
-        workerActivitySlots: z.number(),
-        dailyBudgetUsd: z.number(),
-        laneTokenLimits: laneTokenLimitsSchema.required(),
-        analysisLegs: z.array(z.enum(ProviderIds)),
-        defaultLlmModel: z.string().nullable(),
-        codexReasoningEfforts: z.record(z.string(), z.string()),
-        tailoringGeneratorModels: z.array(z.string()).nullable(),
-        tailoringJudgeModel: z.string().nullable(),
-        resumeVoicePolish: z.boolean(),
-        coverLetterGeneration: z.boolean(),
-        applyMaxBudgetUsd: z.number(),
-        applyTimeoutSeconds: z.number(),
-        scoreCriteria: z.string(),
-        targetCriteria: z.string(),
-        preferredModels: z
-          .object({
-            codex: z.string().optional(),
-            claude: z.string().optional(),
-            google: z.string().optional(),
-          })
-          .strict(),
-      })
-      .strict(),
-    effectiveSettings: z
-      .object({
-        dailyBudgetUsd: effectiveSettingSchema(z.number()),
-        laneTokenLimits: effectiveSettingSchema(laneTokenLimitsSchema.required()),
-        applyConcurrency: effectiveSettingSchema(z.number()),
-        pipelineInternalConcurrency: effectiveSettingSchema(z.number()),
-        workerActivitySlots: effectiveSettingSchema(z.number()),
-        analysisLegs: effectiveSettingSchema(z.array(z.enum(ProviderIds))),
-        defaultLlmModel: effectiveSettingSchema(z.string().nullable()),
-        codexReasoningEfforts: effectiveSettingSchema(z.record(z.string(), z.string())),
-        tailoringGeneratorModels: effectiveSettingSchema(z.array(z.string()).nullable()),
-        tailoringJudgeModel: effectiveSettingSchema(z.string().nullable()),
-        resumeVoicePolish: effectiveSettingSchema(z.boolean()),
-        coverLetterGeneration: effectiveSettingSchema(z.boolean()),
-        applyMaxBudgetUsd: effectiveSettingSchema(z.number()),
-        applyTimeoutSeconds: effectiveSettingSchema(z.number()),
-        scoreCriteria: effectiveSettingSchema(z.string()),
-        targetCriteria: effectiveSettingSchema(z.string()),
-      })
-      .strict(),
-    paths: z.object({ configPath: z.string() }).strict(),
-  })
-  .strict();
-
-export interface SettingsResponse {
-  ok: true;
-  settings: JobCtrlSettings;
-  effectiveSettings: EffectiveJobCtrlSettings;
-  paths: {
-    configPath: string;
-  };
-}
 
 export const EXTENSION_CAPABILITY_VALUES = [
   "capture",
@@ -4930,219 +4626,6 @@ export interface ExtensionAutofillProfileResponse {
   ok: true;
   profileVersion: number | null;
   fields: ExtensionAutofillProfileField[];
-}
-
-export const DISCOVERY_BROWSER_SOURCE_FAMILIES = [
-  "jobspy",
-  "ats_api",
-  "workday",
-  "smartextract",
-  "enrichment",
-] as const;
-export type DiscoveryBrowserSourceFamily =
-  (typeof DISCOVERY_BROWSER_SOURCE_FAMILIES)[number];
-
-const DiscoveryBrowserTaskIdSchema = z
-  .string()
-  .trim()
-  .min(1)
-  .max(160)
-  .regex(/^[A-Za-z0-9._:-]+$/);
-
-const DiscoveryBrowserHttpUrlSchema = z
-  .string()
-  .trim()
-  .max(4096)
-  .regex(/^https?:\/\/[^\s]+$/i, "url must be a valid http(s) URL");
-
-const DiscoveryBrowserHeadersSchema = z
-  .record(z.string().trim().min(1).max(80), z.string().max(4096))
-  .refine((headers) => Object.keys(headers).length <= 32, {
-    message: "At most 32 request headers are allowed.",
-  })
-  .superRefine((headers, context) => {
-    const forbidden = new Set([
-      "connection",
-      "content-length",
-      "cookie",
-      "host",
-      "origin",
-      "referer",
-      "sec-fetch-dest",
-      "sec-fetch-mode",
-      "sec-fetch-site",
-      "user-agent",
-    ]);
-    for (const name of Object.keys(headers)) {
-      const normalized = name.toLowerCase();
-      if (
-        forbidden.has(normalized) ||
-        normalized.startsWith("sec-") ||
-        normalized.startsWith("proxy-")
-      ) {
-        context.addIssue({
-          code: "custom",
-          message: `Header ${name} is browser-owned and cannot be supplied.`,
-        });
-      }
-    }
-  });
-
-const DiscoveryBrowserRequestBodySchema = z
-  .string()
-  .max(2_000_000)
-  .refine((value) => utf8ByteLength(value) <= 2_000_000, {
-    message: "Discovery request body must not exceed 2 MB of UTF-8 data.",
-  });
-
-const DiscoveryBrowserResultBodySchema = z
-  .string()
-  .max(4_000_000)
-  .refine((value) => utf8ByteLength(value) <= 4_000_000, {
-    message: "Discovery response content must not exceed 4 MB of UTF-8 data.",
-  });
-
-export const DiscoveryBrowserRequestSchema = z.discriminatedUnion("mode", [
-  z
-    .object({
-      mode: z.literal("http_request"),
-      url: DiscoveryBrowserHttpUrlSchema,
-      method: z.enum(["GET", "POST"]),
-      headers: DiscoveryBrowserHeadersSchema.default({}),
-      body: DiscoveryBrowserRequestBodySchema.optional(),
-    })
-    .strict()
-    .refine((request) => request.method === "POST" || request.body === undefined, {
-      message: "GET browser requests cannot include a body.",
-      path: ["body"],
-    }),
-  z
-    .object({
-      mode: z.literal("rendered_page"),
-      url: DiscoveryBrowserHttpUrlSchema,
-    })
-    .strict(),
-]);
-export type DiscoveryBrowserRequest = z.infer<typeof DiscoveryBrowserRequestSchema>;
-
-export const DiscoveryBrowserTaskCreateSchema = z
-  .object({
-    taskId: DiscoveryBrowserTaskIdSchema,
-    workflowId: z.string().trim().min(1).max(200),
-    temporalRunId: z.string().trim().min(1).max(200),
-    sourceFamily: z.enum(DISCOVERY_BROWSER_SOURCE_FAMILIES),
-    sourceId: z.string().trim().min(1).max(200).optional(),
-    request: DiscoveryBrowserRequestSchema,
-    timeoutMs: z.number().int().min(1_000).max(120_000).default(60_000),
-  })
-  .strict();
-export type DiscoveryBrowserTaskCreateRequest = z.infer<
-  typeof DiscoveryBrowserTaskCreateSchema
->;
-
-export const DiscoveryBrowserTaskResultSchema = z.discriminatedUnion("status", [
-  z
-    .object({
-      status: z.literal("succeeded"),
-      finalUrl: DiscoveryBrowserHttpUrlSchema,
-      statusCode: z.number().int().min(0).max(599).nullable(),
-      contentType: z.string().trim().max(300).default(""),
-      title: z.string().max(500).default(""),
-      browserUserAgent: z.string().max(500).optional(),
-      bodyText: DiscoveryBrowserResultBodySchema,
-      bodyHtml: DiscoveryBrowserResultBodySchema.optional(),
-      visibleApplyControls: z.array(z.object({
-        href: z.string().trim().min(1).max(2048),
-        jobId: z.string().trim().min(1).max(200),
-      }).strict()).max(20).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      status: z.literal("failed"),
-      errorCode: z.enum([
-        "navigation_failed",
-        "request_failed",
-        "response_too_large",
-        "unsafe_redirect",
-        "unsupported_page",
-      ]),
-      message: z.string().trim().min(1).max(500),
-      retryable: z.boolean(),
-    })
-    .strict(),
-]);
-export type DiscoveryBrowserTaskResult = z.infer<
-  typeof DiscoveryBrowserTaskResultSchema
->;
-
-export const DiscoveryBrowserTaskCompletionSchema = z
-  .object({
-    leaseId: z.string().uuid(),
-    result: DiscoveryBrowserTaskResultSchema,
-  })
-  .strict();
-export type DiscoveryBrowserTaskCompletionRequest = z.infer<
-  typeof DiscoveryBrowserTaskCompletionSchema
->;
-
-export const DiscoveryBrowserExtensionClaimSchema = z
-  .object({
-    installationId: z.string().uuid(),
-    extensionVersion: z.string().trim().min(1).max(80),
-    replace: z.boolean().default(false),
-  })
-  .strict();
-export type DiscoveryBrowserExtensionClaimRequest = z.infer<
-  typeof DiscoveryBrowserExtensionClaimSchema
->;
-
-export interface DiscoveryBrowserTaskAcceptedResponse {
-  ok: true;
-  taskId: string;
-  status: "pending" | "leased" | "succeeded" | "failed";
-}
-
-export type DiscoveryBrowserTaskLeaseResponse =
-  | {
-      ok: true;
-      status: "idle";
-    }
-  | {
-      ok: true;
-      status: "task";
-      taskId: string;
-      leaseId: string;
-      timeoutMs: number;
-      request: DiscoveryBrowserRequest;
-    };
-
-export type DiscoveryBrowserTaskStatusResponse =
-  | {
-      ok: true;
-      taskId: string;
-      status: "pending" | "leased";
-    }
-  | {
-      ok: true;
-      taskId: string;
-      status: "succeeded" | "failed";
-      result: DiscoveryBrowserTaskResult;
-    };
-
-export interface DiscoveryBrowserBridgeStatusResponse {
-  ok: true;
-  connected: boolean;
-  installationBound: boolean;
-  installationIdSuffix: string | null;
-  lastSeenAt: string | null;
-  extensionVersion: string | null;
-  pendingTasks: number;
-  activeTasks: number;
-}
-
-function utf8ByteLength(value: string): number {
-  return new TextEncoder().encode(value).byteLength;
 }
 
 export const COMPENSATION_SOURCE_TYPES = [
@@ -5305,12 +4788,16 @@ export type CompensationSourcePolicyUpdateRequest = z.infer<
 
 export const DiscoverySettingsUpdateRequestSchema = z
   .object({
-    minFitScore: z.coerce.number().int().min(0).max(10).optional(),
+    expectedRevision: z.number().int().nonnegative().optional(),
+    expectedPolicyRevision: z.number().int().positive().optional(),
+    minFitScore: z.coerce.number().int().min(1).max(10).optional(),
     autoApply: z.boolean().optional(),
-    applyApprovalRequired: z.boolean().optional(),
-    boards: z.array(z.enum(["indeed", "linkedin", "zip_recruiter", "glassdoor"])).min(1).optional(),
+    applyApprovalRequired: z.literal(true).optional(),
+    boards: z.array(z.string().refine((value) => value.trim().length > 0)).optional(),
+    // Legacy serialized setting; newly admitted searches ignore this value.
     resultsPerSite: z.coerce.number().int().min(1).max(1000).optional(),
-    hoursOld: z.coerce.number().int().min(1).max(8760).optional(),
+    newJobLimit: z.coerce.number().int().min(1).max(10000).optional(),
+    hoursOld: z.coerce.number().int().min(0).max(8760).optional(),
     schedulingEnabled: z.boolean().optional(),
     scheduleCron: z.string().min(1).optional(),
     maxParallelFamilies: z.coerce.number().int().min(1).max(4).optional(),
@@ -5324,8 +4811,8 @@ export type DiscoverySettingsUpdateRequest = z.infer<typeof DiscoverySettingsUpd
 export interface DiscoverySettings {
   minFitScore: number;
   autoApply: boolean;
-  applyApprovalRequired: boolean;
-  boards: Array<"indeed" | "linkedin" | "zip_recruiter" | "glassdoor">;
+  applyApprovalRequired: true;
+  boards: string[];
   resultsPerSite: number;
   hoursOld: number;
   schedulingEnabled: boolean;
@@ -5335,32 +4822,71 @@ export interface DiscoverySettings {
   crawlUserAgentProduct: string;
   crawlUserAgentContact: string;
   source: "database";
+  [key: string]: unknown;
 }
 
+export type EffectiveDiscoverySetting<T> = EffectiveSetting<T> & { locked: false };
+export type InactiveDiscoveryResultLimitSetting = {
+  value: number;
+  source: "persisted" | "default";
+  activation: "inactive";
+  editable: false;
+  locked: true;
+};
+export type LockedDiscoveryApprovalSetting = {
+  value: true;
+  source: "persisted" | "default";
+  activation: SettingActivation;
+  editable: false;
+  locked: true;
+};
+
 export interface EffectiveDiscoverySettings {
-  minFitScore: EffectiveSetting<number>;
-  autoApply: EffectiveSetting<boolean>;
-  applyApprovalRequired: EffectiveSetting<boolean>;
-  boards: EffectiveSetting<DiscoverySettings["boards"]>;
-  resultsPerSite: EffectiveSetting<number>;
-  hoursOld: EffectiveSetting<number>;
-  schedulingEnabled: EffectiveSetting<boolean>;
-  scheduleCron: EffectiveSetting<string>;
-  maxParallelFamilies: EffectiveSetting<number>;
-  useBrowserHeaders: EffectiveSetting<boolean>;
-  crawlUserAgentProduct: EffectiveSetting<string>;
-  crawlUserAgentContact: EffectiveSetting<string>;
+  minFitScore: EffectiveDiscoverySetting<number>;
+  autoApply: EffectiveDiscoverySetting<boolean>;
+  applyApprovalRequired: LockedDiscoveryApprovalSetting;
+  boards: EffectiveDiscoverySetting<DiscoverySettings["boards"]>;
+  resultsPerSite: InactiveDiscoveryResultLimitSetting;
+  hoursOld: EffectiveDiscoverySetting<number>;
+  schedulingEnabled: EffectiveDiscoverySetting<boolean>;
+  scheduleCron: EffectiveDiscoverySetting<string>;
+  maxParallelFamilies: InactiveDiscoveryResultLimitSetting | EffectiveDiscoverySetting<number>;
+  useBrowserHeaders: EffectiveDiscoverySetting<boolean>;
+  crawlUserAgentProduct: EffectiveDiscoverySetting<string>;
+  crawlUserAgentContact: EffectiveDiscoverySetting<string>;
+  [key: string]: unknown;
 }
+
+const discoveryEffectiveSettingSchema = <T extends z.ZodType>(value: T) =>
+  effectiveSettingSchema(value).extend({ locked: z.literal(false) });
+
+const lockedDiscoveryApprovalSettingSchema = z.object({
+  value: z.literal(true),
+  source: z.enum(["persisted", "default"]),
+  activation: z.enum(SETTING_ACTIVATIONS),
+  editable: z.literal(false),
+  locked: z.literal(true),
+}).strict();
+
+const inactiveDiscoveryLimitSchema = z.object({
+          value: z.number(),
+          source: z.enum(["persisted", "default"]),
+          activation: z.literal("inactive"),
+          editable: z.literal(false),
+          locked: z.literal(true),
+        }).strict();
 
 export const DiscoverySettingsResponseSchema = z
   .object({
     ok: z.literal(true),
+    revision: z.number().int().nonnegative(),
+    policyRevision: z.number().int().positive(),
     settings: z
       .object({
         minFitScore: z.number(),
         autoApply: z.boolean(),
-        applyApprovalRequired: z.boolean(),
-        boards: z.array(z.enum(["indeed", "linkedin", "zip_recruiter", "glassdoor"])),
+        applyApprovalRequired: z.literal(true),
+        boards: z.array(z.string()),
         resultsPerSite: z.number(),
         hoursOld: z.number(),
         schedulingEnabled: z.boolean(),
@@ -5371,43 +4897,45 @@ export const DiscoverySettingsResponseSchema = z
         crawlUserAgentContact: z.string(),
         source: z.literal("database"),
       })
-      .strict(),
+      .passthrough(),
     effectiveSettings: z
       .object({
-        minFitScore: effectiveSettingSchema(z.number()),
-        autoApply: effectiveSettingSchema(z.boolean()),
-        applyApprovalRequired: effectiveSettingSchema(z.boolean()),
-        boards: effectiveSettingSchema(
-          z.array(z.enum(["indeed", "linkedin", "zip_recruiter", "glassdoor"])),
-        ),
-        resultsPerSite: effectiveSettingSchema(z.number()),
-        hoursOld: effectiveSettingSchema(z.number()),
-        schedulingEnabled: effectiveSettingSchema(z.boolean()),
-        scheduleCron: effectiveSettingSchema(z.string()),
-        maxParallelFamilies: effectiveSettingSchema(z.number()),
-        useBrowserHeaders: effectiveSettingSchema(z.boolean()),
-        crawlUserAgentProduct: effectiveSettingSchema(z.string()),
-        crawlUserAgentContact: effectiveSettingSchema(z.string()),
+        minFitScore: discoveryEffectiveSettingSchema(z.number()),
+        autoApply: discoveryEffectiveSettingSchema(z.boolean()),
+        applyApprovalRequired: lockedDiscoveryApprovalSettingSchema,
+        boards: discoveryEffectiveSettingSchema(z.array(z.string())),
+        resultsPerSite: inactiveDiscoveryLimitSchema,
+        hoursOld: discoveryEffectiveSettingSchema(z.number()),
+        schedulingEnabled: discoveryEffectiveSettingSchema(z.boolean()),
+        scheduleCron: discoveryEffectiveSettingSchema(z.string()),
+        maxParallelFamilies: z.union([inactiveDiscoveryLimitSchema, discoveryEffectiveSettingSchema(z.number())]),
+        useBrowserHeaders: discoveryEffectiveSettingSchema(z.boolean()),
+        crawlUserAgentProduct: discoveryEffectiveSettingSchema(z.string()),
+        crawlUserAgentContact: discoveryEffectiveSettingSchema(z.string()),
       })
-      .strict(),
+      .passthrough(),
   })
-  .strict();
+  .passthrough();
 
 export interface DiscoverySettingsResponse {
   ok: true;
+  revision: number;
+  policyRevision: number;
   settings: DiscoverySettings;
   effectiveSettings: EffectiveDiscoverySettings;
+  [key: string]: unknown;
 }
 
 export interface CredentialsResponse {
   ok: true;
+  revision: number;
   store: {
     kind: "config_and_native_credential_store";
     nativeStore: "macos_keychain" | "windows_credential_manager" | "linux_secret_service" | null;
     maxSecretBytes: number | null;
     available: boolean;
     unavailableReason: "inspection_failed" | "unsupported_platform" | null;
-    requiresWorkerRestart: true;
+    requiresWorkerRestart: false;
   };
   credentials: Array<{
     key: CredentialKey;
@@ -5574,8 +5102,7 @@ export interface ProviderOperationErrorResponse {
 // quarantine queue, manual-capture queue, and discovery feedback.
 //
 // These read-model rows are surfaced through ``GET /v1/discovery/...``
-// endpoints. The schemas live alongside the existing dashboard payloads so
-// the web app and the JSON-RPC contract tests share one source of truth.
+// endpoints.
 // ---------------------------------------------------------------------------
 
 export const SOURCE_KIND_VALUES = [
@@ -5666,67 +5193,6 @@ export const MANUAL_CAPTURE_MODE_VALUES = [
 ] as const;
 export type ManualCaptureModeValue = (typeof MANUAL_CAPTURE_MODE_VALUES)[number];
 
-export const SourceProposalEvidenceSchema = z.object({
-  originJobId: z.string(),
-  originPostingUrl: z.string(),
-  inputUrl: z.string(),
-  urlKind: z.enum(["posting_url", "canonical_url", "application_url"]),
-  observations: z.array(z.object({
-    observationId: z.string(), sourceId: z.string(), runId: z.string(),
-    observedUrl: z.string(), observedAt: z.string(),
-  })),
-  extraction: z.object({
-    tier: z.string().nullable(), enrichedAt: z.string().nullable(), snapshotVersion: z.number().nullable(),
-    descriptionSha256: z.string().nullable(), snapshotSha256: z.string().nullable(),
-    snapshotEvidence: z.array(z.string()).optional(),
-  }),
-  sample: z.object({ title: z.string(), company: z.string(), descriptionExcerpt: z.string() }),
-});
-export type SourceProposalEvidence = z.infer<typeof SourceProposalEvidenceSchema>;
-
-export interface SourceProposalReview {
-  coordinateKey: string;
-  sourceId: string;
-  atsKind: string | null;
-  boardToken: string | null;
-  completeness: "unknown";
-  promotionBlockedReason?: string | null;
-  evidence: SourceProposalEvidence[];
-  overlaps: { sourceId: string; state: string; seedUrl: string | null }[];
-}
-
-export interface SourceLocatorCandidateSummary {
-  candidateId: string;
-  candidateUrl: string;
-  sourceKind: SourceKindValue;
-  confidence: number;
-  detectedAtsKind: string | null;
-  employerDomainMatched: boolean;
-  manualActionReason: ManualActionReasonValue | null;
-  discoveredAt: string;
-  proposal?: SourceProposalReview;
-}
-
-export interface SourceLocatorListResponse {
-  ok: true;
-  candidates: SourceLocatorCandidateSummary[];
-}
-
-export const SourceLocatorDecisionSchema = z
-  .object({
-    reason: z.string().trim().max(400).optional(),
-  })
-  .strict();
-export type SourceLocatorDecisionRequest = z.infer<typeof SourceLocatorDecisionSchema>;
-
-export interface SourceLocatorDecisionResponse {
-  ok: true;
-  candidateId: string;
-  decision: "promote" | "reject";
-  source: SourceRegistryEntrySummary | null;
-  decidedAt: string;
-}
-
 export const QUARANTINE_REASONS = [
   "low_confidence_extraction",
   "policy_overridden",
@@ -5758,6 +5224,8 @@ export interface QuarantineListResponse {
 
 export interface ManualCaptureQueueItemSummary {
   itemId: string;
+  /** Opaque identity for the current review lifetime; not an authorization token. */
+  lifecycleId?: string | null;
   originatingUrl: string;
   sourceId: string | null;
   reason: ManualActionReasonValue;
@@ -5770,6 +5238,17 @@ export interface ManualCaptureListResponse {
   ok: true;
   items: ManualCaptureQueueItemSummary[];
 }
+
+export const ManualCaptureSupersedeSchema = z.object({
+  expectedLifecycleId: z.string().regex(/^[0-9a-f]{64}$/),
+}).strict();
+export interface ManualCaptureSupersedeResponse {
+  ok: true;
+  itemId: string;
+  lifecycleId: string;
+}
+
+export type ManualCapturePrepareResponse = ManualCaptureSupersedeResponse;
 
 export const DISCOVERY_FEEDBACK_KINDS = [
   "saved",
@@ -5862,23 +5341,6 @@ export interface RoleMatchFeedbackDecisionResponse {
   ok: true;
   suggestion: RoleMatchFeedbackSuggestion;
 }
-
-export const SourceUpsertRequestSchema = z
-  .object({
-    sourceId: z.string().trim().min(1).max(160),
-    kind: z.enum(SOURCE_KIND_VALUES),
-    displayName: z.string().trim().min(1).max(160),
-    priority: z.enum(SOURCE_PRIORITY_VALUES).default("standard"),
-    state: z.enum(SOURCE_STATE_VALUES).default("experimental"),
-    seedUrl: z
-      .string()
-      .trim()
-      .max(2048)
-      .regex(/^https?:\/\/[^\s]+$/i, "seedUrl must be a valid http(s) URL")
-      .optional(),
-  })
-  .strict();
-export type SourceUpsertRequest = z.infer<typeof SourceUpsertRequestSchema>;
 
 export const SourceStatePatchSchema = z
   .object({
@@ -6451,6 +5913,7 @@ export type JobUrlImportStatusResponse = JobUrlImportCompletedResponse | (
 
 export const ManualCaptureImportSchema = z
   .object({
+    expectedLifecycleId: z.string().regex(/^[0-9a-f]{64}$/).optional(),
     captureMode: z.enum(MANUAL_CAPTURE_MODE_VALUES),
     capturedUrl: z
       .string()
@@ -6542,6 +6005,7 @@ export type ExtensionCaptureIngestResponse =
 export const ManualCaptureDismissSchema = z
   .object({
     reason: z.string().trim().max(400).optional(),
+    expectedLifecycleId: z.string().regex(/^[0-9a-f]{64}$/).optional(),
   })
   .strict();
 export type ManualCaptureDismissRequest = z.infer<typeof ManualCaptureDismissSchema>;
@@ -6961,9 +6425,7 @@ export interface ConfirmContactCandidateResponse {
 // revision run the LLM + the reused materials gate stack on the Python worker
 // (draft body, gate results, and claim -> fact provenance are user-owned content
 // that reaches the client through these read DTOs and lives in the thread read
-// model). Approval/rejection are TS-API transitions gated on the persisted gate
-// outcome (INV-5). There is NO send transport on any outreach surface (INV-1):
-// an approved draft is copied out via the browser clipboard, never sent.
+// model). Approval is gated on the Python feature's persisted review outcome.
 // ---------------------------------------------------------------------------
 
 export const OUTREACH_DRAFT_KINDS = ["intro_request", "follow_up", "offer_negotiation", "offer_clarification", "offer_acceptance", "offer_decline"] as const;
@@ -6978,13 +6440,12 @@ export const OUTREACH_DRAFT_STATUSES = [
 ] as const;
 export type OutreachDraftStatus = (typeof OUTREACH_DRAFT_STATUSES)[number];
 
-/** One deterministic never-fabricate finding against the rendered draft text. */
+/** A model review finding bound to an exact rendered draft line. */
 export interface OutreachGateFabrication {
-  section: string;
+  lineId: string;
   kind: string;
-  token: string;
-  control: string;
   generatedText: string;
+  rationale: string;
 }
 
 export interface OutreachGateValidation {
@@ -7006,6 +6467,14 @@ export interface OutreachDraftGateResults {
   passed: boolean;
   computedAgainst: string;
   sourceContext?: { binding: { jobId: string; termsRevisionId: string; decisionId: string | null }; fingerprint: string; sources: { source_id: string; text: string }[] } | null;
+  determinationIds: string[];
+  lineAnchors: Array<{
+    line_id: string;
+    text: string;
+    evidence_ids: string[];
+    transform_type: "source_copy" | "paraphrase" | "grounded_synthesis" | "non_factual" | "user_edit";
+    reason: string;
+  }>;
   fabrications: OutreachGateFabrication[];
   validation: OutreachGateValidation;
   judge: OutreachGateJudge | null;
@@ -7200,14 +6669,14 @@ export type ScheduleFollowUpRequest = z.infer<typeof ScheduleFollowUpRequestSche
 const MaterialExportDigestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 export const AcceptedMaterialExportSourceSchema = z.object({
   artifactId: z.string().min(1).max(240), generation: z.number().int().positive(),
-  kind: z.enum(["tailored_resume", "cover_letter"]), locale: z.string().nullable(),
+  kind: z.literal("tailored_resume"), locale: z.string().nullable(),
   sha256: MaterialExportDigestSchema.nullable(), metadataSha256: MaterialExportDigestSchema.nullable(),
   unavailableReason: z.string().nullable(),
 }).strict();
 export const AcceptedMaterialExportReceiptSchema = z.object({
   contract: z.literal("accepted-material-docx-v1"), tenantId: z.string().min(1), jobId: z.string().uuid(),
   artifactId: z.string().regex(/^[1-9][0-9]*$/), sourceArtifactId: z.string().min(1).max(240),
-  generation: z.number().int().positive(), kind: z.enum(["tailored_resume", "cover_letter"]),
+  generation: z.number().int().positive(), kind: z.literal("tailored_resume"),
   sourceSha256: MaterialExportDigestSchema, sourceMetadataSha256: MaterialExportDigestSchema,
   settings: z.object({ format: z.literal("docx"), layout: z.literal("semantic-v1"), paper: z.enum(["A4", "Letter"]), locale: z.string().min(1) }).strict(),
   settingsSha256: MaterialExportDigestSchema, sha256: MaterialExportDigestSchema,
@@ -7239,7 +6708,7 @@ const LocaleReviewSchema = z.object({ dimension: z.enum(["terminology", "formatt
 export const MaterialLocaleVariantSchema = z.object({
   authorityStatus: z.enum(["recorded", "unavailable"]),
   contract: z.literal("material-locale-v1"), tenantId: z.string(), jobId: z.string(), entityId: z.string(),
-  source: z.object({ artifactId: z.string(), generation: z.number().int().positive(), kind: z.enum(["tailored_resume", "cover_letter"]), sha256: z.string(), text: z.string() }).strict(),
+  source: z.object({ artifactId: z.string(), generation: z.number().int().positive(), kind: z.literal("tailored_resume"), sha256: z.string(), text: z.string() }).strict(),
   sourceLocale: z.string(), targetLocale: z.string(), profileVersion: z.number().int().positive(),
   facts: z.array(z.object({ source_id: z.string(), text: z.string() }).strict()), protectedValues: z.array(z.string()),
   revisionId: z.string().uuid(), version: z.number().int().positive(), createdAt: z.string(), accepted: z.boolean(),
@@ -7255,7 +6724,7 @@ export const MaterialLocaleVariantSchema = z.object({
 export type MaterialLocaleVariant = z.infer<typeof MaterialLocaleVariantSchema>;
 export const MaterialLocaleHistorySchema = z.object({
   supportedLocales: z.array(z.string()), variants: z.array(MaterialLocaleVariantSchema), profileVersion: z.number().int().positive().nullable(),
-  sources: z.array(z.object({ artifactId: z.string(), generation: z.number().int().positive(), kind: z.enum(["tailored_resume", "cover_letter"]) }).strict()),
+  sources: z.array(z.object({ artifactId: z.string(), generation: z.number().int().positive(), kind: z.literal("tailored_resume") }).strict()),
 }).strict();
 export type MaterialLocaleHistory = z.infer<typeof MaterialLocaleHistorySchema>;
 const localeRevisionFields = { revisionId: z.string().uuid(), expectedVersion: z.number().int().positive() };

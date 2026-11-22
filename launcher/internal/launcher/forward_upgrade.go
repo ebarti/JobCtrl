@@ -10,28 +10,24 @@ import (
 	"github.com/ebarti/jobctrl/launcher/internal/release"
 )
 
-// A protocol-2 installer can migrate an authenticated protocol-1 workspace
-// after verified cleanup without ever executing or delegating recovery to old code.
-// The old controller cannot admit the protocol-2 target before its own backup.
-// The same forward-only path handles later signed protocol-2 updates.
+// Updates are target-to-target only. An installer or interrupted journal cannot
+// authorize executing a legacy payload, migrating its databases, or resetting
+// data. After possible candidate writes, recovery continues with the live pair.
 func promoteForwardUpdate(ctx launchContext, build, source string, output io.Writer) (bool, error) {
 	store, err := releaseStore(ctx)
 	if err != nil {
-		return false, err
+		return true, err
 	}
 	candidate, err := readInstalledReceipt(store.Home, build)
-	if err != nil || candidate.Channel == "local" {
-		return false, nil
+	if err != nil {
+		return true, err
 	}
 	verifiedCandidate, err := verifyInstalledReleaseForExecution(store, candidate)
 	if err != nil {
-		return true, fmt.Errorf("authenticate forward update target: %w", err)
+		return true, fmt.Errorf("authenticate update target: %w", err)
 	}
-	if verifiedCandidate.runtime.LauncherProtocol != 2 || !protocolSupports(verifiedCandidate.distribution, launcherProtocol) {
-		return false, nil
-	}
-	if _, err := readBridgeSchemaContract(verifiedCandidate, 14); err != nil {
-		return true, fmt.Errorf("authenticate target schema declaration: %w", err)
+	if err := admitPythonApplicationLifecycle(ctx, verifiedCandidate); err != nil {
+		return true, err
 	}
 	transition, err := store.TransitionLock()
 	if err != nil {
@@ -49,13 +45,12 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 	if err := refusePendingSourceMigration(ctx); err != nil {
 		return true, err
 	}
-	// Repeat authentication under both locks. Staging is not authority for a
-	// later execution or a changed immutable receipt.
+	// Repeat authentication and read-only admission under both lifecycle locks.
 	verifiedCandidate, err = verifyInstalledReleaseForExecution(store, candidate)
 	if err != nil {
 		return true, err
 	}
-	if _, err := readBridgeSchemaContract(verifiedCandidate, 14); err != nil {
+	if err := admitPythonApplicationLifecycle(ctx, verifiedCandidate); err != nil {
 		return true, err
 	}
 	active, err := store.ReadActive()
@@ -68,78 +63,47 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 		return true, journalErr
 	}
 	if resuming {
-		if !journal.ForwardOnlyUpgrade || !journal.PreserveLiveOnFailure || journal.SchemaVersion != 2 || journal.Operation != "update" || journal.Old == nil || journal.Candidate == nil || *journal.Candidate != candidate || journal.DescriptorSHA256 != candidate.DescriptorSHA256 || journal.SourceGeneration == 0 || (journal.SourceSchemaVersion != 14 && journal.SourceSchemaVersion != 15) {
-			return true, errors.New("unfinished transition is not an authenticated forward update; preserve the live databases and journal")
+		if !targetForwardJournal(journal) || *journal.Candidate != candidate || journal.DescriptorSHA256 != candidate.DescriptorSHA256 {
+			return true, errors.New("unfinished transition is not a target Python application update; preserve the source databases and journal")
 		}
 		if active.Receipt == candidate && active.Generation == journal.SourceGeneration+1 && active.SelectorBuildID == candidate.BuildID && journal.State == release.PolicyFinalized {
-			if !selectorMatchesRelease(store, filepath.Join(store.Home, "bin", "jobctrl"), candidate.BuildID) {
+			if !selectorMatchesEvidence(store.Home, verifiedCandidate) {
 				return true, errors.New("completed update selector changed; preserve the journal")
 			}
 			if err := writeLegacyCurrent(store.Home, candidate); err != nil {
 				return true, err
 			}
-			return true, advance(store, &journal, release.Promoted)
+			if err := advance(store, &journal, release.Promoted); err != nil {
+				return true, err
+			}
+			return true, retainReleases(store, ctx.Instance.StateDir)
 		}
 		if active.Receipt != *journal.Old || active.Generation != journal.SourceGeneration {
-			return true, errors.New("forward update source selection changed; preserve the journal")
+			return true, errors.New("update source selection changed; preserve the journal")
 		}
 	} else if active.Receipt == candidate {
-		ctx = verifiedReleaseContext(ctx, verifiedCandidate)
-		if _, err := os.Lstat(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); errors.Is(err, os.ErrNotExist) {
-			return true, nil
-		} else if err != nil {
-			return true, err
-		}
-		version, err := jobCtrlSchemaVersion(ctx)
-		if err != nil || version != 15 {
-			return true, errors.New("selected protocol-2 payload does not match the workspace schema; preserve the workspace and original installation metadata for recovery")
-		}
-		return true, nil
+		_, err := fmt.Fprintf(output, "JobCtrl %s is already active.\n", candidate.BuildID)
+		return true, err
 	}
 	old, err := verifyInstalledReleaseEvidence(store, active.Receipt, false)
 	if err != nil || active.Receipt.Channel != candidate.Channel || candidate.Sequence <= active.Receipt.Sequence || active.Generation == ^uint64(0) {
-		return true, errors.New("forward update requires an authenticated predecessor and a newer permitted target in the same channel")
+		return true, errors.New("update requires an authenticated predecessor and a newer permitted target in the same channel")
 	}
-	if old.runtime.LauncherProtocol != 1 && old.runtime.LauncherProtocol != 2 {
-		return true, errors.New("unsupported predecessor controller; preserve the installation and workspace")
+	if err := readPythonApplicationSchemaContract(old); err != nil {
+		return true, fmt.Errorf("update cannot replace a legacy application in place: %w", err)
 	}
 	sourceSelectorMatches := forwardSourceSelectorMatches(store, active, old, verifiedCandidate)
-	if !resuming {
-		if !sourceSelectorMatches {
-			return true, errors.New("source selector differs from its authenticated immutable release")
-		}
-	} else if !sourceSelectorMatches && !selectorMatchesEvidence(store.Home, verifiedCandidate) {
-		return true, errors.New("interrupted update selector differs from both authenticated releases")
+	if !sourceSelectorMatches && (!resuming || !selectorMatchesEvidence(store.Home, verifiedCandidate)) {
+		return true, errors.New("update selector differs from its authenticated source and target releases")
 	}
-	// All SQLite helpers come from the authenticated new payload. Do not invoke
-	// the immutable old launcher, its Python command dispatcher or old recovery.
 	ctx = verifiedReleaseContext(ctx, verifiedCandidate)
 	ctx.Instance.RuntimeHome = store.Home
-	if err := requireLegacySourceOwnership(ctx); err != nil {
-		return true, err
-	}
-	if err := stop(verifiedReleaseContext(ctx, old)); err != nil {
-		return true, fmt.Errorf("quiesce workspace before update: %w", err)
-	}
-	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
-		return true, err
-	}
 	unused, err := unusedDatabasePair(ctx.Instance.StateDir)
 	if err != nil {
 		return true, err
 	}
 	if unused {
-		return true, errors.New("the predecessor has not initialized its database pair; initialize that installed version once, stop it, then retry the authenticated installer")
-	}
-	version, err := jobCtrlSchemaVersion(ctx)
-	if err != nil || (version != 14 && version != 15) {
-		return true, errors.New("forward update requires exact schema 14 or 15; preserve the workspace and use its supported predecessor upgrade first")
-	}
-	if resuming && version == 14 {
-		postActivation := journal.State == release.MigrationActivated || journal.State == release.CandidateStarting || journal.State == release.CandidateHealthy || journal.State == release.PolicyFinalized
-		if journal.SourceSchemaVersion == 15 || postActivation {
-			return true, errors.New("live schema regressed after the recorded update boundary; preserve the live databases and journal for inspection")
-		}
+		return true, errors.New("the selected Python application has not initialized its database pair; start that version once, stop it, then retry update")
 	}
 	policy, err := readInstalledPolicy(store.Home, candidate)
 	if err != nil {
@@ -149,37 +113,33 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 	if err != nil {
 		return true, err
 	}
+	// Compatibility checks precede stop, backup, journal and selector mutations.
+	if err := stop(ctx); err != nil {
+		return true, fmt.Errorf("quiesce workspace before update: %w", err)
+	}
+	if err := admitPythonApplicationLifecycle(ctx, verifiedCandidate); err != nil {
+		return true, err
+	}
 	if !resuming {
 		journal, err = store.Begin("update", &active.Receipt, &candidate, candidate.DescriptorSHA256)
 		if err != nil {
 			return true, err
 		}
 		journal.ForwardOnlyUpgrade, journal.PreserveLiveOnFailure = true, true
-		journal.SourceGeneration = active.Generation
-		journal.SourceSchemaVersion = version
+		journal.SourceGeneration, journal.SourceSchemaVersion = active.Generation, pythonApplicationUserVersion
 		if err := advance(store, &journal, release.MetadataVerified); err != nil {
 			return true, err
 		}
 	}
-	// Refresh the backup from the live, stopped pair on every forward attempt.
-	// An earlier backup can omit acknowledged profile or Temporal WAL writes.
-	pairReceipt := active.Receipt
-	if version == 15 {
-		pairReceipt = candidate
-		// The first backup of an already-v15 workspace belongs to its active
-		// predecessor only if that signed release declares the v15 contract
-		// and can be supervised by this controller. A later backup may contain
-		// writes made by the candidate and must never authorize an old rollback.
-		if journal.BackupID == "" && journal.SourceSchemaVersion == 15 && journal.State == release.MetadataVerified &&
-			old.runtime.LauncherProtocol == 2 && protocolSupports(old.distribution, launcherProtocol) {
-			if _, err := readBridgeSchemaContract(old, 14); err == nil {
-				pairReceipt = active.Receipt
-			}
-		}
+	// A retry snapshots stopped live data again. Candidate commits must never be
+	// mislabeled as a predecessor rollback snapshot; retain the original as well.
+	pairReceipt := candidate
+	if journal.BackupID == "" && journal.State == release.MetadataVerified {
+		pairReceipt = active.Receipt
 	}
 	pair, err := snapshotPair(ctx, pairReceipt)
 	if err != nil {
-		return true, fmt.Errorf("back up the live pair for forward recovery: %w", err)
+		return true, fmt.Errorf("back up the live pair for update recovery: %w", err)
 	}
 	if journal.BackupID == "" {
 		journal.BackupID = pair.ID
@@ -199,28 +159,11 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 	if err := advance(store, &journal, release.SelectorReplaced); err != nil {
 		return true, err
 	}
-	if version == 14 {
-		cleanupV15Candidate(ctx.Instance.StateDir, journal.ID)
-		path, err := buildSealedV15Candidate(ctx, pair, journal.ID)
-		if err != nil {
-			return true, err
-		}
-		defer cleanupV15Candidate(ctx.Instance.StateDir, journal.ID)
-		if err := advance(store, &journal, release.MigrationCandidateReady); err != nil {
-			return true, err
-		}
-		if err := installSealedV15Candidate(ctx, path); err != nil {
-			return true, fmt.Errorf("activate schema in place; retain the live pair and rerun update after cleanup: %w", err)
-		}
-		if err := advance(store, &journal, release.MigrationActivated); err != nil {
-			return true, err
-		}
-	}
 	if err := advance(store, &journal, release.CandidateStarting); err != nil {
 		return true, err
 	}
 	if err := startReleaseCommand(ctx, candidate, journal.ID); err != nil {
-		return true, fmt.Errorf("candidate did not become ready; live data was preserved. Run jobctrl stop, then jobctrl update to continue forward: %w", err)
+		return true, fmt.Errorf("candidate startup failed; live data and journal are preserved; run jobctrl stop, then jobctrl update to continue: %w", err)
 	}
 	if err := advance(store, &journal, release.CandidateHealthy); err != nil {
 		return true, err
@@ -246,14 +189,31 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 	if err := advance(store, &journal, release.Promoted); err != nil {
 		return true, err
 	}
-	cleanupV15Candidate(ctx.Instance.StateDir, journal.ID)
+	if err := retainReleases(store, ctx.Instance.StateDir); err != nil {
+		return true, fmt.Errorf("JobCtrl %s is active, but release retention did not complete: %w", candidate.BuildID, err)
+	}
 	_, err = fmt.Fprintf(output, "JobCtrl %s is active. Live workspace data was preserved.\n", candidate.BuildID)
 	return true, err
 }
 
-// A compatible rollback may intentionally keep a newer public selector while
-// selecting an older payload. Authenticate that selector independently; never
-// replace it with an older candidate or admit an incompatible controller.
+func targetForwardJournal(journal release.Journal) bool {
+	if !journal.Resumable() || !journal.ForwardOnlyUpgrade || !journal.PreserveLiveOnFailure || journal.SchemaVersion != 2 || journal.Operation != "update" ||
+		journal.Old == nil || journal.Candidate == nil || journal.SourceGeneration == 0 || journal.SourceGeneration == ^uint64(0) || journal.SourceSchemaVersion != pythonApplicationUserVersion ||
+		journal.DescriptorSHA256 != journal.Candidate.DescriptorSHA256 || journal.TargetBackupID != "" {
+		return false
+	}
+	switch journal.State {
+	case release.MetadataVerified:
+		return journal.BackupID == "" && journal.RecoveryBackupID == ""
+	case release.PairBackedUp, release.SelectorHandoffPending, release.SelectorReplaced, release.CandidateStarting, release.CandidateHealthy, release.PolicyFinalized:
+		return journal.BackupID != ""
+	default:
+		return false
+	}
+}
+
+// A rollback can retain a newer compatible controller. Authenticate its actual
+// bytes independently before updating the selected older target again.
 func forwardSourceSelectorMatches(store *release.Store, active release.Active, old, candidate verifiedRelease) bool {
 	if active.SelectorBuildID == active.Receipt.BuildID {
 		return selectorMatchesEvidence(store.Home, old)
@@ -263,11 +223,7 @@ func forwardSourceSelectorMatches(store *release.Store, active release.Active, o
 		return false
 	}
 	verified, err := verifyInstalledReleaseForExecution(store, selector)
-	if err != nil || verified.runtime.LauncherProtocol != launcherProtocol ||
-		!protocolSupports(old.distribution, verified.runtime.LauncherProtocol) || !protocolSupports(candidate.distribution, verified.runtime.LauncherProtocol) {
-		return false
-	}
-	return selectorMatchesEvidence(store.Home, verified)
+	return err == nil && readPythonApplicationSchemaContract(verified) == nil && selectorMatchesEvidence(store.Home, verified)
 }
 
 func selectorMatchesEvidence(home string, verified verifiedRelease) bool {
@@ -297,8 +253,8 @@ func resumeForwardUpdate(env []string, output io.Writer) (bool, error) {
 	if errors.Is(err, os.ErrNotExist) || (err == nil && (!journal.Resumable() || !journal.ForwardOnlyUpgrade)) {
 		return false, nil
 	}
-	if err != nil || journal.Candidate == nil {
-		return true, errors.New("cannot read the interrupted forward update; preserve the live databases and journal")
+	if err != nil || !targetForwardJournal(journal) {
+		return true, errors.New("cannot resume a legacy or invalid update; preserve the source databases and journal")
 	}
 	ctx, err := transitionContextForReceipt(env, store, *journal.Candidate)
 	if err != nil {
@@ -307,8 +263,8 @@ func resumeForwardUpdate(env []string, output io.Writer) (bool, error) {
 	return promoteForwardUpdate(ctx, journal.Candidate.BuildID, "", output)
 }
 
-// Cleanup is a public recovery operation. It authenticates the new controller
-// independently of the retired active payload and never advances the journal.
+// Cleanup authenticates metadata independently of current execution permission;
+// channel revocation cannot prevent stopping writers the native scope owns.
 func stopForwardUpdate(env []string, output io.Writer) (bool, error) {
 	home, err := runtimeHomeFromEnv(env)
 	if err != nil {
@@ -339,19 +295,14 @@ func stopForwardUpdate(env []string, output io.Writer) (bool, error) {
 		return true, err
 	}
 	journal, err = store.ReadJournal()
-	if err != nil || !journal.Resumable() || !journal.ForwardOnlyUpgrade || !journal.PreserveLiveOnFailure || journal.SchemaVersion != 2 || journal.Operation != "update" || journal.Old == nil || journal.Candidate == nil || journal.SourceGeneration == 0 || (journal.SourceSchemaVersion != 14 && journal.SourceSchemaVersion != 15) || journal.DescriptorSHA256 != journal.Candidate.DescriptorSHA256 {
-		return true, errors.New("cannot authenticate the interrupted forward update for cleanup; preserve the journal and live workspace")
+	if err != nil || !targetForwardJournal(journal) {
+		return true, errors.New("cannot authenticate a legacy or invalid update for cleanup; preserve its journal and live workspace")
 	}
-	// Cleanup uses authenticated metadata only. Current revocation policy
-	// still fences update/start, but cannot prevent stopping owned writers.
 	candidate, err := verifyInstalledReleaseEvidence(store, *journal.Candidate, false)
 	if err != nil {
 		return true, err
 	}
-	if candidate.runtime.LauncherProtocol != 2 || !protocolSupports(candidate.distribution, launcherProtocol) {
-		return true, errors.New("forward cleanup requires an authenticated protocol-2 controller")
-	}
-	if _, err := readBridgeSchemaContract(candidate, 14); err != nil {
+	if err := readPythonApplicationSchemaContract(candidate); err != nil {
 		return true, err
 	}
 	active, err := store.ReadActive()
@@ -362,10 +313,13 @@ func stopForwardUpdate(env []string, output io.Writer) (bool, error) {
 	if err != nil {
 		return true, err
 	}
+	if err := readPythonApplicationSchemaContract(old); err != nil {
+		return true, err
+	}
 	sourceSelected := active.Receipt == *journal.Old && active.Generation == journal.SourceGeneration
 	targetSelected := journal.State == release.PolicyFinalized && active.Receipt == *journal.Candidate && active.Generation == journal.SourceGeneration+1 && active.SelectorBuildID == journal.Candidate.BuildID
-	if (!sourceSelected && !targetSelected) || (!selectorMatchesEvidence(home, old) && !selectorMatchesEvidence(home, candidate)) {
-		return true, errors.New("forward cleanup selection changed; preserve the journal and live workspace")
+	if (!sourceSelected && !targetSelected) || (!forwardSourceSelectorMatches(store, active, old, candidate) && !selectorMatchesEvidence(home, candidate)) {
+		return true, errors.New("update cleanup selection changed; preserve the journal and live workspace")
 	}
 	cleanupEnv := append(append([]string{}, env...), "JOBCTRL_RUNTIME_HOME="+store.Home)
 	instance, err := resolveInstance(cleanupEnv)
@@ -376,7 +330,7 @@ func stopForwardUpdate(env []string, output io.Writer) (bool, error) {
 	if err := stop(ctx); err != nil {
 		return true, err
 	}
-	_, err = fmt.Fprintln(output, "JobCtrl stopped. The interrupted forward update and live workspace were preserved; run jobctrl update to continue.")
+	_, err = fmt.Fprintln(output, "JobCtrl stopped. The interrupted update and live workspace were preserved; run jobctrl update to continue.")
 	return true, err
 }
 
@@ -386,10 +340,8 @@ func refuseUnfinishedForwardUpdate(home string, args, env []string) error {
 		return nil
 	}
 	startup := (len(args) == 2 && args[0] == "start" && args[1] == "--no-open") || (len(args) == 1 && args[0] == "__supervise")
-	if startup && journal.ID != "" && environmentMap(env)["JOBCTRL_TRANSITION_JOURNAL"] == journal.ID {
-		// prepare and authenticatedTransitionStartup still prove the exact
-		// selector, receipt, target, phase and signed inventory before execution.
+	if targetForwardJournal(journal) && startup && journal.ID != "" && environmentMap(env)["JOBCTRL_TRANSITION_JOURNAL"] == journal.ID {
 		return nil
 	}
-	return errors.New("unfinished forward update; keep the live databases and journal. Run jobctrl stop, then jobctrl update to continue forward; rollback cannot restore older data over this transition")
+	return errors.New("unfinished update; keep the live databases and journal. Run jobctrl stop, then jobctrl update to continue; rollback cannot replace this transition with an older snapshot")
 }

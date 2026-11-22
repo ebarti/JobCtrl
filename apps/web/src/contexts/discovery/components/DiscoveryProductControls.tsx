@@ -1,11 +1,9 @@
+import { boardLabel } from "../boards.js";
 import type {
   DiscoveryFeedbackKind,
-  DiscoveryPreviewResponse,
   ManualCaptureImportRequest,
   ManualCaptureListResponse,
   QuarantineListResponse,
-  RoleMatchFeedbackListResponse,
-  SourceLocatorListResponse,
   SourceRegistryEntrySummary,
 } from "@jobctrl/contracts";
 import type { SavedTableView } from "@jobctrl/contracts";
@@ -15,7 +13,6 @@ import {
   IconCheck,
   IconExternalLink,
   IconEye,
-  IconPlus,
   IconThumbUp,
   IconUpload,
   IconX,
@@ -23,14 +20,14 @@ import {
 import { type FormEvent, useMemo, useState } from "react";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { useDiscoverySettingsQuery } from "../hooks/useDiscoverySettingsQuery.js";
 import {
   useDiscoveryQuarantineQuery,
   useDiscoverySourcePreviewQuery,
   useManualCaptureQueueQuery,
   useRoleMatchFeedbackQuery,
-  useSourceLocatorCandidatesQuery,
   useSourceRegistryQuery,
-} from "../../operations/hooks/useDiscoveryProductControlsQuery.js";
+} from "../hooks/useDiscoveryProductControlsQuery.js";
 import { Button } from "../../../shared/ui/button.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Checkbox } from "../../../shared/ui/checkbox.js";
@@ -69,6 +66,7 @@ import {
   hasPolitenessOutcomes,
   politenessOutcomeSummary,
 } from "./SourcePolitenessBadges.js";
+import { DiscoveryFeedbackRefresh } from "./DiscoveryFeedbackRefresh.js";
 import {
   Tabs,
   TabsContent,
@@ -76,22 +74,24 @@ import {
   TabsTrigger,
 } from "../../../shared/ui/tabs.js";
 import {
+  type CaptureDraftEdits,
+  type CaptureImportState,
   useDiscoveryFeedbackMutation,
   useDiscoveryQuarantineDecisionMutation,
   useManualCaptureDismissMutation,
   useManualCaptureImportMutation,
   usePatchDiscoverySourceStateMutation,
-  usePromoteSourceLocatorCandidateMutation,
-  useRejectSourceLocatorCandidateMutation,
   useRoleMatchFeedbackDecisionMutation,
-  useUpsertDiscoverySourceMutation,
 } from "../hooks/useDiscoveryProductControlMutations.js";
 
 type QuarantineEntry = QuarantineListResponse["entries"][number];
 type ManualCaptureItem = ManualCaptureListResponse["items"][number];
-type LocatorCandidate = SourceLocatorListResponse["candidates"][number];
-type RoleMatchSuggestion = RoleMatchFeedbackListResponse["suggestions"][number];
-type PreviewLead = DiscoveryPreviewResponse["leads"][number];
+type RoleMatchSuggestion = import("../contracts.js").RoleFeedback["suggestions"][number];
+type PreviewLead = import("../contracts.js").DiscoveryPreview["leads"][number];
+function sourceRevision(source: SourceRegistryEntrySummary): number | null {
+  const revision = (source as SourceRegistryEntrySummary & { revision?: unknown }).revision;
+  return typeof revision === "number" && Number.isInteger(revision) && revision > 0 ? revision : null;
+}
 type SourceMetricTone = "good" | "warn" | "bad" | "unknown";
 type DiscoveryControlsLayout = "grid" | "tabs";
 type SourceRegistryStateFilter = "all" | SourceRegistryEntrySummary["state"];
@@ -105,17 +105,6 @@ export interface DiscoverySourceTableControls {
   readonly onPresentationChange: (presentation: SavedTablePresentation) => void;
   readonly onApplyView: (view: SavedTableView) => void;
 }
-
-const SOURCE_KINDS = [
-  "ats_api",
-  "employer_careers_page",
-  "official_api",
-  "licensed_feed",
-  "niche_board",
-  "broad_board",
-  "smart_extract",
-  "user_mediated_capture",
-] as const;
 
 const CAPTURE_MODES: Array<{
   value: ManualCaptureImportRequest["captureMode"];
@@ -153,59 +142,8 @@ function label(value: string): string {
   return value.replaceAll("_", " ");
 }
 
-function titleCaseSourceName(value: string): string {
-  return value
-    .split(/[\s._-]+/)
-    .filter(Boolean)
-    .map((part) =>
-      part.length <= 3 && part === part.toUpperCase()
-        ? part
-        : `${part.charAt(0).toUpperCase()}${part.slice(1)}`,
-    )
-    .join(" ");
-}
-
 function sourceCompanyName(source: SourceRegistryEntrySummary): string {
-  const rawName = source.displayName.trim();
-  const rawSourceId = source.sourceId.split(":").at(1) ?? source.sourceId;
-  if (rawName && !rawName.includes(".") && !rawName.includes("-"))
-    return rawName;
-  const candidate = rawName || rawSourceId;
-  const withoutKnownHost = candidate
-    .replace(/\.wd\d+\.myworkdayjobs\.com$/i, "")
-    .replace(/\.myworkdayjobs\.com$/i, "")
-    .replace(/\.greenhouse\.io$/i, "")
-    .replace(/\.lever\.co$/i, "")
-    .replace(/\.ashbyhq\.com$/i, "")
-    .replace(/-wd\d+-myworkdayjobs-com$/i, "")
-    .replace(/-myworkdayjobs-com$/i, "")
-    .replace(/-greenhouse-io$/i, "")
-    .replace(/-lever-co$/i, "")
-    .replace(/-ashbyhq-com$/i, "");
-
-  return titleCaseSourceName(withoutKnownHost || rawName || rawSourceId);
-}
-
-function sourceTypeLabel(source: SourceRegistryEntrySummary): string {
-  const sourceId = source.sourceId.toLowerCase();
-  const policyId = source.policyId.toLowerCase();
-  if (sourceId.startsWith("workday:") || policyId.includes("workday"))
-    return "Workday ATS";
-  if (sourceId.startsWith("greenhouse:") || policyId.includes("greenhouse"))
-    return "Greenhouse ATS";
-  if (sourceId.startsWith("lever:") || policyId.includes("lever"))
-    return "Lever ATS";
-  if (sourceId.startsWith("ashby:") || policyId.includes("ashby"))
-    return "Ashby ATS";
-  if (sourceId.startsWith("jobspy:")) return "Broad board";
-  if (sourceId.startsWith("smart_extract:")) return "Smart extract";
-  if (source.kind === "ats_api") return "ATS API";
-  if (source.kind === "employer_careers_page") return "Employer careers page";
-  if (source.kind === "official_api") return "Official API";
-  if (source.kind === "licensed_feed") return "Licensed feed";
-  if (source.kind === "niche_board") return "Niche board";
-  if (source.kind === "broad_board") return "Broad board";
-  return "Manual capture";
+  return boardLabel(source.sourceId.slice("jobstreaming:".length));
 }
 
 function manualActionLabel(value: ManualCaptureItem["reason"]): string {
@@ -228,6 +166,8 @@ function manualActionLabel(value: ManualCaptureItem["reason"]): string {
       return "Unconfirmed careers page";
     case "browser_extension_capture":
       return "Browser extension capture";
+    default:
+      return "Manual capture required";
   }
 }
 
@@ -251,6 +191,8 @@ function manualActionDetail(value: ManualCaptureItem["reason"]): string {
       return "The URL looks useful, but the app cannot confirm which careers system or parser should handle it yet.";
     case "browser_extension_capture":
       return "The user saved this posting from the browser extension.";
+    default:
+      return "A more specific reason was not recorded.";
   }
 }
 
@@ -361,16 +303,6 @@ function SourceMetricText({
   );
 }
 
-function candidateEvidence(candidate: LocatorCandidate): string {
-  return [
-    candidate.employerDomainMatched ? "Domain matched" : "Domain not verified",
-    candidate.manualActionReason
-      ? `Manual review: ${manualActionLabel(candidate.manualActionReason)}`
-      : "Awaiting your review",
-    `discovered ${new Date(candidate.discoveredAt).toLocaleDateString()}`,
-  ].join(" · ");
-}
-
 export function DiscoveryProductControls({
   layout = "grid",
   sourceTable,
@@ -379,14 +311,10 @@ export function DiscoveryProductControls({
   readonly sourceTable?: DiscoverySourceTableControls;
 } = {}) {
   const sources = useSourceRegistryQuery();
-  const locatorCandidates = useSourceLocatorCandidatesQuery();
   const quarantine = useDiscoveryQuarantineQuery();
   const manualCapture = useManualCaptureQueueQuery();
   const roleMatchFeedback = useRoleMatchFeedbackQuery();
-  const sourceCount = sources.data?.sources.length ?? 0;
-  const quarantineCount = quarantine.data?.entries.length ?? 0;
-  const manualCount = manualCapture.data?.items.length ?? 0;
-  const candidateCount = locatorCandidates.data?.candidates.length ?? 0;
+  const sourceCount = sources.data ? String(sources.data.sources.length) : sources.isPending ? "loading" : "unavailable";
   const pendingRoleSuggestionCount =
     roleMatchFeedback.data?.suggestions.filter(
       (suggestion) => suggestion.status === "pending",
@@ -395,82 +323,50 @@ export function DiscoveryProductControls({
     sources.error ??
     quarantine.error ??
     manualCapture.error ??
-    locatorCandidates.error ??
     roleMatchFeedback.error;
   const message = error instanceof Error ? error.message : null;
+  const reviewCount = quarantine.data && manualCapture.data && roleMatchFeedback.data
+    ? String(quarantine.data.entries.length + manualCapture.data.items.length + pendingRoleSuggestionCount)
+    : quarantine.isPending || manualCapture.isPending || roleMatchFeedback.isPending ? "loading" : "unavailable";
+  const sourcePanel = sources.data || sources.isPending ? <SourceRegistryPanel defaultStateFilter={layout === "tabs" ? "active" : "all"} sources={sources.data?.sources ?? []} loading={sources.isLoading} {...(sourceTable ? { sourceTable } : {})} /> : <p role="alert">Source registry unavailable.</p>;
+  const quarantinePanel = quarantine.data || quarantine.isPending ? <QuarantinePanel entries={quarantine.data?.entries ?? []} loading={quarantine.isLoading} /> : <p role="alert">Quarantine unavailable.</p>;
+  const feedbackPanel = roleMatchFeedback.data || roleMatchFeedback.isPending ? <RoleMatchFeedbackPanel suggestions={roleMatchFeedback.data?.suggestions ?? []} loading={roleMatchFeedback.isLoading} /> : <p role="alert">Role matching feedback unavailable.</p>;
+  const capturePanel = manualCapture.data || manualCapture.isPending ? <ManualCapturePanel items={manualCapture.data?.items ?? []} loading={manualCapture.isLoading} /> : <p role="alert">Manual capture queue unavailable.</p>;
 
   return (
     <section className="card full discovery-controls">
       <CardHeader
         title="Discovery controls"
-        meta={`${sourceCount} sources · ${candidateCount} candidates · ${quarantineCount + manualCount + pendingRoleSuggestionCount} review`}
+        meta={`${sourceCount} JobStreaming boards · ${reviewCount} review`}
       />
-      {message ? <div className="banner inline">{message}</div> : null}
+      {message ? <div className="banner inline" role="alert">{message} Previously loaded results remain visible where available.</div> : null}
       {layout === "tabs" ? (
         <Tabs defaultValue="sources" className="discovery-tabs">
           <TabsList aria-label="Discovery tools" className="discovery-tab-list">
-            <TabsTrigger value="sources">Source registry</TabsTrigger>
-            <TabsTrigger value="locator">Source locator</TabsTrigger>
+            <TabsTrigger value="sources">JobStreaming boards</TabsTrigger>
             <TabsTrigger value="quarantine">Quarantine review</TabsTrigger>
             <TabsTrigger value="role-match">Role matching</TabsTrigger>
             <TabsTrigger value="manual">Manual capture</TabsTrigger>
           </TabsList>
           <TabsContent value="sources" className="discovery-tab-panel">
-            <SourceRegistryPanel
-              defaultStateFilter="active"
-              sources={sources.data?.sources ?? []}
-              loading={sources.isLoading}
-              {...(sourceTable ? { sourceTable } : {})}
-            />
-          </TabsContent>
-          <TabsContent value="locator" className="discovery-tab-panel">
-            <SourceLocatorPanel
-              candidates={locatorCandidates.data?.candidates ?? []}
-              loading={locatorCandidates.isLoading}
-            />
+            {sourcePanel}
           </TabsContent>
           <TabsContent value="quarantine" className="discovery-tab-panel">
-            <QuarantinePanel
-              entries={quarantine.data?.entries ?? []}
-              loading={quarantine.isLoading}
-            />
+            {quarantinePanel}
           </TabsContent>
           <TabsContent value="role-match" className="discovery-tab-panel">
-            <RoleMatchFeedbackPanel
-              suggestions={roleMatchFeedback.data?.suggestions ?? []}
-              loading={roleMatchFeedback.isLoading}
-            />
+            {feedbackPanel}
           </TabsContent>
-          <TabsContent value="manual" className="discovery-tab-panel">
-            <ManualCapturePanel
-              items={manualCapture.data?.items ?? []}
-              loading={manualCapture.isLoading}
-            />
+          <TabsContent value="manual" className="discovery-tab-panel" keepMounted>
+            {capturePanel}
           </TabsContent>
         </Tabs>
       ) : (
         <div className="discovery-control-grid">
-          <SourceRegistryPanel
-            sources={sources.data?.sources ?? []}
-            loading={sources.isLoading}
-            {...(sourceTable ? { sourceTable } : {})}
-          />
-          <SourceLocatorPanel
-            candidates={locatorCandidates.data?.candidates ?? []}
-            loading={locatorCandidates.isLoading}
-          />
-          <QuarantinePanel
-            entries={quarantine.data?.entries ?? []}
-            loading={quarantine.isLoading}
-          />
-          <RoleMatchFeedbackPanel
-            suggestions={roleMatchFeedback.data?.suggestions ?? []}
-            loading={roleMatchFeedback.isLoading}
-          />
-          <ManualCapturePanel
-            items={manualCapture.data?.items ?? []}
-            loading={manualCapture.isLoading}
-          />
+          {sourcePanel}
+          {quarantinePanel}
+          {feedbackPanel}
+          {capturePanel}
         </div>
       )}
     </section>
@@ -490,16 +386,9 @@ function SourceRegistryPanel({
 }) {
   const { featureFlags } = usePorts();
   const isDemo = featureFlags.get("demoMode", false);
-  const upsert = useUpsertDiscoverySourceMutation();
   const patchState = usePatchDiscoverySourceStateMutation();
   const [previewSourceId, setPreviewSourceId] = useState<string | null>(null);
   const preview = useDiscoverySourcePreviewQuery(previewSourceId);
-  const [sourceId, setSourceId] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [kind, setKind] = useState<(typeof SOURCE_KINDS)[number]>(
-    "employer_careers_page",
-  );
-  const [seedUrl, setSeedUrl] = useState("");
   const stats = sourceRegistryStats(sources);
   const initialFilters = useMemo<DataGridFilterState>(
     () =>
@@ -550,11 +439,11 @@ function SourceRegistryPanel({
         label: "Type",
         render: (source) => (
           <span className="source-table-category" data-typography="label">
-            {sourceTypeLabel(source)}
+            {"JobStreaming board"}
           </span>
         ),
-        getSortValue: (source) => sourceTypeLabel(source).toLowerCase(),
-        getFilterValue: sourceTypeLabel,
+        getSortValue: (source) => "JobStreaming board".toLowerCase(),
+        getFilterValue: () => "JobStreaming board",
       },
       {
         id: "state",
@@ -729,13 +618,14 @@ function SourceRegistryPanel({
               variant="ghost"
               aria-label={`Activate ${source.displayName}`}
               title="Activate source"
-              disabled={patchState.isPending || source.state === "active"}
+              disabled={patchState.isPending || source.state === "active" || sourceRevision(source) === null}
               onClick={() =>
                 patchState.mutate({
                   sourceId: source.sourceId,
                   body: {
                     state: "active",
                     reason: "User enabled source from product controls.",
+                    expectedRevision: sourceRevision(source)!,
                   },
                 })
               }
@@ -748,13 +638,14 @@ function SourceRegistryPanel({
               variant="ghost"
               aria-label={`Quarantine ${source.displayName}`}
               title="Quarantine source"
-              disabled={patchState.isPending || source.state === "quarantined"}
+              disabled={patchState.isPending || source.state === "quarantined" || sourceRevision(source) === null}
               onClick={() =>
                 patchState.mutate({
                   sourceId: source.sourceId,
                   body: {
                     state: "quarantined",
                     reason: "User quarantined source from product controls.",
+                    expectedRevision: sourceRevision(source)!,
                   },
                 })
               }
@@ -836,29 +727,15 @@ function SourceRegistryPanel({
     });
   };
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    upsert.mutate({
-      sourceId: sourceId.trim(),
-      displayName: displayName.trim(),
-      kind,
-      priority: "standard",
-      state: "experimental",
-      ...(seedUrl.trim() ? { seedUrl: seedUrl.trim() } : {}),
-    });
-    setSourceId("");
-    setDisplayName("");
-    setSeedUrl("");
-  };
-
   return (
     <div className="discovery-control-panel">
       <div className="discovery-panel-head">
-        <h3 data-typography="component-title">Source registry</h3>
+        <h3 data-typography="component-title">JobStreaming boards</h3>
         <span className="meta" data-typography="metadata">
           {sources.length} total
         </span>
       </div>
+      {patchState.error ? <p role="alert">The source change could not be confirmed. Review the current registry before retrying.</p> : null}
       <div
         className="discovery-source-summary"
         aria-label="Source registry summary"
@@ -887,7 +764,7 @@ function SourceRegistryPanel({
         getRowId={(source) => source.sourceId}
         loading={loading}
         loadingMessage="Loading sources."
-        emptyMessage="No sources registered."
+        emptyMessage="No JobStreaming boards match this view."
         initialSort={{ columnId: "displayName", direction: "asc" }}
         mobileLayout="cards"
         initialFilters={initialFilters}
@@ -919,76 +796,6 @@ function SourceRegistryPanel({
         paginate
         initialPageSize={25}
       />
-      <form className="source-upsert-form" onSubmit={submit}>
-        <Field className="field">
-          <FieldLabel htmlFor="source-id">Source ID</FieldLabel>
-          <Input
-            id="source-id"
-            value={sourceId}
-            onChange={(event) => setSourceId(event.target.value)}
-            required
-          />
-        </Field>
-        <Field className="field">
-          <FieldLabel htmlFor="source-name">Name</FieldLabel>
-          <Input
-            id="source-name"
-            value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
-            required
-          />
-        </Field>
-        <Field className="field">
-          <FieldLabel htmlFor="source-kind">Kind</FieldLabel>
-          <Select
-            items={SOURCE_KINDS.map((value) => ({
-              label: label(value),
-              value,
-            }))}
-            value={kind}
-            onValueChange={(value) => {
-              if (value !== null) {
-                setKind(value as (typeof SOURCE_KINDS)[number]);
-              }
-            }}
-          >
-            <SelectTrigger
-              id="source-kind"
-              aria-label="Kind"
-              className="w-full"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {SOURCE_KINDS.map((value) => (
-                  <SelectItem key={value} value={value}>
-                    {label(value)}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field className="field wide">
-          <FieldLabel htmlFor="source-seed-url">Seed URL</FieldLabel>
-          <Input
-            id="source-seed-url"
-            type="url"
-            value={seedUrl}
-            onChange={(event) => setSeedUrl(event.target.value)}
-            placeholder="https://example.com/careers"
-          />
-        </Field>
-        <Button
-          type="submit"
-          size="sm"
-          disabled={upsert.isPending || !sourceId.trim() || !displayName.trim()}
-        >
-          <IconPlus size={14} aria-hidden="true" />
-          Add source
-        </Button>
-      </form>
       {previewSourceId ? (
         <SourcePreview
           sourceId={previewSourceId}
@@ -1027,7 +834,7 @@ function SourcePreview({
               <span>
                 {lead.company || "Unknown company"} ·{" "}
                 {lead.location || "Unknown location"} · confidence{" "}
-                {pct(lead.estimatedConfidence)}
+                {pct(lead.estimatedConfidence ?? null)}
               </span>
               <span className="mono" data-typography="code">
                 {lead.candidateUrl}
@@ -1041,128 +848,6 @@ function SourcePreview({
               loading
                 ? "Loading source preview."
                 : "No observed leads for this source."
-            }
-          />
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function SourceLocatorPanel({
-  candidates,
-  loading,
-}: {
-  candidates: LocatorCandidate[];
-  loading: boolean;
-}) {
-  const promote = usePromoteSourceLocatorCandidateMutation();
-  const reject = useRejectSourceLocatorCandidateMutation();
-
-  return (
-    <div className="discovery-control-panel">
-      <div className="discovery-panel-head">
-        <h3 data-typography="component-title">Source locator</h3>
-        <span className="meta" data-typography="metadata">
-          {candidates.length} candidates
-        </span>
-      </div>
-      <div className="rows compact">
-        {candidates.map((candidate) => (
-          <div className="discovery-review-row" key={candidate.candidateId}>
-            <IconExternalLink size={16} aria-hidden="true" />
-            <span className="title-stack">
-              <b data-typography="strong-body">{candidate.candidateUrl}</b>
-              <span>
-                {label(candidate.sourceKind)} · {candidate.proposal ? "Saved posting history · Review required" : `confidence ${pct(candidate.confidence)}`} ·{" "}
-                {candidate.detectedAtsKind
-                  ? `${candidate.detectedAtsKind} detected`
-                  : "ATS unknown"}
-              </span>
-              <span>{candidateEvidence(candidate)}</span>
-              {candidate.proposal ? (
-                <>
-                  <span>Board: {candidate.proposal.sourceId}{candidate.proposal.boardToken ? ` · ${candidate.proposal.boardToken}` : ""} · Completeness unknown</span>
-                  <span>{candidate.proposal.overlaps.length
-                    ? `Existing sources: ${candidate.proposal.overlaps.map((entry) => `${entry.sourceId} (${entry.state})`).join(", ")}`
-                    : "No existing source overlap"}</span>
-                  {candidate.proposal.promotionBlockedReason ? <span>{candidate.proposal.promotionBlockedReason}</span> : null}
-                  <span>{candidate.proposal.evidence.length} saved origin records · Up to 3 samples shown</span>
-                  {candidate.proposal.evidence.slice(0, 3).map((evidence, index) => (
-                    <span key={`${evidence.originJobId}:${evidence.urlKind}:${index}`}>
-                      {evidence.sample.title} · {evidence.sample.company} · {evidence.sample.descriptionExcerpt}
-                      <br />Origin posting: {evidence.originPostingUrl} · Job: {evidence.originJobId} · {evidence.urlKind}: {evidence.inputUrl}
-                      <br />Runs: {evidence.observations.map((observation) => observation.runId || "No recorded run").join(", ") || "No recorded run"}
-                      {` · Extraction: ${evidence.extraction.tier ?? "unknown"} · Snapshot: ${evidence.extraction.snapshotVersion ?? "unknown"}`}
-                      {evidence.extraction.snapshotEvidence?.length ? <><br />Saved extraction evidence: {evidence.extraction.snapshotEvidence.join(" · ")}</> : null}
-                    </span>
-                  ))}
-                </>
-              ) : null}
-            </span>
-            <div className="row-actions">
-              <Button
-                size="icon"
-                variant="ghost"
-                nativeButton={false}
-                render={
-                  <a
-                    aria-label={`Open ${candidate.candidateUrl}`}
-                    href={candidate.candidateUrl}
-                    role="link"
-                    target="_blank"
-                    rel="noreferrer"
-                  />
-                }
-                title="Open candidate"
-              >
-                <IconExternalLink size={14} aria-hidden="true" />
-              </Button>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                aria-label={`Promote ${candidate.candidateUrl}`}
-                title="Promote candidate"
-                disabled={promote.isPending || reject.isPending || Boolean(candidate.proposal?.promotionBlockedReason) || candidate.proposal?.overlaps.some((entry) => entry.state !== "active")}
-                onClick={() =>
-                  promote.mutate({
-                    candidateId: candidate.candidateId,
-                    body: {
-                      reason:
-                        "User promoted source locator candidate from product controls.",
-                    },
-                  })
-                }
-              >
-                <IconCheck size={14} aria-hidden="true" />
-              </Button>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                aria-label={`Reject ${candidate.candidateUrl}`}
-                title="Reject candidate"
-                disabled={promote.isPending || reject.isPending}
-                onClick={() =>
-                  reject.mutate({
-                    candidateId: candidate.candidateId,
-                    body: {
-                      reason:
-                        "User rejected source locator candidate from product controls.",
-                    },
-                  })
-                }
-              >
-                <IconX size={14} aria-hidden="true" />
-              </Button>
-            </div>
-          </div>
-        ))}
-        {!candidates.length ? (
-          <Empty
-            title={
-              loading ? "Loading locator candidates." : "No source candidates."
             }
           />
         ) : null}
@@ -1288,6 +973,9 @@ function RoleMatchFeedbackPanel({
   loading: boolean;
 }) {
   const decision = useRoleMatchFeedbackDecisionMutation();
+  const settings = useDiscoverySettingsQuery();
+  const exclusions = settings.data?.settings.exactTitleExclusions;
+  const knownExclusions = !settings.error && !settings.isFetching && Array.isArray(exclusions) && exclusions.every((item): item is string => typeof item === "string") ? exclusions : null;
   const pendingCount = suggestions.filter(
     (suggestion) => suggestion.status === "pending",
   ).length;
@@ -1300,6 +988,8 @@ function RoleMatchFeedbackPanel({
           {pendingCount} pending · {suggestions.length} total
         </span>
       </div>
+      {decision.error ? <p role="alert">Proposal decision could not be confirmed. Review the current proposal before retrying.</p> : null}
+      <DiscoveryFeedbackRefresh />
       <div className="rows compact">
         {suggestions.map((suggestion) => (
           <div
@@ -1309,45 +999,36 @@ function RoleMatchFeedbackPanel({
             <IconAlertTriangle size={16} aria-hidden="true" />
             <span className="title-stack">
               <b data-typography="strong-body">
-                Exclude “{suggestion.titleDisplay}”
+                {suggestion.ruleKind === "exact_title_exclusion" ? "Proposed exact-title exclusion" : "Proposed target review"}: “{suggestion.titleDisplay}”
               </b>
               <span>
-                {label(suggestion.status)} · {suggestion.sampleCount} low-score{" "}
-                {suggestion.sampleCount === 1 ? "example" : "examples"} ·{" "}
-                {label(suggestion.reasonCode)}
+                {label(suggestion.status)} · {label(suggestion.ruleKind)}
               </span>
               <span>{suggestion.reason}</span>
-              {suggestion.sourceIds.length ? (
-                <span className="mono" data-typography="code">
-                  sources: {suggestion.sourceIds.join(", ")}
-                </span>
-              ) : null}
-              {suggestion.evidence[0] ? (
-                <span>
-                  Latest: {suggestion.evidence[0].company || "Unknown company"}{" "}
-                  · score {suggestion.evidence[0].fitScore}/10
-                  {suggestion.evidence[0].roleFit === null
-                    ? ""
-                    : ` · role ${suggestion.evidence[0].roleFit}/10`}
-                </span>
-              ) : null}
+              {suggestion.appliedFilter ? <span>{knownExclusions === null ? "Exclusion recorded at approval; current settings unavailable" : knownExclusions.includes(suggestion.appliedFilter.literal) ? "Current exact-title exclusion" : "Exclusion recorded at approval; no longer in current settings"}: {suggestion.appliedFilter.literal}</span>
+                : suggestion.status === "approved" ? <span>Reviewed proposal; no active filter is recorded.</span> : null}
+              <details><summary>Feedback sources and model provenance</summary>
+                {suggestion.evidence.map((item, index) => <blockquote key={index}><code>{item.source_id}</code>: {item.quote}</blockquote>)}
+                <span>{suggestion.provenance.provider} · {suggestion.provenance.model} · {suggestion.provenance.prompt_version}</span>
+                <code className="break-all">{suggestion.provenance.receipt_id} · {suggestion.provenance.input_fingerprint}</code>
+              </details>
             </span>
             <div className="row-actions">
               <Button
                 type="button"
                 size="icon"
                 variant="ghost"
-                aria-label={`Approve role-match rule for ${suggestion.titleDisplay}`}
-                title="Approve rule"
+                aria-label={`Approve proposal for ${suggestion.titleDisplay}`}
+                title="Approve proposal"
                 disabled={
-                  decision.isPending || suggestion.status === "approved"
+                  decision.isPending || suggestion.status !== "pending"
                 }
                 onClick={() =>
                   decision.mutate({
                     suggestionId: suggestion.suggestionId,
                     body: {
                       decision: "approve",
-                      reason: "User approved low-score role-match suggestion.",
+                      reason: "User approved the reviewed Discovery proposal.",
                     },
                   })
                 }
@@ -1358,17 +1039,17 @@ function RoleMatchFeedbackPanel({
                 type="button"
                 size="icon"
                 variant="ghost"
-                aria-label={`Decline role-match rule for ${suggestion.titleDisplay}`}
-                title="Decline rule"
+                aria-label={`Decline proposal for ${suggestion.titleDisplay}`}
+                title="Decline proposal"
                 disabled={
-                  decision.isPending || suggestion.status === "declined"
+                  decision.isPending || suggestion.status !== "pending"
                 }
                 onClick={() =>
                   decision.mutate({
                     suggestionId: suggestion.suggestionId,
                     body: {
                       decision: "decline",
-                      reason: "User declined low-score role-match suggestion.",
+                      reason: "User declined the reviewed Discovery proposal.",
                     },
                   })
                 }
@@ -1399,11 +1080,17 @@ function ManualCapturePanel({
   items: ManualCaptureItem[];
   loading: boolean;
 }) {
-  const importCapture = useManualCaptureImportMutation();
-  const dismiss = useManualCaptureDismissMutation();
+  const importCapture = useManualCaptureImportMutation(items);
+  // A reopened capture can have the same ID even if no queue read saw it absent.
+  const [dismissalVersions, setDismissalVersions] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const dismiss = useManualCaptureDismissMutation((itemId) => setDismissalVersions((current) => {
+    const next = new Map(current);
+    next.set(itemId, (current.get(itemId) ?? 0) + 1);
+    return next;
+  }));
 
-  const importItem = (itemId: string, body: ManualCaptureImportRequest) => {
-    importCapture.mutate({ itemId, body });
+  const importItem = (itemId: string, body: ManualCaptureImportRequest, edits: CaptureDraftEdits, submittedDraft: CaptureDraftEdits, lifecycleId: string | null) => {
+    importCapture.mutate({ itemId, body: { ...body, ...(lifecycleId ? { expectedLifecycleId: lifecycleId } : {}) }, edits, submittedDraft, lifecycleId });
   };
 
   return (
@@ -1411,20 +1098,63 @@ function ManualCapturePanel({
       <div className="discovery-panel-head">
         <h3 data-typography="component-title">Manual capture</h3>
         <span className="meta" data-typography="metadata">
-          {items.length} pending
+          {items.length} to review
         </span>
       </div>
+      {[...importCapture.states].filter(([itemId, state]) =>
+        state.status === "refresh_failed" && !items.some((item) => item.itemId === itemId),
+      ).map(([itemId]) => (
+        <div key={itemId}>
+          <span role="status">The capture queue could not refresh for {itemId}.</span>
+          <Button type="button" size="sm" onClick={() => importCapture.retryReconciliation(itemId)}>Retry queue refresh</Button>
+        </div>
+      ))}
       <div className="rows compact">
-        {items.map((item) => (
-          <ManualCaptureRow
-            key={item.itemId}
+        {[...importCapture.states].filter(([, state]) => ["local_copy", "unconfirmed", "in_progress", "needs_fence", "refresh_failed", "recovery_failed"].includes(state.status)).map(([itemId, state]) => (
+          <div key={`saved-${itemId}`} className="discovery-review-row">
+            <div className="title-stack">
+              <span role="status">{state.outcome === "unsubmitted" ? "Your unsubmitted edits are available below." : state.outcome === "confirmed" ? "Your submission completed. Its local copy is available below." : state.outcome === "in_progress" ? "Your submission did not start. Its local copy is available below." : state.outcome === "rejected" ? "Your submission failed. Its local copy is available below." : "The submission's outcome is unconfirmed. Its local copy is available below."}</span>
+              <span>Capture mode: {state.submittedDraft.captureMode}</span>
+              <span>Captured URL: {state.submittedDraft.capturedUrl}</span>
+              <FieldLabel htmlFor={`${itemId}-unsubmitted-content`}>Saved submission content</FieldLabel>
+              <Textarea id={`${itemId}-unsubmitted-content`} readOnly value={state.submittedDraft.content ?? ""} rows={3} />
+              <FieldLabel htmlFor={`${itemId}-unsubmitted-note`}>Saved submission note</FieldLabel>
+              <Input id={`${itemId}-unsubmitted-note`} readOnly value={state.submittedDraft.note ?? ""} />
+              <span>Manual follow-up: {state.submittedDraft.futureManualActionRequired ? "Yes" : "No"}</span>
+              {state.status === "local_copy" ? <Button type="button" size="sm" onClick={() => importCapture.discardLocalCopy(itemId)}>Discard local copy</Button> : null}
+            </div>
+          </div>
+        ))}
+        {items.map((item) => {
+          const cached = importCapture.states.get(item.itemId);
+          const state = cached?.lifecycleId === (item.lifecycleId ?? null) ? cached : undefined;
+          const durableUnresolved = item.retryContext.manual_capture_import_unresolved === true;
+          const dismissing = dismiss.isPending && dismiss.variables?.itemId === item.itemId;
+          const savedCopy = cached?.status === "local_copy"
+            || (cached !== undefined && cached.lifecycleId !== (item.lifecycleId ?? null)
+              && (cached.status === "submitting" || cached.status === "recovering" || cached.outcome !== "confirmed"));
+          const fenced = item.lifecycleId == null || dismissing || savedCopy || durableUnresolved || (state !== undefined && !["editing", "rejected", "confirmed"].includes(state.status));
+          return <ManualCaptureRow
+            key={JSON.stringify([item.itemId, item.lifecycleId ?? null, dismissalVersions.get(item.itemId) ?? 0])}
             item={item}
-            importing={importCapture.isPending}
+            importing={fenced}
+            editingDisabled={fenced}
+            reconciliation={state ?? null}
+            durableUnresolved={durableUnresolved && !savedCopy}
+            importError={state?.status === "rejected" || state?.status === "needs_fence"
+              ? state.outcome === "in_progress" ? "Your submission did not start. Review it and try again."
+                : state.outcome === "unknown" ? "The previous outcome is unconfirmed. Review the retained capture before retrying."
+                  : "Import failed. Review the retained capture and try again."
+              : null}
             dismissing={dismiss.isPending}
             onImport={importItem}
-            onDismiss={(itemId) => dismiss.mutate(itemId)}
-          />
-        ))}
+            onDismiss={(itemId) => dismiss.mutate({ itemId, lifecycleId: item.lifecycleId ?? null })}
+            onRetryRefresh={() => importCapture.retryReconciliation(item.itemId)}
+            onSupersede={() => importCapture.supersede(item.itemId, item.lifecycleId ?? null)}
+            onEdit={(changes, snapshot) => importCapture.updateEdits(item.itemId, item.lifecycleId ?? null, changes, snapshot)}
+            onDiscardContent={(snapshot) => importCapture.updateEdits(item.itemId, item.lifecycleId ?? null, { content: manualCaptureDraft(item).content }, snapshot, true)}
+          />;
+        })}
         {!items.length ? (
           <Empty
             title={loading ? "Loading manual queue." : "No manual captures."}
@@ -1438,30 +1168,56 @@ function ManualCapturePanel({
 function ManualCaptureRow({
   item,
   importing,
+  editingDisabled,
+  reconciliation,
+  durableUnresolved,
+  importError,
   dismissing,
   onImport,
   onDismiss,
+  onRetryRefresh,
+  onSupersede,
+  onEdit,
+  onDiscardContent,
 }: {
   item: ManualCaptureItem;
   importing: boolean;
+  editingDisabled: boolean;
+  reconciliation: CaptureImportState | null;
+  durableUnresolved: boolean;
+  importError: string | null;
   dismissing: boolean;
-  onImport: (itemId: string, body: ManualCaptureImportRequest) => void;
+  onImport: (itemId: string, body: ManualCaptureImportRequest, edits: CaptureDraftEdits, submittedDraft: CaptureDraftEdits, lifecycleId: string | null) => void;
   onDismiss: (itemId: string) => void;
+  onRetryRefresh: () => void;
+  onSupersede: () => void;
+  onEdit: (changes: CaptureDraftEdits, snapshot: CaptureDraftEdits) => void;
+  onDiscardContent: (snapshot: CaptureDraftEdits) => void;
 }) {
-  const [captureMode, setCaptureMode] =
-    useState<ManualCaptureImportRequest["captureMode"]>("copied_url");
-  const [capturedUrl, setCapturedUrl] = useState(item.originatingUrl);
-  const [content, setContent] = useState("");
-  const [note, setNote] = useState("");
-  const [futureManualActionRequired, setFutureManualActionRequired] =
-    useState(false);
+  const savedDraft = manualCaptureDraft(item);
+  const [editedDraft, setEditedDraft] = useState<Partial<typeof savedDraft>>(() => reconciliation?.edits ?? {});
+  const draft = { ...savedDraft, ...editedDraft };
+  const { captureMode, capturedUrl, content, note, futureManualActionRequired } = draft;
+  const updateDraft = (changes: Partial<typeof draft>) => {
+    setEditedDraft((current) => ({ ...current, ...changes }));
+    onEdit(changes, { ...draft, ...changes });
+  };
+  const decisionMatchesDraft = captureMode === savedDraft.captureMode
+    && capturedUrl === savedDraft.capturedUrl
+    && content === savedDraft.content;
+  const editedContentWouldBeOmitted = captureMode === "copied_url"
+    && editedDraft.content !== undefined
+    && editedDraft.content !== savedDraft.content;
   const contentRequired = requiresContent(captureMode);
   const urlRequired =
     captureMode === "copied_url" || captureMode === "current_page";
-  const contentLabel = manualCaptureContentLabel(captureMode);
+  const contentLabel = editedContentWouldBeOmitted ? "Edited content" : manualCaptureContentLabel(captureMode);
+  const needsRecapture = item.retryContext.manual_capture_recovery_unverified === true;
   const canImport =
+    !editedContentWouldBeOmitted &&
     (!urlRequired || capturedUrl.trim().length > 0) &&
-    (!contentRequired || content.trim().length > 0);
+    (!contentRequired || content.trim().length > 0) &&
+    (!needsRecapture || (captureMode !== "copied_url" && content.trim().length > 0));
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -1475,6 +1231,9 @@ function ManualCaptureRow({
         note,
         futureManualActionRequired,
       }),
+      editedDraft,
+      draft,
+      item.lifecycleId ?? null,
     );
   };
 
@@ -1494,6 +1253,26 @@ function ManualCaptureRow({
         <span className="manual-capture-reason">
           {manualActionDetail(item.reason)}
         </span>
+        {needsRecapture ? <span>Previous import has no matching saved snapshot. Its outcome is unverified; select saved HTML or pasted text and provide the page again.</span> : null}
+        {item.lifecycleId == null ? <span>This capture's review lifetime could not be verified. Refresh the queue or update JobCtrl before editing or dismissing it.</span> : null}
+        {decisionMatchesDraft && item.retryContext.manual_capture_page_decision === "access_blocked" ? <span>The captured page was identified as a login or access challenge.</span> : null}
+        {decisionMatchesDraft && item.retryContext.manual_capture_page_decision === "posting_unverified" ? <span>The captured page was not identified as one job posting.</span> : null}
+        {editedContentWouldBeOmitted ? <span>Choose a content capture mode to include your edited content, or discard it.</span> : null}
+        {reconciliation?.status === "submitting" ? <span role="status">Importing capture. Editing resumes if it needs review.</span> : null}
+        {reconciliation?.status === "checking" ? <span role="status">Checking the capture queue.</span> : null}
+        {reconciliation?.status === "refresh_failed" ? <span role="status">{reconciliation.outcome === "confirmed" ? "Import completed, but the capture queue could not refresh." : reconciliation.outcome === "rejected" ? "Import failed, but the capture queue could not refresh." : reconciliation.outcome === "in_progress" ? "Your submission did not start. The capture queue could not refresh." : "Import outcome is unconfirmed. The capture queue could not refresh."}</span> : null}
+        {reconciliation?.status === "recovery_failed" ? <span role="status">Could not prepare this capture for review. Its local copy is still available.</span> : null}
+        {reconciliation?.status === "unconfirmed" ? <span role="status">Import outcome is unconfirmed and the capture remains in the queue. Check again before editing.</span> : null}
+        {durableUnresolved && (!reconciliation || reconciliation.status === "editing") ? <span role="status">An earlier import may still finish. Review the retained capture before retrying.</span> : null}
+        {reconciliation?.status === "in_progress" ? <span role="status">Your submission did not start because another import was running.</span> : null}
+        {reconciliation?.status === "recovering" ? <span role="status">Preparing the capture for review.</span> : null}
+        {reconciliation?.status === "confirmed" ? <span role="status">Import completed, but this capture remains in the queue. Review it before another import.</span> : null}
+        {reconciliation?.status === "refresh_failed" || reconciliation?.status === "recovery_failed" || reconciliation?.status === "unconfirmed" || reconciliation?.status === "in_progress" ? <Button type="button" size="sm" onClick={onRetryRefresh}>Retry queue refresh</Button> : null}
+        {(durableUnresolved && (!reconciliation || reconciliation.status === "editing")) || (reconciliation && ["refresh_failed", "recovery_failed", "unconfirmed", "in_progress", "needs_fence"].includes(reconciliation.status)) ? <>
+          <span>Prevent earlier imports for this capture from saving before you review and retry.</span>
+          <Button type="button" size="sm" onClick={onSupersede}>Prevent earlier imports from saving</Button>
+        </> : null}
+        {importError ? <span role="alert">{importError}</span> : null}
         <form className="manual-capture-form" onSubmit={submit}>
           <Field className="field">
             <FieldLabel htmlFor={`${item.itemId}-capture-mode`}>
@@ -1502,11 +1281,10 @@ function ManualCaptureRow({
             <Select
               items={CAPTURE_MODES}
               value={captureMode}
+              disabled={editingDisabled}
               onValueChange={(value) => {
                 if (value !== null) {
-                  setCaptureMode(
-                    value as ManualCaptureImportRequest["captureMode"],
-                  );
+                  updateDraft({ captureMode: value as ManualCaptureImportRequest["captureMode"] });
                 }
               }}
             >
@@ -1536,11 +1314,12 @@ function ManualCaptureRow({
               id={`${item.itemId}-captured-url`}
               type="url"
               value={capturedUrl}
-              onChange={(event) => setCapturedUrl(event.target.value)}
+              disabled={editingDisabled}
+              onChange={(event) => updateDraft({ capturedUrl: event.target.value })}
               required={urlRequired}
             />
           </Field>
-          {contentRequired ? (
+          {contentRequired || (captureMode === "current_page" && draft.content) || editedContentWouldBeOmitted ? (
             <Field className="field wide">
               <FieldLabel htmlFor={`${item.itemId}-captured-content`}>
                 {contentLabel}
@@ -1548,11 +1327,25 @@ function ManualCaptureRow({
               <Textarea
                 id={`${item.itemId}-captured-content`}
                 value={content}
-                onChange={(event) => setContent(event.target.value)}
-                required
+                disabled={editingDisabled}
+                onChange={(event) => updateDraft({ content: event.target.value })}
+                required={contentRequired}
                 rows={3}
               />
             </Field>
+          ) : null}
+          {editedContentWouldBeOmitted ? (
+            <Button type="button" size="sm" disabled={editingDisabled} onClick={() => {
+              const { content: _content, ...remaining } = editedDraft;
+              setEditedDraft((current) => {
+                const remaining = { ...current };
+                delete remaining.content;
+                return remaining;
+              });
+              onDiscardContent({ ...savedDraft, ...remaining });
+            }}>
+              Discard edited content
+            </Button>
           ) : null}
           <Field className="field wide">
             <FieldLabel htmlFor={`${item.itemId}-capture-note`}>
@@ -1561,14 +1354,16 @@ function ManualCaptureRow({
             <Input
               id={`${item.itemId}-capture-note`}
               value={note}
-              onChange={(event) => setNote(event.target.value)}
+              disabled={editingDisabled}
+              onChange={(event) => updateDraft({ note: event.target.value })}
             />
           </Field>
           <Field className="checkline wide" orientation="horizontal">
             <Checkbox
               id={`${item.itemId}-manual-follow-up`}
               checked={futureManualActionRequired}
-              onCheckedChange={setFutureManualActionRequired}
+              disabled={editingDisabled}
+              onCheckedChange={(checked) => updateDraft({ futureManualActionRequired: checked })}
             />
             <FieldLabel htmlFor={`${item.itemId}-manual-follow-up`}>
               Needs manual follow-up
@@ -1609,7 +1404,7 @@ function ManualCaptureRow({
           variant="ghost"
           aria-label={`Dismiss ${item.originatingUrl}`}
           title="Dismiss"
-          disabled={dismissing}
+          disabled={dismissing || editingDisabled}
           onClick={() => onDismiss(item.itemId)}
         >
           <IconX size={14} aria-hidden="true" />
@@ -1629,10 +1424,32 @@ function requiresContent(
   );
 }
 
+function manualCaptureDraft(item: ManualCaptureItem): {
+  captureMode: ManualCaptureImportRequest["captureMode"];
+  capturedUrl: string;
+  content: string;
+  note: string;
+  futureManualActionRequired: boolean;
+} {
+  const value = item.retryContext.manual_capture_draft;
+  const draft = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const captureMode = CAPTURE_MODES.find((mode) => mode.value === draft.capture_mode)?.value ?? "copied_url";
+  return {
+    captureMode,
+    capturedUrl: typeof draft.captured_url === "string" ? draft.captured_url : item.originatingUrl,
+    content: typeof draft.content === "string" ? draft.content : "",
+    note: typeof draft.note === "string" ? draft.note : "",
+    futureManualActionRequired: draft.future_manual_action_required === true,
+  };
+}
+
 function manualCaptureContentLabel(
   captureMode: ManualCaptureImportRequest["captureMode"],
 ): string {
   if (captureMode === "saved_html") return "Saved HTML";
+  if (captureMode === "current_page") return "Captured page content";
   if (captureMode === "email_import") return "Email content";
   return "Pasted text";
 }
@@ -1653,7 +1470,7 @@ function buildManualCapturePayload(input: {
   const note = input.note.trim();
   if (capturedUrl) payload.capturedUrl = capturedUrl;
   if (note) payload.note = note;
-  if (input.captureMode === "saved_html") {
+  if (input.captureMode === "saved_html" || (input.captureMode === "current_page" && content)) {
     payload.contentHtmlBase64 = encodeUtf8Base64(content);
   } else if (requiresContent(input.captureMode)) {
     payload.contentText = content;

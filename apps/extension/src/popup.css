@@ -13,7 +13,9 @@ body {
 }
 
 button,
-input {
+input,
+select,
+textarea {
   font: inherit;
 }
 
@@ -74,10 +76,22 @@ h1 {
 }
 
 .token-row,
-section:last-of-type {
+.action-row {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+#queue-selection,
+#queue-content {
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+#queue-url,
+#queue-note {
+  overflow-wrap: anywhere;
 }
 
 .status-pill {

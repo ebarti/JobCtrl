@@ -14,14 +14,10 @@
   "include": [
     "src/**/*.ts",
     "src/**/*.tsx",
-    "test/**/*.ts",
-    "test/**/*.tsx",
     "e2e/**/*.ts",
     "e2e/**/*.tsx",
     ".storybook/**/*.ts",
     ".storybook/**/*.tsx",
-    "vite.config.ts",
-    "vitest.config.ts",
-    "vitest.types.config.ts"
+    "vite.config.ts"
   ]
 }

@@ -1,17 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { ModelSelectionPanel } from "../contexts/profile/components/ModelSelectionPanel.js";
-import { AiExecutionPolicyPanel } from "../contexts/materials/components/AiExecutionPolicyPanel.js";
-
-export const Route = createFileRoute("/settings/models")({
-  component: ModelsSettingsRoute,
-});
-
-function ModelsSettingsRoute() {
-  return (
-    <>
-      <AiExecutionPolicyPanel />
-      <ModelSelectionPanel />
-    </>
-  );
-}
+// Retained deep link; the parent presents model controls in Connections.
+export const Route = createFileRoute("/settings/models")({ component: () => null });

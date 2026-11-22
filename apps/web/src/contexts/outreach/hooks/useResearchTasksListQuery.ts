@@ -14,9 +14,9 @@ export function useResearchTasksListQuery(
   filters: ResearchTasksFilters = {},
 ): UseQueryResult<ContactResearchListResponse> {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   return useQuery({
     queryKey: outreachKeys.researchTaskList(tenantId, filters),
-    queryFn: () => api.researchTasks(filters),
+    queryFn: () => http.json<ContactResearchListResponse>("GET", "/v1/contacts/research", { query: filters }),
   });
 }

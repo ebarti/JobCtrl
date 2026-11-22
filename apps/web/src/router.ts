@@ -2,11 +2,11 @@ import type { TenantId } from "@jobctrl/domain-types";
 import type { QueryClient } from "@tanstack/react-query";
 import { createRouter } from "@tanstack/react-router";
 
-import type { Ports } from "./shared/providers/PortsProvider.js";
+import type { ResolvedPorts } from "./shared/providers/PortsProvider.js";
 import { routeTree } from "./routeTree.gen.js";
 
 export interface RouterContext {
-  ports: Ports;
+  ports: ResolvedPorts;
   tenantId: TenantId;
   queryClient: QueryClient;
 }

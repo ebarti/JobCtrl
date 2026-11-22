@@ -1,462 +1,476 @@
-# Jobs & Materials API
+# Jobs and Materials API
 
-This route family covers the projection-backed job read model, score and career
-evidence, generated materials, review decisions, outcomes, contacts, and
-outreach. It is the main implementation reference for Jobs, Artifacts, Apply
-Review, Interviews, and Outreach views.
+Feature-owned Python HTTP adapters are being integrated. These are target
+ownership and lifecycle semantics; consult the current adapters for exact paths,
+methods, fields and status codes. A route declaration alone is not proof of a
+working product journey.
 
-For field-level schemas and every route variant, use the
-[complete contract](complete-contract.md#jobs-read-model-and-lifecycle).
+## Jobs and Evidence
 
-## Generation Selection
+Jobs owns capture, identity and versioned posting snapshots. The current work in
+`features/jobs/bootstrap.py` declares `/v1/jobs`, capture and job snapshot
+routes; the integrated candidate must verify them. Manual Jobs works without
+Discovery or Companies. Requirements owns qualified source meanings and Fit
+owns person/evidence qualification; no reader should recompute semantic
+relationships with word matching. The in-progress `features/requirements/http.py`
+declares the catalog and job requirement routes; `features/fit/http.py`
+declares job fit, assessment, corrections and coverage. These declarations
+still need composed application and E2E verification.
 
-`POST /v1/jobs/:jobKey/actions/generate-materials` accepts optional `stages`.
-Omitting them prepares the résumé and PDF; it also includes a letter when
-`coverLetterGeneration` is enabled in Settings. With the setting off, mixed
-requests omit Cover and a cover-only request returns
-`409 cover_letter_generation_disabled` with guidance to enable the setting.
-Existing accepted materials remain available.
+`GET /v1/jobs/{job_id}/snapshots` includes recorded capture attempts. A failed
+employer analysis keeps `failure_code: role_analysis_failed` and, when available,
+stores up to three underlying `{code, provider, model}` entries in
+`attempts[].data.failures`. Provider and model identify the actual frozen
+selection, including the default model. This diagnostic evidence excludes
+prompts, citations, source text and arbitrary exception context. Failure retains
+the last accepted analysis; reading the history starts no retry or model work.
 
-## Jobs And Evidence
+Recognized posting-fetch refusals retain `posting_fetch_blocked` or
+`posting_fetch_unavailable`; unclassified fetch exceptions retain
+`posting_fetch_failed` with an explicitly unknown cause. Their capture attempts
+include `data.captureFailure: {stage: "posting_fetch", kind, reason_code}` with
+only safe identifiers. Recognized blocking reasons come from the acquisition
+policy; unavailable or unclassified failures keep `reason_code: "unknown"`.
+HTTP 429/503 from a configured page provider describe that provider's rate limit
+or unavailability, not the target posting's status. Failed fetches preserve the
+accepted posting and start no model work or automatic retry.
 
-| Route family | What it exposes |
+Fresh employer-analysis requests use `role-analysis-v3-offered-sources` (and the
+corresponding synthesis version). Their citation schema permits only the exact
+offered canonical source IDs; quote and semantic validation remain unchanged.
+Accepted v2 analyses remain readable and reusable when the current posting,
+provider/model/effort/configuration fingerprint, recorded source binding and
+immutable receipt/citation authority still match. This structural upgrade does
+not sweep existing jobs or promote an unaccepted v2 cached response.
+
+## Typed Job Requirements
+
+`GET /v1/jobs/{job_id}/requirements` exposes the accepted job snapshot.
+`POST` on the same route requests an explicit revision-fenced refresh with
+`expected_posting_revision`, `expected_revision` and optional `force`.
+New snapshots carry `contract_version: requirements-v2` and contain:
+
+| Field | Meaning |
 | --- | --- |
-| `GET /v1/jobs` and `GET /v1/jobs/:jobKey` | List/detail projections, stage state, score summary, and audit links. |
-| `POST /v1/jobs/import-url` | Start one public posting import and follow completion or its typed Manual Capture fallback. |
-| `GET /v1/jobs/import-url/:workflowId/:executionId` | Read the acknowledged import execution without starting or waiting for more work. |
-| `GET /v1/scoring/keywords` | Current projected score-version keyword aggregation with canonical normalized keys. |
-| `POST /v1/scoring/stale-scores/actions/reset-for-rescore` | Reset distinct inactive stale scores while retaining their markers until a matching replacement; report active and already-pending jobs separately. |
-| `GET /v1/evidence-map` | Canonical career evidence used by scoring and materials. |
-| `GET/POST /v1/evidence-map/learning` | Read retained selected-job comparisons; preview sources, compare an explicit dated cohort, choose proposals and record milestone activity. |
-| `POST /v1/jobs/:key/score-correction` | A new score version plus explicit correction rationale. |
-| Job hide/restore/delete routes | Reversible lifecycle commands, plus a separate permanent-delete boundary. |
+| `status` | `complete` or `unsupported_language` |
+| `language` | Source-bound `classification: english\|non_english\|uncertain`, `reason` and `evidence_refs` |
+| `quotes` | Exact `evidence_id`, `source_id`, `quote`, `start` and `end` references into the frozen posting |
+| `requirements` | Reusable Skills/Professional Experience occurrences and their canonical binding |
+| `education` | Direct job-local Education demands |
+| `languages` | Direct job-local Languages demands |
+| `unresolved` | Retained source ambiguities |
+| `extraction_provenance` | Recorded extraction/model authority and source bindings |
 
-The Jobs removed-selection flow reads a reviewable list and prepares an exact,
-short-lived cohort before confirmation. It submits that receipt with the same
-canonical IDs; a stale receipt refuses the entire deletion. See the
-[complete lifecycle contract](complete-contract.md#jobs-read-model-and-lifecycle)
-for the request and conflict details. Direct permanent deletion and the guarded
-job-data purge keep their separate existing contracts.
+A reusable occurrence retains its original `category`, `name`, `definition`,
+`basis`, `rationale`, `source_note`, `evidence_refs` and `spans`, alongside its
+canonical IDs/revisions and nested
+`canonical: {contract_version, category, name, definition}`. Its original
+meaning is not replaced by the catalog label. The active catalog categories
+are `skill` and `professional_experience`; canonical rows have no generated
+scope, qualifier, tier or importance-weight fields. Qualifications and meaningful
+alternatives remain in the source-bound definition and occurrence evidence.
 
-List and detail endpoints read projection rows. Job detail also reads the latest
-accepted interview prep directly from its canonical owner, independently of
-projection lag. These reads do not recompute scores, parse salary text, or replay
-events during a request.
+Education demands retain `qualification`, `subjects`, `alternative` and
+`source_note`; Languages demands retain `language`, `proficiency` and
+`source_note`. Both retain exact source metadata/spans and a job-local
+`requirement_id` with `revision: 1`. They do not appear in `GET /v1/requirements`,
+the Fit requirement library or achievement-wording authoring. Their identities
+cannot authorize another job's qualification.
 
-The current requirement-fit report retains each contribution's optional
-`scope` and `scopeSourceId`, bound to the recorded job-interpretation
-determination and exact requirement ID. `requirement-fit-v2-scoped` includes
-only `resume`-scope rows in capability coverage; eligibility, logistics and
-employer conditions remain visible with zero `maxPoints` and `awardedPoints`.
-These readers expose stored arithmetic without recalculating it. Legacy
-reports without a recorded scope source retain their earlier shape and formula.
+A source-bound English-language decision runs before extraction. An accepted
+`unsupported_language` result has empty demand arrays and retains its language
+evidence; preparation skips Fit and creates no score. Uncertainty, invalid output,
+provider refusal and stale sources cannot publish an invented empty fit result.
+Personal traits, certifications/licenses, job conditions and detailed tenure
+analysis are outside this contract. Structured certification work is tracked in
+[#1476](https://github.com/ebarti/JobCtrl/issues/1476).
 
-`POST /v1/jobs/import-url` validates a public HTTP(S) destination. The Jobs UI
-sends `{ url, awaitResult: false }` and receives `202` with
-`{ ok: true, status: "started", workflowId, executionId }` as soon as Temporal
-accepts the import. It follows that exact execution through
-`GET /v1/jobs/import-url/:workflowId/:executionId`; a running import returns
-`status: "pending"` without awaiting its result. The dialog retains this handle
-when a status read fails, retries the read, and links to Runs. It never resubmits
-the import to check progress. Terminal failed, canceled, timed-out and terminated
-histories remain explicit stopped outcomes. The worker checks the tenant,
-app/database, import workflow type and exact execution identity before reading a
-result; it does not follow a newer execution with the same workflow ID.
+Current catalog reads return only `requirements-v2` meanings. Missing versions
+are legacy. Retained detail/history reads preserve accepted old fields and include
+`contract_changed` in `stale_reasons` where applicable; they are not
+silently promoted. Incompatible refresh/resume/replay is refused before new
+publication. Historical ordering and accepted artifact bytes remain available.
+See [generation and rollout](../architecture/scoring.md#generation-history-and-rollout).
 
-Existing callers may omit `awaitResult` or set it to `true` to retain the awaited
-`200` response. Both the awaited response and a completed status read map a
-readable posting to `{ ok, status: "imported", jobKey, importedAt,
-alreadyExisted }`. A blocked, login-walled, rate-limited, or ambiguous page
-returns `{ ok, status: "manual_capture_required", itemId, reason }`; that
-outcome creates no Job row. Repeating an already-imported URL resolves the same
-canonical `JobId` without another fetch.
-An identified posting with public structured content may proceed through strict
-extraction and content-quality review when visual access is unknown. Unknown
-access and availability remain recorded; they are not promoted to clear or
-active. An unknown posting identity or explicit login/challenge still requires
-Manual Capture.
-This includes an exact originating URL whose accepted Manual Capture receipt
-already points to an existing job, even when the captured canonical URL differs.
+`POST /v1/jobs/{job_id}/requirements/corrections` repairs selected reusable
+occurrence interpretations without re-extracting the other demands. The strict
+body is `expected_posting_revision`, accepted `expected_revision` and
+`corrections: [{occurrence_id, reason}]` with 1–20 distinct current occurrence
+IDs. Durable `requirements.correct_occurrences` uses the same body plus `job_id`.
+Reasons are task guidance, never source evidence. The posting and accepted
+snapshot must be current, English and complete.
 
-Provider execution errors retain their retryable domain classification, allowing
-the workflow's bounded retry to acquire another ready route. Citation, schema
-and other source-binding failures remain distinct failures after bounded model
-correction; none can create a guessed job or replace accepted data.
-An oversized public page resource retains its acquisition-limit classification
-and opens Manual Capture. Destination denial still rejects the URL; byte caps
-and public-address checks remain enforced.
+One source-bound revision batch must return exactly one corrected meaning for
+each selected occurrence. Existing complete-catalog matching resolves only that
+batch. The operation cannot add, split, merge or delete occurrences, change
+direct demands, or revise global catalog meanings. All physical occurrence IDs
+change with `previous_occurrence_id` links; unselected meaning/binding/evidence/
+provenance fields remain exact copies. Selected meanings name their correction
+receipt and result fingerprint as current authority, with earlier provenance
+under `origin`. The original full extraction provenance remains on the snapshot,
+and `correction_history` records the separately accepted correction stage.
 
-Each job-detail stage may include an optional `applyUrlOutcome` object with the
-allow-listed `code`, user-facing `message`, `retryable`, and resolver `method`
-fields. It is populated on Enrich when application-target discovery has an
-auditable result. The object is independent of the Enrich stage state: a
-LinkedIn on-site application flow is a successful terminal outcome even though
-there is no external URL. Raw resolver errors and browser-local paths are not
-projected.
+Posting/snapshot identity, all original canonical heads, catalog epoch and
+cancellation fence publication atomically. Failure preserves accepted history.
+At most five new call intents are admitted across worker recovery; settled exact
+authority is reused, while a previously reserved unsettled input refuses with
+409 `requirements_correction_call_unsettled`. This action does not start Fit or
+wording work. It differs from binding correction, which preserves the original
+interpretation, and global canonical revision, which can stale other jobs.
 
-Enrich stages can also include `fetchFailure`: an allow-listed `kind`,
-`requestHost`, `observedAt`, `recoveryStatus`, `checkCount`, `checkedAt`,
-`nextCheckAt`, and `retryEligibleAt`. Recovery status is `waiting`,
-`retry_ready`, `checks_exhausted`, or `stopped`; absent recovery has a zero
-count and null times/status. The diagnostic excludes raw request URLs, query
-strings, and unknown metadata. Both projection writers produce the same shape.
-The job audit preserves typed failure evidence and `EnrichmentFetchRechecked`
-results. Historical success does not turn an old failure into a current block.
+## Typed Fit Results
 
-`jobKey` resolves at the browser API boundary to the tenant-scoped stable
-`JobId`. Canonical clients send that ID; the explicit API/import boundary may
-also accept a posting or application URL as an external locator and resolve it
-to the same ID. Posting identity (the `JobId`, posting URL, or a retained
-posting locator) resolves first. An application URL resolves only when exactly
-one job in the tenant owns it as its canonical enrichment target or retained
-alias; a shared application endpoint matching several jobs resolves to no job,
-and the route answers `job_not_found`. The
-[application URL authority inventory](../architecture/application-url-authority.md)
-lists every reader of these values. Internal command payloads and foreign
-references remain ID-shaped. `GET /v1/jobs` accepts
-`normalizedScoreKeyword` using the exact key returned by
-`GET /v1/scoring/keywords`; current filtering never mixes historical score
-versions into the result. It also accepts optional `jobStates` values
-(`active`, `deleted`, `hidden`; repeated values or normal comma serialization
-are accepted). These values are ORed before count and pagination. Hidden wins
-when both hide and delete tombstones exist. When `jobStates` is present it takes
-precedence over the legacy `deleted` filter; when absent, legacy links keep the
-existing `active`, `closed`, `deleted`, `hidden`, and `all` behavior. The same
-optional filter is accepted by all-matching bulk job mutations.
+New Fit JSON carries `contract_version: requirements-v2`. Its `formula_version`
+and `policy_version` are `requirement-fit-v3-equal`. The score summary records
+`qualification_coverage`, `assessed_count`, `supported_count` and `blocker_count`.
+The retained `weighted_fit` compatibility field is the same equal-item average;
+it does not restore posting weights. An empty assessed set has `assessed_count: 0`
+and null `qualification_coverage`, `score`, `computed_score`, `fit_band` and
+`confidence`. With job conditions excluded, the compatibility `eligibility`
+value is neutral `unknown`, with empty eligibility blockers/warnings.
 
-`GET /v1/jobs` and all-matching bulk filters also accept `stages`, an OR filter
-on the projected `currentStage`. JSON arrays, comma serialization
-(`stages=discover,apply`), repeated values, and repeated comma groups are
-accepted. Up to six values are validated before duplicates are removed;
-surrounding whitespace is trimmed. A valid `stages` value overrides scalar
-`stage`. An empty array (serialized as `stages=`) clears the stage restriction,
-including a supplied scalar. Invalid or oversized arrays are ignored as a whole,
-so the legacy scalar remains effective. Omission or an explicit TypeScript
-`stages: undefined` preserves scalar behavior.
-The current projection groups preparation substages under Discover or Apply;
-membership uses that public stage rather than `currentSubstage`.
+Assessments retain `category`, `name`, `definition`, `text`, exact `evidence_refs`
+and `achievement_ids`. `evidence_route` is `education`, `equivalent_experience`
+or null; `wording_support` is `section`, `achievement` or `none`.
+Coverage's `section_support` rows record `{requirement_id, assessment_id,
+category, evidence_refs}` and prevent a supported section from becoming a false
+achievement-wording gap. Direct Education/Languages demands remain outside the
+reusable coverage/library/authoring inventory. Their qualification still
+contributes an equal item to the job score.
 
-Stage membership and all other filters apply before the global total, sort,
-and page slice. Pages clamp to the last page; an empty result has page one and
-one page. All requests read the total and page from one SQLite snapshot.
-`discoveredSince` and `scoredSince` compare instants inclusively at JavaScript
-millisecond precision, so equivalent offsets and fractional notation match.
-Missing or invalid stored timestamps do not match their cutoff. When both
-cutoffs are supplied, either may match. Timestamp filters use precomputed
-milliseconds in the query index before totals, pagination, and all-matching bulk
-selection.
-Response `filter.stages` records the effective deduplicated membership (an empty
-array means unrestricted); `filter.stage` retains the requested legacy scalar
-for compatibility. Clients can request combined pages through the existing
-API client without assembling stage-local pages.
+Legacy Fit reads return `current: false` with `contract_changed` in
+`stale_reasons`. Incompatible Fit operations refuse with HTTP 409
+`contract_changed`; incompatible generic durable-action replay uses
+`action_contract_changed`. For an accepted unsupported-language posting, a
+read retains any prior score with `unsupported_posting_language` staleness, and
+a new assessment refuses with that code rather than publishing a replacement.
+The existing public routes remain. Reusable requirement correction accepts
+optional `wording_support` and `evidence_route`; the canonical correction route
+cannot correct a direct job-local demand. Exact adapters and the
+[Fit reference](../../workers/automation/src/jobctrl/features/fit/README.md)
+remain authoritative for validation and error envelopes.
 
-Stage-state selection uses the same membership for SQL pages, searched lists,
-and all-matching bulk actions. `state=failed` includes stored `failed` and
-`exhausted` rows; the legacy `state=exhausted` selector includes only stored
-exhaustion. Both are presented as `currentState: "failed"`, with
-`failureReason: "attempt_budget_exhausted"` identifying exhaustion.
-State sorting uses that presented state, so exhausted and other failed jobs
-share the failed sort key. Text sorts lowercase their values and use locale
-comparison, matching the existing browser merger; equal keys keep ascending job
-IDs in both directions. Discovery sorting compares the original timestamp
-strings with locale comparison, preserving browser behavior across fractional
-and offset notation; it does not normalize them to instants. Missing values
-sort first ascending and last descending. All searches and sorts select IDs in
-SQLite before hydrating only the returned page. The app-owned, rebuildable
-[query index](../architecture/read-model.md#job-list-sqlite-selection) stores
-compatible search values and locale sort ordinals without changing exact v14.
-Source and company filters are literal substrings after
-Unicode lowercasing: `%`, `_`, and backslash have no wildcard or escape meaning.
-Source checks the displayed source, discovery source, posting source, and posting
-URL. These rules also apply to searched lists and all-matching bulk selection.
+The durable `fit.refresh` action accepts `prepare_coverage` as a strict boolean,
+defaulting to `true`. For a qualification-and-score-only refresh, explicitly pass
+both `prepare_coverage: false` and `prepare_wording: false`; the action completes
+after factual publication without expression-coverage or authoring calls. A
+coverage-disabled request cannot include wording retries or enable wording
+preparation. Operation reads retain both frozen preparation flags. Previously
+frozen operations without the new flag retain enabled coverage and their existing
+request identity.
 
-### Profile freshness and explicit score updates
+When a manual Fit qualification was paid but a revision conflict prevented
+publication, a new explicitly admitted refresh can recover one settled exact
+qualification for the same Profile and selected jobs. It verifies the full
+gateway input and execution identity, then rechecks every returned requirement
+and its source evidence. A successful recovery exposes
+`counters.qualification_receipts_reused` and consumes no new provider call.
+Ambiguous and unsettled exact receipts produce
+`fit_refresh_qualification_receipt_ambiguous` or
+`fit_refresh_qualification_receipt_unsettled`. The previous action remains
+stale and its score cannot be published.
 
-Jobs list/detail include `scoreProfileFreshness`: status, scored/current profile
-versions, and an optional bound review with determination ID, verdict, rationale,
-provider/model/effort and review time. Profile saves and API startup launch no
-score or material work. A score with unknown source versions is `unknown`.
+Fresh refresh operations expose independent `impact_selection_scope_version` and
+`qualification_transport_version` pins. Complete frozen scope is preserved while
+exact current qualifications and mandatory reassessments are resolved before an
+optional single impact call over uncertain changed-fact items. Fixed decisions
+have structural provenance; the original subset model receipt remains separately
+bound to the composed complete partition. Pre-pin retained calls keep exact
+historical request recovery and unsettled-call refusal. These operation wire
+versions do not change accepted qualification/currentness policy or reset limits.
 
-The existing per-job `actions/rescore-current-policy` and batch scoring actions
-remain explicit. For a changed profile on the same policy, they ask the configured
-model whether the edits affect the job. An insignificant verdict keeps the score's
-original version/date and records `reviewed_unchanged`; a significant verdict
-recomputes. Policy or posting/guidance changes can independently require a new
-score. Missing historical comparison inputs and failed checks preserve accepted
-scores and return their typed failure, without a lexical substitute.
+## Requirements Library And Associations
+
+The redesign candidate composes three public owners: Requirements supplies
+canonical meanings/history, Profile supplies facts and exact wording, and Fit
+supplies recorded assessments, coverage and unassessed user associations. This
+is a source contract; the [redesign ledger](../plans/2026-11-11-original-app-redesign.md)
+records integrated verification separately.
+The active library contains Skills/Professional Experience only. Direct
+Education/Languages demands remain in their job snapshot and Fit result.
+Membership requires an accepted occurrence on at least one existing nondeleted
+Job; hidden Jobs count. Both `GET /v1/requirements` and the composed Fit library
+apply this rule before filtering or pagination. Deleting the last such Job
+removes the meaning from those lists; restoring it recovers the same IDs and
+history. Existing support, associations and wording selections remain retained
+but do not independently keep a deleted-only meaning active. Profile capabilities
+and accepted documents are unchanged. These reads and visibility changes make
+no model calls. `catalog_revision` identifies the retained semantic catalog,
+so a visibility change can alter library membership without changing that epoch.
+Reviewed permanent job deletion removes canonical meanings only when no other
+retained Job occurrence references them, including superseded occurrences and
+soft-deleted Jobs. Requirements removes its heads/revisions/index/action links
+and increments the catalog epoch; registered Fit cleanup removes its owned
+requirement relations in the same transaction. Profile facts and approved
+wording, independent model receipts and remaining Jobs' meanings survive.
+Exact detail/history reads for a permanently removed meaning return 404.
+Later identical source extraction creates a different canonical identity after
+purge; it cannot revive removed revision pins or Profile links.
+
+| Route | Contract |
+| --- | --- |
+| `GET /v1/requirements/{requirement_id}` | Retained current or exact historical meaning and accepted occurrences, including meanings outside the active library. `active_in_library` distinguishes current membership from retention. |
+| `POST /v1/requirements/consolidate` | Explicit source-bound existing-only consolidation: `{expected_catalog_revision,operation_id?}`. The durable `requirements.consolidate` action accepts `{expected_catalog_revision}` and uses its run ID. |
+| `GET /v1/requirements/{requirement_id}/history` | `kind=revisions\|occurrences`, `limit=1..200` (default 50) and nonnegative `offset`; returns `{requirement_id,current_revision,active_in_library,kind,total,limit,offset,rows}`. Occurrences retain exact accepted posting/meaning revisions and report `current`/`stale_reasons`. |
+| `GET /v1/fit/requirement-library?profile_id=default` | Complete active library with nullable recorded `assessment`, exact `coverage`, separate unassessed `associations`, active `current_wordings` heads (including stale heads) and all `wording_assignments` heads. Returns Profile/fact/wording/catalog revisions and `readiness: ready\|profile_required`. An absent Profile has null Profile revisions, not invented evidence. |
+| `POST /v1/fit/associations` | Requires stable `association_id`, `profile_id`, `expected_profile_revision`, `requirement_id`, `requirement_revision`, `achievement_id`, exact `achievement_source_refs`, and `wording: null` or `{variant_id,variant_revision,exact_text,source_refs}`. |
+| `POST /v1/fit/associations/{association_id}/revisions` | The association creation fields plus `expected_revision` revise the optional wording/source pins while retaining the stable Profile/achievement/requirement pair, ID and history. One active manual association exists per pair. |
+| `POST /v1/fit/associations/{association_id}/state` | `{profile_id,expected_revision,state: active\|removed}` performs revision-fenced soft removal/restoration; it preserves original source pins. |
+| `GET /v1/fit/associations/{association_id}/history` | Profile-scoped paginated immutable revisions, with current revision, total, limit and offset. |
+| `POST /v1/fit/current-wordings` | Requires `profile_id`, `expected_profile_revision`, `expected_revision` (`0` for creation) and exact achievement/requirement-revision/variant-revision/approval/positive-coverage-relation pins. Records a maintained assignment, not new semantic authority. |
+| `POST /v1/fit/current-wordings/{assignment_id}/state` | `{profile_id,expected_revision,state: active\|removed}` changes an assignment under its exact revision; restoration refuses stale or absent positive coverage. |
+| `GET /v1/fit/current-wordings/{assignment_id}/history` | Profile-scoped immutable assignment revisions, default 50/max 200 per page, with current revision, total, limit and offset. |
+
+Every user association remains `origin: user` and `assessment_status: unassessed`.
+Creation checks current requirement, achievement/source, Profile and optional
+exact wording revisions. An exact same-ID/body retry reuses its identity; changed
+input cannot overwrite it. A later source, meaning or wording change marks its
+original pins stale. Restoration does not claim freshness or reassess anything.
+These writes make no model call, qualification, coverage, score, wording approval,
+resume change or automatic refresh. Readers join recorded IDs and revisions;
+they do not infer links from labels or text similarity.
+
+The `requirements-capability-demand-v2` policy makes complete retained-catalog
+consolidation mandatory for semantic publication. Its report contains captured
+and published catalog epochs, input member count, canonical roots, complete
+member-to-root mapping, affected jobs, reconciliation identity and model receipt.
+Catalog reads include `normalization` status/version/certificate and recorded
+aliases. Exact historical revision reads preserve their original identity;
+current navigation may follow a recorded alias. Old typed job snapshots report
+`consolidation_required` staleness and cannot supply new assessment authority.
+
+The read-only `GET /v1/jobs/{job_id}/requirements/attempts/latest` returns the
+latest attempt for an existing job, or null before its first attempt. It also
+works before the first accepted snapshot. `failure_code` identifies a refusal.
+Where recorded, `failure_details` preserves the source-free counts, catalog
+revision, reason and model error from a complete-input refusal, or the gateway
+receipt ID for a dispatched provider failure. Historical attempts report only
+the fields that were recorded. The original Requirements read remains an
+optional accepted snapshot.
+
+Consolidation uses semantic policy `requirements-capability-demand-v2`. Explicit
+catalog repair and corrections use `requirements-capability-demand-partition-v6-background-v1`.
+New single-job refreshes and new searches on the per-job route use
+`requirements-capability-demand-partition-v11-cited-occurrences`. Every occurrence
+slot declares `cited` or `unresolved`. A demand group assigns an occurrence by
+citing an offered segment of its original source. The owner rejects an occurrence
+cited by zero or multiple groups. Every accepted group still belongs to one
+capability and supplies one complete demand per job and capability. Each demand group
+chooses `keep` for the sole accepted demand bound to its occurrences, `select`
+for a specific offered prior demand source, or `author` for a new full
+definition. A choice of `keep` can also bind newly assigned occurrences when
+the selected prior demand applies to them. Multiple distinct prior demands
+require an explicit source selection or an authored definition. The response
+retains the original evidence citations for every occurrence. Shared
+initial-search cohorts use `requirements-capability-demand-partition-v7-cohort-background-v1`.
+The instruction revision clarifies a single prerequisite that accepts any of
+several prior backgrounds. Existing action IDs retain their admitted instructions.
+Named columns identify the exact fields in each repeated row. References select whole source strings
+and each source explicitly lists its available segment IDs beside its citation
+path layout. The owner verifies the reconstructed context and original source
+documents before dispatch and when binding the response. Groups can select
+only a retained capability ID for `reuse_requirement_id`. With no retained
+capabilities this field requires null. Previously admitted work keeps its
+original v6, v7, v8 or v9 format through retry. The complete input must fit the existing
+1 MiB gateway bound and the selected provider's context.
+All three versions use `CatalogNormalizationSlots`, which requires a property for every supplied member
+in `member_slots` and every occurrence in `occurrence_slots`. Each slot is assigned
+to an independent pre-offered capability/demand group handle or explicitly
+unresolved. `capability_groups` and `demand_groups` require every offered handle:
+used groups contain terminal normalized definitions/citations/reuse choices;
+unused groups are null. No groups can alias other groups, so recursive cycles are
+unrepresentable. Capacity permits every input to remain separate, without setting
+a target count. Models choose all semantic memberships. The owner only joins
+those assignments to recorded input member/occurrence/job identities.
+Missing definitions, unused non-null groups, demand assignments across capabilities,
+multiple demands for one job/capability and uncertainty refuse publication.
+Group citations select supplied `{source_id,segment_id}` references. The owner
+derives exact quotes from one source value/range using
+`requirements-citation-binding-v1`; the model never copies a quotation or calculates
+offsets. Full source evidence remains in one complete determination per operation.
+Generic extraction, Fit and other feature citation formats are unchanged.
+
+V6 source-ID enums enforce citation roles before owner publication. Demand evidence
+can select inventory, occurrence sources and postings with a matching offered
+occurrence's job/revision/hash. The owner still checks every citation against the
+actual demand's bound occurrences and eligible postings. Supplied prior normalized
+demand definitions are reuse context only: select `reuse_demand_fingerprint` to
+request exact reuse, without citing that definition as original evidence. Other
+citation fields retain their broader supplied-source vocabulary and existing
+required-source/witness rules. Segment IDs keep their existing format; the exact
+source/segment binder remains authoritative. No model-selected citation is dropped
+or rewritten to make an invalid response acceptable.
+
+The report's `partition_binding` is versioned `requirements-partition-binding-v2`
+and contains `raw_selection_fingerprint`, `intermediate_fingerprint`, exact
+`member_groups`/`occurrence_groups` assignments and derived `demand_capabilities`
+joins. Group handles carry no durable identity and never choose a persisted survivor.
+The report's `citation_binding` contains `binder_version`, `selection_fingerprint`,
+`derived_fingerprint`, `segment_catalog_fingerprint`, `source_fingerprint`,
+`source_context_fingerprint`, complete structural `source_context`, per-source
+`source_fingerprints` and the supplied `segment_catalog`. These pin real meaning
+and ordered family revisions, occurrence/snapshot IDs, extraction/correction and
+lineage references, and immutable posting revisions. The citation selection
+fingerprint pins the intermediate reference projection, equal to the partition
+binding's intermediate fingerprint. The gateway accepted-result fingerprint
+always pins the raw slots. Raw model selection/cache/gateway authority is retained
+unchanged; intermediate selection, derived quotes and both bindings are stored
+separately in the existing reconciliation's JSON envelope, versioned
+`requirements-normalization-binding-v3`. Old v2/v3/v4/v5 history remains readable and
+explicit pure validation remains tied to its original prompt/input, including the
+exact v5 schema. V6 changes prompt/schema identity only; binder and envelope
+versions remain unchanged. No SQL schema,
+capability identity policy or normalized-demand fingerprint changes are implied
+by the citation format. Durable Requirements action versions and idempotent input
+hashes include the partition wire so an old quote/array/graph action cannot resume as a
+current terminal-group action. This transport guarantees input accounting, not
+semantic correctness or a particular model latency.
+
+Reusable occurrences retain their original extracted definition and exact source
+evidence plus `normalized_demand` containing its definition, fingerprint, policy
+version and source-bound provenance. The assessment adapter exposes canonical
+ID/revision/category/name, `capability_definition`, normalized demand `definition`,
+`demand_fingerprint` and `demand_provenance`. Same-job occurrences of one capability
+share one combined demand; direct Education/Languages remain job-local.
+
+Fit library rows add `assessment_scope`, `assessment_summary` and
+`demand_assessments`. Each demand row retains its definition, fingerprint,
+applicable jobs and actual recorded assessment/currentness. Multiple demands
+report `varies_by_job` with no representative scalar assessment; incomplete old
+source inventory reports `consolidation_required`, including any verified partial
+rows without claiming a complete assessment. No strongest/latest sibling can
+become global support. Qualification, coverage, refresh checkpoints and
+publication fences retain the exact demand and policy version. Maintained common
+wording heads retain per-demand assessment/relation bindings under one exact
+approved variant; an uncovered demand remains a gap.
+
+Normalization's explicit correction witness is bounded to a retained historical
+member with no accepted occurrence, including deleted jobs. It pins the exact
+unsupported prior claim, original source, retained group and preserved demand
+group. Original definitions stay immutable history; active occurrence splitting
+and invented subtype/scope are refused. The same complete determination and
+atomic source fences apply—there is no separate per-member correction call.
+
+Incomplete/uncertain partitions, invalid reuse/citations, cancellation, stale
+catalog/posting/snapshot heads and payload/provider refusal preserve accepted
+records. No partial consolidation, automatic downstream refresh, lexical fallback
+or per-item inference fanout is admitted. See the
+[decision](../decisions.md#capability-consolidation-and-source-demand).
+
+Maintained assignments are distinct from user associations. They bind exact
+current approved wording and recorded positive coverage (`approval_id` and
+`relation_id`) to the canonical requirement and achievement revisions. Their
+`current` flag describes binding freshness; an active stale head remains visible
+with `stale_reasons` and cannot pretend to be current authority. Selection
+provenance and prior assignment revisions remain inspectable.
+
+Manual assignment permits exact reuse or a result with at most one distinct
+wording variant for the achievement. A change that would maintain additional
+distinct variants returns `409 fit_wording_consolidation_required`, with explicit
+affected-match refresh as the remedy. Only the source-bound grouped decision
+can authorize a justified distinct-coverage exception. No lexical comparison or
+user-authored intended-requirement ID supplies that authority. Assignment writes
+perform no new inference or approval and do not replace accepted resume bytes.
+
+History exposes retained accepted canonical revisions and source occurrences.
+An old occurrence is not a failed refresh promoted into accepted state. Failed
+attempts keep their existing attempt APIs, and a changed posting revision makes
+the occurrence's freshness explicit. See the
+[Requirements library guide](../user/requirements-library.md) for the user flow.
 
 ## Saved Posting Availability
 
-`POST /v1/jobs/:jobId/actions/check-availability` accepts `{}` with no additional
-fields and a canonical JobId. It dispatches `check_posting_availability` with
-trusted tenant, application-directory and database identity; a successful start
-returns `202 { ok: true, status: "queued", runId, workflowId }`. Missing jobs,
-invalid input, unavailable dispatch and malformed worker acknowledgements stay
-explicit errors; the command never launches Apply.
+`GET /v1/jobs/{job_id}/availability` reads the last confirmed state and time
+(`last_confirmed`) and latest attempt (`last_attempt`) for the saved URL. Either
+can be null. `POST` requests a manual check. The UI warns at 24 hours. Failed
+and inconclusive attempts preserve the previous confirmation. See [jobs lifecycle](complete-contract.md#jobs-read-model-and-lifecycle).
 
-Jobs list/detail read the latest `availability` observation directly from the
-Enrichment event ledger, independently of projection lag. The response exposes
-separate attempt/success clocks, latest uncertainty, bounded hashed acquisition
-lineage, next due, calculated overdue/in-progress state, and optional deferred
-explicit command reason/request time/retry time. Unchanged refusals coalesce;
-automatic/preflight checks do not create user request feedback. Local refusal does
-not invent an attempt or raise evidence backoff. It performs no
-employer network calls and appends no events. The
-[complete contract](complete-contract.md#saved-posting-availability) owns fields;
-the [enrichment guide](../user/enrichment-and-extraction.md#saved-posting-availability)
-owns cadence, bounds, anonymous access and costly-work freshness gates.
+## Artifacts and Resume Templates
 
-## Feedback Learning And Materials Policy
+Resumes owns approved wording selection, coverage manifest, editable documents,
+rendering, templates, acceptance and exports. Bind approval and download to the
+exact artifact and source revisions. Failed replacement, rendering or export
+preserves prior accepted material. One advisory coherence review has a status
+separate from user acceptance; a mechanically valid document can be accepted
+with an explicit override of a finding or timeout. The in-progress
+`features/resumes/http.py` declares `/v1/resumes` and routes for editing, review,
+rendering, acceptance, export and locales; these still need integrated proof. See
+[tailoring](../architecture/tailoring.md).
 
-| Route | Purpose |
-| --- | --- |
-| `GET /v1/learning/recommendations` | Paginated pending/inactive recommendation summaries with sample gates and safe counts. |
-| `GET /v1/learning/recommendations/:recommendationId/evidence` | Bounded structured supporting and contradicting references without source free text. |
-| `POST /v1/learning/recommendations/:recommendationId/reviews` | Explicitly accept or reject one current recommendation. |
-| `GET /v1/learning/policies/materials` | Paginated current and superseded tailoring-policy revisions with allowlisted provenance. |
-| `POST /v1/learning/policies/materials/rollbacks` | Restore a reviewed earlier version against an expected current version, or replay its command receipt. |
+Resume list/detail reads include
+`composition_freshness: {current,stale_reasons,revision_id}`. The pure read checks
+recorded Profile, Requirements and Fit pins; it does not move the current draft
+or accepted pointer. Reasons include `profile_changed`, `profile_unavailable`,
+`requirements_changed`, `fit_coverage_changed` and `coverage_not_recorded`.
+Changing the job-relevant assignment fingerprint reports `fit_coverage_changed`.
+It covers canonical requirement IDs, participating achievement IDs and matching
+assignment heads, including a previously missing head becoming present.
+Unrelated requirement assignments do not stale that composition.
+Baseline mode skips Fit/Requirements currentness while still checking Profile
+freshness. A stale result offers explicit preparation; it does not regenerate,
+hide accepted bytes or invent a fresh assessment.
+New-generation currentness rejects legacy requirement/Fit authority for new
+composition while retaining historical accepted artifacts. Tailoring preserves
+all baseline sections, including Language / Proficiency, and changes only
+approved achievement wording. Each eligible canonical requirement receives one
+composition policy point; that coefficient is never posting metadata.
 
-Acceptance creates one versioned Materials policy revision; rejection writes a
-review but does not change policy. A restore compares the reviewed current
-version inside the append transaction; a stale review requires a fresh review
-and new command. An identical command returns its original receipt even if a
-later revision is current. See the [complete contract](complete-contract.md#feedback-learning-and-policy-history)
-for fields and conflicts. None of these routes starts scoring, tailoring,
-Apply, or artifact work. Errors and historical metadata are sanitized before
-they cross the browser boundary.
+## Apply Review and Outcomes
 
-## Artifacts And Resume Templates
-
-| Route family | Purpose |
-| --- | --- |
-| Artifact list/detail | Read registered resume, cover-letter, PDF, and audit metadata. |
-| Artifact preview routes | Serve HTML, PDF, or a rendered PDF page. |
-| `POST /v1/artifacts/:artifactId/open` | Open a registered local artifact through the OS adapter. |
-| `POST /v1/jobs/:jobId/material-exports` | List original accepted text sources/retained exports or synchronously create a source-bound DOCX. |
-| `GET /v1/artifacts/:artifactId/download.docx` | Download an owned, hash-verified retained DOCX export as an attachment. |
-| `/v1/resume-templates` | Create, inspect, and select versioned resume templates. |
-
-Updating an existing template requires the current version ID. A stale update
-returns a conflict without publishing a version; clients reload and deliberately
-reconcile the draft. Creating a new template does not need a version ID. The
-default selection can also bind the active version it expects. See the
-[field-level template contract](complete-contract.md#artifacts-and-tailoring-audit).
-
-The API serves registered artifacts, never an arbitrary filesystem path. The
-job detail projection links each accepted generation to provenance, validation,
-and layout evidence. Artifact summaries include a nullable canonical
-`generation` when one was recorded; lifecycle `status` remains unchanged.
-An older generation can still be approved, so clients must not treat age alone
-as a superseded status.
-
-Original accepted-material exports reuse the CLI's deterministic DOCX service
-through runtime-bound Python RPC. The request binds the displayed source ID,
-generation, source hash and metadata hash; an intervening edit or acceptance
-change refuses export. History and export failures preserve accepted materials,
-review decisions and earlier exports. Download failures preserve the receipt and
-can be retried independently. See the [field-level DOCX contract](complete-contract.md#accepted-material-docx-exports).
-
-## Interviews: Catalog, Preparation, And Notes
-
-| Route | Purpose |
-| --- | --- |
-| `GET /v1/interviews/catalog` | Bounded, filtered installed public catalog with source/reading metadata. |
-| `GET /v1/interviews/questions/:questionId` | One active card plus its immutable catalog binding. |
-| `POST /v1/jobs/:jobKey/actions/generate-interview-prep` | Explicit bounded selection/context dispatched to `InterviewPrepWorkflow`; returns `202` when queued, `200` for a completed dispatch response. |
-| `GET /v1/jobs/:jobKey/interview-prep/history` | Paginated generations, including superseded and failed attempts. |
-| `GET /v1/jobs/:jobKey/interview-notes` | Latest independent per-question notes, or one question's revision history. |
-| `POST /v1/jobs/:jobKey/interview-notes` | Expected-revision note save; a stale edit returns `409`. |
-
-Catalog reads are direct TypeScript asset handlers. They need no SQLite, job,
-live worker, or provider and retain normal loopback/browser security hooks.
-An unknown card returns `404 unknown_question`, a retired card such as C08
-returns `410 retired_question`, and a missing/invalid packaged asset fails
-closed with `503 interview_catalog_unavailable`.
-
-Generation accepts up to 16 unique active question IDs, catalog binding,
-per-question accepted-evidence choices with a current profile-version fence,
-stage/format, role lens/responsibilities, known criteria, and rationale. An
-explicit empty evidence choice remains a gap; omitted entries allow automatic
-selection. It validates selection before worker dispatch and provider spend. Legacy requests
-without a selection use deterministic bounded selection; older unbound stored
-prep remains explicitly legacy. The returned current job-detail prep remains
-the last accepted generation through pending or failed replacement. Its
-retained card/input context and question metadata support inspectable history
-and read-side stale diagnostics without rewriting old results.
-
-Note saves are independent of generation/item replacement and default to
-unverified user statements. They append revision history, verify any source
-generation retains the same question for the tenant/job, derive matching origin
-bindings at the server, and never inherit a passed generation
-audit or update Profile, fit, or Apply. The conflict response includes
-`currentNote`; clients preserve the dirty draft and reconcile with that saved
-revision before retrying. Events carry safe IDs/versions/counts only.
-
-The [complete interview contract](complete-contract.md#interview-catalog-preparation-and-notes)
-owns every field, pagination default, status, and error. The
-[Materials audit owner](../architecture/materials.md#stored-interview-preparation)
-explains source authority and the research-draft/assessment boundary.
-
-## Compensation
-
-`GET /v1/jobs/:jobKey/compensation/posted` exposes parsed employer-posted facts;
-`GET /v1/jobs/:jobKey/compensation/market` exposes the local estimate and its
-selected evidence plus immutable benchmark lineage when the estimate references
-a canonical direct or geographically extrapolated fact. Job list/detail
-summaries identify that authority as `direct`, `extrapolated`, or unknown;
-detail reads expose the role, level, geography, freshness, exact salary and
-price-level inputs, factor bounds, and formula needed to audit the result.
-After an automatic refresh attempt, active jobs without a supported role or
-country have a recorded `insufficient_evidence` market result with a role or
-location reason and no range. `not_requested` means no market result has been
-persisted. A failed source lookup with no benchmark records
-`source_unavailable`; a retained all-level benchmark still records
-`insufficient_evidence` with `weak_level_match` when it cannot support the
-job's level. A compatible accepted range survives either failure.
-`/v1/compensation/sources` controls permitted source inputs. Refresh is an
-explicit workflow/action, not a read-time side effect.
-
-## Apply Review And Outcomes
-
-| Boundary | Representative routes |
-| --- | --- |
-| Review queue and drafts | `GET /v1/apply/review-queue`, resume-review draft/revision/render/comment routes |
-| Binding decision | `POST /v1/jobs/:jobKey/apply-review/decision` |
-| Repeat-application evidence and confirmation | `repeatApplication` on review/detail reads; `POST /v1/jobs/:jobKey/repeat-application/override` |
-| Outcomes | job outcome routes plus `/v1/outcomes` and `/v1/analytics/outcomes` |
-| Gmail suggestions | bounded scan plus accept/reject decision routes |
-
-Manual `POST /v1/jobs/:jobKey/outcomes` and user-attested
-`POST /v1/outreach/threads/:threadId/send-logs` require a UUID `requestId`.
-Keep the same identity and validated payload for a retry. Equal retries return
-the original immutable result; a changed payload in that tenant/operation/target
-scope returns `409 action_identity_conflict` without mutation. A new deliberate
-action uses a new identity. Missing or malformed identities return `400`.
-Send logging returns `{ ok: true, sendLog }`, not a thread snapshot; use the
-existing contact Outreach read for current thread state. See the
-[complete retry contract](complete-contract.md#manual-action-retry-contract).
-
-Email approval requests echo the complete reviewed `emailApplication` preview
-as `reviewedEmailCandidate`, alongside recipient and attachment ID. The API
-compares it atomically with the current preview before recording approval.
-A replacement preview requires fresh review even when those two IDs match.
-
-`POST /v1/outcomes/gmail/scan` returns bounded evidence and suggestion summaries
-with canonical `jobId` values. It never returns raw message bodies. Scan events
-use that same identity to invalidate the matching outcome detail. Worker-side
-failures include a safe `failureCode`; invalid input returns 400, and Gmail or
-model unavailability returns 503. Previously stored evidence is preserved.
-
-The latest accepted artifact remains reviewable while a replacement is being
-generated. Failed or rejected attempts stay in the audit history.
-
-Live Apply dispatch returns `409` when confirmed prior-application evidence
-blocks the target or requires confirmation. The confirmation endpoint records a
-reasoned, evidence-fingerprint-bound authorization for one later live claim; it
-never submits by itself. The Python worker recomputes and consumes that
-authorization at its authoritative claim boundary.
-
-## Contacts And Outreach
-
-| Capability | Route family |
-| --- | --- |
-| Contact facts | `/v1/contacts` list, detail, create, update, delete, and reviewed CSV/vCard import |
-| Supervised research | `/v1/contacts/research` run/list/detail and candidate confirmation |
-| Draft review | contact/thread draft generate, revise, approve, and reject routes |
-| Follow-up operations | send logs, schedule/complete/dismiss, and due-follow-up reads |
-
-Research candidates remain proposals until a user confirms them. Outreach drafts
-remain drafts until their review gate is satisfied.
-Research detail includes distinct source outcomes for a response that is too
-large, a timeout, a failed redirect, a transport failure, or an HTTP error.
-These do not claim that a successfully read page contains no candidates.
-
-Contact updates use the fingerprint from the detail read to reject stale edits
-without replacing newer facts. See the [contact contract](complete-contract.md#contacts)
-for the request and conflict response.
-
-<a id="contact-research"></a>
-<a id="outreach-drafts"></a>
-
-Generation and revision compare their complete starting thread state at
-publication. A concurrent draft/review/send-log/reminder change returns
-`409 outreach_publication_conflict` with private unpublished text, completed
-gates and provenance, leaving current content and history unchanged. The caller
-refetches and deliberately reconciles before retrying; see the
-[conflict response](complete-contract.md#outreach-drafts). The open editor
-retains those results across refresh, including disappearance of the review
-card. This does not make generation or revision commands idempotent or send
-anything automatically.
-The revision response identifies the draft published by that operation; clients
-check its thread, draft ID, generation and submitted text against the returned
-readback before treating it as confirmed. A matching older draft is insufficient.
-
-## Reviewed Locale Variants
-
-`POST /v1/jobs/:jobId/material-locales` provides history, source-linked generation,
-independent terminology/formatting review, explicit acceptance/rejection and four
-accepted exports. Requests bind source/profile/revision versions; history reads
-stored authority and never retranslates. See the
-[wire contract](complete-contract.md#material-locale-variants) and
-[user flow](../user/locale-variants.md).
+Applications consumes the exact accepted resume and owns screening answers,
+approval of the application payload, assisted execution and outcomes. Changed
+inputs invalidate stale approval; ambiguous external outcomes cannot be silently
+retried. See [apply](../user/apply.md) and
+[security](../developer/security.md#apply-path-containment).
 
 ## Screening Answers
 
-`GET /v1/jobs/:jobId/screening-answers` reads private current questions, application-bound history, reviewed library revisions, available facts, source bindings/failures and persisted determination receipts. `POST` executes `capture`, `draft`, `edit`, `review`, `reuse` or `use` with `expectedRevision` and `idempotencyKey`. The [user command reference](../user/screening-answers.md#cli-and-local-api) describes action fields. API-derived tenant and mandatory workspace/database identity bind the registered `screening_answers` RPC; callers cannot supply runtime identity inside commands. Conflicts/source/model failures preserve accepted content. The public demo classifies both endpoints unavailable. These routes never enter/submit forms or create submitted outcomes.
+Applications owns reviewed answer revisions and their application context.
+Profile evidence remains Profile-owned. A prior answer or resume approval does
+not approve a new application payload.
 
-## Optional company context
+## Contacts and Outreach
 
-`GET /v1/jobs/:jobId` includes `companyBriefing` when a company link has been explicitly confirmed. This read joins canonical company records and the stored determination; it never refreshes public sources. Job Detail and Interviews render this same snapshot. See [the wire contract](complete-contract.md#company-briefings) and [user controls](../user/company-briefings.md).
+Contacts and Outreach are separate features. Contacts owns provenance, import
+and research; Outreach owns reviewed drafts, decisions, send records and
+follow-up state. Changes and sends require current revision/authorization
+checks; creating a draft is not a send. See [contacts](complete-contract.md#contacts).
 
-## Cover-Letter PDF Review
+## Interviews Catalog, Preparation, and Notes
 
-`materialsPreview.coverLetter` identifies the canonical accepted cover source,
-current accepted PDF, normalized print settings, renderer and accepted version.
-`POST /v1/jobs/:jobKey/cover-letter/preview` renders a fenced full-text snapshot;
-`POST /v1/jobs/:jobKey/cover-letter/accept` explicitly accepts its exact bytes.
-The preview PDF route and accepted artifact route serve the same file after
-acceptance. Preview requests do not advance Materials or approval bindings.
-Submit-approval requests with a cover source must supply `coverLetterAcceptedVersion`;
-the API and Apply worker check the recorded source/PDF binding. See the
-[complete contract](complete-contract.md#cover-letter-pdf-review) for limits and
-failure behavior.
+Interviews owns its catalog, source-bound preparation and independent notes.
+Explicitly empty evidence selections remain empty; a failed generation leaves
+accepted preparation and notes intact.
 
-## Selected-job learning commands
+## Compensation
 
-`GET /v1/evidence-map/learning` reads saved cohort comparisons and chosen
-milestones through the registered local `career_learning` RPC. It does not
-refresh sources or call a model. POST uses a strict `action` union: `preview`
-selects explicit job IDs without writing; `compare` creates or revision-fences a
-dated cohort; `choose` accepts one proposal from the exact current comparison;
-`update` saves revision-fenced milestone activity with a required completion
-statement for completed work. Provider or binding failure preserves accepted
-records. See the [complete contract](complete-contract.md#selected-cohort-demand-and-milestones)
-and [user workflow](../user/scoring-and-employer-analysis.md#selected-job-demand-and-learning-milestones).
+Compensation owns posted and market evidence, source policy and normalization.
+Source availability and currency/time-base uncertainty must be represented
+honestly. Its neutral core does not depend on JobCtrl storage or workflow IDs.
+After a refresh verifies posted pay, `GET /v1/jobs/{id}/compensation/posted`
+returns the cited fact while market research continues. A failed market
+refresh leaves the latest accepted estimate available at
+`GET /v1/jobs/{id}/compensation/market` with its own source revision.
+For a title-sourced determination the posted fact's `sourceField` is `title`
+and its receipt binds the exact saved title, posting ID and revision. The
+structured amount, currency, period and component are the model's verified
+result. Each market comparison retains the posted source it used.
+
+For `GET /v1/jobs/query`, `posted_known=source_known` selects current
+employer-posted facts with at least one numeric bound in the source currency
+and period. `source_unknown` selects its complement, including stale and
+unassessed facts. Clients can discover these modes in
+`capabilities.posted_pay_filters`. Existing `known` and `unknown` values and
+the `posted_min_eur` and `posted_max_eur` filters use annual EUR bounds.
 
 ## Actual Offers
 
-`GET /v1/jobs/:jobId/offer` reads the private current terms, current decision
-and immutable histories. `POST .../offer/terms` saves a user-confirmed source
-and typed cash/equity/benefit/deadline terms with `expectedRevisionId`.
-`POST .../offer/decisions` records accepted/declined attestations against the
-current `termsRevisionId` with `expectedDecisionId`. Revisions/corrections
-require reasons; stale or conflicting writes return `409 offer_conflict`.
-Neither command needs interview prep or changes submission/pipeline authority.
-See the [field-level offer contract](complete-contract.md#actual-offer-terms-and-decisions).
+Offers owns terms, scenarios, decisions and correction history separately from
+market compensation. Unknown terms stay unknown. Changes do not themselves
+submit an application or send a communication.
 
-Outreach generation/revision also accepts the closed offer-specific `kind`
-values and `offerRevisionId`. The worker loads canonical sources, applies the
-existing claim/quality gates and fences source changes at persistence. Stale
-offer bindings return `409 draft_gates_not_passed` on approval/send logging.
-Provider, spend and structural failures retain the last approved message.
+## Feedback Learning and Materials Policy
 
-Job Detail and Apply Review read the same canonical Apply disposition and
-submission evidence. Manual `mark-skipped` records a durable local Apply stop. Its response message
-explains that an in-flight submission may still complete. Job Detail's existing
-`applyAudit.hardBlockers` distinguishes `manual_apply_skip` from
-`submission_intent_recorded`; the latter retains original intent run IDs from
-canonical events, independently of the latest run. A recorded successful
-submission or manual Applied attestation retains the intent source without
-labeling the accepted outcome as uncertain; neither authorizes blind retry. `submission_outcome_uncertain`
-retains a prior Needs verification stop even if its intent receipt is missing. See [Skip and safe
-reset](../user/apply.md#skip-and-safe-reset) for recovery limits.
+Corrections and feedback remain inspectable and user-controlled. Learning
+activity is not evidence of a capability and does not alter Fit. Policy and
+artifact updates preserve previously accepted versions until explicitly changed.

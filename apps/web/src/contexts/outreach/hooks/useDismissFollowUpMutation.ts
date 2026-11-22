@@ -17,15 +17,17 @@ export function useDismissFollowUpMutation(
   threadId: string,
   contactId: string,
   jobId?: string,
-): UseMutationResult<OutreachThreadResponse, Error, void> {
+): UseMutationResult<OutreachThreadResponse, Error, { expectedFingerprint: string }> {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   const threadForContactKey = outreachKeys.threadForContact(tenantId, contactId, jobId ?? null);
   return useMutation(
-    createOptimisticMutation<OutreachThreadResponse, void>(queryClient, {
+    createOptimisticMutation<OutreachThreadResponse, { expectedFingerprint: string }>(queryClient, {
       mutationKey: outreachKeys.thread(tenantId, threadId),
-      mutationFn: () => api.dismissOutreachFollowUp(threadId),
+      mutationFn: (body) => http.json<OutreachThreadResponse>(
+        "POST", `/v1/outreach/threads/${encodeURIComponent(threadId)}/follow-up/dismiss`, { body },
+      ),
       optimisticUpdates: () => [
         {
           queryKey: threadForContactKey,

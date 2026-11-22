@@ -1,2 +1,1 @@
-export * from "./client.js";
-export * from "./endpoint-client.js";
+export * from "./errors.js";

@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { http, HttpResponse } from "msw";
 
-import { sampleDashboardSummary } from "../../test/fixtures/projections.js";
+import { sampleDashboardSummary } from "../../../.storybook/fixtures/projections.js";
 import { DashboardView } from "./DashboardView.js";
 
 const meta = {

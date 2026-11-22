@@ -1,0 +1,92 @@
+/* The job-specific panel is a sibling of the interview library. */
+.interview-job-preparation__header {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.interview-job-preparation__header h2 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.interview-job-preparation__header a {
+  justify-self: start;
+}
+
+.interview-job-preparation > .section {
+  display: grid;
+  min-width: 0;
+  gap: 12px;
+  padding: 20px 24px;
+}
+
+.interview-job-preparation > .section > h3 {
+  margin: 0;
+}
+
+.interview-job-preparation > .section > [data-slot="button"],
+.interview-job-preparation form > [data-slot="button"] {
+  justify-self: start;
+  max-width: 100%;
+  height: auto;
+  min-height: 36px;
+  white-space: normal;
+  text-align: center;
+}
+
+.interview-job-preparation > .section:last-child {
+  border-bottom: 0;
+}
+
+.interview-job-preparation > [role="alert"] {
+  margin: 0;
+  padding: 16px 24px;
+}
+
+.interview-job-preparation > div[role="alert"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.interview-job-preparation > .section > .section,
+.interview-job-preparation > .section > details > .section {
+  padding-inline: 0;
+}
+
+.interview-job-preparation details > summary {
+  cursor: pointer;
+}
+
+.interview-job-preparation > .section > details.section > :not(summary),
+.interview-job-preparation
+  > [aria-label="Preparation history"]
+  > details
+  > :not(summary) {
+  margin-block-start: 12px;
+}
+
+.interview-job-preparation .interview-context > ol:empty {
+  display: none;
+}
+
+@media (max-width: 800px) {
+  .interview-job-preparation__header,
+  .interview-job-preparation > .section {
+    padding: 16px;
+  }
+
+  .interview-job-preparation > [role="alert"] {
+    padding: 16px;
+  }
+
+  .interview-job-preparation > .section > [data-slot="button"],
+  .interview-job-preparation form > [data-slot="button"] {
+    min-height: 44px;
+  }
+}

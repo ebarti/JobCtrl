@@ -21,15 +21,18 @@ export function DryRunButton({
   const isPending = dryRun.isPending;
   const actionLabel = label ?? (isDemo ? "Rehearse application" : "Dry run");
   return (
-    <Button
-      type="button"
-      {...(className ? { className } : {})}
-      size="sm"
-      variant="outline"
-      disabled={isPending}
-      onClick={() => dryRun.mutate({ jobId })}
-    >
-      {isPending ? "Running" : actionLabel}
-    </Button>
+    <span>
+      <Button
+        type="button"
+        {...(className ? { className } : {})}
+        size="sm"
+        variant="outline"
+        disabled={isPending}
+        onClick={() => dryRun.mutate({ jobId })}
+      >
+        {isPending ? "Running" : actionLabel}
+      </Button>
+      {dryRun.error ? <span role="alert">{dryRun.error.message}</span> : null}
+    </span>
   );
 }

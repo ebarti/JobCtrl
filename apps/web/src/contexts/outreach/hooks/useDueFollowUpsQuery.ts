@@ -1,4 +1,4 @@
-import type { DueFollowUpSummary } from "@jobctrl/contracts";
+import type { DueFollowUpSummary, DueFollowUpsResponse } from "@jobctrl/contracts";
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
@@ -13,9 +13,9 @@ import { outreachKeys } from "../queryKeys.js";
  */
 export function useDueFollowUpsQuery(): UseQueryResult<DueFollowUpSummary[]> {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   return useQuery({
     queryKey: outreachKeys.dueFollowUps(tenantId),
-    queryFn: async () => (await api.dueOutreachFollowUps()).followUps,
+    queryFn: async () => (await http.json<DueFollowUpsResponse>("GET", "/v1/outreach/follow-ups/due")).followUps,
   });
 }

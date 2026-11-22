@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
-import { sampleContactAttributes } from "../../../test/fixtures/contacts.js";
+import { sampleContactAttributes } from "../../../../.storybook/fixtures/contacts.js";
 import { ContactProvenanceList } from "./ContactProvenanceList.js";
 
 const meta = {

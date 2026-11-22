@@ -6,31 +6,39 @@ import (
 	"path/filepath"
 )
 
-// The caller authenticates the candidate and owns both lifecycle locks. An
-// initial selection must not strand schema 14 without its recorded predecessor.
-// Reinstallation of schema 15 keeps the live workspace after cleanup admission.
+// The installer already authenticated the payload and holds both lifecycle
+// locks. Database admission must precede stop or selection changes: a legacy
+// workspace is transferred explicitly to a different fresh target workspace.
 func CheckWorkspaceSelection(home, payloadRoot string, env []string, initial bool) error {
 	env = append(append([]string{}, env...), "JOBCTRL_RUNTIME_HOME="+home)
 	inst, err := resolveInstance(env)
 	if err != nil {
 		return err
 	}
-	ctx := launchContext{PayloadRoot: payloadRoot, Instance: inst, Environment: env}
-	if err := refusePendingSourceMigration(ctx); err != nil {
-		return err
-	}
-	if err := requireLegacySourceOwnership(ctx); err != nil {
-		return err
-	}
 	target, err := loadRuntimeManifest(filepath.Join(payloadRoot, "launcher", "runtime-manifest.json"))
 	if err != nil {
 		return err
 	}
-	expectedVersion := int64(15)
-	if target.LauncherProtocol == 1 {
-		expectedVersion = 14
-	} else if target.LauncherProtocol != 2 {
-		return errors.New("unsupported target controller for workspace selection")
+	distribution, err := loadAndVerifyDistributionManifest(payloadRoot)
+	if err != nil {
+		return err
+	}
+	ctx := launchContext{PayloadRoot: payloadRoot, Instance: inst, Environment: env, Manifest: target, Distribution: distribution}
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
+	if err := refusePendingBridgeHandoff(home); err != nil {
+		return err
+	}
+	verified := verifiedRelease{payloadRoot: payloadRoot, runtime: target, distribution: distribution}
+	if initial {
+		transferred, err := admitInitialProfileTransfer(ctx, verified)
+		if transferred || err != nil {
+			return err
+		}
+	}
+	if err := admitPythonApplicationLifecycle(ctx, verified); err != nil {
+		return err
 	}
 	unused, err := unusedDatabasePair(inst.StateDir)
 	if err != nil {
@@ -39,17 +47,15 @@ func CheckWorkspaceSelection(home, payloadRoot string, env []string, initial boo
 	if unused {
 		return nil
 	}
+	if !usesPythonApplication(target) {
+		return errors.New("workspace selection requires the Python application")
+	}
 	if initial {
 		if err := stop(ctx); err != nil {
-			return fmt.Errorf("clean up existing workspace before selection: %w", err)
+			return fmt.Errorf("clean up owned workspace before selection: %w", err)
 		}
-	}
-	version, err := jobCtrlSchemaVersion(ctx)
-	if err != nil {
-		return err
-	}
-	if version != expectedVersion {
-		return errors.New("existing workspace needs its authenticated predecessor selection for migration; preserve its databases and installation metadata, and run the new installer against that original installation")
+		// Recheck after the native stop proof and before installer publication.
+		return admitPythonApplicationLifecycle(ctx, verified)
 	}
 	return nil
 }

@@ -52,6 +52,31 @@ A failed fetch or exhausted cascade records a retryable attempt without
 manufacturing a snapshot. Failure remains isolated to that job, so useful
 results from the rest of the source batch survive.
 
+When a search rediscovers a saved job, JobCtrl records the new observation and
+keeps the accepted full posting. A search card can contain description text
+without establishing a new accepted detail capture. For older jobs demoted by
+search ingestion, the upgrade restores the original accepted detail as a new
+revision and keeps the complete history.
+
+Downstream role analysis and requirement extraction can reuse a verified model
+result when their complete source text, context and execution settings are
+exactly identical. This is separate from deciding whether two leads are the
+same opening. A reused result is bound to the destination job's actual posting
+revision and source history before publication; it does not create a new
+observation or borrow another job's score. Changed content or execution settings
+cannot use a result from different inputs. [Scoring](scoring-and-employer-analysis.md#shared-requirement-meanings)
+explains how canonical requirement identity then permits reuse of current
+person assessments.
+
+Before typed requirement extraction, a source-bound model decision checks the
+posting language. The `requirements-v2` path accepts English postings and skips
+non-English postings without translation, Fit scoring or a zero-score substitute.
+An uncertain, unavailable or invalid decision records a blocked attempt and
+preserves accepted content, requirements, scores and materials. This gate does
+not erase the captured posting or infer language from a keyword list. See
+[typed requirements and evidence](scoring-and-employer-analysis.md#shared-requirement-meanings)
+for reusable Skills/Professional Experience and direct Education/Languages.
+
 An explicit enrichment retry from the web app or CLI keeps the last accepted
 description, application URL and attempt history while reopening extraction.
 It clears the failed stage's error and execution fields. The attempt counter
@@ -87,6 +112,20 @@ Anonymous browser acquisition bounds each public document or data response to
 redirect validation, credential stripping, timeouts and read-only request
 restrictions apply to both limits. An oversized resource remains an acquisition
 failure and cannot establish a posting or availability verdict.
+
+**Jobs → Add a job by URL or text → Import posting URL** queues the import in
+your workspace. You can leave Jobs or close the browser after it is queued.
+Open **Recent URL imports** in the same workspace to follow progress, cancel a
+pending import, or open the saved job. **Queued for model capacity** means
+another model operation holds the required slot. The worker continues
+automatically when capacity becomes available. A worker restart recovers
+settled stages from their exact receipts. A changed source or an interrupted
+provider call with an unconfirmed result leaves a recorded failure for review.
+
+When connected to an older server, the form offers **View import run** after
+submission. **View URL import runs** also shows earlier receipts after a reload.
+Those server versions can end the import with `model_lane_busy` when another
+operation holds the lane. The run records that failure.
 
 Direct URL imports interpret the complete visible page capture, including
 posting details and current controls outside its main-content panel. For the
@@ -154,37 +193,17 @@ code, message, method, and retry policy.
 
 ## Saved Posting Availability
 
-Job Detail shows **Posting availability**, with **Check availability** and
-**Inspect employer posting** actions. The latest attempt, last successful
-verification, next due time, reason, acquisition method and evidence remain
-separate. A recent successful check does not hide a later unknown result.
-Reading Jobs does not contact employers.
+Open Job Detail to see **Posting availability** and the time of the last
+confirmed observation for that posting URL. After 24 hours the view shows a
+stale warning. An unverified posting offers the same **Check availability**
+button. Opening Jobs, starting JobCtrl and reconnecting read saved information
+without contacting the employer. Use the button or the CLI below to recheck.
 
-While the local worker runs, visible saved postings are checked every 24
-hours when active and every seven days when unavailable. Unavailable jobs stay
-saved and can become active again. The first check is due immediately; startup
-and reconnect catch up in groups of at most 25. Hidden/deleted jobs, running
-applications and terminal application outcomes are excluded from automatic
-checks. Manual checks remain available for saved, inspectable jobs.
-
-A sweep checks its selected postings sequentially and is admitted at most once
-per minute. It stops claiming jobs when its automatic quota is exhausted and
-has a 20-minute work budget within the 30-minute activity limit. Cancellation
-stops the current acquisition and prevents later jobs from starting. Independent
-jobs can be checked concurrently. All checks share a
-limit of 100 posting acquisitions per hour per workspace; automatic sweeps may
-use at most 80, reserving 20 for foreground checks and preparation. Each check
-is charged once, including its bounded browser resources. Requests retain at
-least two seconds between starts and one in flight per actual host. Repeated
-clicks coalesce, and a job starts at most once a minute. Unknown employer
-observations retry automatically after five minutes, with increasing delays
-capped at 24 hours. An explicit check can retry after the one-minute job limit,
-but cannot bypass quotas, safety checks or host cooldowns. Local quota, pacing
-and contention refusals do not create unknown observations or increase evidence
-backoff. Only explicit commands record deferred request feedback, with unchanged
-refusals coalesced. Refusals preserve attempt and successful-verification clocks.
-Sleep, an offline machine or a stopped worker leaves the recorded times intact
-and can make a check overdue.
+A successful observation refreshes the verification time, including when the
+verdict is unchanged. An inconclusive or failed manual check is shown separately
+from the last confirmed state and can be retried explicitly. Closed postings
+remain available to inspect. Scheduled searches for new jobs have their own
+setting in [Discovery](discovery.md).
 
 Greenhouse and Lever (including Lever EU) are checked through exact posting
 APIs. Ashby contributes only a matching positive posting, including unlisted
@@ -212,7 +231,7 @@ refusals without invalidating the status capture.
 Each check permits 12 posting/API requests and 64 browser resources, at most one
 million bytes per response and 12 million bytes in total.
 
-Scoring, tailoring and cover generation reuse a posting observation from the
+Scoring and tailoring reuse a posting observation from the
 preceding six hours. They also reuse a trustworthy canonical posting capture
 from that window when its saved page interpretation and description-quality
 judgments match the current tenant, job, posting URL and exact description.
@@ -221,8 +240,7 @@ enrichment. Stale, quarantined, changed or unbound captures use the normal check
 known closure and deletion still prevent preparation. Capture freshness uses its
 actual capture time, never a later metadata update.
 An unknown observation or captured availability verdict can be reused for
-preparation without another foreground request; it stays unknown, and its
-background retry schedule remains unchanged. Capture reuse creates no new
+preparation without another foreground request. It stays unknown. Capture reuse creates no new
 availability observation and does not satisfy unattended Apply's separate gate.
 Preparation can proceed with usable content while availability stays unknown. Unknown is shown honestly and remains retryable; confirmed
 unavailable postings stop preparation. Dry-run rehearsals and human-reviewed
@@ -280,6 +298,42 @@ the user's current Chrome profile, so an existing same-site session may be used.
 Without it, acquisition uses anonymous access. Neither mode consults robots.txt;
 a page that remains inaccessible stays on the manual path.
 
+While an import is being checked, its capture remains read-only. If its outcome
+cannot be confirmed, refresh the queue before editing or retrying that capture;
+other captures remain available for review.
+Submitted content is retained before the import starts. If you reload while an
+earlier attempt may still finish, the capture remains read-only until you choose
+the recovery action below.
+To review and retry a failed, conflicting, or unconfirmed submission, choose
+**Prevent earlier imports from saving**. This prevents earlier imports for that
+capture from saving, including any that are still running. A running workflow
+may still prevent a new import from starting until it finishes.
+If another import prevents your submission from starting and the capture leaves
+the queue, JobCtrl keeps an in-memory copy of your unsubmitted text for review.
+It is not retained across a full reload.
+If a request's outcome is unconfirmed and the reviewed capture disappears or is
+reopened, the local copy is labelled unconfirmed; the queue change alone does
+not prove that the request started or succeeded.
+If the capture changes or disappears while you have unsent edits, those edits
+remain available as a labelled local copy while this page stays open.
+
+If a submitted capture cannot be extracted or saved, it stays in Manual Capture
+with its submitted content and details available for review and retry. Correct
+the content and import again; a failed attempt does not report an imported job.
+The pending draft is stored locally and removed from the queue when imported or
+dismissed. A local database failure can prevent saving the draft, so keep the
+form open until the retry data is available. Older imported captures with no
+matching saved snapshot and an identifiable original observation appear as
+**unverified**. JobCtrl cannot attribute every historical failure to a particular
+capture, so review requires the user to provide the page again; it does not
+invent missing content or replace older accepted evidence.
+
+Manual capture uses the cited page interpretation to check that the content is
+an individual posting and does not report a login or challenge. A cited model
+selection then chooses the requested posting's fields and description from the
+captured sources. An unverified page or invalid selection stays available for
+review; JobCtrl does not substitute a neighboring posting or a word-list guess.
+
 The Jobs page's **Import job** action applies the same boundary to one explicit
 public URL. It acknowledges the import promptly and follows its progress without
 holding one browser request open until all interpretation work finishes. Once
@@ -296,8 +350,8 @@ ambiguous page creates a pending Manual Capture item and never a fabricated
 non-public destinations are rejected before worker dispatch or browser
 navigation. When the captured posting is active and clears snapshot policy,
 the import records completed intake and enrichment, then starts the same
-durable per-job preparation used by Discover: score, tailor, cover letter, and
-PDF rendering. A missing separate application URL does not block that
+durable per-job preparation used by Discover: score, tailor, and PDF rendering.
+A missing separate application URL does not block that
 preparation. Quarantined or inactive captures do not start it, and URL import
 never starts Apply.
 
@@ -314,7 +368,7 @@ request budget, and audit history remain enforced. Recovery stops before the
 application form and cannot submit an application.
 
 When that live extension connects, JobCtrl immediately continues the
-browser-conditioned Enrich → Score → Tailor → Cover path for affected LinkedIn
+browser-conditioned Enrich → Score → Tailor path for affected LinkedIn
 jobs only; unrelated robots blocks and ordinary pending jobs are not
 retriggered, and another Discover run is not required. Job-scoped and bulk
 Enrich runs/retries remain available offline. Each site batch prefers the live
@@ -365,9 +419,10 @@ Several records participate, but they do not own the same fact:
 - **Enrichment owns posting detail:** fetch attempts, full description,
   application URL, content snapshots, extraction provenance, confidence, and
   active-state verification.
-- **Scoring owns interpretation:** employer requirements, fit evidence, and
-  scores are derived later from the accepted posting snapshot; they are not
-  enrichment facts.
+- **Requirements owns typed demands:** reusable Skills/Professional Experience
+  meanings and direct Education/Languages demands come from the accepted posting
+  snapshot. Fit owns their evidence assessments and score. These are later
+  decisions, not enrichment facts.
 - **Operations owns the read projection:** list/detail pages read projection
   rows. A `GET` does not fetch the posting again or repair missing enrichment.
 
@@ -381,8 +436,8 @@ event payloads.
 ### The Quality Gate
 
 A low-confidence snapshot that remains quarantined is still visible and may be
-scored for cheap triage, but it is excluded from tailoring, cover-letter, and
-Apply preparation. Confirming an operator override removes that quarantine
+scored for cheap triage, but it is excluded from tailoring and Apply preparation.
+Confirming an operator override removes that quarantine
 block. A snapshot whose only recoverable omission is the application URL is not
 automatically treated as low-confidence.
 
@@ -433,8 +488,6 @@ Page availability, individual-posting state and description quality use cited mo
 
 See [the decision](../decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) for caching, provenance and failure contracts.
 
-### Arbitrary-site discovery captures
+### Importing a known posting URL
 
-Smart Extract resolves listing cards through the same rendered and structured posting-source preparation as direct URL imports. Card titles, employer guesses and blank places are not canonical posting facts. Its full-posting qualification checks the extracted specific role, description and saved location/work-model scope before creating a Job, as described in [Discovery](discovery.md#how-target-search-controls-are-used). The accepted posting snapshot records the page, extraction and qualification determination IDs. That exact capture seeds enrichment; failed or uncertain qualification preserves existing accepted job content and creates no replacement job.
-
-For archived Smart Extract recovery, interrupted snapshot publication retains the exact qualified capture and determination references. Retry completes that capture without another page fetch or model call, while preserving newer accepted snapshots, enrichment and owner deletion. A publication failure leaves the archived item available for retry; canonical Job existence alone does not acknowledge it.
+**Jobs → Import job → Import posting URL** fetches the supplied public posting, extracts its job facts and preserves the source snapshot. Importing during an active search queues the request if model capacity is occupied. A retry uses the same receipt. JobStreaming owns the separate board search path. [Discovery](discovery.md#capture-a-known-posting).

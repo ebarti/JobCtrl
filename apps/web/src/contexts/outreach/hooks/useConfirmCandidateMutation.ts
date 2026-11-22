@@ -12,6 +12,7 @@ import { outreachKeys } from "../queryKeys.js";
 
 export interface ConfirmCandidateVariables extends ConfirmContactCandidateRequest {
   candidateId: string;
+  expectedRevision: number;
 }
 
 /**
@@ -23,7 +24,7 @@ export function useConfirmCandidateMutation(
   taskId: string,
 ): UseMutationResult<ConfirmContactCandidateResponse, Error, ConfirmCandidateVariables> {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation(
     createOptimisticMutation<ConfirmContactCandidateResponse, ConfirmCandidateVariables>(
@@ -31,7 +32,7 @@ export function useConfirmCandidateMutation(
       {
         mutationKey: outreachKeys.researchTask(tenantId, taskId),
         mutationFn: ({ candidateId, ...body }) =>
-          api.confirmContactCandidate(taskId, candidateId, body),
+          http.json<ConfirmContactCandidateResponse>("POST", `/v1/contacts/research/${encodeURIComponent(taskId)}/candidates/${encodeURIComponent(candidateId)}/confirm`, { body }),
         optimisticUpdates: ({ candidateId }) => [
           {
             queryKey: outreachKeys.researchTask(tenantId, taskId),

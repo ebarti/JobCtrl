@@ -11,7 +11,7 @@ import { http, HttpResponse } from "msw";
 import { useMemo } from "react";
 
 import { analyticsSearchSchema } from "../../routes/-analytics.search.js";
-import { sampleOutcomeAnalyticsSummary } from "../../test/fixtures/projections.js";
+import { sampleOutcomeAnalyticsSummary } from "../../../.storybook/fixtures/projections.js";
 import { AnalyticsView } from "./AnalyticsView.js";
 
 const meta = {

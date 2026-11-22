@@ -1,0 +1,119 @@
+"""Jobs owns posting identity, immutable observations and capture receipts."""
+
+SCHEMA = """
+CREATE TABLE jobs_jobs (
+    job_id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    hidden_at TEXT,
+    deleted_at TEXT,
+    state_revision INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE jobs_postings (
+    job_id TEXT NOT NULL REFERENCES jobs_jobs(job_id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    source_id TEXT NOT NULL,
+    source_hash TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    PRIMARY KEY(job_id,revision)
+);
+CREATE TABLE jobs_identity_keys (
+    identity_key TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL REFERENCES jobs_jobs(job_id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX jobs_identity_owner ON jobs_identity_keys(job_id);
+CREATE TABLE jobs_observations (
+    observation_id TEXT PRIMARY KEY,
+    job_id TEXT NOT NULL REFERENCES jobs_jobs(job_id) ON DELETE CASCADE,
+    source_id TEXT NOT NULL,
+    source_native_id TEXT NOT NULL,
+    observed_url TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    run_id TEXT,
+    receipt_key TEXT UNIQUE,
+    provenance_json TEXT NOT NULL,
+    posting_revision INTEGER NOT NULL,
+    receipt_fingerprint TEXT
+);
+CREATE INDEX jobs_observation_owner ON jobs_observations(job_id,observed_at);
+CREATE TABLE jobs_capture_attempts (
+    attempt_id TEXT PRIMARY KEY,
+    job_id TEXT,
+    url TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    state TEXT NOT NULL,
+    failure_code TEXT,
+    data_json TEXT NOT NULL
+);
+CREATE TABLE jobs_quarantine (
+    quarantine_id TEXT PRIMARY KEY,
+    job_id TEXT,
+    expected_revision INTEGER,
+    reason TEXT NOT NULL,
+    state TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    reviewed_at TEXT,
+    data_json TEXT NOT NULL
+);
+CREATE TABLE jobs_delete_selections (
+    selection_id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT,
+    selection_json TEXT NOT NULL
+);
+CREATE TABLE jobs_analysis (
+    job_id TEXT NOT NULL REFERENCES jobs_jobs(job_id) ON DELETE CASCADE,
+    revision INTEGER NOT NULL,
+    posting_revision INTEGER NOT NULL,
+    source_hash TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    data_json TEXT NOT NULL,
+    PRIMARY KEY(job_id,revision)
+);
+CREATE TABLE jobs_operations (
+    operation_id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    input_fingerprint TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+"""
+
+# Recover detail demoted by older search ingestion. Every intervening revision
+# must be a Discovery observation. Keep the original capture and all revisions.
+RECOVER_DISCOVERY_DETAILS = """
+CREATE TEMP TABLE jobs_detail_recovery AS
+SELECT j.job_id, j.revision + 1 AS next_revision, detail.source_id,
+       detail.source_hash, detail.observed_at, detail.data_json
+FROM jobs_jobs j
+JOIN jobs_postings head ON head.job_id=j.job_id AND head.revision=j.revision
+JOIN jobs_postings detail ON detail.job_id=j.job_id AND detail.revision=(
+    SELECT max(p.revision) FROM jobs_postings p
+    WHERE p.job_id=j.job_id AND p.revision<j.revision
+      AND json_extract(p.data_json,'$.content_state')='accepted_detail'
+)
+WHERE json_extract(head.data_json,'$.content_state') IN ('listing_only','provider_detail')
+  AND json_extract(head.data_json,'$.active_state') IN ('unknown',json_extract(detail.data_json,'$.active_state'))
+  AND NOT EXISTS (
+    SELECT 1 FROM jobs_quarantine q WHERE q.job_id=j.job_id AND q.state='pending'
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM jobs_postings p
+    WHERE p.job_id=j.job_id AND p.revision>detail.revision
+      AND NOT EXISTS (
+        SELECT 1 FROM jobs_observations o
+        WHERE o.job_id=p.job_id AND o.posting_revision=p.revision
+          AND o.run_id IS NOT NULL AND o.observed_at=p.observed_at
+      )
+  );
+INSERT INTO jobs_postings(job_id,revision,source_id,source_hash,observed_at,data_json)
+SELECT job_id,next_revision,source_id,source_hash,observed_at,data_json FROM jobs_detail_recovery;
+UPDATE jobs_jobs SET revision=revision+1,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+WHERE job_id IN (SELECT job_id FROM jobs_detail_recovery);
+DROP TABLE jobs_detail_recovery;
+"""

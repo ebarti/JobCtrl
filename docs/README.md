@@ -5,7 +5,9 @@ identifies the latest published version; source versions and pending release
 work do not establish what installed users receive. For installation and
 upgrade instructions, see [Getting Started](user/getting-started.md).
 Historical launch plans and incomplete verification gates do not mean the
-product is unpublished.
+product is unpublished. The source documentation describes the Python application
+and its feature contracts. Source changes and their verification do not establish
+what an installed release already includes.
 
 ## Public Project Docs
 
@@ -30,8 +32,9 @@ has one defining page; other pages summarize it briefly and link to that owner.
 ### Start Here
 
 - [`index.md`](index.md): documentation homepage and product entry points.
-- [`comparison.md`](comparison.md): evidence-backed comparison with Career-Ops,
-  JobOps, AI Job Search, and adjacent job-search tools.
+- [`comparison.md`](comparison.md): why choose JobCtrl, with a dated,
+  evidence-backed comparison of 19 source-reviewed and commercial job-search,
+  resume, application, and career alternatives.
 - [`user/product-tour.md`](user/product-tour.md): visual product tour.
 - [`user/getting-started.md`](user/getting-started.md): install, first-run setup,
   provider readiness, first workflow, update, rollback, and removal.
@@ -63,14 +66,18 @@ has one defining page; other pages summarize it briefly and link to that owner.
 ### The Job-Search Lifecycle
 
 - [`user/candidate-profile.md`](user/candidate-profile.md): canonical candidate
-  facts, preferences, attestations, versions, and downstream consumers.
-- [`user/discovery.md`](user/discovery.md): target search, source registry,
-  runtime controls, schedules, crawl policy, and SQLite ownership.
+  facts, preferences, attestations, approved wording, and manual updates to
+  affected matches after saved changes.
+- [`user/discovery.md`](user/discovery.md): target search through JobStreaming, direct posting URL imports, board states, schedules, and SQLite ownership.
 - [`user/enrichment-and-extraction.md`](user/enrichment-and-extraction.md): job
   capture, extraction, normalization, deduplication, snapshots, and provenance.
 - [`user/scoring-and-employer-analysis.md`](user/scoring-and-employer-analysis.md):
-  fit evidence, requirement assessment, policy, corrections, and ranking; it
-  consumes the employer analysis owned by Discovery.
+  fit evidence, shared requirement matching, factual support versus wording
+  coverage, policy, corrections, and ranking; it consumes the employer analysis
+  owned by Discovery.
+- [`user/requirements-library.md`](user/requirements-library.md): canonical
+  Skills/Professional Experience meanings, linked achievements, exact wording coverage, unassessed user links
+  and source/revision history in the redesign candidate.
 - [`user/company-briefings.md`](user/company-briefings.md): optional public-source company context, explicit identity links, bounded CLI refresh and shared job/interview/digest reads.
 - [`user/materials-and-tailoring.md`](user/materials-and-tailoring.md): generated
   materials, provenance, validation, review, and accepted-artifact history.
@@ -111,31 +118,34 @@ has one defining page; other pages summarize it briefly and link to that owner.
 - [`local-reliability-qa.md`](local-reliability-qa.md): validation-path chooser.
 - [`developer/releasing.md`](developer/releasing.md): version preparation, curated release notes, protected publication, and public-channel verification.
 - [`developer/local-scale-benchmark.md`](developer/local-scale-benchmark.md):
-  reproducible synthetic production-path benchmark and measured local baseline.
+  historical synthetic production-path benchmark; remeasure the transformed
+  runtime before treating its results as current.
 - [`developer/qa/regression-catalog.md`](developer/qa/regression-catalog.md):
   risk families, invariants, and regression proof.
 - [`developer/qa/doctor-diagnostics.md`](developer/qa/doctor-diagnostics.md):
   CLI diagnostic coverage, status meaning, platform modes, and verification limits.
 - [`developer/qa/browser-smoke.md`](developer/qa/browser-smoke.md): browser smoke
   assertions.
-- [`developer/qa/frontend.md`](developer/qa/frontend.md): frontend test layers
-  and accessibility bar.
+- [`developer/qa/frontend.md`](developer/qa/frontend.md): frontend verification
+  and accessibility guidance; use the Python journey ledger for the target suite.
 - [`developer/first-run-ttfv.md`](developer/first-run-ttfv.md): first-run
   time-to-value validation protocol.
 - [`developer/qa/complete-checklist.md`](developer/qa/complete-checklist.md):
-  exhaustive local QA checklist.
+  product and high-risk verification checklist.
+- [`developer/qa/python-journeys.md`](developer/qa/python-journeys.md): target
+  E2E journeys, observed-result ledger and separate operational proof.
 
 ### How JobCtrl Works
 
-- [`architecture/index.md`](architecture/index.md): current system map and
-  bounded-context composition.
-- [`architecture/runtime.md`](architecture/runtime.md): process ownership,
-  lifetimes, readiness, and TypeScript-to-Python boundaries.
-- [`architecture/agent-runtime.md`](architecture/agent-runtime.md): kit-owned
-  provider execution, reusable Codex clients, request isolation and cleanup.
-- [`architecture/pipeline/`](architecture/pipeline/index.md): Temporal workflow
-  catalog, stage execution, activities and retries, concurrency, scheduling,
-  operations, and recovery.
+- [`architecture/index.md`](architecture/index.md): Python target system map
+  and feature composition.
+- [`architecture/runtime.md`](architecture/runtime.md): Python application,
+  worker and launcher ownership, lifetimes and readiness.
+- [`architecture/agent-runtime.md`](architecture/agent-runtime.md): historical
+  provider runtime design; verify its integration with the Python model gateway
+  before treating those implementation details as current.
+- [`architecture/pipeline/`](architecture/pipeline/index.md): Python feature
+  actions and preparation, Temporal execution, retries, scheduling and recovery.
 - [`architecture/data-events-and-projections.md`](architecture/data-events-and-projections.md):
   the distinction between domain state, events, projections, and telemetry.
 - [`architecture/storage.md`](architecture/storage.md): physical SQLite and file
@@ -143,42 +153,44 @@ has one defining page; other pages summarize it briefly and link to that owner.
 - [`architecture/portable-workspace.md`](architecture/portable-workspace.md): future
   proposal (not implemented) for owned workspace bundles and safe import.
 - [`architecture/application-url-authority.md`](architecture/application-url-authority.md):
-  application URL readers and writers after the exact-v10 migration, and the
-  unique-match job lookup rule.
-- [`architecture/read-model.md`](architecture/read-model.md): apply feedback and
-  projection details.
-- [`architecture/scoring.md`](architecture/scoring.md): scoring algorithm,
-  evidence, policy, and calibration.
-- [`architecture/reviewed-screening-answers.md`](architecture/reviewed-screening-answers.md): private answer revisions, application contexts and model/review fences.
+  historical exact-v10 URL authority inventory. The Python target assigns job
+  and application sources to their [feature owners](architecture/domain-model/strategic.md).
+- [`architecture/read-model.md`](architecture/read-model.md): feature-owned
+  reads, application feedback and composed views.
+- [`architecture/scoring.md`](architecture/scoring.md): person qualification,
+  requirement evidence, score resolution and wording-coverage separation.
+- [`architecture/reviewed-screening-answers.md`](architecture/reviewed-screening-answers.md):
+  historical screening architecture; the Python Applications owner and
+  [screening guide](user/screening-answers.md) describe the target workflow.
 - [`architecture/materials.md`](architecture/materials.md): employer analysis
   and cross-artifact auditability.
 - [`architecture/material-locale-variants.md`](architecture/material-locale-variants.md):
   source-bound translation authority, registry persistence and export fences.
 - [Leadership Practice — future architecture (not implemented)](architecture/leadership-practice.md):
   bounded management reflection and experiments.
-- [Material Variant Comparison](architecture/material-variant-comparison.md): future proposal (not implemented).
-- [`architecture/tailoring.md`](architecture/tailoring.md): resume-tailoring
-  prompt and validation contract.
+- [`architecture/tailoring.md`](architecture/tailoring.md): complete approved
+  baseline composition, coverage, advisory review and acceptance.
 - [`architecture/contracts-types-and-api-boundaries.md`](architecture/contracts-types-and-api-boundaries.md):
-  schema ownership and cross-process contract boundaries.
+  Python feature services, schema ownership and public API boundaries.
 - [`architecture/frontend/`](architecture/frontend/index.md): frontend system
   overview; numbered deep references are listed below.
-- [`architecture/observability.md`](architecture/observability.md): telemetry,
-  traces, propagation, and Langfuse export.
+- [`architecture/observability.md`](architecture/observability.md): model
+  accounting, operational evidence and diagnostic-export verification limits.
 
 ### Reference
 
-- [`local-ts-api.md`](local-ts-api.md): route-family chooser and cross-cutting
-  TypeScript API conventions.
+- [`local-ts-api.md`](local-ts-api.md): local Python API and cross-cutting
+  conventions; the documentation URL is retained.
 - [`api/profile-and-settings.md`](api/profile-and-settings.md),
   [`api/jobs-and-materials.md`](api/jobs-and-materials.md), and
   [`api/operations-and-events.md`](api/operations-and-events.md): focused API
   semantics by route family.
-- [`api/complete-contract.md`](api/complete-contract.md): exhaustive wire-level
-  route, field, status, error, and Server-Sent Events contract.
-- [`architecture/domain-model/`](architecture/domain-model/index.md): canonical
-  backend design (§1–§11), split into strategic design, tactical design, ports,
-  integration, persistence, explicitly future cloud seams, and reference.
+- [`api/complete-contract.md`](api/complete-contract.md): target route-family
+  index and shared HTTP, error and event boundaries; integrated verification is
+  in progress.
+- [`architecture/domain-model/`](architecture/domain-model/index.md): Python
+  feature ownership, tactical invariants, public ports, integration,
+  persistence and explicitly future cloud considerations.
 - [`architecture/frontend/`](architecture/frontend/index.md): canonical
   frontend design (§1–§15), split into contexts, structure, patterns, state and
   ports, realtime, integration, testing, and reference.
@@ -192,6 +204,13 @@ These documents remain in the repository but are not separate site sections:
 - [GitHub Issues](https://github.com/ebarti/JobCtrl/issues): actionable work; [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) accounts for the historical backlog.
 - [`claims-ledger.md`](claims-ledger.md): public product claims and supporting references.
 - [`plans/`](plans/): active proposals and immutable implemented-plan history.
+  The active [Original app redesign](plans/2026-11-11-original-app-redesign.md)
+  maps whole-product outcomes, retained independent capabilities and pending
+  candidate verification across the application, demo and documentation.
+  The active [Typed job requirements](plans/typed-requirements.md) plan defines
+  the `requirements-v2` generation, direct Education/Languages demands,
+  equal-item Fit and pending upgrade/product proof. Source work does not
+  establish a live rollout.
   The active [sensitive-artifact retention and cleanup
   proposal](plans/sensitive-artifact-retention.md) defines the unshipped local
   inventory, preservation, preview, containment, and recovery contract tracked

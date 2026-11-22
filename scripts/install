@@ -242,19 +242,16 @@ install_playwright_browsers() {
 }
 
 run_python_setup() {
-  local setup_args=(--skip-system --skip-dependencies --skip-browsers)
+  local setup_args=(setup)
   if [[ "$ASSUME_YES" -eq 1 ]]; then
     setup_args+=(--yes)
-  fi
-  if [[ "$DRY_RUN" -eq 1 ]]; then
-    setup_args+=(--dry-run)
   fi
   if [[ "$SKIP_DOCTOR" -eq 1 ]]; then
     setup_args+=(--skip-doctor)
   fi
 
   if confirm "Run JobCtrl setup for vendor auth and analysis-leg configuration?"; then
-    run_in_root uv --project workers/automation run jobctrl setup "${setup_args[@]}"
+    run_in_root uv --project workers/automation run --no-sync python -m jobctrl "${setup_args[@]}"
   else
     SKIPPED_STEPS+=("JobCtrl setup")
   fi
@@ -275,11 +272,11 @@ print_summary() {
   cat <<'EOF'
 
 Next commands:
-  pnpm dev
+  corepack pnpm dev
 
 CLI route only:
-  uv --project workers/automation run jobctrl init
-  uv --project workers/automation run jobctrl doctor
+  uv --project workers/automation run --no-sync python -m jobctrl init
+  uv --project workers/automation run --no-sync python -m jobctrl doctor
 EOF
 }
 

@@ -71,6 +71,13 @@ cached release is first activated, the normal-user bootstrap checks Apple
 notarization before running the installer; the installer verifies the complete
 runtime before activation. No Homebrew sandbox patch is required.
 
+For a curl reinstall, use the original bin directory. JobCtrl remembers the
+PATH entry it added even when your new shell already has it on PATH.
+
+If the installer reports that it discarded a corrupt cached archive, rerun the
+same install command to download and verify it again. An interrupted partial
+download can still resume.
+
 ### Build and run from source
 
 Use the source option when you want to inspect, modify, or contribute to the
@@ -113,6 +120,12 @@ Use `jobctrl start --no-open` when you do not want a browser window, or
 Your workspace is stored under `~/.jobctrl/` by default and survives stops,
 updates, and rollbacks.
 
+If the local workflow engine's health check does not answer, startup reports a
+deadline failure and status can show the engine as unhealthy even when its
+process is still running. Status includes the bounded health diagnostic. If
+probe cleanup cannot be verified, status exits with an error and keeps the
+unverified ownership receipt; preserve it and use `jobctrl stop` to retry cleanup.
+
 `jobctrl stop` requests a clean shutdown, terminates verified leftovers that
 exceed the timeout, and waits for exit. It tracks the instance's children even
 if they detach or their parent crashes. Successful cleanup permits normal
@@ -127,7 +140,7 @@ troubleshooting for an unrecoverable cleanup problem, not a normal requirement.
 
 ### Create your profile
 
-Open **Profile** in the web app and add or import the facts JobCtrl may use for
+Open **My profile → Experience** in the source-built web app and add or import the facts JobCtrl may use for
 scoring and tailoring. Your profile is the source of truth for every later
 stage; JobCtrl must not invent experience, skills, or achievements that are
 not recorded there. [Candidate Profile](candidate-profile.md) explains the
@@ -135,7 +148,8 @@ profile's boundaries, versioning, and downstream consumers.
 
 ### Connect an LLM provider
 
-Open **Settings → Credentials** and configure one provider:
+Open **Settings → Connections** and configure one provider. Existing credentials,
+models and browser deep links reveal their corresponding connection panel:
 
 - **Codex:** use an already authenticated Codex CLI, then verify it in JobCtrl.
 - **Claude:** use an Anthropic API key or one of the guided Google Vertex,
@@ -147,13 +161,11 @@ One ready provider is sufficient for scoring, materials, and employer
 analysis. Connecting a second provider can improve ensemble diversity, but it
 is a recommendation, not a requirement.
 
-Claude and Google values saved to the native credential store take effect when the
-relevant Python process next starts. Restart JobCtrl after those edits:
-
-```bash
-jobctrl stop
-jobctrl start
-```
+The Python source candidate resolves saved native credentials for each new
+provider execution. Saving does not require a routine worker restart; an
+in-flight request keeps the credential it started with. Inspect readiness after
+the save rather than assuming that configured credentials establish model
+access. Installed availability remains tied to the published version.
 
 If the active provider route is owned by a non-empty environment variable,
 Settings keeps that active secret and its removal control read-only. You may
@@ -168,7 +180,8 @@ budgets. Apply-specific browser, CAPTCHA, and Gmail setup is in
 
 ### Verify provider readiness
 
-After any required credential-store restart, verify the effective configuration:
+After saving provider configuration, or restarting after a launch-environment
+change, verify the effective configuration:
 
 ```bash
 jobctrl setup
@@ -188,11 +201,38 @@ files for terminal-driven workflows:
 jobctrl init
 ```
 
+For a new workspace, the wizard's Remote choice starts with LinkedIn and
+ZipRecruiter because Indeed cannot combine Remote with the 72-hour lookback.
+On a rerun, the wizard retains the existing Profile. Edit it in the web app if
+you want to change it. Saved Profile target roles and location/work-model rows
+take precedence over the corresponding Discovery rows entered in the wizard.
+Existing resume files, AI settings, and Apply automation settings are also kept
+unless you choose to change them. A selected resume replacement is saved only
+after Discovery is accepted. Adding an AI credential retains other `.env`
+settings. Turning off the standing Apply loop does not change your separate
+approval choice.
+The wizard keeps saved boards, lookback and other controls while
+replacing the location and title rows it asks you to enter. If a saved board
+cannot support the new target, change that board or target and retry; the
+rejected settings stay unchanged.
+If a saved tier or location-label filter would exclude every resulting search,
+the wizard shows the conflicting filter and asks whether to clear it. Declining
+leaves the Discovery settings unchanged; confirming clears only that filter.
+
 ## 4. Run Your First Workflow
 
-Use the web app to configure discovery targets, inspect jobs and scores, edit
-generated materials, rehearse a dry run, and approve any live submission.
+The Original redesign source candidate starts in **Jobs**. Open **My profile →
+Search preferences** to save roles, locations, work arrangements, boards and
+limits. Return to **Jobs → Search for jobs**, review effective criteria and
+readiness, then choose **Start search**. Filtering saved jobs is a separate
+action. Saving preferences or fixing a connection does not launch work.
+
+Compare the resulting Jobs table, open one job, choose tailored or full-baseline
+**Prepare resume**, edit in the real Plate editor, review/accept the document,
+then rehearse and review its application. Final browser submission stays manual.
 [Daily Workflow](normal-flows.md) walks through the complete supervised loop.
+The [redesign ledger](../plans/2026-11-11-original-app-redesign.md) records exact
+candidate verification; the published release determines installed availability.
 
 For a quick terminal-side readiness check:
 
@@ -202,8 +242,9 @@ jobctrl pipeline-status
 jobctrl runs
 ```
 
-Start with a dry run. JobCtrl does not submit in dry-run mode, and live
-submission remains behind the configured approval gate.
+Start application work with a dry rehearsal. Discovery itself has no dry-run
+mode. JobCtrl does not submit in an application rehearsal, and live submission
+retains its exact approval and ownership gates.
 
 ## Discovery Extension And Optional Managed-Browser Capabilities
 
@@ -251,67 +292,75 @@ use the updated formula, while bundled-installer installations use their signed
 release channel. Pulling source changes does not publish an update to installed
 users.
 
-For Homebrew installations, `brew upgrade ebarti/tap/jobctrl` updates the
-formula while retaining the existing workspace.
+For compatible Homebrew updates, `brew upgrade ebarti/tap/jobctrl` updates the
+formula and retains the workspace. Moving from v0.4.x to v0.5.0 follows the
+Profile transfer below.
 
-A compatible source checkout and installed app use the same workspace, profile,
-resume and Temporal history. Older installed releases have limits: v0.3.1 supports
-schema 14 and expects Temporal history at `$JOBCTRL_DIR/temporal.db`, not the
-older source location `$JOBCTRL_DIR/temporal/temporal.db`. Do not move or delete
-history to force compatibility. A newer checkout can upgrade the shared database
-beyond what an older installed release understands; update the installed app when
-a compatible release is published. Source upgrade and recovery details are in
-[Local Development](../local-development.md#schema-migrations-and-source-updates).
+::: warning Moving from v0.4.x to the Python workspace
+JobCtrl v0.5.0 uses a fresh workspace and transfers the full Profile and
+supporting sources. Keep the previous workspace for jobs, applications,
+generated materials and workflow history. The target database has application
+ID `1245926228` and user version `1`.
 
-**v0.3.1 upgrade limitation:** v0.4.0 cannot automatically upgrade a normally
-used v0.3.1 workspace because the older runtime did not record enough information
-to verify that all of its child processes stopped. The installer refuses before
-migration and preserves the workspace and installation records. There is no
-documented self-service recovery yet. Stay on v0.3.1 until a compatible upgrade
-is available. Avoid upgrading its Homebrew formula in the meantime: the new
-formula's `jobctrl` command attempts the same blocked transition and cannot
-start that workspace. Preserve the registry and both databases; do not delete
-them to bypass the refusal.
+Stop JobCtrl v0.4.x with `jobctrl stop` before transferring. The
+`profile-transfer` command reads a private copy of the legacy database and its
+recovery files to preserve the source workspace. Use a nonexistent new target,
+a complete browser Profile sources manifest and `--confirm-profile-only-reset`.
+Verify the completed receipt before selecting the new workspace.
 
-For supported schema-15 transitions with verified runtime ownership, the new
-authenticated installer upgrades the original installation. It requires an
-initialized schema-14 or schema-15 workspace and its original installation
-metadata. Older schemas must first reach schema 14 through a supported predecessor;
-preserve the workspace and see the [v0.3.1 upgrade notes](https://github.com/ebarti/JobCtrl/releases/tag/v0.3.1).
-The installer stops owned processes, backs up the application and Temporal
-databases together, and applies the additive migration before checking startup
-health. If cleanup fails, preserve the reported evidence.
+An installed cutover also needs a **separate fresh native runtime home** with no
+active release selection. Preserve both the old workspace and its native runtime
+home. The authenticated candidate installer must first stage into the new runtime
+home; its bundled Python performs the transfer, and the same installer then makes
+the first selection with `JOBCTRL_DIR` pointing to the new workspace. Use the
+signed v0.5.0 or later assets for that operation.
+The native installer supports `--stage-only --home`; the public install shell does
+not forward `--stage-only`.
 
-If startup fails or the upgrade is interrupted, JobCtrl preserves the live
-databases and recovery journal. Rerun the trusted new installer that began the
-upgrade if the old `jobctrl` command remains selected or reports an unreadable
-transition journal. The old binary cannot recover the new journal. After the
-new command has replaced it, run `jobctrl stop`, then `jobctrl update` to continue
-forward. Each attempt backs up the current pair, including later saved changes.
-A revoked candidate can still be stopped through the new command; revocation
-continues to block its startup or update. If a legacy runtime lacks complete
-ownership records, JobCtrl cannot currently verify a safe recovery automatically
-and has no documented self-service procedure for it. Preserve the registry,
-workspace and journal, and seek support. Restarting the computer alone does not
-clear this refusal. Do not remove the journal, reinstall over a schema-14
-workspace without its original metadata, or restore an older snapshot over newer
-data. Rollback across this protocol change is refused. A same-protocol explicit rollback still
-restores the snapshot associated with its previous release, so data added since
-that snapshot is not carried backward. Automatic paired rollback is also
-unavailable while a workspace uses the legacy source Temporal history path;
-the live workspace and backup are preserved. A source merge or synthetic test does
-not publish an upgrade; the signed installer must pass release qualification
-before installed users receive it.
+Run the transfer with the staged payload's bundled Python. Replace the paths
+with the staged payload, previous workspace, unused workspace path and exported
+browser source bundle.
 
-Rollback keeps a compatible launcher for recovery while restoring the older
-application. Homebrew commands preserve that selection until you explicitly run
-`jobctrl update` again. If an older updater reports a failed candidate and cannot
-restart its previous release, recovery depends on the transition state and the
-available compatible controller. The installer and formula also handle an
-installation you have never started. If an existing database/history pair is
-incomplete, updating refuses
-to replace it; preserve those files and recover the pair before retrying.
+```bash
+JOBCTRL_RUNTIME_MODE=bundled JOBCTRL_PAYLOAD_DIR=/path/to/staged-payload \
+  /path/to/staged-payload/python/bin/python3 -I -B -m jobctrl profile-transfer \
+  --source /path/to/previous-workspace \
+  --target /path/to/fresh-workspace \
+  --browser-sources /path/to/browser-profile-sources.json \
+  --confirm-profile-only-reset
+```
 
+Confirm that the receipt reports `status: complete` and `sourcePreserved: true`
+before first selection. The [release guide](../developer/releasing.md#python-application-cutover-and-installed-qualification)
+describes staging and recovery in more detail.
+
+Only a verified, unused transfer may start without workflow history. First native
+selection consumes that permission once. If interrupted after consumption, keep
+the target for inspection or repeat the explicit transfer into a different
+nonexistent target; do not remove the selection marker to retry. Reusing an old
+runtime home or a used transfer cannot authorize missing-history recovery.
+Do not treat a source checkout or synthetic smoke as a published upgrade; signed
+acquisition, predecessor compatibility and release qualification remain separate
+gates.
+
+For later target-to-target updates, the new runtime preserves live workspace
+state. If an update is interrupted, stop the owned runtime and resume forward;
+do not automatically restore an old database over newer writes. An explicit
+rollback requires an allowed release and a verified target database/history
+pair. Unresolved model accounting blocks rollback until reconciled. Preserve
+the current data, journal, backups and accounting evidence when recovery is
+uncertain.
+:::
+
+The typed-requirement source candidate also has a generation-specific
+[upgrade and rollback boundary](data-and-safety.md#typed-requirements-upgrade):
+stop old writers and back up before new-generation writes; restoring that backup
+is required for rollback afterward. Installing an older binary alone does not
+restore compatible requirement or workflow authority. This work has not rolled
+out to a live workspace.
+
+For released versions, use the release-specific installation and recovery
+instructions. A source merge does not publish an installed update.
 
 ## Semantic Determination Authority
 

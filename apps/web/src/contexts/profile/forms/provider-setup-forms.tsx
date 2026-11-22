@@ -8,6 +8,7 @@ import {
 } from "@jobctrl/contracts";
 
 import { Button } from "../../../shared/ui/button.js";
+import { useCredentialEditFence } from "../../settings/credentials.js";
 import {
   Dialog,
   DialogClose,
@@ -112,6 +113,7 @@ interface ProviderFormProps {
   environmentManagedKeys?: readonly CredentialKey[];
   inspectionBlocked?: boolean;
   secretStorageAvailable?: boolean;
+  onSecretDraftChange?: (hasSecret: boolean) => void;
 }
 
 export function ClaudeProviderForm({
@@ -120,13 +122,16 @@ export function ClaudeProviderForm({
   environmentManagedKeys = [],
   inspectionBlocked = false,
   secretStorageAvailable = true,
+  onSecretDraftChange,
 }: ProviderFormProps) {
   const update = useUpdateCredentialsBatchMutation();
+  const fence = useCredentialEditFence();
   const [message, setMessage] = useState("");
   const [saveError, setSaveError] = useState("");
   const [removalOpen, setRemovalOpen] = useState(false);
   const [removalError, setRemovalError] = useState("");
   const effectiveMode = claudeModeFromStatus(currentMode);
+  useEffect(() => () => onSecretDraftChange?.(false), [onSecretDraftChange]);
   const environmentManaged = activeModeManagedByEnvironment(
     effectiveMode,
     environmentManagedKeys,
@@ -176,11 +181,15 @@ export function ClaudeProviderForm({
           setMessage("Claude setup is managed by the launch environment and is read-only here.");
           return;
         }
-        await update.mutateAsync(request);
+        const saved = await update.mutateAsync(fence.request(request));
         const changed = (Object.keys(submittedValues) as Array<keyof typeof submittedValues>)
           .some((field) => formApi.state.values[field] !== submittedValues[field]);
+        fence.accept(saved.revision, changed);
         if (request.operations.some((operation) => operation.operation === "set" && operation.key === "ANTHROPIC_API_KEY")
-          && formApi.getFieldValue("apiKey") === submittedValues.apiKey) formApi.setFieldValue("apiKey", "");
+          && formApi.getFieldValue("apiKey") === submittedValues.apiKey) {
+          formApi.setFieldValue("apiKey", "");
+          onSecretDraftChange?.(false);
+        }
         if (request.operations.some((operation) => operation.operation === "set" && operation.key === "GOOGLE_APPLICATION_CREDENTIALS")
           && formApi.getFieldValue("googleApplicationCredentials") === submittedValues.googleApplicationCredentials) formApi.setFieldValue("googleApplicationCredentials", "");
         const statusChanged = modeBaseline.current.version !== baselineVersion;
@@ -190,8 +199,8 @@ export function ClaudeProviderForm({
           formApi.setFieldValue("mode", modeBaseline.current.value, { dontUpdateMeta: true });
         }
         setMessage(changed || statusChanged
-          ? "Claude provider settings saved. The form has changed since submission; review it before saving again. Restart JobCtrl to load the saved settings."
-          : "Claude provider settings saved. Restart JobCtrl to load them.");
+          ? "Claude provider settings saved. The form has changed since submission; review it before saving again. Newly started actions use the saved settings."
+          : "Claude provider settings saved. Newly started actions use them.");
       } catch (error) {
         setSaveError(providerMutationMessage(error));
       }
@@ -228,17 +237,22 @@ export function ClaudeProviderForm({
         setRemovalError("Claude setup is managed by the launch environment and cannot be removed here.");
         return;
       }
-      await update.mutateAsync(request);
-      if (form.getFieldValue("apiKey") === inputAtRemoval) form.setFieldValue("apiKey", "");
+      const saved = await update.mutateAsync(fence.request(request));
+      fence.accept(saved.revision, form.getFieldValue("apiKey") !== inputAtRemoval);
+      if (form.getFieldValue("apiKey") === inputAtRemoval) {
+        form.setFieldValue("apiKey", "");
+        onSecretDraftChange?.(false);
+      }
       setRemovalOpen(false);
-      setMessage("Claude provider settings removed. Restart JobCtrl to stop using this provider.");
+      setMessage("Claude provider settings removed. Newly started actions use the updated configuration; launch-environment overrides remain authoritative.");
     } catch (error) {
       setRemovalError(providerRemovalMessage("Claude", error));
     }
   }
 
   return (
-    <form className="provider-form" onChangeCapture={() => { editVersion.current += 1; }} onSubmit={(event) => submitForm(event, form.handleSubmit)}>
+    <form className="provider-form" onChangeCapture={() => { fence.capture(); editVersion.current += 1; }} onSubmit={(event) => submitForm(event, form.handleSubmit)}>
+      {fence.stale ? <p className="provider-form-message warning" role="alert">Credential configuration changed while you were editing. Your draft remains here. <Button type="button" variant="outline" disabled={inspectionBlocked} onClick={fence.review}>Review current credential status</Button></p> : null}
       <fieldset className="contents" disabled={inspectionBlocked}>
       <legend className="sr-only">Claude setup fields</legend>
       <form.Field name="mode">
@@ -267,12 +281,12 @@ export function ClaudeProviderForm({
                     id="claude-api-key"
                     name={field.name}
                     label="Anthropic API key"
-                    help="Stored only in macOS Keychain. JobCtrl never returns the value after saving."
+                    help="Stored only in the native credential store. JobCtrl never returns the value after saving."
                     required
                     disabled={!secretStorageAvailable || environmentManagedKeys.includes("ANTHROPIC_API_KEY")}
                     value={field.state.value}
                     onBlur={field.handleBlur}
-                    onChange={field.handleChange}
+                    onChange={(value) => { field.handleChange(value); onSecretDraftChange?.(value.length > 0); }}
                   />
                 )}
               </form.Field>
@@ -373,7 +387,7 @@ export function ClaudeProviderForm({
               saveError={saveError}
               removalError={removalOpen ? "" : removalError}
               saveLabel="Save Claude setup"
-              readOnly={inspectionBlocked || (environmentManaged && mode === effectiveMode)}
+              readOnly={inspectionBlocked || fence.stale || (environmentManaged && mode === effectiveMode)}
               removeAction={
                 removalOpen || (configured && !environmentManaged) ? (
                   <ProviderRemovalDialog
@@ -407,13 +421,16 @@ export function GoogleProviderForm({
   environmentManagedKeys = [],
   inspectionBlocked = false,
   secretStorageAvailable = true,
+  onSecretDraftChange,
 }: ProviderFormProps) {
   const update = useUpdateCredentialsBatchMutation();
+  const fence = useCredentialEditFence();
   const [message, setMessage] = useState("");
   const [saveError, setSaveError] = useState("");
   const [removalOpen, setRemovalOpen] = useState(false);
   const [removalError, setRemovalError] = useState("");
   const effectiveMode = googleModeFromStatus(currentMode);
+  useEffect(() => () => onSecretDraftChange?.(false), [onSecretDraftChange]);
   const environmentManaged = activeModeManagedByEnvironment(
     effectiveMode,
     environmentManagedKeys,
@@ -459,11 +476,15 @@ export function GoogleProviderForm({
           setMessage("Google setup is managed by the launch environment and is read-only here.");
           return;
         }
-        await update.mutateAsync(request);
+        const saved = await update.mutateAsync(fence.request(request));
         const changed = (Object.keys(submittedValues) as Array<keyof typeof submittedValues>)
           .some((field) => formApi.state.values[field] !== submittedValues[field]);
+        fence.accept(saved.revision, changed);
         if (request.operations.some((operation) => operation.operation === "set" && operation.key === "GEMINI_API_KEY")
-          && formApi.getFieldValue("apiKey") === submittedValues.apiKey) formApi.setFieldValue("apiKey", "");
+          && formApi.getFieldValue("apiKey") === submittedValues.apiKey) {
+          formApi.setFieldValue("apiKey", "");
+          onSecretDraftChange?.(false);
+        }
         if (request.operations.some((operation) => operation.operation === "set" && operation.key === "GOOGLE_APPLICATION_CREDENTIALS")
           && formApi.getFieldValue("googleApplicationCredentials") === submittedValues.googleApplicationCredentials) formApi.setFieldValue("googleApplicationCredentials", "");
         const statusChanged = modeBaseline.current.version !== baselineVersion;
@@ -473,8 +494,8 @@ export function GoogleProviderForm({
           formApi.setFieldValue("mode", modeBaseline.current.value, { dontUpdateMeta: true });
         }
         setMessage(changed || statusChanged
-          ? "Google provider settings saved. The form has changed since submission; review it before saving again. Restart JobCtrl to load the saved settings."
-          : "Google provider settings saved. Restart JobCtrl to load them.");
+          ? "Google provider settings saved. The form has changed since submission; review it before saving again. Newly started actions use the saved settings."
+          : "Google provider settings saved. Newly started actions use them.");
       } catch (error) {
         setSaveError(providerMutationMessage(error));
       }
@@ -511,17 +532,22 @@ export function GoogleProviderForm({
         setRemovalError("Google setup is managed by the launch environment and cannot be removed here.");
         return;
       }
-      await update.mutateAsync(request);
-      if (form.getFieldValue("apiKey") === inputAtRemoval) form.setFieldValue("apiKey", "");
+      const saved = await update.mutateAsync(fence.request(request));
+      fence.accept(saved.revision, form.getFieldValue("apiKey") !== inputAtRemoval);
+      if (form.getFieldValue("apiKey") === inputAtRemoval) {
+        form.setFieldValue("apiKey", "");
+        onSecretDraftChange?.(false);
+      }
       setRemovalOpen(false);
-      setMessage("Google provider settings removed. Restart JobCtrl to stop using this provider.");
+      setMessage("Google provider settings removed. Newly started actions use the updated configuration; launch-environment overrides remain authoritative.");
     } catch (error) {
       setRemovalError(providerRemovalMessage("Google", error));
     }
   }
 
   return (
-    <form className="provider-form" onChangeCapture={() => { editVersion.current += 1; }} onSubmit={(event) => submitForm(event, form.handleSubmit)}>
+    <form className="provider-form" onChangeCapture={() => { fence.capture(); editVersion.current += 1; }} onSubmit={(event) => submitForm(event, form.handleSubmit)}>
+      {fence.stale ? <p className="provider-form-message warning" role="alert">Credential configuration changed while you were editing. Your draft remains here. <Button type="button" variant="outline" disabled={inspectionBlocked} onClick={fence.review}>Review current credential status</Button></p> : null}
       <fieldset className="contents" disabled={inspectionBlocked}>
       <legend className="sr-only">Google setup fields</legend>
       <form.Field name="mode">
@@ -550,12 +576,12 @@ export function GoogleProviderForm({
                     id="gemini-api-key"
                     name={field.name}
                     label="Gemini API key"
-                    help="Stored only in macOS Keychain and never returned by the API."
+                    help="Stored only in the native credential store and never returned by the API."
                     required
                     disabled={!secretStorageAvailable || environmentManagedKeys.includes("GEMINI_API_KEY")}
                     value={field.state.value}
                     onBlur={field.handleBlur}
-                    onChange={field.handleChange}
+                    onChange={(value) => { field.handleChange(value); onSecretDraftChange?.(value.length > 0); }}
                   />
                 )}
               </form.Field>
@@ -599,7 +625,7 @@ export function GoogleProviderForm({
               saveError={saveError}
               removalError={removalOpen ? "" : removalError}
               saveLabel="Save Google setup"
-              readOnly={inspectionBlocked || (environmentManaged && mode === effectiveMode)}
+              readOnly={inspectionBlocked || fence.stale || (environmentManaged && mode === effectiveMode)}
               removeAction={
                 removalOpen || (configured && !environmentManaged) ? (
                   <ProviderRemovalDialog
@@ -851,9 +877,8 @@ function ProviderRemovalDialog({
         <DialogHeader>
           <DialogTitle>Remove {provider} provider setup?</DialogTitle>
           <DialogDescription>
-            This removes the provider's non-secret connection settings from config.json and its API key from macOS Keychain.
-            External vendor CLI and cloud credentials are unchanged. Restart JobCtrl afterward
-            so its API provider process and worker stop using the previous configuration.
+            This removes the provider's saved connection settings from this workspace and its API key from the native credential store.
+            External vendor CLI and cloud credentials remain managed by their provider. Newly started actions use the saved change; launch-environment overrides remain authoritative.
           </DialogDescription>
         </DialogHeader>
         {error ? (
@@ -908,9 +933,8 @@ function googleModeFromStatus(mode: string | null | undefined): GoogleMode | nul
 }
 
 function providerMutationMessage(error: unknown): string {
-  return error instanceof Error
-    ? `Could not save provider settings. ${error.message}`
-    : "Could not save provider settings. Check config.json access and Keychain Access, then retry.";
+  return `Could not save provider settings. ${credentialRecoveryMessage(error)
+    ?? "Your draft remains here; check credential status before retrying."}`;
 }
 
 function providerRemovalMessage(provider: "Claude" | "Google", error: unknown): string {

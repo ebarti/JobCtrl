@@ -11,16 +11,15 @@ function formatScore(score: number): string {
   return Number.isFinite(score) ? score.toFixed(2) : "unknown";
 }
 
-// The truthfulness gate stack is the sole approval authority (INV-5). Every field
-// is rendered and a failing field is NEVER hidden (CLAUDE.md auditability
-// discipline). Blocks are labelled by what they prove: deterministic
-// never-fabricate findings, validator errors/warnings, and the persona judge.
+// The persisted claim and quality reviews gate approval. Show the recorded
+// model findings and IDs without presenting them as deterministic conclusions.
 export function DraftGateResultsPanel({ gateResults }: DraftGateResultsPanelProps): JSX.Element {
   const { passed, computedAgainst, fabrications, validation, judge } = gateResults;
+  const recorded = gateResults;
   return (
-    <div className="draft-gate-results" role="group" aria-label="Truthfulness gate results">
+    <div className="draft-gate-results" role="group" aria-label="Claim and quality review results">
       <StatusBadge role="status" tone={passed ? "ok" : "danger"}>
-        {passed ? "Truthfulness gates passed" : "Truthfulness gates blocked this draft"}
+        {passed ? "Claim and quality reviews passed" : "Claim or quality review blocked this draft"}
       </StatusBadge>
       <p className="draft-gate-computed-against">
         Computed against <span className="mono">{computedAgainst}</span>
@@ -34,41 +33,44 @@ export function DraftGateResultsPanel({ gateResults }: DraftGateResultsPanelProp
           <p className="mono">{source.source_id}</p><pre className="whitespace-pre-wrap break-words">{source.text}</pre>
         </li>)}</ul>
       </details> : null}
+      {recorded.determinationIds?.length ? <details>
+        <summary>Recorded review identities and exact draft lines</summary>
+        <ul>{recorded.determinationIds.map((id) => <li className="mono" key={id}>{id}</li>)}</ul>
+        <pre className="whitespace-pre-wrap break-words">{JSON.stringify(recorded.lineAnchors ?? [], null, 2)}</pre>
+      </details> : null}
       <div className="draft-gate-block">
-        <p className="draft-gate-block-title">Deterministic never-fabricate findings</p>
+        <p className="draft-gate-block-title">Claim verification findings</p>
         {fabrications.length === 0 ? (
-          <p className="muted">No fabricated claims detected in the generated text.</p>
+          <p className="muted">No individual unsupported claim findings were recorded.</p>
         ) : (
           <ul className="draft-gate-fabrication-list">
-            {fabrications.map((fabrication, index) => (
+            {fabrications.map((finding, index) => {
+              return (
               <li
-                key={`${fabrication.section}:${fabrication.token}:${index}`}
+                key={`${finding.lineId ?? "claim"}:${index}`}
                 className="draft-gate-fabrication"
               >
-                <dl className="detail-list" aria-label={`Fabrication finding ${index + 1}`}>
+                <dl className="detail-list" aria-label={`Claim finding ${index + 1}`}>
                   <div>
                     <dt>Kind</dt>
-                    <dd>{fabrication.kind}</dd>
+                    <dd>{finding.kind}</dd>
                   </div>
                   <div>
-                    <dt>Token</dt>
-                    <dd className="mono">{fabrication.token}</dd>
+                    <dt>Draft line</dt>
+                    <dd className="mono">{finding.lineId}</dd>
                   </div>
                   <div>
-                    <dt>Control</dt>
-                    <dd>{fabrication.control}</dd>
+                    <dt>Reason</dt>
+                    <dd>{finding.rationale}</dd>
                   </div>
                   <div>
-                    <dt>Section</dt>
-                    <dd>{fabrication.section}</dd>
-                  </div>
-                  <div>
-                    <dt>Offending text</dt>
-                    <dd className="mono">{fabrication.generatedText}</dd>
+                    <dt>Reviewed text</dt>
+                    <dd className="mono">{finding.generatedText}</dd>
                   </div>
                 </dl>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </div>
@@ -106,7 +108,7 @@ export function DraftGateResultsPanel({ gateResults }: DraftGateResultsPanelProp
       </div>
 
       <div className="draft-gate-block">
-        <p className="draft-gate-block-title">Persona judge</p>
+        <p className="draft-gate-block-title">Model quality review</p>
         {judge ? (
           <>
             <dl className="detail-list" aria-label="Judge result">

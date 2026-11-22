@@ -22,14 +22,14 @@ type Story = StoryObj<typeof meta>;
 
 export const AllStatuses: Story = {};
 
-export const ApprovedOnly: Story = {
+export const AcceptedOnly: Story = {
   args: {
-    search: { ...baseSearch, status: "approved" },
+    search: { ...baseSearch, status: "accepted" },
   },
 };
 
-export const StaleOnly: Story = {
+export const RenderHistory: Story = {
   args: {
-    search: { ...baseSearch, status: "stale" },
+    search: { ...baseSearch, status: "history" },
   },
 };

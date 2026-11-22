@@ -2,6 +2,7 @@ import {
   JOB_APPLY_STATUS_FILTERS,
   JOB_SORT_FIELDS,
   JOB_STATES,
+  SavedJobGridFiltersSchema,
   STAGES,
   STAGE_STATES,
   type SavedTableView,
@@ -21,11 +22,17 @@ export const SAVED_TABLE_VIEW_STORE_VERSION = 4;
 export const SAVED_TABLE_VIEW_SCHEMA_VERSION = 1;
 export const DEFAULT_SAVED_TABLE_VIEW_ID = "default";
 export const JOBS_TABLE_ID = "jobs" satisfies TableId;
+// The Python composed read supports these additional owner-backed sort fields.
+export const PYTHON_JOBS_SORT_FIELDS = [...JOB_SORT_FIELDS, "job_state", "resume_template", "scored_at"] as const;
 export const JOBS_TABLE_COLUMN_IDS = [
   "select",
-  "fit_score",
   "title",
   "company",
+  "location",
+  "posted_compensation",
+  "fit_score",
+  "apply_status",
+  "eligibility",
   "job_state",
   "source",
   "compensation_min_eur",
@@ -33,15 +40,16 @@ export const JOBS_TABLE_COLUMN_IDS = [
   "compensation_market",
   "compensation_confidence",
   "compensation_warnings",
-  "location",
   "current_stage",
   "current_state",
   "resume_template",
   "discovered_at",
-  "apply_status",
+  "scored_at",
 ] as const;
 
 export const DEFAULT_JOBS_HIDDEN_COLUMN_IDS = [
+  "eligibility",
+  "job_state",
   "source",
   "compensation_min_eur",
   "compensation_max_eur",
@@ -49,7 +57,10 @@ export const DEFAULT_JOBS_HIDDEN_COLUMN_IDS = [
   "compensation_confidence",
   "compensation_warnings",
   "resume_template",
+  "current_stage",
+  "current_state",
   "discovered_at",
+  "scored_at",
 ] as const;
 
 export const DISCOVERY_SOURCES_TABLE_ID = "discovery-sources" satisfies TableId;
@@ -73,6 +84,12 @@ export const DISCOVERY_SOURCE_COLUMN_IDS = [
 ] as const;
 export const DISCOVERY_SOURCE_SORT_COLUMN_IDS =
   DISCOVERY_SOURCE_COLUMN_IDS.filter((columnId) => columnId !== "actions");
+
+export const REQUIREMENTS_TABLE_ID = "requirements" satisfies TableId;
+export const REQUIREMENTS_TABLE_COLUMN_IDS = [
+  "name", "category", "definition", "support", "achievements", "wordings", "revision",
+] as const;
+export const DEFAULT_REQUIREMENTS_HIDDEN_COLUMN_IDS = ["definition", "revision"] as const;
 
 const STAGE_OR_ALL = [...STAGES, "all"] as const;
 const STATE_OR_ALL = [...STAGE_STATES, "all"] as const;
@@ -111,7 +128,7 @@ const TABLE_CONFIGS: Record<string, KnownTableConfig> = {
       deleted: "active",
       pageSize: 50,
     },
-    sortableColumnIds: JOB_SORT_FIELDS,
+    sortableColumnIds: PYTHON_JOBS_SORT_FIELDS,
   },
   [DISCOVERY_SOURCES_TABLE_ID]: {
     tableId: DISCOVERY_SOURCES_TABLE_ID,
@@ -129,6 +146,15 @@ const TABLE_CONFIGS: Record<string, KnownTableConfig> = {
       },
     },
     sortableColumnIds: DISCOVERY_SOURCE_SORT_COLUMN_IDS,
+  },
+  [REQUIREMENTS_TABLE_ID]: {
+    tableId: REQUIREMENTS_TABLE_ID,
+    columnIds: REQUIREMENTS_TABLE_COLUMN_IDS,
+    fixedLeadingColumnIds: [],
+    defaultHiddenColumnIds: DEFAULT_REQUIREMENTS_HIDDEN_COLUMN_IDS,
+    defaultSort: { columnId: "name", direction: "asc" },
+    defaultUrlFilters: { q: "", pageSize: 25 },
+    sortableColumnIds: REQUIREMENTS_TABLE_COLUMN_IDS,
   },
 };
 
@@ -377,6 +403,12 @@ function normalizeColumns(
       : config.defaultHiddenColumnIds,
     knownIds,
   );
+  // A newly introduced presentation column must not change an existing saved
+  // layout. The fresh built-in Default has no source order and opts into it.
+  if (config.tableId === JOBS_TABLE_ID && Array.isArray(source["order"])
+      && !source["order"].includes("posted_compensation") && !hidden.includes("posted_compensation")) {
+    hidden.push("posted_compensation");
+  }
   if (hidden.length >= config.columnIds.length) {
     hidden.shift();
   }
@@ -447,6 +479,10 @@ function normalizeUrlFilters(
     if (typeof timestamp === "string" && timestamp.trim()) {
       next[key] = timestamp.trim();
     }
+  }
+  if (config.tableId === JOBS_TABLE_ID) {
+    const jobGrid = SavedJobGridFiltersSchema.safeParse(source["jobGrid"]);
+    if (jobGrid.success) next.jobGrid = jobGrid.data;
   }
   if (source["sourceFilters"] !== undefined) {
     next.sourceFilters = normalizeGridFilters(source["sourceFilters"], config);
@@ -667,7 +703,7 @@ function configFor(tableId: TableId): KnownTableConfig {
   return config;
 }
 
-export const useSavedTableViewsStore = create<SavedTableViewsState>()(
+function createSavedTableViewsStore(storageName: string) { return create<SavedTableViewsState>()(
   persist(
     (set, get) => ({
       ...initialState,
@@ -792,7 +828,7 @@ export const useSavedTableViewsStore = create<SavedTableViewsState>()(
       reset: () => set(normalizeSavedTableViewsState({})),
     }),
     {
-      name: "jh:saved-table-views",
+      name: storageName,
       storage: createJSONStorage(getStorage),
       version: SAVED_TABLE_VIEW_STORE_VERSION,
       migrate: migrateSavedTableViewsState,
@@ -807,4 +843,9 @@ export const useSavedTableViewsStore = create<SavedTableViewsState>()(
       }),
     },
   ),
-);
+); }
+
+export const useSavedTableViewsStore = createSavedTableViewsStore("jh:saved-table-views");
+/** Python-cutover Jobs views begin fresh; this key never reads legacy Jobs state. */
+export const usePythonJobsTableViewsStore = createSavedTableViewsStore("jh:python-jobs-table-views:v1");
+export const useRequirementsTableViewsStore = createSavedTableViewsStore("jh:requirements-table-views:v1");

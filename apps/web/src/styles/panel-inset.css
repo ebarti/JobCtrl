@@ -1,0 +1,5 @@
+/* Opt in at the panel owner. Frames and typography belong to its composition. */
+.panel-inset {
+  gap: var(--jh-internal-gap);
+  padding: var(--jh-panel-padding);
+}

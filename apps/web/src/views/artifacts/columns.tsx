@@ -1,260 +1,126 @@
 import { Link } from "@tanstack/react-router";
-import type { RowSelectionState } from "@tanstack/react-table";
-import { type MouseEvent } from "react";
 
-import { ArtifactStatusBadge } from "../../contexts/materials/components/ArtifactStatusBadge.js";
-import { ArtifactTypeBadge } from "../../contexts/materials/components/ArtifactTypeBadge.js";
-import { OpenArtifactButton } from "../../contexts/materials/components/OpenArtifactButton.js";
-import { ResumeTemplateStatusBadge } from "../../contexts/materials/components/ResumeTemplateStatusBadge.js";
-import { formatBytes } from "../../contexts/materials/lib/artifact-type-format.js";
-import type { ArtifactSummary } from "@jobctrl/contracts";
 import type {
-  DataGridColumn,
-  DataGridHeaderContext,
-} from "../../shared/ui/filterable-data-grid.js";
-import { Checkbox } from "../../shared/ui/checkbox.js";
+  ResumeArtifact,
+  ResumeArtifactStatus,
+} from "../../contexts/resumes/index.js";
+import type { DataGridColumn } from "../../shared/ui/filterable-data-grid.js";
 import { RelativeTime } from "../../shared/ui/relative-time.js";
-import { TitleStack } from "../../shared/ui/title-stack.js";
+import { StatusBadge } from "../../shared/ui/status-badge.js";
+import { ArtifactFileActions } from "./ArtifactFileActions.js";
 
-export interface ArtifactColumnsOptions {
-  rowSelection: RowSelectionState;
-  onRowSelectionChange: (next: RowSelectionState) => void;
-}
-
-function updateSelectedRows(
-  rowSelection: RowSelectionState,
-  onRowSelectionChange: (next: RowSelectionState) => void,
-  rows: readonly ArtifactSummary[],
-  checked: boolean,
-) {
-  const next: RowSelectionState = { ...rowSelection };
-  for (const row of rows) {
-    if (checked) {
-      next[row.artifactId] = true;
-    } else {
-      delete next[row.artifactId];
-    }
-  }
-  onRowSelectionChange(next);
-}
-
-function selectHeader(
-  { rowSelection, onRowSelectionChange }: ArtifactColumnsOptions,
-  { pageRows }: DataGridHeaderContext<ArtifactSummary>,
-) {
-  const allSelected =
-    pageRows.length > 0 &&
-    pageRows.every((row) => Boolean(rowSelection[row.artifactId]));
-  const someSelected = pageRows.some((row) =>
-    Boolean(rowSelection[row.artifactId]),
-  );
+export const artifactStatusLabels: Record<ResumeArtifactStatus, string> = {
+  accepted: "Accepted",
+  accepted_history: "Previously accepted",
+  candidate: "Candidate",
+  history: "Render history",
+  accepted_translation: "Accepted translation",
+};
+export function ArtifactState({ row }: { row: ResumeArtifact }) {
   return (
-    <span
-      className="row-check-hitbox"
-      onClick={(event: MouseEvent<HTMLSpanElement>) => {
-        event.stopPropagation();
-        if (event.target === event.currentTarget) {
-          updateSelectedRows(
-            rowSelection,
-            onRowSelectionChange,
-            pageRows,
-            !allSelected,
-          );
-        }
-      }}
+    <StatusBadge
+      tone={
+        row.status === "accepted" || row.status === "accepted_translation"
+          ? "ok"
+          : "muted"
+      }
     >
-      <Checkbox
-        aria-label="Select all rows on this page"
-        checked={allSelected}
-        indeterminate={someSelected && !allSelected}
-        onCheckedChange={(checked) =>
-          updateSelectedRows(
-            rowSelection,
-            onRowSelectionChange,
-            pageRows,
-            checked,
-          )
-        }
-        onClick={(event: MouseEvent) => event.stopPropagation()}
-      />
-    </span>
+      {artifactStatusLabels[row.status]}
+    </StatusBadge>
   );
 }
-
-function updateSelectedRow(
-  rowSelection: RowSelectionState,
-  onRowSelectionChange: (next: RowSelectionState) => void,
-  row: ArtifactSummary,
-  checked: boolean,
-) {
-  updateSelectedRows(rowSelection, onRowSelectionChange, [row], checked);
+export function artifactBytes(size: number) {
+  return `${(size / 1024).toFixed(1)} KB`;
 }
-
-export function ArtifactMobileRow({
-  options,
-  row,
-}: {
-  readonly options: ArtifactColumnsOptions;
-  readonly row: ArtifactSummary;
-}) {
-  const title = row.title || row.type;
-
+export function ArtifactMobileRow({ row }: { row: ResumeArtifact }) {
   return (
-    <div className="artifact-mobile-row">
-      <div className="artifact-mobile-row__identity">
-        <Checkbox
-          aria-label={`Select artifact ${title}`}
-          checked={Boolean(options.rowSelection[row.artifactId])}
-          onCheckedChange={(checked) =>
-            updateSelectedRow(
-              options.rowSelection,
-              options.onRowSelectionChange,
-              row,
-              checked,
-            )
-          }
-          onClick={(event: MouseEvent) => event.stopPropagation()}
-        />
-        <div className="artifact-mobile-row__title-stack">
-          <span data-typography="strong-body">{title}</span>
-          <span data-typography="body">{row.company || "Unknown company"}</span>
-        </div>
-      </div>
-      <div
-        className="artifact-mobile-row__status"
-        aria-label="Artifact type and status"
+    <article className="grid gap-2">
+      <Link
+        className="title-link"
+        to="/artifacts/$artifactId"
+        params={{ artifactId: row.artifactId }}
       >
-        <ArtifactTypeBadge artifactType={row.type} />
-        <ArtifactStatusBadge status={row.status} />
-      </div>
-      <div className="artifact-mobile-row__meta" data-typography="metadata">
-        <RelativeTime value={row.createdAt} />
-        <span aria-hidden="true">·</span>
-        <span>{row.size || formatBytes(row.sizeBytes)}</span>
-      </div>
-      <div className="artifact-mobile-row__actions">
-        <OpenArtifactButton
-          artifactId={row.artifactId}
-          disabled={row.status === "missing"}
-        />
-      </div>
-    </div>
+        {row.title}
+      </Link>
+      <p>
+        {row.company ?? "Employer label unavailable"} · revision{" "}
+        {row.revision.number}
+        {row.locale ? ` · ${row.locale.target_locale}` : ""}
+      </p>
+      <ArtifactState row={row} />
+      <p>
+        {artifactBytes(row.render.size_bytes)} · {row.render.page_count} pages
+      </p>
+      <ArtifactFileActions artifact={row} compact />
+    </article>
   );
 }
-
-export function artifactColumns(
-  options: ArtifactColumnsOptions,
-): Array<DataGridColumn<ArtifactSummary>> {
-  return [
-    {
-      id: "select",
-      label: "Select",
-      header: (context) => selectHeader(options, context),
-      className: "row-check",
-      headerClassName: "row-check",
-      render: (row) => (
-        <span
-          className="row-check-hitbox"
-          onClick={(event: MouseEvent<HTMLSpanElement>) => {
-            event.stopPropagation();
-            if (event.target === event.currentTarget) {
-              updateSelectedRow(
-                options.rowSelection,
-                options.onRowSelectionChange,
-                row,
-                !Boolean(options.rowSelection[row.artifactId]),
-              );
-            }
-          }}
-        >
-          <Checkbox
-            aria-label={`Select ${row.title || row.type}`}
-            checked={Boolean(options.rowSelection[row.artifactId])}
-            onCheckedChange={(checked) =>
-              updateSelectedRow(
-                options.rowSelection,
-                options.onRowSelectionChange,
-                row,
-                checked,
-              )
-            }
-            onClick={(event: MouseEvent) => event.stopPropagation()}
-          />
+export const artifactColumns: Array<DataGridColumn<ResumeArtifact>> = [
+  {
+    id: "title",
+    label: "Source",
+    sortable: true,
+    rowHeader: true,
+    render: (row) => (
+      <Link
+        className="title-link"
+        to="/artifacts/$artifactId"
+        params={{ artifactId: row.artifactId }}
+      >
+        {row.title}
+        <span className="block text-sm">
+          Revision {row.revision.number} ·{" "}
+          {row.locale
+            ? `Translation ${row.locale.target_locale}`
+            : row.revision.mode === "baseline_copy"
+              ? "Baseline copy"
+              : "Tailored resume"}
         </span>
+      </Link>
+    ),
+  },
+  {
+    id: "company",
+    label: "Company",
+    sortable: true,
+    render: (row) => row.company ?? "Not recorded",
+  },
+  {
+    id: "type",
+    label: "Type",
+    sortable: true,
+    render: (row) => (row.locale ? "Translation PDF" : "Resume PDF"),
+  },
+  {
+    id: "status",
+    label: "Recorded state",
+    sortable: true,
+    render: (row) => <ArtifactState row={row} />,
+  },
+  {
+    id: "created_at",
+    label: "Rendered",
+    sortable: true,
+    render: (row) =>
+      row.renderedAt ? (
+        <RelativeTime value={row.renderedAt} />
+      ) : row.acceptedAt ? (
+        <>
+          Accepted <RelativeTime value={row.acceptedAt} />
+        </>
+      ) : (
+        "Time not recorded"
       ),
-    },
-    {
-      id: "title",
-      label: "Title",
-      sortable: true,
-      rowHeader: true,
-      getFilterValue: (row) => row.title || row.type,
-      render: (row) => (
-        <Link
-          to="/artifacts/$artifactId"
-          params={{ artifactId: row.artifactId }}
-          className="title-link"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <TitleStack primary={row.title || row.type} />
-        </Link>
-      ),
-    },
-    {
-      id: "company",
-      label: "Company",
-      sortable: true,
-      getFilterValue: (row) => row.company || "-",
-      render: (row) => <span className="muted-cell">{row.company || "-"}</span>,
-    },
-    {
-      id: "type",
-      label: "Type",
-      sortable: true,
-      getFilterValue: (row) => row.type,
-      render: (row) => <ArtifactTypeBadge artifactType={row.type} />,
-    },
-    {
-      id: "status",
-      label: "Status",
-      sortable: true,
-      getFilterValue: (row) => row.status,
-      render: (row) => <ArtifactStatusBadge status={row.status} />,
-    },
-    {
-      id: "resume_template",
-      label: "Template",
-      sortable: true,
-      getFilterValue: (row) => row.resumeTemplate?.state ?? "no template",
-      getFilterSearchValue: (row) =>
-        row.resumeTemplate?.effective.templateName ?? "no template",
-      render: (row) => <ResumeTemplateStatusBadge state={row.resumeTemplate} />,
-    },
-    {
-      id: "size_bytes",
-      label: "Size",
-      sortable: true,
-      getFilterValue: (row) => row.size || formatBytes(row.sizeBytes),
-      render: (row) => (
-        <span className="mono">{row.size || formatBytes(row.sizeBytes)}</span>
-      ),
-    },
-    {
-      id: "created_at",
-      label: "Created",
-      sortable: true,
-      getFilterValue: (row) => row.createdAt ?? "-",
-      render: (row) => <RelativeTime value={row.createdAt} />,
-    },
-    {
-      id: "actions",
-      label: "Actions",
-      render: (row) => (
-        <OpenArtifactButton
-          artifactId={row.artifactId}
-          disabled={row.status === "missing"}
-        />
-      ),
-    },
-  ];
-}
+  },
+  {
+    id: "size_bytes",
+    label: "Size",
+    sortable: true,
+    render: (row) => artifactBytes(row.render.size_bytes),
+  },
+  {
+    id: "actions",
+    label: "File",
+    render: (row) => <ArtifactFileActions artifact={row} compact />,
+  },
+];

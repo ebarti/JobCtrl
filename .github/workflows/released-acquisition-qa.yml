@@ -60,6 +60,8 @@ jobs:
           node scripts/released-upgrade-smoke.mjs \
             --release-dir "$RUNNER_TEMP/release" \
             --output "$RUNNER_TEMP/released-upgrade-smoke.json"
+          jq -e '.schemaVersion == 2 and .status == "passed" and .qualification == "signed-latest-stable-and-candidate" and .executables == "actual-latest-stable-and-signed-candidate" and (.results | length == 1) and .results[0].status == "passed"' \
+            "$RUNNER_TEMP/released-upgrade-smoke.json"
       - name: Retain the synthetic qualification report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

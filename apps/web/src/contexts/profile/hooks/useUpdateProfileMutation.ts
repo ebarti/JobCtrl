@@ -4,37 +4,33 @@ import { useMutation, useQueryClient, type UseMutationResult } from "@tanstack/r
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { createOptimisticMutation } from "../../../shared/lib/createOptimisticMutation.js";
-import { dashboardKeys } from "../../operations/dashboardKeys.js";
-import { jobsKeys } from "../../operations/jobsKeys.js";
 import type { ProfileConfigResponse } from "@jobctrl/contracts";
 import { patchProfileResponse } from "../lib/profile-patches.js";
 import { profileKeys } from "../queryKeys.js";
+import { updateProfile } from "../client.js";
 
-export function useUpdateProfileMutation(): UseMutationResult<
+export function useUpdateProfileMutation(options: { optimistic?: boolean; workspaceIdentity?: string | undefined } = {}): UseMutationResult<
   ProfileConfigResponse,
   Error,
   ProfileUpdateRequest
 > {
   const tenantId = useTenantId();
-  const { api } = usePorts();
+  const { http } = usePorts();
   const queryClient = useQueryClient();
   return useMutation(
     createOptimisticMutation<ProfileConfigResponse, ProfileUpdateRequest>(queryClient, {
       mutationKey: profileKeys.profile(tenantId),
-      mutationFn: (body) => api.updateProfile(body),
-      optimisticUpdates: (body) => [
-        {
-          queryKey: profileKeys.profile(tenantId),
-          patch: (current) => patchProfileResponse(current, body),
-        },
-      ],
-      // Profile changes affect downstream scoring (job lists) and dashboard counts.
-      settle: () => [
-        profileKeys.profile(tenantId),
-        jobsKeys.lists(tenantId),
-        jobsKeys.details(tenantId),
-        dashboardKeys.summary(tenantId),
-      ],
+      mutationFn: (body) => updateProfile(http, body, options.workspaceIdentity),
+      ...(options.optimistic === false ? {} : {
+        optimisticUpdates: (body: ProfileUpdateRequest) => [
+          {
+            queryKey: profileKeys.profile(tenantId),
+            patch: (current: unknown) => patchProfileResponse(current, body),
+          },
+        ],
+      }),
+      // Jobs/Fit own their cross-feature event invalidation; Profile owns its cache.
+      settle: () => [profileKeys.profile(tenantId)],
     }),
   );
 }

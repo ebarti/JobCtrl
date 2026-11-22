@@ -51,6 +51,8 @@ export function ImportUploadForm() {
 
   const [readError, setReadError] = useState("");
   const [reading, setReading] = useState(false);
+  const [loadingSaved, setLoadingSaved] = useState(false);
+  const loadingSavedRef = useRef(false);
   const [pendingUpload, setPendingUpload] = useState<UploadFormValues | null>(
     null,
   );
@@ -113,6 +115,7 @@ export function ImportUploadForm() {
   };
 
   const removeUpload = async () => {
+    if (loadingSavedRef.current) return;
     readGeneration.current += 1;
     setReading(false);
     setPendingUpload(null);
@@ -160,6 +163,9 @@ export function ImportUploadForm() {
   };
 
   const loadSaved = async () => {
+    if (loadingSavedRef.current) return;
+    loadingSavedRef.current = true;
+    setLoadingSaved(true);
     const generation = ++readGeneration.current;
     const pathname = router.history.location.pathname;
     setReading(false);
@@ -169,8 +175,13 @@ export function ImportUploadForm() {
     const stillCurrent = () =>
       generation === readGeneration.current &&
       pathname === router.history.location.pathname;
-    if (await retryStorage(storage, stillCurrent))
-      showAcceptedUpload(useProfileImportStore.getState());
+    try {
+      if (await retryStorage(storage, stillCurrent))
+        showAcceptedUpload(useProfileImportStore.getState());
+    } finally {
+      loadingSavedRef.current = false;
+      setLoadingSaved(false);
+    }
   };
 
   const handleFile = async (file: File | null) => {
@@ -301,6 +312,7 @@ export function ImportUploadForm() {
               <Button
                 type="button"
                 variant="outline"
+                disabled={loadingSaved}
                 onClick={() => void removeUpload()}
               >
                 Retry removing PDF
@@ -310,6 +322,7 @@ export function ImportUploadForm() {
               <Button
                 type="button"
                 variant="outline"
+                disabled={loadingSaved}
                 onClick={() => void loadSaved()}
               >
                 Retry browser storage
@@ -319,6 +332,7 @@ export function ImportUploadForm() {
               <Button
                 type="button"
                 variant="outline"
+                disabled={loadingSaved}
                 onClick={() => void loadSaved()}
               >
                 Load latest saved PDF
@@ -338,6 +352,8 @@ export function ImportUploadForm() {
           </div>
         </Alert>
       ) : null}
+
+      {loadingSaved ? <p role="status">Loading the latest saved PDF…</p> : null}
 
       <form.Subscribe selector={(state) => state.errors}>
         {(errors) => {
@@ -432,6 +448,7 @@ export function ImportUploadForm() {
         <Button
           type="button"
           variant="outline"
+          disabled={loadingSaved}
           onClick={() => void removeUpload()}
         >
           Remove saved PDF

@@ -1,46 +1,30 @@
 # Web Frontend Instructions
 
-Also follow the root `AGENTS.md`. The canonical frontend contract lives in
-`docs/architecture/frontend/` and `docs/decisions.md`; do not duplicate it here.
+Follow the root `AGENTS.md`. The frontend architecture contract is in
+`docs/architecture/frontend/`; do not duplicate its detailed rationale here.
 
-Non-negotiable implementation rules:
-
-- Preserve the documented context/view dependency direction. Views may compose
-  public context components and call public context-owned hooks, including the
-  Operations read hooks, but never call the API client or query client directly.
-  Route loaders validate/map search and delegate to the owning context's
-  `readQueries.ts` helpers with narrow structural dependencies. Contexts must
-  not import routes, the generated tree or views. Keep Jobs without a loader;
-  its effective-query handoff remains view-owned. Preserve prefetch best-effort
-  behavior and Activity ensure-read error propagation.
-  Aggregate contexts may consume the Operations read kernel; they do not import
-  another aggregate context's hooks or stores.
-- Import unchanged DTOs, schemas and constants from `@jobctrl/contracts`, and
-  domain vocabulary/events from `@jobctrl/domain-types`. Keep genuine frontend
-  input refinements in Operations; do not add transparent DTO routing facades.
-  Preserve existing string identifier compatibility.
-- Keep tenant-first hierarchical query keys, context-owned mutations with
-  targeted invalidation, real optimistic patch/rollback behavior, and exhaustive
-  SSE invalidation handlers.
-- Access browser and local capabilities through ports; do not call clipboard,
-  storage, `EventSource`, or other adapters directly from feature code.
+- Features own their reads, mutations, query keys, data validation, public panels
+  and event invalidations. Dashboard, Activity, Settings, Evidence Map and job
+  workspaces compose public feature interfaces. Core must build and work when
+  an optional feature and its explicit shell registration are removed.
+- Views and routes do not call the HTTP or query client directly. Route loaders
+  validate/map URL state and delegate to feature-owned read helpers with narrow
+  structural dependencies. Independent reads start in parallel. Feature code
+  does not import routes, generated route trees, views, or sibling private state.
+- Use tenant-first query keys and feature-owned mutations. Invalidate the
+  relevant reads after writes and committed events. Optimistic changes need
+  real rollback and must not overwrite newer publications or accepted work.
+  The shell owns one event connection and explicitly composes feature handlers.
+- Use the shared HTTP port against the Python application's `/v1` routes;
+  features own and validate the DTOs for their public endpoints. Browser and OS
+  capabilities, including storage, clipboard, downloads and event streams, go
+  through ports. Preserve uncertain-write handling and visible failure states.
 - Use TanStack Form with Zod `safeParse`; persist only navigation-surviving
-  multi-step state in Zustand.
-- Colocate focused tests/stories, reuse the shared MSW handlers, cover changed
-  query/mutation success and rollback, and preserve the event/stage parity tests.
-- Keep Storybook free of critical/serious axe violations. Any pre-existing
-  production deferral must be recorded in a linked [GitHub issue](https://github.com/ebarti/JobCtrl/issues).
-- Run `corepack pnpm web:lint` before opening a PR. It enforces the dependency
-  direction, Operations read-kernel access, browser-port, and context-owned
-  API/query/store rules above from TypeScript syntax, resolved symbols and
-  capability provenance (any, missing generated declarations, casts and aliases
-  cannot grant access). Context helpers may receive dependencies but must not
-  return raw API/query authority to routes or views, including through `any`.
-  Capability-bearing method receivers and constructor parameter properties
-  remain subject to the same handoff boundary, and
-  the TypeScript CI web job blocks on it. Scoped exemptions live in
-  `apps/web/boundary-exemptions.json` and fail when stale. Run the whole
-  `corepack pnpm web:lint:test` suite, including real generated-route controls;
-  require boundary diagnostics independently of compiler diagnostics.
-
-Use `docs/local-reliability-qa.md` for verification.
+  multi-step state in Zustand. Preserve accessible controls and navigation.
+- The accepted transformation uses a fresh E2E-only behavior suite. Exercise
+  real UI, Python application, database, worker and renderer through controlled
+  external boundaries; do not add component, unit, snapshot or internal-mock
+  tests. Static checks and builds remain required. See `docs/local-reliability-qa.md`.
+- Run `corepack pnpm web:lint` before opening a PR. Boundary lint checks
+  dependency direction, capability provenance and use of browser ports; scoped
+  exemptions in `apps/web/boundary-exemptions.json` must be justified and live.

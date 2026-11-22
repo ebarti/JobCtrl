@@ -24,7 +24,6 @@ const PREPARATION_STAGES: ReadonlySet<Stage> = new Set([
   "enrich",
   "score",
   "tailor",
-  "cover",
 ]);
 
 function sumStages(

@@ -1,6 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 
-import { sampleDashboardSummary } from "../../test/fixtures/projections.js";
+import { sampleDashboardSummary } from "../../../.storybook/fixtures/projections.js";
 import { ApplyRunsCard } from "./ApplyRunsCard.js";
 
 const meta = {

@@ -88,6 +88,6 @@ EOF
     ;;
   *)
     [[ -e "$REPO/.git" ]] || fail "no checkout at $REPO; run: jobctrl bootstrap"
-    exec uv --project "$REPO/workers/automation" run jobctrl "$@"
+    exec uv --project "$REPO/workers/automation" run --no-sync python -m jobctrl "$@"
     ;;
 esac

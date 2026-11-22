@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "JobCtrl",
-  "description": "Run JobCtrl Discovery in this Chrome profile, capture postings, and review autofill suggestions.",
-  "version": "0.4.0",
+  "description": "Save the current job posting to JobCtrl and review autofill suggestions.",
+  "version": "0.5.0",
   "action": {
     "default_popup": "popup.html"
   },
@@ -10,10 +10,10 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["activeTab", "alarms", "declarativeNetRequest", "scripting", "storage", "webNavigation"],
+  "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": [
-    "http://*/*",
-    "https://*/*"
+    "http://127.0.0.1/*",
+    "http://localhost/*"
   ],
   "content_scripts": [
     {
@@ -26,6 +26,6 @@
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http: https:;"
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src http://127.0.0.1:* http://localhost:*;"
   }
 }

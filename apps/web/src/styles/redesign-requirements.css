@@ -1,0 +1,157 @@
+/* Reusable requirement definitions and their achievement relationships. */
+.requirements-workspace,
+.requirements-library,
+.requirements-library *,
+.achievement-requirements,
+.requirement-picker {
+  min-width: 0;
+}
+
+.requirements-library {
+  width: 100%;
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.requirements-workspace { display: grid; gap: 20px; width: 100%; }
+.requirements-workspace > .page-head { margin-bottom: 0; }
+.requirements-library > :is([role="status"], [role="alert"], .muted) { margin: 0 0 16px; }
+.requirement-consolidation { display: grid; justify-items: start; gap: 10px; margin-bottom: 20px; padding: 16px 20px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.requirement-consolidation :is(h2, p) { margin: 0; }
+.requirement-consolidation h2 { font-size: 16px; line-height: 1.4; }
+.requirement-consolidation div { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.requirement-consolidation div > :is(h2, p) { flex-basis: 100%; }
+.requirements-library__layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px; align-items: start; }
+.requirements-library__table { min-width: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--card); overflow: hidden; }
+.requirements-library__table:focus { outline: 2px solid var(--ring); outline-offset: 3px; }
+.requirements-library__table .data-grid-tools { flex-wrap: wrap; gap: 8px; }
+.requirements-table-search { display: inline-flex; min-width: 0; }
+.requirements-table-search input { width: 210px; min-width: 0; }
+.requirements-library .data-grid-filter-column-picker { width: 170px; max-width: 100%; min-height: 32px; }
+.requirements-data-grid-table .data-grid-column-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.requirements-data-grid-table .data-grid-sort-button { display: inline-flex; align-items: center; gap: 6px; flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.requirements-data-grid-table .data-grid-sort-button > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.requirements-data-grid-table .data-grid-sort-button > svg,
+.requirements-data-grid-table .data-grid-sort-button > span:last-child,
+.requirements-data-grid-table .data-grid-column-filter-button,
+.requirements-data-grid-table .data-grid-column-reorder-handle { flex-shrink: 0; }
+.requirements-table__name { display: block; font-weight: 550; overflow-wrap: anywhere; }
+.requirements-table__definition { display: block; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
+.requirements-table__secondary { display: block; margin-top: 4px; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+.requirements-table__mobile-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 16px 0 0; }
+.requirements-table__mobile-facts > div:first-child { grid-column: 1 / -1; }
+.requirements-table__mobile-facts dt { color: var(--muted-foreground); font-size: 12px; }
+.requirements-table__mobile-facts dd { margin: 4px 0 0; font-size: 14px; }
+.requirements-library__detail { min-width: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--card); overflow-wrap: anywhere; }
+.requirements-library__detail:focus { outline: 2px solid var(--ring); outline-offset: 3px; }
+.requirements-detail__navigation { padding: 12px 16px; border-bottom: 1px solid var(--border); }
+.requirements-detail__filter-note { margin: 0; padding: 12px 20px 0; color: var(--muted-foreground); font-size: 12px; }
+.requirements-detail { padding: clamp(18px, 2vw, 28px); }
+.requirements-detail :is(details, p, blockquote, footer, pre) { min-inline-size: 0; max-inline-size: 100%; overflow-wrap: anywhere; }
+.requirements-detail > .requirement-assessment { margin-bottom: 24px; }
+.requirement-demands { display: grid; gap: 10px; margin-bottom: 24px; }
+.requirement-demands h3, .requirement-demands p { margin: 0; }
+.requirement-demands__list { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+.requirement-demands__list > li { padding: 10px 0; border-top: 1px solid var(--border); }
+.requirement-demands__content { display: grid; gap: 10px; padding: 10px 0 4px; }
+.requirement-demands__content :is(blockquote, ul) { margin: 0; }
+.requirements-detail blockquote footer { margin-top: 6px; font-size: 12px; line-height: 1.5; }
+.requirement-history__list { list-style: none; padding: 0; margin: 0; }
+.requirements-definition { padding-bottom: 22px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
+.requirements-definition h2 { margin: 8px 0 10px; font-size: 22px; line-height: 1.35; overflow-wrap: anywhere; }
+.requirements-definition p { margin: 8px 0; max-width: 110ch; }
+.requirements-definition__eyebrow { color: var(--muted-foreground); font-weight: 600; }
+.requirement-section-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px 16px; margin: 0 0 15px; }
+.requirement-section-heading h2, .requirement-section-heading h3, .requirement-section-heading h5 { margin: 0; font-size: 16px; line-height: 1.4; font-weight: 650; }
+.requirement-count { color: var(--muted-foreground); font-weight: 500; }
+.requirement-relationship-help { margin: -5px 0 16px; }
+.requirement-achievement__identity p { margin: 8px 0 0; }
+.requirement-empty { padding: 20px; border: 1px dashed var(--border); border-radius: 7px; background: var(--background); }
+.requirement-empty p { margin: 6px 0 0; color: var(--muted-foreground); }
+.requirements-achievements { display: grid; gap: 16px; }
+.requirement-achievement { display: grid; gap: 14px; border: 1px solid var(--border); border-radius: 7px; padding: 20px; }
+.requirement-achievement__heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 8px 16px; }
+.requirement-achievement__heading h4 { margin: 0; font-size: 16px; line-height: 1.4; }
+.requirement-achievement__heading p { margin: 3px 0 0; }
+.requirement-achievement__fact, .requirement-wording__text { margin: 0; max-width: 110ch; white-space: pre-wrap; overflow-wrap: anywhere; }
+.requirement-achievement .requirement-section-heading { margin: 8px 0 0; }
+.requirement-wording-groups { display: grid; gap: 10px; }
+.requirement-wording-groups details > .requirement-wordings { margin-top: 10px; }
+.requirement-wordings { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px; }
+.requirement-wording { display: grid; gap: 12px; align-content: start; padding: 16px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); }
+.requirement-wording__heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.requirement-wording h5 { margin: 0; font-size: 14px; }
+.requirement-badge { display: inline-flex; align-items: center; width: fit-content; max-width: 100%; padding: 3px 8px; border-radius: 5px; background: var(--muted); color: var(--foreground); font-size: 14px; line-height: 1.4; overflow-wrap: anywhere; }
+.requirement-assessment, .requirement-wording__coverage, .requirement-association-record { display: grid; gap: 7px; }
+.requirement-association-action { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.requirement-association-action p { flex-basis: 100%; }
+.requirement-history { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); }
+.requirements-library details summary, .requirement-picker details summary { cursor: pointer; color: var(--primary); font-weight: 600; }
+.requirement-history__content { display: grid; gap: 12px; padding-top: 14px; overflow-wrap: anywhere; }
+.requirement-alias-history { display: grid; gap: 10px; }
+.requirement-alias-history :is(h4, p) { min-inline-size: 0; margin: 0; overflow-wrap: anywhere; }
+.requirement-history__list { display: grid; gap: 12px; }
+.requirement-history__list > li, .requirement-removed { display: grid; gap: 7px; padding: 14px; border: 1px solid var(--border); border-radius: 6px; }
+.requirement-history__list p, .requirement-history__list blockquote, .requirement-removed p { margin: 0; }
+.requirement-history__list span { color: var(--muted-foreground); }
+.requirement-history__line, .requirement-history__pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.requirement-history__line { justify-content: space-between; }
+.requirement-history__pagination span { margin-right: auto; }
+.requirements-library pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.requirements-library blockquote { padding-left: 12px; border-left: 3px solid var(--border); white-space: pre-wrap; }
+.requirements-library blockquote footer { color: var(--muted-foreground); }
+.requirement-error { color: var(--destructive-text); overflow-wrap: anywhere; }
+.achievement-requirements { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 14px; line-height: 1.5; }
+.achievement-requirements > :is(.requirement-error, .muted) { flex-basis: 100%; margin: 0; }
+.achievement-requirements:has(> details[open]) { flex-basis: 100%; }
+.achievement-requirements__disclosure { min-inline-size: 0; max-inline-size: 100%; color: var(--muted-foreground); }
+.achievement-requirements__disclosure[open] { inline-size: 100%; }
+.achievement-requirements__disclosure > summary { inline-size: fit-content; max-inline-size: 100%; min-block-size: 32px; padding-block: 6px; cursor: pointer; font-size: 12px; line-height: 20px; }
+.achievement-requirements__disclosure > summary:hover { color: var(--foreground); }
+.achievement-requirements__disclosure > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; border-radius: 3px; }
+.achievement-requirements__content { display: grid; gap: 12px; margin-block-start: 6px; padding-block-start: 8px; border-block-start: 1px solid var(--border); }
+.achievement-requirements__content > button { justify-self: start; }
+.achievement-requirements__list { display: grid; grid-template-columns: minmax(0, 1fr); margin: 0; padding: 0; list-style: none; max-block-size: 24rem; overflow-y: auto; overscroll-behavior: contain; }
+.achievement-requirements__list > li + li { border-block-start: 1px solid var(--border); }
+.achievement-requirements__list button { display: grid; gap: 4px; inline-size: 100%; min-block-size: 44px; padding: 10px 8px; border: 0; border-radius: 3px; background: transparent; color: var(--foreground); text-align: left; font-size: 13px; font-weight: 400; line-height: 1.5; overflow-wrap: anywhere; cursor: pointer; }
+.achievement-requirements__list button:hover { background: var(--accent); }
+.achievement-requirements__list button:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.achievement-requirements__list small { color: var(--muted-foreground); font-size: 12px; }
+.achievement-requirements__tags { display: flex; flex-wrap: wrap; gap: 8px; }
+.achievement-requirements__tag { display: inline-grid; gap: 2px; max-width: 100%; padding: 6px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--muted); color: var(--foreground); text-align: left; line-height: 1.4; overflow-wrap: anywhere; }
+.achievement-requirements__tag:hover { border-color: var(--primary); }
+.achievement-requirements__tag small { color: var(--muted-foreground); font-size: 12px; }
+.requirement-picker { width: min(680px, calc(100vw - 32px)); max-width: 680px; max-height: min(85dvh, 900px); overflow: auto; font-size: 14px; line-height: 1.5; }
+.requirement-picker p { margin: 5px 0; overflow-wrap: anywhere; }
+.requirement-picker__section, .requirement-picker__select { display: grid; gap: 8px; }
+.requirement-picker__section label { display: grid; gap: 6px; font-weight: 600; }
+.requirement-picker__options { display: grid; gap: 6px; max-height: 240px; overflow: auto; }
+.requirement-picker__options button { display: grid; gap: 5px; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--card); text-align: left; overflow-wrap: anywhere; }
+.requirement-picker__options button:hover, .requirement-picker__options button[aria-pressed="true"] { border-color: var(--primary); background: var(--accent); }
+.requirement-picker__options button span { color: var(--muted-foreground); }
+.requirement-picker__select select { width: 100%; min-height: 40px; padding: 8px; border: 1px solid var(--input); border-radius: 6px; background: var(--card); color: var(--foreground); }
+.requirement-picker__wording { padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--background); white-space: pre-wrap; }
+.requirement-picker__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+@media (min-width: 1100px) {
+  .requirements-workspace--selected .requirements-library__layout { grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); }
+  .requirements-workspace--selected :is(.requirements-library__table, .requirements-library__detail) { max-height: calc(100dvh - 240px); overflow: auto; }
+}
+@media (max-width: 820px) {
+  .requirements-workspace--selected .requirements-library__table { display: none; }
+  .requirements-library__layout { gap: 16px; }
+  .requirements-detail, .requirement-achievement { padding: 16px; }
+  .requirements-detail__navigation > button { min-height: 44px; }
+  .requirement-history__pagination span { flex-basis: 100%; }
+}
+@media (max-width: 640px) {
+  .achievement-requirements__disclosure > summary { min-block-size: 44px; padding-block: 12px; }
+  .requirements-table-search { flex: 1 1 100%; }
+  .requirements-table-search input { width: 100%; }
+  .requirements-library .data-grid-tools > :is(button, select) { min-height: 44px; }
+  .requirements-detail__navigation { padding: 8px; }
+  .requirements-detail__filter-note { padding-inline: 16px; }
+  .requirements-library details > summary { min-block-size: 44px; align-content: center; }
+}
+.achievement-wording-workspace { display: grid; gap: 12px; }
+.achievement-wording-workspace__notice { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--warning-muted); }

@@ -3,9 +3,9 @@ import { createMemoryHistory, createRootRoute, createRoute, createRouter, Outlet
 import { http, HttpResponse } from "msw";
 import { useMemo } from "react";
 import { interviewsSearchSchema } from "../../routes/-interviews.search.js";
-import { makeQuestionPrep } from "../../test/fixtures/interviews.js";
-import { makeJobDetail, sampleInterviewPrep } from "../../test/fixtures/projections.js";
-import { handlers } from "../../test/msw/handlers.js";
+import { makeQuestionPrep } from "../../../.storybook/fixtures/interviews.js";
+import { makeJobDetail, sampleInterviewPrep } from "../../../.storybook/fixtures/projections.js";
+import { handlers } from "../../../.storybook/fixtures/msw/handlers.js";
 import { InterviewsView } from "./InterviewsView.js";
 
 const meta = {

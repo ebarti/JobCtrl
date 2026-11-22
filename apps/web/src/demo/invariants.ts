@@ -1,7 +1,9 @@
 import { isDemoArtifactUrl } from "./artifacts.js";
 import { DEMO_ROUTE_NAMES, type DemoRouteName, type DemoSeed } from "./contracts.js";
 import { scanDemoPrivacy } from "./privacy.js";
-import { ProfileSchema, QA_DEMO_SHARED_LIFECYCLE_STATES } from "@jobctrl/contracts";
+import { ProfileSchema } from "@jobctrl/contracts";
+
+const DEMO_SAMPLE_LIFECYCLE_STATES = ["succeeded", "failed", "blocked"] as const;
 
 const CLOSED_ACTIVE_STATES: ReadonlySet<string> = new Set([
   "closed",
@@ -162,7 +164,6 @@ function assertDemoReadModelInvariants(seed: DemoSeed): void {
   assertOkEnvelope(model.discovery.settings, "discovery settings");
   assertOkEnvelope(model.discovery.sources, "discovery sources");
   assertOkEnvelope(model.discovery.compensationSources, "compensation sources");
-  assertOkEnvelope(model.discovery.locatorCandidates, "source locator candidates");
   assertOkEnvelope(model.discovery.quarantine, "discovery quarantine");
   assertOkEnvelope(model.discovery.manualCapture, "manual capture queue");
   assertOkEnvelope(model.discovery.roleMatchFeedback, "role-match feedback");
@@ -352,7 +353,7 @@ function assertDemoReadModelInvariants(seed: DemoSeed): void {
     ...model.runs.list.items.map((run) => run.status),
     ...model.jobs.list.items.map((item) => item.currentState),
   ]);
-  for (const state of QA_DEMO_SHARED_LIFECYCLE_STATES) {
+  for (const state of DEMO_SAMPLE_LIFECYCLE_STATES) {
     if (!sharedStates.has(state)) {
       throw new TypeError(`Demo read model is missing shared QA lifecycle state: ${state}.`);
     }

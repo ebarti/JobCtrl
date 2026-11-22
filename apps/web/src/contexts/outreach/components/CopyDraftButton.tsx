@@ -8,23 +8,27 @@ export interface CopyDraftButtonProps {
   draft: OutreachDraftDto;
   contactId?: string;
   jobId?: string;
+  threadId?: string;
+  expectedFingerprint?: string;
+  sourcesCurrent?: boolean;
+  reviewAuthorityVerified?: boolean;
 }
 
 // INV-1: an approved draft leaves JobCtrl ONLY through a user-initiated
 // clipboard copy via the ClipboardPort — never a network send, never
 // navigator.clipboard directly. Enabled only for an approved draft.
-export function CopyDraftButton({ draft, contactId, jobId }: CopyDraftButtonProps): JSX.Element {
+export function CopyDraftButton({ draft, threadId, expectedFingerprint, sourcesCurrent, reviewAuthorityVerified }: CopyDraftButtonProps): JSX.Element {
   const copy = useCopyOfferDraft();
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
-  const approved = draft.status === "approved" && draft.offerSourcesCurrent !== false;
+  const approved = Boolean(threadId && expectedFingerprint && sourcesCurrent && reviewAuthorityVerified) && draft.status === "approved" && draft.offerSourcesCurrent !== false;
 
   const onCopy = () => {
     if (!approved) {
       return;
     }
     setError("");
-    void copy(draft, contactId, jobId).then(() => {
+    void copy(draft, threadId, expectedFingerprint).then(() => {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
     }).catch((cause: unknown) => setError(cause instanceof Error ? cause.message : "Could not copy this draft."));

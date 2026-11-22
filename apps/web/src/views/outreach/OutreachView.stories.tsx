@@ -11,7 +11,7 @@ import { http, HttpResponse } from "msw";
 import { useMemo } from "react";
 
 import { outreachSearchSchema } from "../../routes/-outreach.search.js";
-import { makeContactListResponse } from "../../test/fixtures/contacts.js";
+import { makeContactListResponse } from "../../../.storybook/fixtures/contacts.js";
 import { OutreachView } from "./OutreachView.js";
 
 const meta = {

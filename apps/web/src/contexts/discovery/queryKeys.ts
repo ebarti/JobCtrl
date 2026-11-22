@@ -2,12 +2,16 @@ import type { TenantId } from "@jobctrl/domain-types";
 
 export const discoveryKeys = {
   all: (tenantId: TenantId) => ["tenant", tenantId, "discovery"] as const,
+  runs: (tenantId: TenantId) => [...discoveryKeys.all(tenantId), "runs"] as const,
+  searchActions: (tenantId: TenantId) => [...discoveryKeys.all(tenantId), "search-actions"] as const,
+  searchAction: (tenantId: TenantId, databaseInstanceId: string, runId: string) =>
+    [...discoveryKeys.searchActions(tenantId), databaseInstanceId, runId] as const,
+  targetPlan: (tenantId: TenantId) => [...discoveryKeys.all(tenantId), "target-plan"] as const,
+  run: (tenantId: TenantId, runId: string) => [...discoveryKeys.runs(tenantId), runId] as const,
   jobUrlImportStatus: (tenantId: TenantId, workflowId: string, executionId: string) =>
     ["tenant", tenantId, "discovery", "job-url-import", workflowId, executionId] as const,
   settings: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "settings"] as const,
-  sourceLocator: (tenantId: TenantId) =>
-    ["tenant", tenantId, "discovery", "source-locator"] as const,
   sourceRegistry: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "source-registry"] as const,
   sourcePreview: (tenantId: TenantId, sourceId: string) =>
@@ -18,6 +22,8 @@ export const discoveryKeys = {
     ["tenant", tenantId, "discovery", "quarantine"] as const,
   manualCapture: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "manual-capture"] as const,
+  manualCaptureImports: (tenantId: TenantId) =>
+    ["tenant", tenantId, "discovery", "manual-capture-imports"] as const,
   feedback: (tenantId: TenantId) =>
     ["tenant", tenantId, "discovery", "feedback"] as const,
   roleMatchFeedback: (tenantId: TenantId) =>

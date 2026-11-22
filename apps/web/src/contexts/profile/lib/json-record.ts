@@ -6,6 +6,19 @@ export function isJsonRecord(value: unknown): value is JsonRecord {
   return isRecord(value);
 }
 
+/** Compare JSON data without treating object key order as meaningful. */
+export function sameJson(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right))
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+      && left.every((value, index) => sameJson(value, right[index]));
+  if (!isJsonRecord(left) || !isJsonRecord(right)) return false;
+  const leftKeys = Object.keys(left).filter((key) => left[key] !== undefined);
+  const rightKeys = Object.keys(right).filter((key) => right[key] !== undefined);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.hasOwn(right, key) && sameJson(left[key], right[key]));
+}
+
 export function getPathValue(source: unknown, path: string): unknown {
   return path.split(".").reduce<unknown>((current, segment) => {
     if (current === null || current === undefined) {
@@ -82,7 +95,8 @@ export function lines(value: string): string[] {
 export function defaultRepeatItem(path: string, existingIds: Iterable<string> = []): JsonRecord {
   const prefix = path === "resume.experience_entries" ? "experience"
     : path === "resume.education_entries" ? "education"
-      : path === "resume.skill_categories" ? "skill" : null;
+      : path === "resume.skill_categories" ? "skill"
+        : path === "resume.language_entries" ? "language" : null;
   if (prefix === null) {
     return {};
   }
@@ -108,6 +122,9 @@ export function defaultRepeatItem(path: string, existingIds: Iterable<string> = 
   }
   if (path === "resume.skill_categories") {
     return { id, label: "", items: [""] };
+  }
+  if (path === "resume.language_entries") {
+    return { id, language: "", proficiency: "" };
   }
   return {};
 }

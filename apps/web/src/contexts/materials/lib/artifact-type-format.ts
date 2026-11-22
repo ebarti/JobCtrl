@@ -1,7 +1,4 @@
 export function artifactKindLabel(type: string): string {
-  if (type.includes("cover")) {
-    return "cover";
-  }
   if (type.includes("resume")) {
     return "resume";
   }

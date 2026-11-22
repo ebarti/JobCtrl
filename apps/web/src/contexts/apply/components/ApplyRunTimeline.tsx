@@ -1,96 +1,123 @@
-import type { JSX } from "react";
-import { useMemo } from "react";
-import { skipToken, useQuery } from "@tanstack/react-query";
-
-import { applyRunsKeys } from "../../operations/applyRunsKeys.js";
-import { Empty } from "../../../shared/ui/empty.js";
-import { formatDateTime } from "../../../shared/lib/formatters.js";
-import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import type { StatusTagTone } from "../../../shared/ui/status-tokens.js";
 import {
-  normalizeApplyRunEventEntry,
-  type ApplyRunWithEvents,
-} from "../selectors/applyRunSelectors.js";
-
-const EMPTY_EVENTS: readonly unknown[] = [];
+  useApplicationActionRun,
+  useApplicationQuery,
+} from "../readQueries.js";
 
 export interface ApplyRunTimelineProps {
-  runId: string;
-  jobId?: string;
-  events?: readonly unknown[];
-  applyEvents?: readonly unknown[];
-}
-
-function eventLabel(type: string): string {
-  return type
-    .replace(/[_-]+/g, " ")
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .trim()
-    .replace(/\s+/g, " ");
+  readonly runId: string;
+  readonly jobId?: string;
+  readonly events?: readonly unknown[];
+  readonly applyEvents?: readonly unknown[];
 }
 
 export function applyRunEventLevelTone(level: string): StatusTagTone {
-  const normalized = level.toLowerCase();
-  if (normalized === "error") return "danger";
-  if (normalized === "warn" || normalized === "warning") return "warn";
-  if (normalized === "debug") return "muted";
-  return "info";
+  return level === "error"
+    ? "danger"
+    : level === "warn" || level === "warning"
+      ? "warn"
+      : level === "debug"
+        ? "muted"
+        : "info";
 }
 
-export function ApplyRunTimeline({ runId, jobId, events = EMPTY_EVENTS, applyEvents = EMPTY_EVENTS }: ApplyRunTimelineProps): JSX.Element {
-  const tenantId = useTenantId();
-  const queryKey = useMemo(() => applyRunsKeys.detail(tenantId, runId), [runId, tenantId]);
-  const { data } = useQuery<ApplyRunWithEvents>({
-    queryKey,
-    queryFn: skipToken,
-    enabled: false,
-    initialData: { events: [] },
-    staleTime: Number.POSITIVE_INFINITY,
-  });
+function resultJobId(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  if ("jobId" in result && typeof result.jobId === "string")
+    return result.jobId;
+  for (const field of ["run", "rehearsal"] as const) {
+    const value = (result as Record<string, unknown>)[field];
+    if (
+      value &&
+      typeof value === "object" &&
+      "jobId" in value &&
+      typeof value.jobId === "string"
+    )
+      return value.jobId;
+  }
+  return null;
+}
 
-  const timeline = useMemo(() => {
-    const workflow = events.map(normalizeApplyRunEventEntry);
-    const persisted = applyEvents.map(normalizeApplyRunEventEntry);
-    const knownRunEvents = new Set(persisted.flatMap((event) => event.runEventId === undefined ? [] : [event.runEventId]));
-    const live = (data?.events ?? []).map(normalizeApplyRunEventEntry).filter((event) => {
-      if (jobId && event.jobId !== jobId) return false;
-      if (event.runEventId === undefined) return true;
-      if (knownRunEvents.has(event.runEventId)) return false;
-      knownRunEvents.add(event.runEventId);
-      return true;
-    });
-    return [...workflow, ...persisted, ...live]
-      .map((event, index) => ({ event, index, timestamp: event.at ? Date.parse(event.at) : Number.NaN }))
-      .sort((left, right) => {
-        const leftTime = Number.isFinite(left.timestamp) ? left.timestamp : Infinity;
-        const rightTime = Number.isFinite(right.timestamp) ? right.timestamp : Infinity;
-        return leftTime - rightTime || left.index - right.index;
-      })
-      .map(({ event }) => event);
-  }, [events, applyEvents, data?.events, jobId]);
-
+export function ApplyRunTimeline({ runId, jobId }: ApplyRunTimelineProps) {
+  const action = useApplicationActionRun(runId);
+  const application = useApplicationQuery(jobId ?? "");
+  const knownRun =
+    !jobId ||
+    application.data?.runs.some((run) => run.runId === runId) ||
+    application.data?.rehearsals.some((run) => run.runId === runId) ||
+    resultJobId(action.data?.result) === jobId;
+  const foreignJob =
+    jobId &&
+    resultJobId(action.data?.result) &&
+    resultJobId(action.data?.result) !== jobId;
+  const terminal =
+    action.data &&
+    ["succeeded", "failed", "cancelled"].includes(action.data.status);
   return (
-    <div className="apply-run-timeline" data-run-id={runId}>
-      {timeline.length === 0 ? <Empty title="No timeline events recorded for this run." /> : null}
-      {timeline.length > 0 ? (
-        <ol className="apply-run-timeline-list" aria-label="Apply run timeline">
-          {timeline.map((event, index) => (
-            <li
-              className={`apply-run-timeline-event tone-${applyRunEventLevelTone(event.level)}`}
-              key={`${event.at ?? "no-time"}-${event.type}-${index}`}
-            >
-              <span className="apply-run-timeline-marker" aria-hidden="true" />
-              <span className="apply-run-timeline-body">
-                <span className="apply-run-timeline-head">
-                  <strong>{eventLabel(event.type)}</strong>
-                  {event.at ? <time dateTime={event.at}>{formatDateTime(event.at)}</time> : null}
-                </span>
-                {event.message ? <span className="apply-run-timeline-message">{event.message}</span> : null}
-              </span>
-            </li>
-          ))}
-        </ol>
+    <section
+      className="apply-run-timeline grid gap-3"
+      aria-label="Application action history"
+      data-run-id={runId}
+    >
+      {action.isPending ? (
+        <p role="status">Loading application action…</p>
       ) : null}
-    </div>
+      {action.error ? (
+        <p role="alert">
+          The application action could not be refreshed. Retained application
+          evidence remains available.
+        </p>
+      ) : null}
+      {jobId && (!knownRun || foreignJob) && action.data ? (
+        <p role={terminal || foreignJob ? "alert" : "status"}>
+          {terminal || foreignJob
+            ? "This action has no recorded authority binding it to this job. Open the operation from Runs to inspect its own identity."
+            : "Waiting for a saved application record that binds this exact action to this job."}
+        </p>
+      ) : null}
+      {action.data && knownRun && !foreignJob ? (
+        <>
+          <p>
+            {action.data.action} · <strong>{action.data.status}</strong>
+          </p>
+          <p>
+            Run {action.data.runId} · workflow {action.data.workflowId}
+          </p>
+          {action.data.temporalRunId ? (
+            <p>Temporal run {action.data.temporalRunId}</p>
+          ) : null}
+          <ol aria-label="Application run timeline">
+            <li>
+              Accepted:{" "}
+              <time dateTime={action.data.createdAt}>
+                {action.data.createdAt}
+              </time>
+            </li>
+            <li>
+              Last update:{" "}
+              <time dateTime={action.data.updatedAt}>
+                {action.data.updatedAt}
+              </time>
+            </li>
+            {action.data.cancellationRequested ? (
+              <li>
+                Cancellation requested; the final status remains authoritative.
+              </li>
+            ) : null}
+          </ol>
+          {action.data.errorCode ? (
+            <p role="alert">Action failure: {action.data.errorCode}</p>
+          ) : null}
+          {action.data.result ? (
+            <details>
+              <summary>Recorded application result</summary>
+              <pre className="whitespace-pre-wrap break-words">
+                {JSON.stringify(action.data.result, null, 2)}
+              </pre>
+            </details>
+          ) : null}
+        </>
+      ) : null}
+    </section>
   );
 }

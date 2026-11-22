@@ -1,17 +1,21 @@
-import type { DomainEventUnion } from "@jobctrl/domain-types";
+import type { DemoEvent as DomainEventUnion } from "../events.js";
 
 import type { DemoWorkspaceSnapshot } from "./contracts.js";
 
 /** Older clients do not maintain these fields. A mismatched checkpoint means
  * an older client or unfamiliar writer committed since the last known state. */
-export function hasCurrentLifecycleTracking(snapshot: DemoWorkspaceSnapshot): boolean {
+export function hasCurrentLifecycleTracking(snapshot: DemoWorkspaceSnapshot,
+): boolean {
   const revisions = snapshot.jobLifecycleRevisions;
-  return revisions !== null && typeof revisions === "object" && !Array.isArray(revisions)
+  return (
+    revisions !== null && typeof revisions === "object" && !Array.isArray(revisions)
     && snapshot.lifecycleRevisionCheckpoint === snapshot.revision
     && Number.isSafeInteger(snapshot.lifecycleRevisionFloor)
     && (snapshot.lifecycleRevisionFloor ?? -1) >= 0
     && (snapshot.lifecycleRevisionFloor ?? Infinity) <= snapshot.revision
-    && Object.values(revisions).every((value) => Number.isSafeInteger(value) && value >= 0);
+    && Object.values(revisions).every((value) => Number.isSafeInteger(value) && value >= 0,
+    )
+  );
 }
 
 export function captureLifecycleRevisions(snapshot: DemoWorkspaceSnapshot, jobKeys: readonly string[]): Map<string, number> {
@@ -52,9 +56,10 @@ export function advanceLifecycleRevisions(
     }
   }
   for (const event of events) {
-    if (event.eventType === "JobDeleted" || event.eventType === "JobRestored"
-      || event.eventType === "JobHidden" || event.eventType === "JobUnhidden") {
-      changed.add(event.payload.jobId);
+    if (event.type === "JobDeleted" || event.type === "JobRestored"
+      || event.type === "JobHidden" || event.type === "JobUnhidden") {
+      if (typeof event.payload.jobId === "string")
+        changed.add(event.payload.jobId);
     }
   }
   for (const jobKey of changed) versions[jobKey] = (versions[jobKey] ?? 0) + 1;

@@ -42,7 +42,7 @@ const STEPS: ReadonlyArray<{
     key: "confirm",
     label: "Confirm import",
     compactLabel: "Confirm",
-    description: "Apply the selected data",
+    description: "Extract a review draft",
     to: "/profile/import/confirm",
   },
 ];

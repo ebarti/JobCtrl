@@ -54,7 +54,7 @@ export function bindProfilePreviewFields(html: string, source: unknown): string 
   };
 
   bind(owner("personal:full_name"), "personal:full_name", profile.personal.full_name ?? "");
-  bind(owner("summary"), "summary", profile.resume.executive_profile.baseline_text ?? "");
+  bind(owner("executive_profile#0") ?? owner("summary"), "summary", profile.resume.executive_profile.baseline_text ?? "");
   const addressGroups = [
     { fields: ["address", "city"] as const, separator: ", " },
     { fields: ["postal_code", "country"] as const, separator: " " },
@@ -77,16 +77,27 @@ export function bindProfilePreviewFields(html: string, source: unknown): string 
       bind(heading?.querySelector(`.resume-entry-${className}`), `${prefix}:${key}`, entry[key]);
     }
     bind(owner(`${prefix}:summary`), `${prefix}:summary`, entry.summary);
-    entry.bullets.forEach((bullet, index) => bind(owner(`${prefix}:bullet:${index + 1}`), `${prefix}:bullet:${index + 1}`, bullet));
+    entry.bullets.forEach((bullet, index) => {
+      const achievementId = entry.achievement_ids?.[index];
+      if (achievementId) bind(owner(achievementId), achievementId, bullet);
+    });
   }
   for (const entry of profile.resume.education_entries) {
     const prefix = `education:${entry.id}`;
     const heading = owner(`${prefix}:subtitle`);
-    const institution = [["institution", entry.institution], ["location", entry.location]] as const;
-    const present = institution.filter(([, value]) => value.trim());
-    replaceComposite(heading?.querySelector(".resume-entry-institution"), present.map(([, value]) => value).join(" | "),
-      join(present.map(([key, value]) => field(`${prefix}:${key}`, value)), " | "), `${prefix}:institution`);
-    bind(heading?.querySelector(".resume-entry-date"), `${prefix}:date`, entry.date);
+    const institutionNode = owner(`${prefix}:institution`);
+    const locationNode = owner(`${prefix}:location`);
+    if (institutionNode || locationNode) {
+      bind(institutionNode, `${prefix}:institution`, entry.institution);
+      bind(locationNode, `${prefix}:location`, entry.location);
+    } else {
+      // Older previews stored both fields in one composite institution span.
+      const institution = [["institution", entry.institution], ["location", entry.location]] as const;
+      const present = institution.filter(([, value]) => value.trim());
+      replaceComposite(heading?.querySelector(".resume-entry-institution"), present.map(([, value]) => value).join(" | "),
+        join(present.map(([key, value]) => field(`${prefix}:${key}`, value)), " | "), `${prefix}:institution`);
+    }
+    bind(owner(`${prefix}:date`) ?? heading?.querySelector(".resume-entry-date"), `${prefix}:date`, entry.date);
     bind(owner(`${prefix}:degree`), `${prefix}:degree`, entry.degree);
     owner(`${prefix}:details`)?.setAttribute("data-resume-profile-field", `unmapped:${prefix}:details`);
   }
@@ -94,8 +105,14 @@ export function bindProfilePreviewFields(html: string, source: unknown): string 
     const prefix = `skills:${category.id}`;
     const label = doc.createElement("b");
     label.append(field(`${prefix}:label`, category.label), separator(": "));
-    replaceComposite(owner(prefix), `${category.label}: ${category.items.join(", ")}`,
+    replaceComposite(owner(`${prefix}#0`) ?? owner(prefix), `${category.label}: ${category.items.join(", ")}`,
       [label, ...join(category.items.map((item, index) => field(`${prefix}:item:${index + 1}`, item)), ", ")], prefix);
+  }
+  for (const entry of profile.resume.language_entries) {
+    for (const key of ["language", "proficiency"] as const) {
+      const id = `language:${entry.id}:${key}`;
+      bind(owner(id), id, entry[key]);
+    }
   }
   return `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`;
 }

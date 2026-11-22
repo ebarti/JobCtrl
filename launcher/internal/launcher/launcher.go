@@ -5,6 +5,7 @@ package launcher
 
 import (
 	"bufio"
+	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
@@ -25,6 +26,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -37,14 +39,16 @@ var (
 	buildIDPattern       = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]{7,127}$`)
 	semverPattern        = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`)
 	minimumOSPattern     = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){1,2}$`)
-	requiredComponentIDs = []string{"jobctrl-launcher", "jobctrl-api", "jobctrl-web", "jobctrl-worker", "node-runtime", "python-runtime", "temporal-runtime"}
+	requiredComponentIDs = []string{"jobctrl-launcher", "jobctrl-web", "jobctrl-worker", "node-runtime", "python-runtime", "temporal-runtime"}
 )
 
 const (
-	launcherProtocol   = 2
-	stateSchemaVersion = 1
-	logLineLimit       = 200
-	startupTimeout     = 30 * time.Second
+	launcherProtocol         = 2
+	stateSchemaVersion       = 1
+	logLineLimit             = 200
+	startupTimeout           = 30 * time.Second
+	temporalProbeTimeout     = 3 * time.Second
+	temporalProbeOutputLimit = 16 << 10
 	// Detached start spans two sequential supervisor health phases: Temporal,
 	// then API/worker. The parent must not kill a supervisor that is still
 	// within those valid phase deadlines.
@@ -60,11 +64,12 @@ const (
 )
 
 var (
-	errUntrackedOwnership = errors.New("this legacy runtime has no durable child-ownership record; recorded processes were checked, but cleanup cannot certify already-detached children. Automatic recovery is unavailable; keep the runtime registry and workspace intact and seek support")
-	ErrAlreadyRunning     = errors.New("an active JobCtrl instance already owns this state directory")
-	ErrPortInUse          = errors.New("a required fixed loopback port is already in use")
-	ErrLockHeld           = errors.New("the JobCtrl instance lock is held")
-	errStartupInterrupted = errors.New("supervisor startup interrupted")
+	errUntrackedOwnership  = errors.New("this legacy runtime has no durable child-ownership record; recorded processes were checked, but cleanup cannot certify already-detached children. Automatic recovery is unavailable; keep the runtime registry and workspace intact and seek support")
+	ErrAlreadyRunning      = errors.New("an active JobCtrl instance already owns this state directory")
+	ErrPortInUse           = errors.New("a required fixed loopback port is already in use")
+	ErrLockHeld            = errors.New("the JobCtrl instance lock is held")
+	errStartupInterrupted  = errors.New("supervisor startup interrupted")
+	errOwnershipInspection = errors.New("cannot verify JobCtrl process ownership")
 )
 
 type commandSpec struct {
@@ -313,26 +318,8 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 	if err := refuseUnfinishedForwardUpdate(runtimeHome, args, inheritedEnv); err != nil {
 		return err
 	}
-	if len(args) > 0 && args[0] == "rollback" {
-		if handled, err := recoverBridgeBeforeBootstrap(inheritedEnv, args, stdout); handled {
-			return err
-		}
-		_, controllerErr := homebrewBootstrap(executable, args, inheritedEnv, stdout, stderr, true)
-		if handled, recoveryErr := recoverRevokedTransitionBeforePrepare(inheritedEnv, stdout); handled {
-			if recoveryErr != nil && controllerErr != nil {
-				return fmt.Errorf("prepare recovery controller: %v; recovery: %w", controllerErr, recoveryErr)
-			}
-			return recoveryErr
-		}
-		if handled, recoveryErr := recoverInterruptedTransitionBeforeBootstrap(inheritedEnv, stdout); handled {
-			if recoveryErr != nil && controllerErr != nil {
-				return fmt.Errorf("prepare recovery controller: %v; recovery: %w", controllerErr, recoveryErr)
-			}
-			return recoveryErr
-		}
-		if controllerErr != nil {
-			return controllerErr
-		}
+	if handled, stopErr := stopUnsafeActiveBeforePrepare(executable, args, inheritedEnv); handled {
+		return stopErr
 	}
 	if handled, uninstallErr := uninstallUnsafeActiveBeforePrepare(args, inheritedEnv, stdout); handled {
 		return uninstallErr
@@ -345,6 +332,9 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 		return err
 	}
 	defer func() { _ = ctx.selection.Close() }()
+	if !usesPythonApplication(ctx.Manifest) && !historicalInspectionCommand(args) {
+		return errors.New("this launcher executes only the Python application; preserve the previous workspace and use explicit Profile-only transfer into a fresh target")
+	}
 	// A source migration is resumed by its source controller. Product commands
 	// must not start another writer while that recovery record is present.
 	if len(args) == 0 || (args[0] != "stop" && args[0] != "status" && args[0] != "logs" && args[0] != "version" && args[0] != "help" && args[0] != "--help") {
@@ -364,6 +354,9 @@ func Run(executable string, args, inheritedEnv []string, stdout, stderr io.Write
 		} else if journalErr != nil && !errors.Is(journalErr, os.ErrNotExist) {
 			return fmt.Errorf("read release transition journal: %w", journalErr)
 		}
+	}
+	if len(args) > 0 && (args[0] == applyExecutionArgument || args[0] == applyWorkerArgument) && usesPythonApplication(ctx.Manifest) {
+		return errors.New("the retired Apply worker entrypoint is unavailable; use the reviewed Python application action")
 	}
 	if len(args) > 0 && args[0] == applyExecutionArgument {
 		if len(args) != 1 {
@@ -420,6 +413,7 @@ func transitionRecoveryUnavailable(journal release.Journal) bool {
 }
 
 // Control/read-only commands run outside the runtime's execution boundary.
+// Temporal status probes acquire their own short-lived durable OS scope.
 // Every public entry that can leave runtime children gets a durable OS scope.
 func commandRequiresOwnedExecution(args []string) bool {
 	if len(args) == 0 {
@@ -430,7 +424,7 @@ func commandRequiresOwnedExecution(args []string) bool {
 		return true
 	case "status":
 		return len(args) == 2 && args[1] == "--pipeline"
-	case "help", "--help", "stop", "logs", "open", "version", "update", "rollback", "backup", "uninstall":
+	case "help", "--help", "-h", "stop", "logs", "open", "version", "update", "rollback", "backup", "uninstall":
 		return false
 	default:
 		return true
@@ -471,7 +465,7 @@ func authenticatedTransitionStartup(ctx launchContext, args []string) bool {
 // same native start path. It exists separately from Run so that its routing
 // contract can be regression-tested without starting a runtime.
 func dispatchCommand(ctx launchContext, args []string, stdout, stderr io.Writer) error {
-	if len(args) == 0 || args[0] == "--help" || args[0] == "help" {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		printHelp(stdout)
 		return nil
 	}
@@ -524,6 +518,9 @@ func dispatchCommand(ctx launchContext, args []string, stdout, stderr io.Writer)
 }
 
 func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
+	if !usesPythonApplication(ctx.Manifest) {
+		return errors.New("the retired application runtime cannot be started by this launcher")
+	}
 	foreground, noOpen, err := parseStartArgs(args)
 	if err != nil {
 		return err
@@ -536,9 +533,6 @@ func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
 	}
 	if err := requireLegacySourceOwnership(ctx); err != nil {
 		return err
-	}
-	if err := migrateHistoricalTransition(ctx); err != nil {
-		return fmt.Errorf("prepare target schema for historical update: %w", err)
 	}
 	if err := checkStartSchemaVersion(ctx); err != nil {
 		return err
@@ -559,23 +553,10 @@ func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
 // An installed build must explain a version mismatch before a worker exit can
 // hide its cause. Normal release updates perform the migration before start.
 func checkStartSchemaVersion(ctx launchContext) error {
-	database := filepath.Join(ctx.Instance.StateDir, "jobctrl.db")
-	if _, err := os.Lstat(database); errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return err
+	if !usesPythonApplication(ctx.Manifest) {
+		return errors.New("the selected payload does not implement the Python application")
 	}
-	version, err := jobCtrlSchemaVersion(ctx)
-	if err != nil {
-		return fmt.Errorf("inspect the workspace database before startup: %w", err)
-	}
-	if version > currentJobCtrlSchemaVersion {
-		return errors.New("this workspace was upgraded by a newer JobCtrl build; update the installed app before starting it")
-	}
-	if version < currentJobCtrlSchemaVersion {
-		return errors.New("the workspace database needs an upgrade; use the supported JobCtrl installer or update path before starting")
-	}
-	return nil
+	return checkPythonApplicationWorkspace(ctx)
 }
 
 func ExitCode(err error) int {
@@ -1555,7 +1536,7 @@ func environmentMap(env []string) map[string]string {
 	return values
 }
 func childEnvironment(inherited []string, payloadRoot, stateDir string, manifest runtimeManifest) []string {
-	blocked := map[string]bool{"BASH_ENV": true, "VIRTUAL_ENV": true, "NODE_PATH": true, "NODE_OPTIONS": true, "PORT": true, "JOBCTRL_API_ALLOW_REMOTE_BIND": true, "JOBCTRL_API_HOST": true, "JOBCTRL_API_PORT": true, "JOBCTRL_WEB_PORT": true, "TEMPORAL_ADDRESS": true, "TEMPORAL_NAMESPACE": true, "JOBCTRL_TEMPORAL_DB": true, "PATH": true, "JOBCTRL_PAYLOAD_DIR": true, "JOBCTRL_RUNTIME_MODE": true, "JOBCTRL_WEB_ASSETS_DIR": true, "PLAYWRIGHT_BROWSERS_PATH": true, "JOBCTRL_PYTHON_EXECUTABLE": true}
+	blocked := map[string]bool{"BASH_ENV": true, "VIRTUAL_ENV": true, "NODE_PATH": true, "NODE_OPTIONS": true, "PORT": true, "JOBCTRL_API_ALLOW_REMOTE_BIND": true, "JOBCTRL_API_HOST": true, "JOBCTRL_API_PORT": true, "JOBCTRL_WEB_PORT": true, "TEMPORAL_ADDRESS": true, "TEMPORAL_NAMESPACE": true, "JOBCTRL_TEMPORAL_DB": true, "JOBCTRL_TEMPORAL_ADDRESS": true, "JOBCTRL_TEMPORAL_NAMESPACE": true, "JOBCTRL_TEMPORAL_UI_URL": true, "JOBCTRL_TEMPORAL_TASK_QUEUE": true, "JOBCTRL_WEB_DIR": true, "PATH": true, "JOBCTRL_PAYLOAD_DIR": true, "JOBCTRL_RUNTIME_MODE": true, "JOBCTRL_WEB_ASSETS_DIR": true, "PLAYWRIGHT_BROWSERS_PATH": true, "JOBCTRL_PYTHON_EXECUTABLE": true}
 	values := make(map[string]string, len(inherited))
 	for _, pair := range inherited {
 		key, value, ok := strings.Cut(pair, "=")
@@ -1568,10 +1549,14 @@ func childEnvironment(inherited []string, payloadRoot, stateDir string, manifest
 	values["JOBCTRL_PAYLOAD_DIR"] = payloadRoot
 	values["JOBCTRL_RUNTIME_MODE"] = "bundled"
 	values["JOBCTRL_WEB_ASSETS_DIR"] = filepath.Join(payloadRoot, "web")
+	values["JOBCTRL_WEB_DIR"] = filepath.Join(payloadRoot, "web")
 	values["PLAYWRIGHT_BROWSERS_PATH"] = filepath.Join(payloadRoot, "chromium")
 	values["JOBCTRL_PYTHON_EXECUTABLE"] = filepath.Join(payloadRoot, "python", "bin", "python3")
 	values["TEMPORAL_ADDRESS"] = fmt.Sprintf("127.0.0.1:%d", manifest.Ports.TemporalGRPC)
 	values["TEMPORAL_NAMESPACE"] = "default"
+	values["JOBCTRL_TEMPORAL_ADDRESS"] = values["TEMPORAL_ADDRESS"]
+	values["JOBCTRL_TEMPORAL_NAMESPACE"] = "default"
+	values["JOBCTRL_TEMPORAL_UI_URL"] = fmt.Sprintf("http://127.0.0.1:%d", manifest.Ports.TemporalUI)
 	values["JOBCTRL_API_HOST"] = "127.0.0.1"
 	values["JOBCTRL_API_PORT"] = strconv.Itoa(manifest.Ports.API)
 	values["JOBCTRL_TEMPORAL_DB"] = filepath.Join(stateDir, "temporal.db")
@@ -1597,7 +1582,7 @@ func substitute(argument string, ctx launchContext) (string, error) {
 			return "", err
 		}
 	}
-	return strings.NewReplacer("${PAYLOAD_ROOT}", ctx.PayloadRoot, "${TEMPORAL_GRPC_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalGRPC), "${TEMPORAL_UI_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalUI), "${TEMPORAL_DB}", temporal).Replace(argument), nil
+	return strings.NewReplacer("${PAYLOAD_ROOT}", ctx.PayloadRoot, "${STATE_DIR}", ctx.Instance.StateDir, "${API_PORT}", strconv.Itoa(ctx.Manifest.Ports.API), "${TEMPORAL_GRPC_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalGRPC), "${TEMPORAL_UI_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalUI), "${TEMPORAL_DB}", temporal).Replace(argument), nil
 }
 func componentByName(manifest runtimeManifest, name string) (commandSpec, error) {
 	for _, component := range manifest.Components {
@@ -1913,6 +1898,11 @@ func sendReady(writer io.Writer, err error) {
 }
 
 func supervise(ctx launchContext, ready io.Writer) (result error) {
+	if !usesPythonApplication(ctx.Manifest) {
+		err := errors.New("the retired application runtime cannot be supervised")
+		sendReady(ready, err)
+		return err
+	}
 	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
 		sendReady(ready, err)
 		return err
@@ -1923,6 +1913,12 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 		return err
 	}
 	defer releaseLock(lock)
+	if usesPythonApplication(ctx.Manifest) {
+		if err := checkPythonApplicationWorkspace(ctx); err != nil {
+			sendReady(ready, err)
+			return err
+		}
+	}
 	// Resolve after claiming the workspace: source and installed releases must
 	// operate on the same existing history, or refuse an ambiguous workspace.
 	ctx, err = withTemporalHistory(ctx)
@@ -1966,8 +1962,8 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 	defer func() {
 		shutdownComponents(&state, children, ctx.Instance.StatePath)
 		cleanupErr := terminateOwnedProcesses(ctx, state)
-		if cleanupErr != nil && result == nil {
-			result = fmt.Errorf("clean up remaining instance processes: %w", cleanupErr)
+		if cleanupErr != nil {
+			result = errors.Join(result, fmt.Errorf("clean up remaining instance processes: %w", cleanupErr))
 		}
 		if cleanupErr == nil && state.ExecutionScopeID != "" {
 			state.OwnershipVerified = true
@@ -1994,7 +1990,7 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		return err
 	}
-	if err := waitForTemporal(ctx, children["temporal"], exits, signals); err != nil {
+	if err := waitForTemporal(ctx, ctx, children["temporal"], exits, signals); err != nil {
 		if errors.Is(err, errStartupInterrupted) {
 			return nil
 		}
@@ -2133,7 +2129,7 @@ func startComponent(ctx launchContext, state *instanceState, name string) (*exec
 		return nil, err
 	}
 	argv := append([]string{"-p", "-c", gatedComponentScript, "jobctrl-component", executable}, arguments...)
-	command := exec.Command("/bin/bash", argv...)
+	command := payloadCommand(ctx.Environment, "/bin/bash", argv...)
 	command.Env, command.Dir, command.Stdout, command.Stderr = temporalGateEnvironment(ownedProcessEnvironment(ctx)), ctx.Instance.StateDir, logFile, logFile
 	command.ExtraFiles = []*os.File{gateRead}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -2171,31 +2167,128 @@ func startComponent(ctx launchContext, state *instanceState, name string) (*exec
 	}
 	return command, nil
 }
-func waitForTemporal(ctx launchContext, temporal *exec.Cmd, exits <-chan componentExit, signals <-chan os.Signal) error {
-	deadline := time.Now().Add(startupTimeout)
+func waitForTemporal(ctx, controller launchContext, temporal *exec.Cmd, exits <-chan componentExit, signals <-chan os.Signal) error {
+	startup, cancelStartup := context.WithTimeout(context.Background(), startupTimeout)
+	defer cancelStartup()
 	var last error
-	for time.Now().Before(deadline) {
+	for {
 		select {
 		case <-signals:
 			return errStartupInterrupted
 		case exit := <-exits:
 			return startupComponentExitError{exit}
+		case <-startup.Done():
+			return temporalStartupTimeout(last)
 		default:
 		}
 		if !processPIDAlive(temporal.Process.Pid) {
 			return errors.New("Temporal exited before becoming healthy")
 		}
-		if err := temporalHealthProbe(ctx); err == nil {
-			return nil
-		} else {
-			last = err
+		probeCtx, cancelProbe := context.WithCancel(startup)
+		result := make(chan error, 1)
+		go func() { result <- temporalHealthProbe(probeCtx, ctx, controller) }()
+		var cause error
+		select {
+		case last = <-result:
+		case <-signals:
+			cause = errStartupInterrupted
+		case exit := <-exits:
+			cause = startupComponentExitError{exit}
+		case <-startup.Done():
+			cause = startup.Err()
 		}
-		time.Sleep(150 * time.Millisecond)
+		if cause != nil {
+			cancelProbe()
+			last = <-result
+			var cleanupErr *temporalProbeCleanupError
+			if errors.As(last, &cleanupErr) {
+				return fmt.Errorf("Temporal probe cleanup failed: %w", last)
+			}
+			if errors.Is(cause, context.DeadlineExceeded) {
+				return temporalStartupTimeout(last)
+			}
+			return cause
+		}
+		cancelProbe()
+		if last == nil {
+			select {
+			case <-signals:
+				return errStartupInterrupted
+			case exit := <-exits:
+				return startupComponentExitError{exit}
+			case <-startup.Done():
+				return temporalStartupTimeout(nil)
+			default:
+			}
+			return nil
+		}
+		var cleanupErr *temporalProbeCleanupError
+		if errors.As(last, &cleanupErr) {
+			return fmt.Errorf("Temporal probe cleanup failed: %w", last)
+		}
+		timer := time.NewTimer(150 * time.Millisecond)
+		select {
+		case <-signals:
+			timer.Stop()
+			return errStartupInterrupted
+		case exit := <-exits:
+			timer.Stop()
+			return startupComponentExitError{exit}
+		case <-startup.Done():
+			timer.Stop()
+			return temporalStartupTimeout(last)
+		case <-timer.C:
+		}
 	}
-	return fmt.Errorf("embedded Temporal did not become healthy: %w", last)
 }
 
-func probeTemporal(ctx launchContext) error {
+func temporalStartupTimeout(last error) error {
+	if last == nil {
+		last = context.DeadlineExceeded
+	}
+	return fmt.Errorf("embedded Temporal did not become healthy before startup deadline: %w", last)
+}
+
+type temporalProbeCleanupError struct{ err error }
+
+func (e *temporalProbeCleanupError) Error() string { return e.err.Error() }
+func (e *temporalProbeCleanupError) Unwrap() error { return e.err }
+
+type boundedProbeOutput struct {
+	mu        sync.Mutex
+	data      []byte
+	truncated bool
+}
+
+func (b *boundedProbeOutput) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	n := len(p)
+	remaining := temporalProbeOutputLimit - len(b.data)
+	if remaining < len(p) {
+		b.truncated = true
+		p = p[:remaining]
+	}
+	b.data = append(b.data, p...)
+	return n, nil
+}
+
+func (b *boundedProbeOutput) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	value := strings.TrimSpace(string(b.data))
+	if b.truncated {
+		value += " [output truncated]"
+	}
+	return value
+}
+
+func probeTemporal(parent context.Context, ctx, controller launchContext) error {
+	probeCtx, cancel := context.WithTimeout(parent, temporalProbeTimeout)
+	defer cancel()
+	if controller.Instance != ctx.Instance {
+		return errors.New("Temporal probe controller belongs to a different instance")
+	}
 	ctx, err := withTemporalHistory(ctx)
 	if err != nil {
 		return err
@@ -2212,10 +2305,16 @@ func probeTemporal(ctx launchContext) error {
 			return err
 		}
 	}
-	probe := exec.Command(executable, arguments...)
-	probe.Env, probe.Dir = ctx.Environment, ctx.Instance.StateDir
-	if output, err := probe.CombinedOutput(); err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
+	output := &boundedProbeOutput{}
+	// The executable and arguments belong to the service's verified payload.
+	// The helper belongs to the independently authenticated current controller.
+	controller.PayloadRoot = ctx.PayloadRoot
+	controller.Environment = ctx.Environment
+	if err := runTemporalProbeInOwnedExecution(probeCtx, controller, executable, arguments, output); err != nil {
+		if diagnostic := output.String(); diagnostic != "" {
+			return fmt.Errorf("Temporal health probe: %w: %s", err, diagnostic)
+		}
+		return fmt.Errorf("Temporal health probe: %w", err)
 	}
 	return nil
 }
@@ -2258,7 +2357,10 @@ func probeAPIWorker(ctx launchContext, expectedWorkerPID int) error {
 		return fmt.Errorf("API health returned HTTP %d", response.StatusCode)
 	}
 	var health struct {
-		Worker struct {
+		Application string `json:"application"`
+		WorkspaceID string `json:"workspaceId"`
+		Worker      struct {
+			PID       int    `json:"pid"`
 			Status    string `json:"status"`
 			Heartbeat *struct {
 				PID int `json:"pid"`
@@ -2271,7 +2373,11 @@ func probeAPIWorker(ctx launchContext, expectedWorkerPID int) error {
 	if health.Worker.Status != "healthy" {
 		return fmt.Errorf("worker health is %q", health.Worker.Status)
 	}
-	if health.Worker.Heartbeat == nil || health.Worker.Heartbeat.PID != expectedWorkerPID {
+	if usesPythonApplication(ctx.Manifest) {
+		if health.Application != "jobctrl-python" || health.WorkspaceID != ctx.Instance.ID || health.Worker.PID != expectedWorkerPID {
+			return errors.New("Python application health does not identify this workspace and owned worker")
+		}
+	} else if health.Worker.Heartbeat == nil || health.Worker.Heartbeat.PID != expectedWorkerPID {
 		return fmt.Errorf("worker heartbeat pid is not owned worker pid %d", expectedWorkerPID)
 	}
 	return nil
@@ -2474,6 +2580,14 @@ func sameRuntimeGeneration(first, second instanceState) bool {
 }
 
 func stop(ctx launchContext) error {
+	err := stopInstance(ctx)
+	if errors.Is(err, errOwnershipInspection) {
+		return fmt.Errorf("%w; resolve the inspection issue and retry the stop operation", err)
+	}
+	return err
+}
+
+func stopInstance(ctx launchContext) error {
 	control, err := acquireLock(ctx.Instance.ControlPath, false)
 	if err != nil {
 		return fmt.Errorf("acquire stop control lock: %w", err)
@@ -2678,14 +2792,16 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	}
 	differentRelease := validateStateBinding(ctx, state) != nil
 	type componentStatus struct {
-		State     string     `json:"state"`
-		PID       int        `json:"pid"`
-		Log       string     `json:"log"`
-		ExitedAt  *time.Time `json:"exitedAt,omitempty"`
-		ExitError string     `json:"exitError,omitempty"`
+		State       string     `json:"state"`
+		PID         int        `json:"pid"`
+		Log         string     `json:"log"`
+		ExitedAt    *time.Time `json:"exitedAt,omitempty"`
+		ExitError   string     `json:"exitError,omitempty"`
+		HealthError string     `json:"healthError,omitempty"`
 	}
 	components := map[string]componentStatus{}
 	allReady := true
+	var probeCleanupErr error
 	workerRecord := state.Components["worker"]
 	apiRecord := state.Components["api"]
 	apiWorkerHealth := errors.New("API is not running")
@@ -2696,11 +2812,20 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 		record, found := state.Components[name]
 		live := found && recordMatchesLiveProcess(record)
 		stateName := "stopped"
+		var healthError string
 		if live {
 			stateName = "running"
-			if !differentRelease && name == "temporal" && probeTemporal(ctx) != nil {
-				stateName = "unhealthy"
-				allReady = false
+			if !differentRelease && name == "temporal" {
+				if probeErr := temporalHealthProbe(context.Background(), ctx, ctx); probeErr != nil {
+					stateName = "unhealthy"
+					allReady = false
+					healthError = probeErr.Error()
+					var cleanupErr *temporalProbeCleanupError
+					if errors.As(probeErr, &cleanupErr) {
+						probeCleanupErr = fmt.Errorf("Temporal health probe cleanup incomplete; preserve its receipt and run jobctrl stop: %w", probeErr)
+						healthError = probeCleanupErr.Error()
+					}
+				}
 			}
 			if !differentRelease && (name == "worker" || name == "api") && apiWorkerHealth != nil {
 				stateName = "unhealthy"
@@ -2714,7 +2839,7 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 				stateName = "stale"
 			}
 		}
-		components[name] = componentStatus{stateName, record.PID, record.LogPath, record.ExitedAt, record.ExitError}
+		components[name] = componentStatus{stateName, record.PID, record.LogPath, record.ExitedAt, record.ExitError, healthError}
 	}
 	supervisorLive := recordMatchesLiveProcess(state.Supervisor)
 	overall := "stopped"
@@ -2752,24 +2877,34 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	}
 
 	if jsonOutput {
-		return json.NewEncoder(output).Encode(struct {
+		err := json.NewEncoder(output).Encode(struct {
 			Status        string                     `json:"status"`
 			InstanceID    string                     `json:"instanceId"`
 			StateDir      string                     `json:"stateDir"`
 			SupervisorPID int                        `json:"supervisorPid"`
 			Components    map[string]componentStatus `json:"components"`
 		}{overall, state.InstanceID, state.CanonicalStateDir, state.Supervisor.PID, components})
+		return errors.Join(err, probeCleanupErr)
 	}
 	if overall == "source-running" {
 		_, err := fmt.Fprintf(output, "JobCtrl: source supervisor running (pid=%d). Use corepack pnpm dev:status in its checkout for component health.\n", state.Supervisor.PID)
-		return err
+		return errors.Join(err, probeCleanupErr)
 	}
-	fmt.Fprintf(output, "JobCtrl: %s\n", overall)
+	if _, err := fmt.Fprintf(output, "JobCtrl: %s\n", overall); err != nil {
+		return errors.Join(err, probeCleanupErr)
+	}
 	for _, name := range []string{"temporal", "worker", "api"} {
 		item := components[name]
-		fmt.Fprintf(output, "%-9s %-8s pid=%d\n", name, item.State, item.PID)
+		if _, err := fmt.Fprintf(output, "%-9s %-8s pid=%d\n", name, item.State, item.PID); err != nil {
+			return errors.Join(err, probeCleanupErr)
+		}
+		if item.HealthError != "" {
+			if _, err := fmt.Fprintf(output, "  health: %s\n", item.HealthError); err != nil {
+				return errors.Join(err, probeCleanupErr)
+			}
+		}
 	}
-	return nil
+	return probeCleanupErr
 }
 func logs(ctx launchContext, args []string, output io.Writer) error {
 	if len(args) > 1 || (len(args) == 1 && args[0] == "--follow") {
@@ -2850,6 +2985,9 @@ func version(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	return err
 }
 func dispatchPython(ctx launchContext, args []string) error {
+	if !usesPythonApplication(ctx.Manifest) {
+		return errors.New("the selected payload does not implement the canonical Python application CLI")
+	}
 	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
 		return err
 	}
@@ -2863,7 +3001,7 @@ func dispatchPython(ctx launchContext, args []string) error {
 		return fmt.Errorf("retain release selection lock for command: %w", err)
 	}
 	defer restore()
-	return syscall.Exec(python, argv, ownedProcessEnvironment(ctx))
+	return execPayload(ownedProcessEnvironment(ctx), python, argv[1:]...)
 }
 
 func dispatchApplyWorker(ctx launchContext) error {
@@ -2876,5 +3014,5 @@ func dispatchApplyWorker(ctx launchContext) error {
 		return fmt.Errorf("retain release selection lock for Apply worker: %w", err)
 	}
 	defer restore()
-	return syscall.Exec(python, []string{python, "-I", "-B", "-m", "jobctrl.apply.execution"}, ownedProcessEnvironment(ctx))
+	return execPayload(ownedProcessEnvironment(ctx), python, "-I", "-B", "-m", "jobctrl.apply.execution")
 }

@@ -83,9 +83,6 @@ export function TargetRoleSuggestions({
 
   const generate = async () => {
     if (profileVersion === null || isFormBaseStale) return;
-    setSuggestions([]);
-    setPreferenceSuggestions([]);
-    setGeneratedVersion(null);
     setEmptyMessage("");
     setNoticeMessage("");
     generation.reset();
@@ -94,6 +91,7 @@ export function TargetRoleSuggestions({
         expectedProfileVersion: profileVersion,
         maximumSuggestions: 3,
       });
+      if (result.profileVersion !== currentProfileVersion.current || result.profileVersion !== currentFormBaseVersion.current) return;
       setGeneratedVersion(result.profileVersion);
       setDeterminationId(result.determinationId);
       setSuggestions(result.suggestions.map((suggestion) => ({
@@ -276,6 +274,7 @@ export function TargetRoleSuggestions({
                   <FieldDescription>
                     Original evidence IDs: {suggestion.evidenceIds.join(", ")}
                   </FieldDescription>
+                  <details><summary>Source citations</summary>{suggestion.citations.map((citation, citationIndex) => <blockquote key={`${citation.source_id}:${citationIndex}`}>{citation.quote}<footer>{citation.source_id}</footer></blockquote>)}</details>
                   <Button
                     type="button"
                     variant="ghost"
@@ -320,6 +319,7 @@ export function TargetRoleSuggestions({
                       ? " Values were edited; the original evidence does not validate your edit."
                       : " This describes past work, not current search willingness."}
                   </FieldDescription>
+                  <details><summary>Source citations</summary>{suggestion.citations.map((citation, citationIndex) => <blockquote key={`${citation.source_id}:${citationIndex}`}>{citation.quote}<footer>{citation.source_id}</footer></blockquote>)}</details>
                   <FieldLabel htmlFor={`target-preference-location-${index}`}>Proposed location {index + 1}</FieldLabel>
                   <Input
                     id={`target-preference-location-${index}`}

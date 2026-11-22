@@ -33,8 +33,8 @@ export function contactRoleLabel(role: ContactRole): string {
   return CONTACT_ROLE_LABELS[role];
 }
 
-export function contactSourceKindLabel(kind: ContactSourceKind): string {
-  return CONTACT_SOURCE_KIND_LABELS[kind];
+export function contactSourceKindLabel(kind: string): string {
+  return (CONTACT_SOURCE_KIND_LABELS as Record<string, string>)[kind] ?? kind;
 }
 
 export function contactAttributeKindLabel(kind: string): string {

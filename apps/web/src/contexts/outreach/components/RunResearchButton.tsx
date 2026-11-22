@@ -1,11 +1,12 @@
 import type { RunContactResearchRequest } from "@jobctrl/contracts";
-import { useId, useState, type FormEvent, type JSX } from "react";
+import { useId, useRef, useState, type FormEvent, type JSX } from "react";
 
 import {
   getApiCapabilityAvailability,
   LOCAL_INSTALL_GUIDE_URL,
 } from "../../../shared/lib/apiCapabilityAvailability.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
+import { useRetryableAction, type RetryableActionRetention } from "../../../shared/lib/useRetryableAction.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Field, FieldLabel } from "../../../shared/ui/field.js";
 import { Input } from "../../../shared/ui/input.js";
@@ -15,6 +16,9 @@ export interface RunResearchButtonProps {
   jobId?: string;
   employer?: string;
 }
+
+type ResearchAttempt = { requestId: string; body: RunContactResearchRequest };
+const researchAttempts: RetryableActionRetention<ResearchAttempt> = new Map();
 
 // Starts a supervised research run. A public source is fetched ONLY when the
 // user supplies its URL here (per-source opt-in, INV-3); with no URL the run
@@ -30,6 +34,10 @@ export function RunResearchButton({ jobId, employer }: RunResearchButtonProps): 
   const unavailableReasonId = useId();
   const sourceUrlId = useId();
   const mutation = useRunResearchMutation();
+  const scope = JSON.stringify([jobId ?? null, employer ?? null]);
+  const action = useRetryableAction<ResearchAttempt>(`contact-research:${scope}`, researchAttempts);
+  const current = useRef({ scope, url });
+  current.current = { scope, url };
   const errorMessage = mutation.error instanceof Error ? mutation.error.message : "";
   const blocked = mutation.isPending || !availability.available;
 
@@ -44,11 +52,20 @@ export function RunResearchButton({ jobId, employer }: RunResearchButtonProps): 
       ...(jobId ? { jobId } : {}),
       sources: trimmed ? [{ category: "public_web_page", url: trimmed, label: "" }] : [],
     };
-    mutation.mutate(request, { onSuccess: () => setUrl("") });
+    const frozen = action.prepare({ requestId: action.requestId, body: request });
+    const submittedScope = scope;
+    const submittedUrl = url;
+    mutation.mutate({ body: frozen.body, idempotencyKey: frozen.requestId }, { onSuccess: () => {
+      action.newAction();
+      if (current.current.scope === submittedScope && current.current.url === submittedUrl) setUrl("");
+    } });
   };
 
   return (
     <form className="run-research" onSubmit={onSubmit}>
+      {action.pending ? <div role="status">The previous request may already be queued. Retry keeps the same source and request identity.
+        <Button type="button" variant="outline" disabled={mutation.isPending} onClick={() => { action.newAction(); mutation.reset(); }}>Start a different research request</Button>
+      </div> : null}
       <Field className="run-research-field">
         <FieldLabel className="run-research-label" htmlFor={sourceUrlId}>
           Public source URL (optional)
@@ -56,7 +73,7 @@ export function RunResearchButton({ jobId, employer }: RunResearchButtonProps): 
         <Input
           id={sourceUrlId}
           aria-describedby={availability.available ? undefined : unavailableReasonId}
-          disabled={!availability.available}
+          disabled={!availability.available || action.pending}
           type="url"
           value={url}
           placeholder="https://company.example/team"
@@ -68,7 +85,7 @@ export function RunResearchButton({ jobId, employer }: RunResearchButtonProps): 
         type="submit"
         disabled={blocked}
       >
-        {mutation.isPending ? "Starting…" : "Run research"}
+        {mutation.isPending ? "Starting…" : action.pending ? "Retry research start" : "Run research"}
       </Button>
       {!availability.available ? (
         <span className="meta" id={unavailableReasonId}>

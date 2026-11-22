@@ -1,7 +1,7 @@
 import { ExtensionCaptureIngestSchema, type ExtensionCaptureIngestRequest } from "@jobctrl/contracts";
 
 import type { BrowserStorageArea } from "./browser";
-import { LocalApiError, postExtensionCapture } from "./local-api";
+import { ExtensionCaptureSupersededError, LocalApiError, postExtensionCapture } from "./local-api";
 
 export const CAPTURE_QUEUE_STORAGE_KEY = "jobctrlCaptureQueue";
 export const MAX_CAPTURE_QUEUE_SIZE = 25;
@@ -10,6 +10,7 @@ export interface QueuedCapture {
   id: string;
   queuedAt: string;
   capture: ExtensionCaptureIngestRequest;
+  reviewStatus?: "superseded";
 }
 
 export interface EnqueueResult {
@@ -131,10 +132,26 @@ async function flushSnapshot(
       return upgraded;
     });
     if (!item) continue; // An explicit clear removed this item before its send.
+    if (item.reviewStatus === "superseded") {
+      failure = "A superseded capture remains saved locally; review it or discard it individually.";
+      continue;
+    }
     let response;
     try {
       response = await sendCapture(token, item.capture);
     } catch (error) {
+      if (error instanceof ExtensionCaptureSupersededError) {
+        const retained = await withQueueLock(storage, async () => {
+          const queue = await readQueue(storage);
+          const index = queue.findIndex((candidate) => candidate.id === item.id && candidate.capture.captureId === item.capture.captureId);
+          if (index < 0) return false;
+          queue[index] = { ...queue[index]!, reviewStatus: "superseded" };
+          await storage.set({ [CAPTURE_QUEUE_STORAGE_KEY]: queue });
+          return true;
+        });
+        if (retained) failure = "A superseded capture remains saved locally; review it or discard it individually.";
+        continue;
+      }
       failure = error instanceof LocalApiError
         ? error.status === 401 || error.status === 403
           ? "JobCtrl rejected the pairing token. Copy a fresh token from Settings."
@@ -160,12 +177,24 @@ export function clearCaptureQueue(storage: BrowserStorageArea): Promise<void> {
   return withQueueLock(storage, () => storage.remove(CAPTURE_QUEUE_STORAGE_KEY));
 }
 
+export function discardQueuedCapture(storage: BrowserStorageArea, id: string): Promise<boolean> {
+  return withQueueLock(storage, async () => {
+    const queue = await readQueue(storage);
+    const index = queue.findIndex((item) => item.id === id);
+    if (index < 0) return false;
+    queue.splice(index, 1);
+    await storage.set({ [CAPTURE_QUEUE_STORAGE_KEY]: queue });
+    return true;
+  });
+}
+
 function isQueuedCapture(value: unknown): value is QueuedCapture {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const candidate = value as Record<string, unknown>;
   return (
     typeof candidate.id === "string" && candidate.id.length > 0 &&
     typeof candidate.queuedAt === "string" && Number.isFinite(Date.parse(candidate.queuedAt)) &&
+    (candidate.reviewStatus === undefined || candidate.reviewStatus === "superseded") &&
     ExtensionCaptureIngestSchema.safeParse(candidate.capture).success
   );
 }

@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -64,7 +63,7 @@ func buildV15CandidateFromSource(candidate launchContext, source string, sourceV
 	if sourceVersion == legacyJobCtrlSchemaVersion {
 		arguments = append(arguments, "--migration-at", time.Now().UTC().Format(time.RFC3339Nano))
 	}
-	command := exec.Command(python, arguments...)
+	command := payloadCommand(candidate.Environment, python, arguments...)
 	command.Env = candidate.Environment
 	command.Dir = candidate.Instance.StateDir
 	output, err := command.Output()
@@ -91,7 +90,7 @@ func buildV15CandidateFromSource(candidate launchContext, source string, sourceV
 		cleanupV15Candidate(candidate.Instance.StateDir, journalID)
 		return "", errors.New("sealed v15 candidate digest verification failed")
 	}
-	version, versionErr := sqliteUserVersion(python, path)
+	version, versionErr := sqliteUserVersion(python, path, candidate.Environment)
 	if versionErr != nil || version != currentJobCtrlSchemaVersion {
 		cleanupV15Candidate(candidate.Instance.StateDir, journalID)
 		return "", errors.New("sealed v15 candidate schema verification failed")
@@ -136,7 +135,7 @@ func installSealedV15Candidate(candidate launchContext, candidatePath string) er
 		return errors.New("live database is not a regular file")
 	}
 	python := migrationPython(candidate)
-	command := exec.Command(python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v15_activation",
+	command := payloadCommand(candidate.Environment, python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v15_activation",
 		"--mode", "activate", "--live", live, "--candidate", candidatePath, "--receipt", candidatePath+".source-binding.json")
 	command.Env = candidate.Environment
 	output, activationErr := command.CombinedOutput()
@@ -151,7 +150,7 @@ func installSealedV15Candidate(candidate launchContext, candidatePath string) er
 		}
 		return errors.New("locked exact-v15 activation failed")
 	}
-	version, err := sqliteUserVersion(python, live)
+	version, err := sqliteUserVersion(python, live, candidate.Environment)
 	if errors.Is(err, errUnresolvedDatabasePublication) {
 		return err
 	}
@@ -193,7 +192,7 @@ func bindV15Source(candidate launchContext, source, path string) error {
 		return err
 	}
 	python := migrationPython(candidate)
-	command := exec.Command(python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v15_activation",
+	command := payloadCommand(candidate.Environment, python, "-I", "-B", "-m", "jobctrl.infrastructure.migrations.v15_activation",
 		"--mode", "bind", "--source", source, "--live", filepath.Join(candidate.Instance.StateDir, "jobctrl.db"),
 		"--candidate", path, "--receipt", path+".source-binding.json")
 	command.Env = candidate.Environment

@@ -1,7 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
 
-import { JobsView } from "../views/jobs/JobsView.js";
-
-export const Route = createFileRoute("/jobs/")({
-  component: JobsView,
-});
+// The comparison list belongs to the parent so opening a job preserves it.
+export const Route = createFileRoute("/jobs/")({ component: () => null });
