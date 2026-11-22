@@ -50,9 +50,17 @@ function documentLines(document: Data, theme: Data = {}): Line[] {
     line(`skills:${string(category.id) || index}:label`, category.label);
     if (Array.isArray(category.items)) line(`skills:${string(category.id) || index}:items`, category.items.filter((item): item is string => typeof item === "string").join(", "));
   });
+  const languages = rows(document.languages);
+  section = "languages";
+  if (languages.length) line("section:languages", "Languages", "h2", "resume-section-title");
+  for (const entry of languages) for (const field of ["language", "proficiency"] as const) {
+    line(`language:${string(entry.id)}:${field}`, entry[field]);
+  }
   if (new Set(lines.map((item) => item.id)).size !== lines.length) throw new Error("The saved document contains duplicate field IDs.");
-  const order = Array.isArray(theme.sectionOrder) ? theme.sectionOrder : ["summary", "experience", "education", "skills"];
-  if (order.length !== 4 || new Set(order).size !== 4 || order.some((value) => !["summary", "experience", "education", "skills"].includes(String(value))) || Array.isArray(theme.hiddenSections) && theme.hiddenSections.length) throw new Error("A baseline resume must retain every authored section.");
+  const order = Array.isArray(theme.sectionOrder) ? [...theme.sectionOrder] : ["summary", "experience", "education", "skills"];
+  const required = ["summary", "experience", "education", "skills"];
+  if (new Set(order).size !== order.length || required.some((value) => !order.includes(value)) || order.some((value) => ![...required, "languages"].includes(String(value))) || Array.isArray(theme.hiddenSections) && theme.hiddenSections.length) throw new Error("A baseline resume must retain every authored section.");
+  if (languages.length && !order.includes("languages")) order.push("languages");
   return [...lines.filter((line) => line.section === "personal"), ...order.flatMap((value) => lines.filter((line) => line.section === value))];
 }
 

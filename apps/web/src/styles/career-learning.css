@@ -1,0 +1,43 @@
+.career-learning-content {
+  container: career-learning / inline-size;
+  min-inline-size: 0;
+}
+
+.career-learning-content :is(form, fieldset, [data-slot="field"], [data-slot="field-group"]) {
+  min-inline-size: 0;
+}
+
+.career-learning-content form {
+  inline-size: 100%;
+  max-inline-size: 60rem;
+}
+
+.career-learning-content :is(p, blockquote, [data-slot="alert-description"]) {
+  max-inline-size: 76ch;
+  overflow-wrap: anywhere;
+}
+
+.career-learning-cohort__fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 16px 24px;
+}
+
+.career-learning-cohort__jobs [data-slot="field-label"] {
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.career-learning-cohort__pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+@container career-learning (max-width: 40rem) {
+  .career-learning-cohort__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

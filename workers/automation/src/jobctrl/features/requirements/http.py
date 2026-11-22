@@ -37,21 +37,38 @@ class RevisionRequest(RequestValue):
     reason: StrictStr = Field(min_length=1, max_length=2000)
 
 
+class OccurrenceCorrectionRequest(RequestValue):
+    occurrence_id: StrictStr = Field(min_length=1, max_length=120)
+    reason: StrictStr = Field(min_length=1, max_length=2000)
+
+
+class OccurrenceCorrectionsRequest(RequestValue):
+    expected_posting_revision: StrictInt = Field(ge=1, le=2**63 - 1)
+    expected_revision: StrictInt = Field(ge=1, le=2**63 - 1)
+    corrections: list[OccurrenceCorrectionRequest] = Field(min_length=1, max_length=20)
+
+
 class RebuildRequest(RequestValue):
     expected_catalog_revision: StrictInt = Field(ge=0, le=2**63 - 1)
 
 
+class ConsolidateRequest(RebuildRequest):
+    operation_id: StrictStr | None = Field(default=None, min_length=1, max_length=240)
+
+
 def raise_application_error(failure: RequirementError):
-    if failure.code in {"catalog_changed", "cancelled", "retrieval_index_stale", "requirements_scan_pending"}:
+    if failure.code in {"catalog_changed", "cancelled", "stale_catalog_revision", "retrieval_index_stale", "requirements_contract_changed",
+                         "requirements_correction_call_unsettled", "requirements_consolidation_call_unsettled",
+                         "requirements_cohort_interrupted"}:
         status = 409
-    elif failure.code in {"model_provenance_missing"}:
+    elif failure.code in {"model_provenance_missing", "requirements_catalog_unavailable", "catalog_snapshot_invalid"}:
         status = 503
     else:
         status = 422
     raise AppError(
         failure.code,
-        ("Requirements scan progress is saved. Continue the same refresh to finish; accepted work remains available."
-         if failure.code == "requirements_scan_pending" else
+        ("The complete requirement catalog could not be assessed in one call. Accepted work remains available."
+         if failure.code == "requirements_catalog_unavailable" else
          "Requirements were not replaced. Review the source or retry the blocked determination."),
         status,
         details=failure.details,
@@ -77,6 +94,16 @@ def _pagination(request, *, default=50, maximum=200):
 
 
 def routes(service):
+    async def consolidate(request):
+        body = await parse_request(request, ConsolidateRequest)
+        try:
+            return JSONResponse(await service.consolidate_catalog(**body.model_dump()))
+        except RequirementError as failure:
+            raise_application_error(failure)
+
+    async def latest_attempt(request):
+        return JSONResponse(service.latest_job_attempt(request.path_params["job_id"]))
+
     async def job_requirements(request):
         if request.method in {"GET", "HEAD"}:
             return JSONResponse(service.find_job_requirements(request.path_params["job_id"]))
@@ -111,6 +138,11 @@ def routes(service):
     async def index_status(request):
         return JSONResponse(service.index_status())
 
+    async def history(request):
+        limit, offset = _pagination(request)
+        return JSONResponse(service.requirement_history(request.path_params["requirement_id"],
+            kind=request.query_params.get("kind", "revisions"), limit=limit, offset=offset))
+
     async def rebuild(request):
         body = await parse_request(request, RebuildRequest)
         try:
@@ -128,6 +160,13 @@ def routes(service):
             raise_application_error(failure)
         return JSONResponse(result)
 
+    async def correct_occurrences(request):
+        body = await parse_request(request, OccurrenceCorrectionsRequest)
+        try:
+            return JSONResponse(await service.correct_occurrences(request.path_params["job_id"], **body.model_dump()))
+        except RequirementError as failure:
+            raise_application_error(failure)
+
     async def revise(request):
         body = await parse_request(request, RevisionRequest)
         try:
@@ -140,10 +179,14 @@ def routes(service):
 
     return (
         Route("/v1/jobs/{job_id}/requirements", job_requirements, methods=["GET", "POST"]),
+        Route("/v1/jobs/{job_id}/requirements/attempts/latest", latest_attempt, methods=["GET"]),
+        Route("/v1/jobs/{job_id}/requirements/corrections", correct_occurrences, methods=["POST"]),
         Route("/v1/jobs/{job_id}/requirements/{occurrence_id}/binding", correct_binding, methods=["POST"]),
         Route("/v1/requirements", catalog, methods=["GET"]),
+        Route("/v1/requirements/consolidate", consolidate, methods=["POST"]),
         Route("/v1/requirements/index", index_status, methods=["GET"]),
         Route("/v1/requirements/index/rebuild", rebuild, methods=["POST"]),
         Route("/v1/requirements/{requirement_id}", detail, methods=["GET"]),
+        Route("/v1/requirements/{requirement_id}/history", history, methods=["GET"]),
         Route("/v1/requirements/{requirement_id}/revisions", revise, methods=["POST"]),
     )

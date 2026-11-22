@@ -74,6 +74,7 @@ class ResumesService:
 
     def get(self, resume_id, *, connection=None):
         state = self.repository.get(resume_id, connection=connection)
+        state["composition_freshness"] = self._composition_freshness(current(state), connection=connection)
         if self.jobs is not None:
             job = self.jobs.get_job_snapshots([state["job_id"]], connection=connection, include_deleted=True).get(state["job_id"])
             state["job"] = {"jobId": job["job_id"], "title": job["title"], "company": job["company"],
@@ -85,6 +86,8 @@ class ResumesService:
 
     def list(self, job_id=None):
         states = self.repository.list(job_id=job_id)
+        for state in states:
+            state["composition_freshness"] = self._composition_freshness(current(state))
         if self.jobs is not None and states:
             ids = list(dict.fromkeys(row["job_id"] for row in states))
             jobs = {}
@@ -95,6 +98,31 @@ class ResumesService:
                 state["job"] = {"jobId": job["job_id"], "title": job["title"], "company": job["company"],
                                 "source": "current_jobs_label"} if job else None
         return states
+
+    def _composition_freshness(self, revision, connection=None):
+        """Inspect source pins without changing a draft, acceptance or model state."""
+        reasons = []
+        try:
+            latest = self._snapshot(revision["profile_snapshot"]["profile_id"], connection)
+            if latest["profile_revision"] != revision["profile_revision"]:
+                reasons.append("profile_changed")
+        except Exception:
+            reasons.append("profile_unavailable")
+        if revision["mode"] != "baseline_copy":
+            if revision.get("contract_version") != "requirements-v2":
+                reasons.append("requirements_contract_changed")
+            if revision["requirements_snapshot"] is None or revision["fit_snapshot"] is None:
+                reasons.append("coverage_not_recorded")
+            else:
+                try:
+                    self.requirements.assert_current(revision["requirements_snapshot"], connection=connection)
+                except Exception:
+                    reasons.append("requirements_changed")
+                try:
+                    self.fit.assert_current(revision["fit_snapshot"], connection=connection)
+                except Exception:
+                    reasons.append("fit_coverage_changed")
+        return {"current": not reasons, "stale_reasons": reasons, "revision_id": revision["revision_id"]}
 
     def job_summaries(self, job_ids, connection=None):
         if not isinstance(job_ids, (list, tuple)) or len(job_ids) > 1000 or any(not isinstance(item, str) for item in job_ids):
@@ -145,14 +173,25 @@ class ResumesService:
             return None
         if not isinstance(operation_id, str) or not operation_id.strip() or len(operation_id) > 240:
             raise ResumeError("invalid_resume_operation_id")
-        return {"operation_id": operation_id, "input_hash": digest(payload)}
+        return {"operation_id": operation_id,
+                "input_hash": digest({"contract_version": "requirements-v2", **payload})}
 
     def _coverage(self, job_id, snapshot, connection=None):
+        from jobctrl.features.requirements import snapshot_items
         requirements = dto(self.requirements.get_job_requirements(job_id, connection=connection))
+        if requirements.get("contract_version") != "requirements-v2":
+            raise ResumeError("requirements_contract_changed")
         if requirements.get("stale") is True:
             raise ResumeError("requirements_source_changed")
+        items = {}
+        for row in snapshot_items(requirements):
+            previous = items.get(row["requirement_id"])
+            if previous is not None and any(previous.get(key) != row.get(key) for key in
+                    ("requirement_revision", "demand_fingerprint", "definition")):
+                raise ResumeError("requirements_source_changed")
+            items[row["requirement_id"]] = row
         coverage = dto(self.fit.coverage_for(
-            snapshot["profile_revision"], requirements.get("requirements", []), snapshot["approved_variants"],
+            snapshot["profile_revision"], list(items.values()), snapshot["approved_variants"],
             profile_id=snapshot["profile_id"], connection=connection,
         ))
         return requirements, coverage
@@ -229,6 +268,7 @@ class ResumesService:
     def _revision(self, snapshot, prepared, requirements, coverage, theme, *, template=None):
         self.renderer.validate_theme(theme)
         return {"revision_id": str(uuid4()), "number": 1, "created_at": now(),
+                "contract_version": "requirements-v2",
                 "profile_revision": snapshot["profile_revision"], "profile_snapshot": deepcopy(snapshot),
                 "requirements_snapshot": deepcopy(requirements), "fit_snapshot": deepcopy(coverage),
                 **deepcopy(prepared), "theme": deepcopy(theme), "template": deepcopy(template),
@@ -359,8 +399,9 @@ class ResumesService:
                 "invent claims, or request a polishing/repair loop. All recorded approvals remain user-owned."),
             sources=sources, response_schema=review_schema(),
             context={"resume_id": resume_id, "revision_id": revision["revision_id"],
+                     "contract_version": "requirements-v2",
                      "profile_revision": snapshot["profile_revision"], "document_sha256": digest(revision["document"])},
-            prompt_version="resume-coherence-v1", lane="resumes",
+            prompt_version="resume-coherence-requirements-v2", lane="resumes",
         )
         fingerprint = None
         preflight_failure = None
@@ -611,7 +652,7 @@ class ResumesService:
             recorded_source(path=["resume", "executive_profile"])
         for role in pinned["roles"]:
             recorded_source(role_id=role["role_id"])
-        for section in ("education_entries", "skill_categories"):
+        for section in ("education_entries", "skill_categories", "language_entries"):
             for row in resume.get(section, []):
                 recorded_source(path=["resume", section, row["id"]])
         for ident in refs:

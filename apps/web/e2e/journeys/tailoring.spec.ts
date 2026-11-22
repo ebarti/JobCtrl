@@ -5,6 +5,7 @@ import {
   expect,
   json,
   modelCall,
+  completed,
   type ExternalCall,
 } from "../harness/fixtures.js";
 import {
@@ -16,6 +17,12 @@ import {
   type Library,
   type Resume,
 } from "./core-data.js";
+import { catalogMatching, typedExtraction } from "./requirements-data.js";
+import { qualificationBatchDecision } from "./qualification-data.js";
+import {
+  groupedCoverageDecision,
+  type GroupedCoverageContext,
+} from "./fit-data.js";
 
 type Source = { source_id: string; text: string };
 type Fit = {
@@ -43,43 +50,19 @@ test("approved wording composes the full baseline and failed model or render ref
   const posting = await createPosting(api, "tailoring");
   await page.goto(`/jobs/${posting.job_id}`);
   await page
+    .locator("summary")
+    .filter({ hasText: /^Posting, availability and requirement details$/ })
+    .click();
+  await page
     .getByRole("button", { name: "Extract requirements", exact: true })
     .click();
   const extraction = await modelCall(app, "requirements.extract");
   const postingSource = sources(extraction)[0]!;
-  extraction.reply({
-    status: "complete",
-    requirements: [
-      {
-        local_id: "recovery",
-        text: postingSource.text,
-        definition: "Implement durable workflow recovery",
-        qualifiers: [],
-        scope: "resume",
-        tier: "must_have",
-        weight: 1,
-        support: "supported",
-        spans: [
-          {
-            start: 0,
-            end: postingSource.text.length,
-            quote: postingSource.text,
-          },
-        ],
-      },
-    ],
-    reason: "The posting expressly requires durable workflow recovery.",
-    citations: citations([postingSource]),
-  });
-  const novelty = await modelCall(app, "requirements.novelty");
-  novelty.reply({
-    verdict: "new",
-    reason: "The complete catalog sweep has no equivalent qualified meaning.",
-    citations: citations(sources(novelty)),
-  });
-  await expect(
-    page.getByRole("button", { name: "Assess person fit", exact: true }),
-  ).toBeEnabled();
+  extraction.reply(typedExtraction(extraction, { requirements: [{
+    localId: "recovery", text: postingSource.text, definition: "Implement durable workflow recovery",
+  }] }));
+  const matching = await modelCall(app, "requirements.match_catalog");
+  matching.reply(catalogMatching(matching, { recovery: { verdict: "new" } }));
   // Wait on the public accepted requirements state rather than a UI delay.
   await expect
     .poll(
@@ -94,50 +77,36 @@ test("approved wording composes the full baseline and failed model or render ref
     )
     .toBe(1);
 
-  await page
-    .getByRole("button", { name: "Assess person fit", exact: true })
-    .click();
-  const qualification = await modelCall(app, "fit.qualification");
-  const qualificationContext = qualification.body["context"] as {
-    binding: Record<string, string>;
-  };
+  // Prepare the factual state through its real public owner while keeping
+  // wording admission explicit. The primary Prepare resume flow is exercised
+  // below once the reviewed wording has current source-bound coverage.
+  const scoring = api.post(`/v1/jobs/${posting.job_id}/fit/assess`, {
+    data: {
+      expected_revision: 0,
+      prepare_wording: false,
+      prepare_coverage: true,
+    },
+  });
+  const qualification = await modelCall(app, "fit.qualification-batch");
   const fact = sources(qualification).find(
     (source) => source.source_id === evidenceId,
   )!;
-  const requirement = sources(qualification).find(
-    (source) => source.source_id === "requirement",
-  )!;
   expect(fact).toBeTruthy();
-  qualification.reply({
-    ...qualificationContext.binding,
-    kind: "matched",
-    strength: "direct",
-    confidence: "high",
-    rationale:
-      "The authored achievement directly supports the qualified requirement.",
-    evidence: citations([fact]),
-    requirement_citations: citations([requirement]),
-    achievement_ids: [achievement.achievement_id],
-    keywords: ["durable workflows"],
-    eligibility: "eligible",
-    blocker_category: null,
-    warning_category: null,
-  });
-  const baselineCoverage = await modelCall(app, "fit.wording-coverage");
-  baselineCoverage.reply({
-    ...(baselineCoverage.body["context"] as { binding: Record<string, string> })
-      .binding,
-    status: "not_covered",
-    rationale:
-      "The person qualifies; this approved baseline expression does not express the complete requested emphasis.",
-    citations: citations(
-      sources(baselineCoverage).filter((source) =>
-        ["requirement", "approved-variant", evidenceId].includes(
-          source.source_id,
-        ),
-      ),
-    ),
-  });
+  qualification.reply(qualificationBatchDecision(qualification, () => ({
+    achievementIds: [achievement.achievement_id], evidenceSourceIds: [fact.source_id], keywords: ["durable workflows"],
+  })));
+  const baselineCoverage = await modelCall(app, "fit.wording-coverage-grouped");
+  baselineCoverage.reply(
+    groupedCoverageDecision(baselineCoverage, {
+      evidenceSourceId: evidenceId,
+      status: "not_covered",
+      action: "propose_wording",
+      gapRequirementIds: (
+        baselineCoverage.body["context"] as GroupedCoverageContext
+      ).binding.requirements.map((row) => row.requirement_id),
+    }),
+  );
+  expect((await scoring).status()).toBe(200);
   await expect(page.getByText("Score 10/10", { exact: true })).toBeVisible();
   const beforeWording = await json<Fit>(
     api,
@@ -148,9 +117,24 @@ test("approved wording composes the full baseline and failed model or render ref
   expect(beforeWording.score.score).toBe(10);
   expect(beforeWording.coverage.wording_gaps).not.toHaveLength(0);
 
+  const firstManualAdmission = page.waitForResponse(
+    (response) =>
+      response.url() === `${app.baseURL}/v1/actions/fit.refresh` &&
+      response.request().method() === "POST",
+  );
   await page
-    .getByRole("button", { name: "Prepare wording", exact: true })
+    .locator("summary")
+    .filter({ hasText: /^Update affected matches$/ })
     .click();
+  await page
+    .getByRole("region", { name: "Affected matches", exact: true })
+    .getByRole("button", { name: "Update affected matches", exact: true })
+    .click();
+  const firstManualResponse = await firstManualAdmission;
+  expect(firstManualResponse.status()).toBe(202);
+  const firstManualRun = (await firstManualResponse.json()) as {
+    runId: string;
+  };
   const authoring = await modelCall(app, "profile.wording_authoring");
   const alternative =
     "Built durable workflow recovery with documented operational ownership.";
@@ -161,6 +145,7 @@ test("approved wording composes the full baseline and failed model or render ref
       "The proposed expression stays within the cited authored achievement.",
     citations: citations(sources(authoring)),
   });
+  await completed(api, firstManualRun.runId);
   let proposed: Library | undefined;
   await expect
     .poll(async () => {
@@ -178,9 +163,8 @@ test("approved wording composes the full baseline and failed model or render ref
   ).toBe(10);
 
   await page.goto("/profile");
-  const wording = page.getByRole("article", {
-    name: `Wording ${proposedVariant.variant_id}`,
-    exact: true,
+  const wording = page.getByRole("article").filter({
+    has: page.getByText(alternative, { exact: true }),
   });
   await expect(wording.getByText(alternative, { exact: true })).toBeVisible();
   await wording
@@ -204,23 +188,37 @@ test("approved wording composes the full baseline and failed model or render ref
   const beforeRefresh = app.external.calls.length;
   await page.goto(`/jobs/${posting.job_id}`);
   await page
-    .getByRole("button", { name: "Refresh wording coverage", exact: true })
+    .locator("summary")
+    .filter({ hasText: /^Update affected matches$/ })
     .click();
-  const approvedCoverage = await modelCall(app, "fit.wording-coverage");
-  approvedCoverage.reply({
-    ...(approvedCoverage.body["context"] as { binding: Record<string, string> })
-      .binding,
-    status: "covered",
-    rationale:
-      "This exact approved expression covers the requirement using the same person evidence.",
-    citations: citations(
-      sources(approvedCoverage).filter((source) =>
-        ["requirement", "approved-variant", evidenceId].includes(
-          source.source_id,
-        ),
-      ),
-    ),
+  const refreshPanel = page.getByRole("region", {
+    name: "Affected matches",
+    exact: true,
   });
+  await refreshPanel
+    .getByRole("button", { name: "Dismiss completed update", exact: true })
+    .click();
+  const coverageAdmission = page.waitForResponse(
+    (response) =>
+      response.url() === `${app.baseURL}/v1/actions/fit.refresh` &&
+      response.request().method() === "POST",
+  );
+  await refreshPanel
+    .getByRole("button", { name: "Update affected matches", exact: true })
+    .click();
+  const coverageResponse = await coverageAdmission;
+  expect(coverageResponse.status()).toBe(202);
+  const coverageRun = (await coverageResponse.json()) as { runId: string };
+  const approvedCoverage = await modelCall(app, "fit.wording-coverage-grouped");
+  approvedCoverage.reply(
+    groupedCoverageDecision(approvedCoverage, {
+      evidenceSourceId: evidenceId,
+      status: "covered",
+      action: "reuse_approved",
+      reusableVariantId: proposedVariant.variant_id,
+    }),
+  );
+  await completed(api, coverageRun.runId);
   await expect
     .poll(
       async () =>
@@ -233,20 +231,44 @@ test("approved wording composes the full baseline and failed model or render ref
       .slice(beforeRefresh)
       .filter((call) => call.path === "/model")
       .map((call) => call.body["operation"]),
-  ).toEqual(["fit.wording-coverage"]);
+  ).toEqual(["fit.wording-coverage-grouped"]);
   expect(
     (await json<Fit>(api, "get", `/v1/jobs/${posting.job_id}/fit`)).score.score,
   ).toBe(10);
 
-  const composedResponse = page.waitForResponse(
+  await page
+    .getByRole("combobox", { name: "Resume to prepare", exact: true })
+    .selectOption("tailored");
+  const preparationAdmission = page.waitForResponse(
     (response) =>
-      response.url() === `${app.baseURL}/v1/resumes` &&
+      new URL(response.url()).pathname === "/v1/actions/preparation.run" &&
       response.request().method() === "POST",
   );
   await page
-    .getByRole("button", { name: "Compose tailored resume", exact: true })
+    .getByRole("button", { name: "Prepare resume", exact: true })
     .click();
-  let resume: Resume = (await (await composedResponse).json()).resume;
+  const preparationResponse = await preparationAdmission;
+  expect(preparationResponse.status()).toBe(202);
+  expect(preparationResponse.request().postDataJSON()).toMatchObject({
+    recipe: "prepare",
+    scope: "selected",
+    job_ids: [posting.job_id],
+    resume_mode: "tailored",
+  });
+  const preparation = (await preparationResponse.json()) as { runId: string };
+  const review = await modelCall(app, "resumes.coherence");
+  review.reply({ verdict: "pass", findings: [] });
+  await completed(api, preparation.runId);
+  let resume: Resume = (
+    await json<{ resumes: Resume[] }>(
+      api,
+      "get",
+      `/v1/resumes?jobId=${posting.job_id}`,
+    )
+  ).resumes[0]!;
+  await expect(
+    page.getByRole("tab", { name: "Resume", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
   const composed = current(resume);
   expect(composed.document.experience.map((role) => role.id)).toEqual(
     baseline.resume.experience_entries.map((role) => role.id),
@@ -267,19 +289,11 @@ test("approved wording composes the full baseline and failed model or render ref
   expect(current(repeat).selected_variants).toEqual(composed.selected_variants);
   expect(current(repeat).coverage_manifest).toEqual(composed.coverage_manifest);
 
-  await page
-    .getByRole("button", { name: "Review coherence", exact: true })
-    .click();
-  const review = await modelCall(app, "resumes.coherence");
-  review.reply({ verdict: "pass", findings: [] });
   await expect
     .poll(
       async () => current(await getResume(api, resume.resume_id)).review.status,
     )
     .toBe("pass");
-  await page
-    .getByRole("button", { name: "Render resume", exact: true })
-    .click();
   await expect
     .poll(
       async () =>
@@ -318,6 +332,10 @@ test("approved wording composes the full baseline and failed model or render ref
   await page
     .getByRole("combobox", { name: "Saved resume", exact: true })
     .selectOption(resume.resume_id);
+  await page
+    .locator("summary:visible")
+    .filter({ hasText: /^Document validation and recovery tools$/ })
+    .click();
 
   // Keep a genuine read of the review's intermediate claim in flight while
   // the same browser receives its newer mutation result. Deliver its original
@@ -498,7 +516,9 @@ test("approved wording composes the full baseline and failed model or render ref
     holdLaterReads = false;
     releaseStaleRead();
     releaseLaterReads();
-    await page.unroute(matchesList, delayList);
+    // Stop admitting callbacks and drain this test's sole route before removing
+    // interception; removing it first auto-continues responses still in flight.
+    await page.unrouteAll({ behavior: "wait" });
     await Promise.all(forwardingReads);
   }
 });

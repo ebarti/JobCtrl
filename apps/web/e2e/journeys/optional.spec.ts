@@ -1,3 +1,4 @@
+import { indeedPage } from "./indeed-data.js";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -367,7 +368,7 @@ test("interview notes and learning activity preserve source ownership; the diges
   api,
   page,
   allowRequestFailure,
-}) => {
+}, testInfo) => {
   await createBaseline(api);
   const job = await createPosting(api, "career");
   const profileBefore = await json(api, "get", "/v1/profile");
@@ -404,6 +405,63 @@ test("interview notes and learning activity preserve source ownership; the diges
     factualSupport: "unverified_user_statement",
   });
 
+  // The selected-job path is a separate panel from the no-job library. Check
+  // its actual content and disclosures without generating interview material.
+  const callsBeforeInterview = app.external.calls.filter((call) => call.path === "/model").length;
+  await page.goto(`/interviews?job=${encodeURIComponent(job.job_id)}&card=B01`);
+  const jobPreparation = page.getByRole("region", { name: "Job interview preparation", exact: true });
+  const contextPanel = jobPreparation.getByRole("region", { name: "Question selection and interview context", exact: true });
+  const notePanel = jobPreparation.getByRole("region", { name: "Independent user notes", exact: true });
+  await expect(notePanel.getByRole("textbox", { name: "Notes for B01", exact: true })).toHaveValue("A revised synthetic example.");
+  await expect(jobPreparation.getByText("No interview prep generated.", { exact: true })).toBeVisible();
+  await contextPanel.getByRole("button", { name: "Add question to preparation", exact: true }).click();
+  const evidence = contextPanel.getByText("Evidence for B01: automatic selection", { exact: true });
+  await evidence.click();
+  await expect(contextPanel.getByRole("button", { name: "Use no evidence for B01", exact: true })).toBeVisible();
+  const noteHistory = notePanel.getByText("Saved note revision history", { exact: true });
+  await noteHistory.click();
+  await expect(notePanel.getByText("A synthetic example to prepare.", { exact: true })).toBeVisible();
+  for (const [width, inset] of [[1193, 24], [390, 16], [320, 16]] as const) {
+    await page.setViewportSize({ width, height: 1226 });
+    const geometry = await jobPreparation.evaluate((panel) => {
+      const bounds = (element: Element) => {
+        const rect = element.getBoundingClientRect();
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
+      };
+      const header = panel.querySelector(".interview-job-preparation__header")!;
+      const context = panel.querySelector('[aria-label="Question selection and interview context"]')!;
+      const notes = panel.querySelector('[aria-label="Independent user notes"]')!;
+      const prep = panel.querySelector('[aria-label="Interview preparation"]')!;
+      const historySection = panel.querySelector('[aria-label="Preparation history"]')!;
+      return {
+        panel: bounds(panel),
+        header: bounds(header),
+        title: bounds(header.querySelector("h2")!),
+        link: bounds(header.querySelector("a")!),
+        context: bounds(context.querySelector("h3")!),
+        notes: bounds(notes.querySelector("h3")!),
+        textarea: bounds(notes.querySelector("textarea")!),
+        prep: bounds(prep.querySelector("h3")!),
+        history: bounds(historySection.querySelector("h3")!),
+        noteHistory: bounds(notes.querySelector("details > summary")!),
+      };
+    });
+    expect(geometry.title.top - geometry.panel.top).toBeGreaterThanOrEqual(15);
+    expect(geometry.link.top - geometry.title.bottom).toBeGreaterThanOrEqual(6);
+    expect(geometry.context.top - geometry.header.bottom).toBeGreaterThanOrEqual(15);
+    for (const item of [geometry.title, geometry.link, geometry.context, geometry.notes, geometry.textarea, geometry.prep, geometry.history, geometry.noteHistory]) {
+      expect(item.left).toBeGreaterThanOrEqual(geometry.panel.left + inset - 1);
+      expect(item.right).toBeLessThanOrEqual(geometry.panel.right - inset + 1);
+    }
+    await jobPreparation.getByRole("heading", { name: "Preparation for Synthetic Reliability Engineer", exact: true }).scrollIntoViewIfNeeded();
+    await testInfo.attach(`interview-job-preparation-${width}`, {
+      contentType: "image/png",
+      body: await page.screenshot(),
+    });
+  }
+  expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(callsBeforeInterview);
+  await page.setViewportSize({ width: 1440, height: 900 });
+
   const path = "/v1/evidence-map/learning";
   const preview = await json<Learning>(api, "post", path, {
     action: "preview",
@@ -411,9 +469,6 @@ test("interview notes and learning activity preserve source ownership; the diges
   });
   expect(preview.preview?.analyzedCount).toBe(1);
   const openLearning = async () => {
-    await page
-      .getByText("Selected-job demand and learning milestones", { exact: true })
-      .click();
     await expect(
       page.getByRole("heading", { name: "Review a selected-job cohort" }),
     ).toBeVisible();
@@ -425,14 +480,81 @@ test("interview notes and learning activity preserve source ownership; the diges
       })
       .check();
   };
-  await page.goto("/evidence-map");
+  await page.goto("/learning");
   await openLearning();
+  const callsBeforeLearningLayout = app.external.calls.filter((call) => call.path === "/model").length;
+  const learning = page.getByRole("region", { name: "Learning and selected-job demand", exact: true });
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const title = await page.getByRole("heading", { name: "Learning", level: 1, exact: true }).boundingBox();
+    const geometry = await learning.evaluate((panel) => {
+      const bounds = (element: Element) => {
+        const box = element.getBoundingClientRect();
+        return { left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width };
+      };
+      const content = panel.querySelector(".career-learning-content")!;
+      const form = content.querySelector(".career-learning-cohort")!;
+      return {
+        panel: bounds(panel),
+        form: bounds(form),
+        intro: bounds(content.querySelector(":scope > p")!),
+        inputs: Array.from(form.querySelectorAll(".career-learning-cohort__fields input")).map(bounds),
+        rootSize: parseFloat(getComputedStyle(document.documentElement).fontSize),
+        viewport: document.documentElement.clientWidth,
+        documentWidth: document.documentElement.scrollWidth,
+      };
+    });
+    expect(geometry.inputs).toHaveLength(4);
+    expect(geometry.documentWidth).toBeLessThanOrEqual(geometry.viewport);
+    expect(geometry.form.width).toBeLessThanOrEqual(60 * geometry.rootSize + 1);
+    expect(Math.abs(geometry.form.left - title!.x)).toBeLessThanOrEqual(1);
+    for (const input of geometry.inputs) {
+      expect(input.left).toBeGreaterThanOrEqual(geometry.panel.left - 1);
+      expect(input.right).toBeLessThanOrEqual(geometry.form.right + 1);
+    }
+    if (width === 1440) {
+      expect(geometry.form.width).toBeLessThan(geometry.panel.width);
+      expect(geometry.intro.width).toBeLessThan(geometry.form.width);
+      expect(Math.abs(geometry.inputs[0]!.top - geometry.inputs[1]!.top)).toBeLessThanOrEqual(1);
+      expect(Math.abs(geometry.inputs[2]!.top - geometry.inputs[3]!.top)).toBeLessThanOrEqual(1);
+      expect(geometry.inputs[0]!.right).toBeLessThan(geometry.inputs[1]!.left);
+    } else {
+      for (const [index, input] of geometry.inputs.entries()) {
+        expect(Math.abs(input.left - geometry.form.left)).toBeLessThanOrEqual(1);
+        if (index) expect(input.top).toBeGreaterThan(geometry.inputs[index - 1]!.bottom);
+      }
+    }
+    await testInfo.attach(`learning-cohort-layout-${width}`, { contentType: "image/png", body: await learning.screenshot({ animations: "disabled" }) });
+  }
+  expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(callsBeforeLearningLayout);
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.getByLabel("Cohort name").fill("Synthetic cohort");
   await page.getByLabel("Selection date").fill("2026-11-06");
   await page
     .getByLabel("Your aspirations (separate from demonstrated capability)")
     .fill("Learn how recovery is designed.");
   await chooseJob();
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "Jobs", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "My profile", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", { name: "My profile sections", exact: true })
+    .getByRole("link", { name: "Learning", exact: true })
+    .click();
+  await expect(page.getByLabel("Cohort name")).toHaveValue("Synthetic cohort");
+  await expect(
+    page.getByLabel("Your aspirations (separate from demonstrated capability)"),
+  ).toHaveValue("Learn how recovery is designed.");
+  await expect(
+    page.getByRole("checkbox", {
+      name: "Synthetic Reliability Engineer · Synthetic Hiring Company",
+    }),
+  ).toBeChecked();
   await page.getByRole("button", { name: "Review selected cohort" }).click();
   await expect(
     page.getByText("Review selected cohort before model comparison"),
@@ -441,16 +563,26 @@ test("interview notes and learning activity preserve source ownership; the diges
     request.method() === "POST" &&
     new URL(request.url()).pathname === path &&
     request.postDataJSON()?.action === "compare";
+  // Reads during navigation or SSE updates can reach the same URL. Drop only
+  // the response to the comparison POST under test.
+  async function dropNextComparison(onResponse: (status: number) => void) {
+    const pattern = `**${path}`;
+    let forwarded = false;
+    const intercept = async (route: import("@playwright/test").Route) => {
+      if (forwarded || !isCompare(route.request())) return route.fallback();
+      forwarded = true;
+      try {
+        const response = await route.fetch();
+        onResponse(response.status());
+        await route.abort("failed");
+      } finally {
+        await page.unroute(pattern, intercept);
+      }
+    };
+    await page.route(pattern, intercept);
+  }
   let deliveredStatus: number | undefined;
-  await page.route(
-    `**${path}`,
-    async (route) => {
-      const response = await route.fetch();
-      deliveredStatus = response.status();
-      await route.abort("failed");
-    },
-    { times: 1 },
-  );
+  await dropNextComparison((status) => { deliveredStatus = status; });
   const sent = page.waitForRequest(isCompare);
   await page.getByRole("button", { name: "Compare reviewed postings" }).click();
   const browserRequest = await sent;
@@ -680,14 +812,70 @@ test("interview notes and learning activity preserve source ownership; the diges
     fitBefore,
   );
 
-  await page.goto("/evidence-map");
-  await page.getByText("Selected-job demand and learning milestones").click();
+  await page.goto("/learning");
   await expect(
     page.getByRole("heading", { name: "Synthetic cohort" }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "Study recovery", level: 4 }),
   ).toBeVisible();
+  const milestoneEditor = page.getByRole("article", {
+    name: "Milestone Study recovery",
+    exact: true,
+  });
+  const completion = milestoneEditor.getByRole("textbox", {
+    name: "Completion evidence or artifact reference",
+    exact: true,
+  });
+  await completion.fill("Unsaved synthetic milestone notes.");
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "Jobs", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", { name: "Main navigation", exact: true })
+    .getByRole("link", { name: "My profile", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", { name: "My profile sections", exact: true })
+    .getByRole("link", { name: "Learning", exact: true })
+    .click();
+  await expect(completion).toHaveValue("Unsaved synthetic milestone notes.");
+  const competingActivity = await json<Learning>(api, "post", path, {
+    action: "update",
+    milestoneId: milestone.milestoneId,
+    expectedRevision: updated.milestones[0]!.revision,
+    status: "in_progress",
+    completionEvidence: "Saved activity from another editor.",
+  });
+  await expect(milestoneEditor.getByRole("alert")).toContainText(
+    "This milestone changed since the draft began.",
+  );
+  await expect(completion).toHaveValue("Unsaved synthetic milestone notes.");
+  await expect(
+    milestoneEditor.getByRole("button", {
+      name: "Save milestone activity",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await milestoneEditor
+    .getByRole("button", {
+      name: "Keep my draft against this saved version",
+      exact: true,
+    })
+    .click();
+  await milestoneEditor
+    .getByRole("button", { name: "Save milestone activity", exact: true })
+    .click();
+  await expect
+    .poll(
+      async () =>
+        (await json<Learning>(api, "get", path)).milestones[0]!.revision,
+    )
+    .toBe(competingActivity.milestones[0]!.revision + 1);
+  expect(
+    (await json<Learning>(api, "get", path)).milestones[0]!.completionEvidence,
+  ).toBe("Unsaved synthetic milestone notes.");
 
   // A provider disconnect leaves an unknown model outcome. After a reload the
   // UI must retain only the request identity and refuse a fresh comparison.
@@ -704,15 +892,7 @@ test("interview notes and learning activity preserve source ownership; the diges
     page.getByText("Review selected cohort before model comparison"),
   ).toBeVisible();
   let unresolvedStatus: number | undefined;
-  await page.route(
-    `**${path}`,
-    async (route) => {
-      const response = await route.fetch();
-      unresolvedStatus = response.status();
-      await route.abort("failed");
-    },
-    { times: 1 },
-  );
+  await dropNextComparison((status) => { unresolvedStatus = status; });
   const sentUnresolved = page.waitForRequest(isCompare);
   await page.getByRole("button", { name: "Compare reviewed postings" }).click();
   const unresolvedRequest = await sentUnresolved;
@@ -966,7 +1146,7 @@ test("offer terms retain unknowns, corrections and explicit compensation source 
   }>(api, "get", `/v1/jobs/${job.job_id}/compensation`);
   expect(compensation.summary.posted.recordStatus).toBe("not_recorded");
   expect(compensation.summary.market.recordStatus).toBe("not_requested");
-  await page.goto(`/jobs/${job.job_id}`);
+  await page.goto(`/jobs/${job.job_id}?jobTab=offer`);
   await expect(page.getByText("Offer decision: declined")).toBeVisible();
   await page.getByText("Offer history", { exact: true }).click();
   await expect(
@@ -1107,7 +1287,7 @@ test("contact research requires confirmation and distinguishes invalid output fr
     "/v1/contacts?employer=Synthetic%20Research%20Co",
   );
   expect(beforeConfirmation.items).toEqual([]);
-  await page.goto(`/jobs/${job.job_id}`);
+  await page.goto(`/jobs/${job.job_id}?jobTab=people`);
   const researchPanel = page.getByRole("region", { name: "Contact research" });
   await expect(
     researchPanel.getByRole("button", { name: "Confirm contact" }),
@@ -1243,6 +1423,10 @@ test("contact research requires confirmation and distinguishes invalid output fr
   ).toHaveLength(beforeProtected);
 });
 
+test.describe("independent Discovery and Companies", () => {
+// Remove orchestration while retaining the recorded-data owners used by Job Detail.
+test.use({ features: "profile,jobs,requirements,fit,resumes,discovery,companies" });
+
 test("Discovery ingests a controlled provider page and Companies retains a sourced briefing on failed refresh", async ({
   app,
   api,
@@ -1251,7 +1435,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
   const settings = {
     queries: ["Synthetic Engineer"],
     locations: [{ location: "Madrid", remote: false }],
-    boards: ["linkedin"],
+    boards: ["indeed"],
     resultsPerSite: 5,
     hoursOld: 0,
     newJobLimit: 5,
@@ -1321,6 +1505,14 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
   });
   expect(staleSettings.status()).toBe(409);
   await page.goto("/discovery");
+  await page
+    .locator("summary")
+    .filter({ hasText: /^Search plans, schedules and source behavior$/ })
+    .click();
+  await page
+    .locator("summary")
+    .filter({ hasText: /^One-off search with temporary criteria$/ })
+    .click();
   await expect(
     page.getByRole("heading", { name: "Discovery runs" }),
   ).toBeVisible();
@@ -1328,6 +1520,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
     page.getByRole("heading", { name: "Explicit search targets" }),
   ).toBeVisible();
   const planPanel = page.getByRole("region", { name: "Profile search plan" });
+  await planPanel.getByRole("button", { name: /Profile search plan/ }).click();
   await expect(
     planPanel.getByText("No search plan has been saved yet."),
   ).toBeVisible();
@@ -1345,14 +1538,10 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
   const search = (await queued.json()) as { runId: string };
   const provider = await app.external.next();
   expect(provider.method).toBe("POST");
-  expect(provider.path).toBe("/discovery");
-  expect(provider.body["request"]).toMatchObject({
-    query: "Synthetic Engineer",
-    location: "Madrid",
-    remote_only: false,
-    sites: ["linkedin"],
-  });
-  provider.respond({
+  expect(provider.path).toBe("/jobstreaming/indeed");
+  expect(String(provider.body["query"])).toContain('what: "Synthetic Engineer"');
+  expect(String(provider.body["query"])).toContain('where: "Madrid"');
+  provider.respond(indeedPage({
     jobs: [
       {
         job_key: "synthetic-provider-job",
@@ -1365,14 +1554,15 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
     ],
     cursor: null,
     complete: true,
-  });
+  }));
   await completed(api, search.runId);
-  await expect(page.getByText(`Run ${search.runId}: succeeded`)).toBeVisible();
+  await expect(page.locator(".discovery-runs-panel").getByRole("region", { name: "Job search progress", exact: true })).toContainText("Search completed");
+  await expect(page.locator(".discovery-runs-panel").getByRole("region", { name: "Job search progress", exact: true })).toContainText("Initial fit assessment is unavailable in this application.");
   const sourceRegistry = await json<{
     sources: { sourceId: string; recommendedState: string }[];
   }>(api, "get", "/v1/discovery/sources");
   expect(sourceRegistry.sources).toContainEqual(
-    expect.objectContaining({ sourceId: "jobstreaming:linkedin" }),
+    expect.objectContaining({ sourceId: "jobstreaming:indeed" }),
   );
   const listing = await json<{ jobs: { job_id: string; title: string }[] }>(
     api,
@@ -1497,19 +1687,23 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
     page.getByText("The company says it builds workflow tools."),
   ).toBeVisible();
 });
+});
 
 test("compensation evidence cites the posting and an explicit manual report and survives a failed refresh", async ({
   app,
   api,
   page,
 }) => {
-  const job = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+  const description = "Develop software. Base salary EUR 80000 to EUR 100000 per year.";
+  const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
+  const job = await json<{ job_id: string; revision: number }>(api, "post", "/v1/jobs/capture", {
     url: "https://example.com/jobs/pay",
     title: "Senior Software Engineer",
     company: "Synthetic Pay Company",
     location: "Madrid, Spain",
-    description: "Develop software.",
-    salary: "Base salary EUR 80000 to EUR 100000 per year.",
+    description,
+    full_description: description,
   });
   // This is an explicitly selected import file, not a database seed or a recorded model output.
   const observationsPath = path.join(app.workspace, "synthetic-pay.json");
@@ -1543,9 +1737,7 @@ test("compensation evidence cites the posting and an explicit manual report and 
   const run = (await submitted.json()) as { runId: string };
   const pay = await modelCall(app, "compensation.posted_pay");
   const postingSource = sources(pay.body)[0]!;
-  expect(postingSource.text).toBe(
-    "Base salary EUR 80000 to EUR 100000 per year.",
-  );
+  expect(postingSource.text).toBe(description);
   pay.reply({
     parse_state: "parsed_range",
     currency: "EUR",
@@ -1563,6 +1755,12 @@ test("compensation evidence cites the posting and an explicit manual report and 
   // Each explicit classification is bound to the actual posting or report row.
   for (const kind of ["posting", "report"] as const) {
     const call = await modelCall(app, "compensation.classification");
+    if (kind === "posting") {
+      const saved = await json<{ recordStatus: string; fact?: { minimumAmount: number; maximumAmount: number } }>(
+        api, "get", `/v1/jobs/${job.job_id}/compensation/posted`,
+      );
+      expect(saved).toMatchObject({ recordStatus: "recorded", fact: { minimumAmount: 80000, maximumAmount: 100000 } });
+    }
     const source = sources(call.body)[0]!;
     expect(source.source_id).toContain(
       kind === "posting"
@@ -1683,6 +1881,101 @@ test("compensation evidence cites the posting and an explicit manual report and 
     accepted.audit.posted.determination.receipt_id,
   );
   expect(retained.summary).toEqual(accepted.summary);
+
+  const revised = "Base salary EUR 82000 to EUR 105000 per year.";
+  await json(api, "patch", `/v1/jobs/${job.job_id}`, { expectedRevision: job.revision, description: revised });
+  const marketFailure = await action(api, "compensation.refresh", { ...options, jobId: job.job_id });
+  const revisedPay = await modelCall(app, "compensation.posted_pay");
+  const revisedSource = sources(revisedPay.body)[0]!;
+  expect(revisedSource.text).toBe(revised);
+  revisedPay.reply({
+    parse_state: "parsed_range", currency: "EUR", period: "year", component: "base_salary",
+    minimum_amount: 82000, maximum_amount: 105000, confidence: "high", warnings: [],
+    citations: [{ source_id: revisedSource.source_id, quote: revised }], rationale: "The new posting states this range.",
+  });
+  (await modelCall(app, "compensation.classification")).invalidJson();
+  await expect.poll(async () => (await json<{ status: string }>(api, "get", `/v1/action-runs/${marketFailure.runId}`)).status)
+    .toBe("failed");
+  const independent = await json<Compensation>(api, "get", `/v1/jobs/${job.job_id}/compensation`);
+  expect(independent.summary.posted.range).toMatchObject({ minimumAmount: 82000, maximumAmount: 105000 });
+  expect(independent.audit.posted.determination.receipt_id).not.toBe(accepted.audit.posted.determination.receipt_id);
+  expect(independent.summary.market.range).toEqual(accepted.summary.market.range);
+  expect(independent.audit.market).toMatchObject({ sourceCurrent: false, estimate: { sourceCount: 1 } });
+
+  const retry = await action(api, "compensation.refresh", { ...options, jobId: job.job_id });
+  // Only the failed market stage reaches the provider again for this exact revision.
+  (await modelCall(app, "compensation.classification")).invalidJson();
+  await expect.poll(async () => (await json<{ status: string }>(api, "get", `/v1/action-runs/${retry.runId}`)).status)
+    .toBe("failed");
+  const retried = await json<Compensation>(api, "get", `/v1/jobs/${job.job_id}/compensation`);
+  expect(retried.audit.posted.determination.receipt_id).toBe(independent.audit.posted.determination.receipt_id);
+});
+
+test("compensation retry rejects uncited pay and preserves an unsettled posting call", async ({ app, api }) => {
+  const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
+  const job = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/posted-receipt", title: "Synthetic role", company: "Synthetic employer",
+    salary: "Annual base salary EUR 40000 to 50000.",
+  });
+  const refresh = () => action(api, "compensation.refresh", { jobId: job.job_id, includeEuroTopTech: false });
+  const posted = () => json<{ recordStatus: string }>(api, "get", `/v1/jobs/${job.job_id}/compensation/posted`);
+  const run = (id: string) => json<{ status: string; errorCode: string | null }>(api, "get", `/v1/action-runs/${id}`);
+  const first = await refresh();
+  const bad = await modelCall(app, "compensation.posted_pay");
+  const source = sources(bad.body)[0]!;
+  bad.reply({
+    parse_state: "parsed_range", currency: "EUR", period: "year", component: "base_salary",
+    minimum_amount: 40000, maximum_amount: 90000, confidence: "high", warnings: [],
+    citations: [{ source_id: source.source_id, quote: source.text }], rationale: "The cited line states the range.",
+  });
+  await expect.poll(async () => (await run(first.runId)).status).toBe("failed");
+  expect((await posted()).recordStatus).toBe("not_recorded");
+  const second = await refresh();
+  const next = await modelCall(app, "compensation.posted_pay");
+  expect(sources(next.body)[0]).toEqual(source);
+  expect((await posted()).recordStatus).toBe("not_recorded");
+  next.disconnect();
+  await expect.poll(async () => (await run(second.runId)).status).toBe("failed");
+  const third = await refresh();
+  await expect.poll(() => run(third.runId)).toMatchObject({ status: "failed", errorCode: "compensation_posted_call_unsettled" });
+  expect((await posted()).recordStatus).toBe("not_recorded");
+});
+
+test("automatic compensation refreshes only changed postings with source text", async ({ app, api }) => {
+  type Refresh = { runId: string; result?: { results?: { jobId: string; status: string }[] } };
+  const setting = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", {
+    expectedRevision: setting.revision, compensationAutomationEnabled: true, dailyBudgetUsd: 0,
+  });
+  const capture = (id: string, description: string) => json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+    url: `https://example.com/jobs/${id}`, title: id, company: "Synthetic salary publisher", description,
+  });
+  await capture("card-without-salary", "");
+  const first = await capture("first-posting", "First public description.");
+  async function failedAttempt(jobId: string, checkConcurrentAdmission = false, title?: string) {
+    const pay = await modelCall(app, "compensation.posted_pay");
+    expect(sources(pay.body)[0]!.source_id).toContain(jobId);
+    if (title) expect(sources(pay.body)).toEqual([{ source_id: `posting:${jobId}:1:title`, text: title }]);
+    if (checkConcurrentAdmission) {
+      const concurrent = await api.post("/v1/actions/compensation.refresh_stale", { data: { automatic: true } });
+      expect(concurrent.status()).toBe(409);
+      expect(await concurrent.json()).toMatchObject({ error: { code: "action_scope_busy" } });
+    }
+    pay.invalidJson();
+    await expect.poll(async () => {
+      const page = await json<{runs: Refresh[]}>(api, "get", "/v1/action-runs?action=compensation.refresh_stale");
+      return page.runs.find((run) => run.result?.results?.some((r) => r.jobId === jobId))?.result?.results;
+    }, { timeout: 40_000 }).toEqual([{ jobId, status: "failed", code: "model_schema_violation" }]);
+  }
+  await failedAttempt(first.job_id, true);
+  const second = await capture("second-posting", "Second public description.");
+  await failedAttempt(second.job_id);
+  const title = "Synthetic title-only card | €60K - €80K";
+  const titled = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/titled-pay", title, company: "Synthetic salary publisher",
+  });
+  await failedAttempt(titled.job_id, false, title);
 });
 
 test("interview preparation honors an explicit empty evidence selection and retains the accepted preparation on failure", async ({

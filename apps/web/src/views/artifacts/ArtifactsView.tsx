@@ -88,11 +88,11 @@ export function ArtifactsView() {
     <main className="route-page grid gap-5">
       <PageHead
         eyebrow="Library"
-        title="Artifacts"
+        title="Materials"
         subtitle={
           query.data
             ? `${query.data.artifacts.length} registered PDF files · ${query.data.resumes.length} resume records`
-            : "Loading saved artifacts"
+            : "Loading saved materials"
         }
       />
       <p>
@@ -107,11 +107,12 @@ export function ArtifactsView() {
       ) : null}
       <Button
         variant="outline"
+        className="justify-self-start"
         onClick={() => {
           void query.refetch();
         }}
       >
-        Reload artifact catalog
+        Refresh materials
       </Button>
       <section className="card full data-list-card">
         <ArtifactFilterBar search={search} />

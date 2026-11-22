@@ -5,10 +5,14 @@ name: Complete application journeys
 permissions:
   contents: read
 jobs:
-  journeys:
-    name: UI checks
+  shards:
+    name: Journeys (shard ${{ matrix.shard }}/6)
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     env:
       UV_PYTHON: '3.12'
       UV_LOCKED: '1'
@@ -29,6 +33,8 @@ jobs:
         with:
           node-version: 22.21.1
           cache: pnpm
+      - name: Fetch the fixed source-upgrade predecessors
+        run: node scripts/fetch-e2e-predecessors.mjs
       - name: Set up Python
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
         with:
@@ -72,9 +78,10 @@ jobs:
           const start = Number(fs.readFileSync(process.env.RUNNER_TEMP + '/jobctrl-e2e-start', 'utf8'));
           console.log(JSON.stringify({runner:'ubuntu-24.04',arch:process.arch,cpus:os.availableParallelism(),memoryMiB:Math.round(os.totalmem()/1024/1024),setupSeconds:Math.floor(Date.now()/1000)-start,node:process.version}));
           NODE
-      - name: Build once and run complete real application journeys
-        timeout-minutes: 10
-        run: corepack pnpm e2e
+      - name: Build once and run this shard of real application journeys
+        # Reserve two minutes beyond the suite ceiling for build and owned cleanup.
+        timeout-minutes: 14
+        run: corepack pnpm e2e -- --shard=${{ matrix.shard }}/6 --workers=2
       - name: Require unchanged dependency locks
         if: always()
         run: git diff --exit-code -- pnpm-lock.yaml workers/automation/uv.lock
@@ -87,14 +94,25 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: python-application-journeys-${{ github.run_attempt }}
+          name: python-application-journeys-shard-${{ matrix.shard }}-of-6-${{ github.run_attempt }}
           path: |
             /tmp/jobctrl-transform-1428/e2e-*/timings.json
             /tmp/jobctrl-transform-1428/e2e-*/junit.xml
             /tmp/jobctrl-transform-1428/e2e-*/results.json
             /tmp/jobctrl-transform-1428/e2e-*/playwright/
-            /tmp/jobctrl-transform-1428/e2e-*/application-*/api.log
+            /tmp/jobctrl-transform-1428/e2e-*/application-*/api*.log
             /tmp/jobctrl-transform-1428/e2e-*/application-*/worker-*.log
             /tmp/jobctrl-transform-1428/e2e-*/temporal-*/temporal.log
           retention-days: 7
           if-no-files-found: warn
+  journeys:
+    name: UI checks
+    needs: shards
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Require all journey shards to pass
+        env:
+          SHARDS_RESULT: ${{ needs.shards.result }}
+        run: test "$SHARDS_RESULT" = success

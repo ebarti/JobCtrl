@@ -43,9 +43,11 @@ adds a worker-only admission check. Tokens and credentials never enter ordinary
 settings, event payloads or application logs.
 
 `GET /v1/health` reports the workspace identity, selected features, database
-schema, model accounting and actual worker heartbeat. A worker is healthy only
-when the recorded PID is live, its heartbeat is recent and its task queue matches
-this workspace. Native lifecycle admission additionally verifies process
+schema, model accounting and worker dispatch readiness. The API matches the
+local live worker, its startup identity and its recent heartbeat against the
+workflow and activity pollers reported by the paired Temporal namespace. Action
+admission also checks the specific operation was registered. A two-second probe
+bounds an unavailable workflow service. Native lifecycle admission additionally verifies process
 ownership. `GET /v1/setup/status` composes public Profile, provider, browser,
 Temporal and policy diagnostics. Configuration presence and successful live
 checks remain distinct facts.
@@ -117,7 +119,19 @@ count toward lane limits. Unknown or placeholder SDK counters remain unknown.
 Finite monetary caps require either reported cost or an explicit exact-model
 quote before dispatch; quote availability and capture share the admission
 transaction. A zero monetary cap explicitly disables that cap while lane/token
-accounting remains enforced independently.
+accounting remains enforced independently. Spend summaries distinguish live
+calls, interrupted/unsettled calls, and completed calls whose provider supplied
+no monetary amount. Missing terminal cost is unavailable, not an unresolved
+operation; missing tokens cannot invalidate a known monetary total. An unknown
+total remains null, with any known subtotal named separately. Re-enabling a
+finite monetary cap still refuses dispatch against prior missing monetary
+receipts; finite token lanes retain their own missing-token refusal. Read-only accounting
+blockers derive from the same saved policy and receipt snapshot: positive money
+limits require historical monetary evidence; positive token limits require
+historical token evidence only in affected lanes. Unknown history with no
+applicable enabled limit is informational, with null totals and original receipts
+preserved. This does not settle interrupted actions or infer cancellation
+ownership; execution recovery remains with canonical action/run owners.
 
 Provider process reuse is bounded by the shared SDK runtime service. API and
 worker shutdown close that service explicitly and join provider cleanup.
@@ -126,3 +140,12 @@ The E2E-only external provider seam requires an exact private workspace marker
 and capability token, literal loopback HTTP, no redirects and no ambient proxy.
 It replaces only the external provider call; application, database, worker and
 renderer are real.
+
+### Workspace and worker identity
+
+Health reports the selected workspace and the Python source fingerprint captured
+when the process starts. The worker registers its database instance, queue,
+workflow connection, build and actions with its heartbeat. The first verified
+worker pairs the workspace with the selected history and Temporal namespace ID.
+An incompatible worker or history requires an explicit restart with the
+matching workspace and service. Saved data is preserved.

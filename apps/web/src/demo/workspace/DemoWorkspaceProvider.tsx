@@ -2,6 +2,8 @@ import {
   createContext,
   useContext,
   useMemo,
+  useEffect,
+  useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react";
@@ -36,6 +38,17 @@ export function DemoWorkspaceProvider({
   readonly workspace: DemoWorkspaceRepository | null;
   readonly children: ReactNode;
 }) {
+  // Composition clears reset caches and owned drafts before this subscriber.
+  // Remount every observer so read-only pages also bind the fresh workspace.
+  const [resetGeneration, setResetGeneration] = useState(0);
+  useEffect(
+    () =>
+      workspace?.subscribe((notification) => {
+        if (notification.kind === "reset")
+          setResetGeneration((generation) => generation + 1);
+      }),
+    [workspace],
+  );
   const runtime = useSyncExternalStore(
     workspace?.subscribeRuntime ?? subscribeEmpty,
     workspace?.getRuntimeSnapshot ?? getEmptyRuntime,
@@ -46,7 +59,7 @@ export function DemoWorkspaceProvider({
     [runtime, workspace],
   );
   return (
-    <DemoWorkspaceContext.Provider value={value}>
+    <DemoWorkspaceContext.Provider key={resetGeneration} value={value}>
       {children}
     </DemoWorkspaceContext.Provider>
   );

@@ -19,7 +19,7 @@ JobCtrl keeps four inputs separate:
 
 | Input | What it is allowed to do |
 | --- | --- |
-| Candidate Profile snapshot | Prove experience, skills, dates, employers, titles, metrics, and other candidate facts |
+| Candidate Profile snapshot | Prove experience, education, skills, Language / Proficiency, dates, employers, titles, metrics, and other candidate facts |
 | Posting and accepted employer analysis | Describe the target role, requirements, priorities, and employer wording |
 | Requirement-fit record | Connect a requirement to direct, strong, transferable, missing, or blocked profile evidence |
 | Tailoring policy and preferences | Control selection, structure, style, models, templates, and validation thresholds |
@@ -37,6 +37,45 @@ create evidence. Failed refreshes preserve the last accepted material.
 The [accepted transformation target](../user/materials-and-tailoring.md#how-jobctrl-chooses-a-resume)
 retains the full approved baseline and separates factual fit from document
 coverage. It is an implementation target pending integration verification.
+
+## Reuse Approved Expression Deliberately
+
+The current Python source keeps factual support separate from approved wording
+coverage. A person can meet a requirement while no approved variant expresses
+it; that document gap does not lower factual fit. Requirements with the same
+qualified meaning can reuse their recorded assessment and exact current wording
+relations across jobs.
+A current match supported in its own Skills, Education or Languages section
+does not create an achievement-wording gap. Reusable wording coverage concerns
+Skills/Professional Experience meanings; job-local Education/Languages demands
+never enter achievement authoring. Language proficiency comes only from authored
+Language / Proficiency records, and an explicitly offered education experience
+route does not assert a degree.
+
+Saving Profile facts, sources or wording approval starts no follow-on work.
+After saving, choose **Update affected matches** when you want those changes
+reviewed. Fit considers an achievement's relevant requirement set together and
+prepares a grouped proposal only for meaningful supported expression gaps.
+It reuses approved expression and does not rewrite already covered content for
+stylistic variation. New wording needs an actual unsupported expression need
+and factual achievement support.
+Profile's **Approve exact wording** action authorizes that precise text for
+reuse; rejected and deferred proposals remain recorded rather than being
+regenerated for each job. See the
+[wording library](../user/candidate-profile.md#approved-wording-library) for
+editing and approval, and the [update guide](../user/candidate-profile.md#update-affected-matches)
+for finite limits, costs, partial outcomes and explicit retries.
+
+The real Plate baseline editor remains part of Profile. Reviewing a wording
+proposal does not replace that editor or rewrite an accepted resume. Document
+composition, rendering and acceptance remain separate actions with their own
+recorded inputs. Source behavior and the synthetic walkthrough do not establish
+installed-release availability or a hosted deployment.
+The complete baseline retains every section, including structured Language /
+Proficiency through Plate and supported exports. Tailoring changes only approved
+achievement wording. Each eligible canonical meaning receives one internal
+composition policy point, followed by complementary depth and stable ties;
+those points are not importance attributed to the posting.
 
 ## Missing Evidence Stays Missing
 
@@ -90,6 +129,9 @@ Use the [synthetic live demo](https://demo.jobctrl.dev) to inspect requirement
 evidence and generated materials without connecting a provider. To tailor your
 own profile, follow [Getting Started](../user/getting-started.md), create and
 review a versioned Candidate Profile, then run a bounded Discover workflow.
+The updated source-built **Demo guide** → **Explore matching and wording** walkthrough
+illustrates requirement reuse and grouped proposals without model calls or
+saved workspace changes; the actual update action is unavailable there.
 Always read the rendered resume and its evidence before using it.
 
 Related reading:

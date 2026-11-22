@@ -29,12 +29,24 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "workers/automation/src"))
 
 _HELPER = r'''from pathlib import Path
-import json,sys,time
+import json,os,sys,time
 root=Path(__file__).parent
 operation,key=sys.argv[1:]
 control=json.loads((root/'control.json').read_text()) if (root/'control.json').exists() else {}
-with (root/'calls.jsonl').open('a') as log: log.write(json.dumps({'operation':operation,'key':key})+'\n')
+with (root/'calls.jsonl').open('a') as log: log.write(json.dumps({'operation':operation,'key':key,'pid':os.getpid()})+'\n')
 if control.get('delay_operation')==operation:
+    entry={'operation':operation,'key':key,'pid':os.getpid()}
+    if control.get('exec_before_delay'):
+        (root/'helper-before-exec.json').write_text(json.dumps(entry))
+        deadline=time.monotonic()+5
+        while not (root/'release-helper-exec').exists():
+            if time.monotonic()>=deadline: raise SystemExit(2)
+            time.sleep(0.003)
+        control.update(exec_before_delay=False,after_exec=True)
+        (root/'control.json').write_text(json.dumps(control))
+        os.execv(sys.executable,[sys.executable,'-I','-B',__file__,operation,key])
+    if control.get('after_exec'):
+        (root/'helper-after-exec.json').write_text(json.dumps(entry))
     if control.get('delay_once'): (root/'control.json').unlink()
     time.sleep(control.get('delay_seconds',0))
 if control.get('fail_operation')==operation and control.get('fail_key',key)==key:
@@ -75,9 +87,11 @@ raise SystemExit(0)
 def recovery_journey(owned: Path, state: Path, client, check) -> None:
     """Use independent real API processes and exact owned process handles."""
     import httpx
+    from jobctrl.app.credentials import read_process_identity
 
     processes = []
     pending = []
+    inspection_failures = []
     marker = owned / "mutations.sqlite3.inflight"
     server_code = """from pathlib import Path
 import os,uvicorn
@@ -124,39 +138,65 @@ uvicorn.run(create_http_app(application,port=port,credential_service=service),ho
     def save(base, value):
         try:
             with httpx.Client(base_url=base, headers={"Origin": base}, trust_env=False, timeout=15) as remote:
-                saved = remote.get("/v1/credentials").json()
+                saved = credential_metadata(remote)
                 remote.patch("/v1/credentials/batch", json={"expectedRevision": saved["revision"],
                              "operations": [{"operation": "set", "key": "GEMINI_API_KEY", "value": value}]})
         except httpx.HTTPError:
             pass  # Deliberate death of the exact owned API is the fault.
+        except CredentialInspectionError as error:
+            inspection_failures.append(error)
 
     def mutate_peer(value):
-        saved = client.get("/v1/credentials").json()
+        saved = credential_metadata(client)
         return client.patch("/v1/credentials/batch", json={"expectedRevision": saved["revision"],
                             "operations": [{"operation": "set", "key": "GEMINI_API_KEY", "value": value}]})
 
     try:
+        control = subprocess.Popen([sys.executable, "-I", "-B", "-c", "import sys; sys.stdin.buffer.read()"],
+                                   stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        processes.append(control)
+        owner_identity = read_process_identity(os.getpid())
+        control_identity = read_process_identity(control.pid)
+        check("stale_birth_control_ready", owner_identity.get("state") == control_identity.get("state") == "alive"
+              and owner_identity["identity"] != control_identity["identity"])
+        # A deliberately stale birth record is a fault, never signal authority.
+        marker.write_text(json.dumps({"version": 1, "id": str(uuid.uuid4()), "ownerPid": os.getpid(),
+                                      "ownerIdentity": owner_identity["identity"], "childPid": control.pid,
+                                      "childIdentity": owner_identity["identity"]}))
+        credential_metadata(client)
+        check("stale_birth_retired_without_signal", not marker.exists() and control.poll() is None)
+
         process, base = launch("recovery-live-helper")
-        (state / "control.json").write_text(json.dumps({"delay_operation": "set", "delay_seconds": 1.5, "delay_once": True}))
+        (state / "control.json").write_text(json.dumps({"delay_operation": "set", "delay_seconds": 1.5,
+                                                       "delay_once": True, "exec_before_delay": True}))
         request = threading.Thread(target=save, args=(base, "synthetic-orphan"))
         pending.append(request)
         request.start()
         deadline = time.monotonic() + 5
         observed = None
+        entered = None
         while time.monotonic() < deadline:
             try:
                 observed = json.loads(marker.read_text())
-                if observed.get("ownerPid") == process.pid and observed.get("childPid") is not None:
+                entered = json.loads((state / "helper-before-exec.json").read_text())
+                if (observed.get("ownerPid") == process.pid and observed.get("childPid") is not None
+                        and entered == {"operation": "set", "key": "GEMINI_API_KEY", "pid": observed["childPid"]}):
                     break
             except (OSError, ValueError):
                 pass
             time.sleep(0.003)
-        check("real_helper_registered", observed is not None and observed.get("childPid") is not None)
+        if inspection_failures:
+            raise inspection_failures[0]
+        check("real_helper_registered", observed is not None and observed.get("ownerPid") == process.pid
+              and observed.get("childPid") is not None)
+        check("registered_helper_entered", entered == {"operation": "set", "key": "GEMINI_API_KEY", "pid": observed["childPid"]})
         process.kill()
         process.wait(timeout=3)
         started = time.monotonic()
+        (state / "release-helper-exec").write_text("owned-helper-only")
         response = mutate_peer("synthetic-after-orphan")
         check("successor_waits_orphan_helper", response.status_code == 200 and time.monotonic() - started >= 1.2)
+        check("orphan_helper_exec_preserves_custody", json.loads((state / "helper-after-exec.json").read_text()) == entered)
         check("orphan_custody_retired", not marker.exists() and (state / "GEMINI_API_KEY.synthetic-value").read_text() == "synthetic-after-orphan")
         (state / "control.json").unlink(missing_ok=True)
 
@@ -190,6 +230,8 @@ uvicorn.run(create_http_app(application,port=port,credential_service=service),ho
                     break
                 os.kill(process.pid, signal.SIGCONT)
             request.join(timeout=5)
+            if inspection_failures:
+                raise inspection_failures[0]
             if caught:
                 break
         check("owner_death_before_registration", caught)
@@ -224,9 +266,37 @@ def file_security(path: Path):
     return buffer.raw
 
 
+class CredentialInspectionError(RuntimeError):
+    def __init__(self, response):
+        super().__init__("Credential inspection failed.")
+        self.http_status = response.status_code
+        try:
+            payload = response.json()
+            value = payload.get("error", {}) if isinstance(payload, dict) else {}
+            details = value.get("details", {}) if isinstance(value, dict) else {}
+            code = value.get("code") if isinstance(value, dict) else None
+            reason = details.get("reason") if isinstance(details, dict) else None
+        except ValueError:
+            code = reason = None
+        self.error_code = code if code == "credential_store_unavailable" else "unknown"
+        self.store_reason = reason if isinstance(reason, str) and reason in {
+            "busy", "ownership_unverified", "operational_failure", "partial_failure", "unsupported_platform"
+        } else "unknown"
+
+
+def credential_metadata(client) -> dict:
+    response = client.get("/v1/credentials")
+    if response.status_code != 200:
+        raise CredentialInspectionError(response)
+    return response.json()
+
+
 def error_metadata(error: Exception) -> dict:
-    """Report code locations and OS numbers without exception data or locals."""
+    """Report allowlisted execution metadata without response bodies or locals."""
     metadata = {"errorType": type(error).__name__}
+    if isinstance(error, CredentialInspectionError):
+        metadata.update(httpStatus=error.http_status, errorCode=error.error_code,
+                        credentialStoreReason=error.store_reason)
     for name in ("errno", "winerror"):
         value = getattr(error, name, None)
         if type(value) is int:
@@ -400,10 +470,7 @@ def main() -> int:
 
         with httpx.Client(base_url=base, headers={"Origin": base}, trust_env=False, timeout=20) as client:
             def metadata():
-                result = client.get("/v1/credentials")
-                if result.status_code != 200:
-                    raise RuntimeError("Credential inspection failed.")
-                return result.json()
+                return credential_metadata(client)
 
             def batch(operations, revision=None):
                 saved = metadata() if revision is None else {"revision": revision}

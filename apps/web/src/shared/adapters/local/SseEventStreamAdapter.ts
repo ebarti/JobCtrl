@@ -7,8 +7,12 @@ import type {
   EventStreamSubscription,
 } from "../../ports/EventStreamPort.js";
 import { parseDomainEvent } from "../../ports/lib/parseDomainEvent.js";
+import type { SharedStreamCommand } from "./SseEventStreamWorker.js";
 
 const STREAM_PATH = "/v1/events/stream";
+const WORKER_HEARTBEAT_MS = 5_000;
+const WORKER_DEADLINE_MS = 20_000;
+const WORKER_RETRY_MAX_MS = 30_000;
 
 export class SseEventStreamAdapter implements EventStreamPort {
   private readonly baseUrl: string;
@@ -47,14 +51,35 @@ class SseSubscription implements EventStreamSubscription {
   private currentStatus: EventStreamStatus = "connecting";
   private closed = false;
   private workspaceChanged = false;
+  private pagePaused = false;
   private readonly listenerCleanup: Array<() => void> = [];
   private source: EventSource | null = null;
+  private worker: SharedWorker | null = null;
+  private workerCleanup: (() => void) | null = null;
+  private workerHeartbeat: ReturnType<typeof setInterval> | undefined;
+  private workerRetry: ReturnType<typeof setTimeout> | undefined;
+  private retryDelayMs = 1_000;
+  private readonly onPageHide = () => {
+    this.pagePaused = true;
+    clearTimeout(this.workerRetry);
+    this.workerRetry = undefined;
+    this.closeWorker();
+    this.closeSource();
+    if (!this.workspaceChanged) this.setStatus("closed");
+  };
+  private readonly onPageShow = () => {
+    if (!this.pagePaused || this.closed || this.workspaceChanged) return;
+    this.pagePaused = false;
+    this.openTransport();
+  };
 
   constructor(
     private readonly url: string,
     private readonly notifyParent: (status: EventStreamStatus) => void,
   ) {
-    this.open();
+    globalThis.addEventListener("pagehide", this.onPageHide);
+    globalThis.addEventListener("pageshow", this.onPageShow);
+    this.openTransport();
   }
 
   get status(): EventStreamStatus {
@@ -85,16 +110,119 @@ class SseSubscription implements EventStreamSubscription {
       return;
     }
     this.closed = true;
+    globalThis.removeEventListener("pagehide", this.onPageHide);
+    globalThis.removeEventListener("pageshow", this.onPageShow);
+    clearTimeout(this.workerRetry);
+    this.workerRetry = undefined;
+    this.closeWorker();
+    this.closeSource();
+    this.setStatus("closed");
+  }
+
+  private closeSource(): void {
     for (const cleanup of this.listenerCleanup) {
       cleanup();
     }
     this.listenerCleanup.length = 0;
     this.source?.close();
     this.source = null;
+  }
+
+  private openTransport(): void {
+    if (typeof SharedWorker === "undefined") this.open();
+    else this.openShared();
+  }
+
+  private openShared(): void {
+    if (this.closed || this.workspaceChanged || this.pagePaused) return;
+    let worker: SharedWorker;
+    try {
+      const target = new URL(this.url, globalThis.location.href).href;
+      worker = new SharedWorker(new URL("./SseEventStreamWorker.ts", import.meta.url), {
+        type: "module", name: `jobctrl-event-stream:${target}`,
+      });
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "NotSupportedError") this.open();
+      else this.retryShared();
+      return;
+    }
+    this.worker = worker;
+    this.setStatus("connecting");
+    let lastActivity = Date.now();
+    const current = () => this.worker === worker && !this.closed && !this.workspaceChanged && !this.pagePaused;
+    const send = (command: SharedStreamCommand) => worker.port.postMessage(command);
+    const failed = () => { if (current()) this.retryShared(); };
+    const onMessage = (event: MessageEvent<unknown>) => {
+      if (!current()) return;
+      lastActivity = Date.now();
+      const message = event.data;
+      if (!message || typeof message !== "object" || !("type" in message)) {
+        this.invalidFrame(); failed(); return;
+      }
+      if (message.type === "frame" && "data" in message && typeof message.data === "string") {
+        this.handleEvent({ data: message.data } as MessageEvent); return;
+      }
+      if (message.type === "heartbeat") return;
+      if (message.type === "unsupported") {
+        // Only an unavailable platform primitive permits the per-page fallback.
+        this.closeWorker(); this.open(); return;
+      }
+      if (message.type === "expired") { failed(); return; }
+      if (message.type === "status" && "status" in message) {
+        const next = message.status;
+        if (next === "workspace_changed") {
+          this.workspaceChanged = true;
+          this.closeWorker();
+          this.setStatus("workspace_changed");
+          return;
+        }
+        if (next === "open" || next === "connecting" || next === "closed") {
+          if (next === "open") this.retryDelayMs = 1_000;
+          this.setStatus(next); return;
+        }
+      }
+      this.invalidFrame(); failed();
+    };
+    const onError = (event: Event) => { event.preventDefault(); failed(); };
+    worker.port.addEventListener("message", onMessage);
+    worker.port.addEventListener("messageerror", onError);
+    worker.addEventListener("error", onError);
+    this.workerCleanup = () => {
+      worker.port.removeEventListener("message", onMessage);
+      worker.port.removeEventListener("messageerror", onError);
+      worker.removeEventListener("error", onError);
+      try { send({ type: "unsubscribe" }); } catch { /* An already failed port owns no live subscription. */ }
+      worker.port.close();
+    };
+    worker.port.start();
+    this.workerHeartbeat = setInterval(() => {
+      if (!current()) return;
+      if (Date.now() - lastActivity > WORKER_DEADLINE_MS) { failed(); return; }
+      try { send({ type: "ping" }); } catch { failed(); }
+    }, WORKER_HEARTBEAT_MS);
+    try { send({ type: "subscribe", url: new URL(this.url, globalThis.location.href).href }); }
+    catch { failed(); }
+  }
+
+  private closeWorker(): void {
+    clearInterval(this.workerHeartbeat);
+    this.workerHeartbeat = undefined;
+    this.worker = null;
+    this.workerCleanup?.();
+    this.workerCleanup = null;
+  }
+
+  private retryShared(): void {
+    this.closeWorker();
+    if (this.closed || this.workspaceChanged || this.pagePaused || this.workerRetry !== undefined) return;
     this.setStatus("closed");
+    const delay = this.retryDelayMs;
+    this.retryDelayMs = Math.min(WORKER_RETRY_MAX_MS, delay * 2);
+    this.workerRetry = setTimeout(() => { this.workerRetry = undefined; this.openShared(); }, delay);
   }
 
   private open(): void {
+    if (this.closed || this.workspaceChanged || this.pagePaused) return;
     if (typeof EventSource === "undefined") {
       this.setStatus("closed");
       return;

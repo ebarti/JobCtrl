@@ -43,8 +43,9 @@ const catalogSchema = z.object({ ok: z.literal(true), providers: z.array(z.objec
   })).max(512),
 })).length(3) });
 
+const settingsKey = (tenant: string) => ["tenant", tenant, "settings"] as const;
 export const credentialKeys = {
-  all: (tenant: string) => ["tenant", tenant, "settings", "credentials"] as const,
+  all: (tenant: string) => [...settingsKey(tenant), "credentials"] as const,
   current: (tenant: string) => [...credentialKeys.all(tenant), "metadata"] as const,
   status: (tenant: string) => [...credentialKeys.all(tenant), "providers"] as const,
   models: (tenant: string) => [...credentialKeys.all(tenant), "models"] as const,
@@ -72,7 +73,7 @@ function revision(client: QueryClient, tenant: string): number {
 }
 
 async function refresh(client: QueryClient, tenant: string): Promise<void> {
-  await invalidateQueriesWithOptimisticOwnership(client, ["tenant", tenant, "settings"]);
+  await invalidateQueriesWithOptimisticOwnership(client, settingsKey(tenant));
 }
 
 export function useCredentialMetadata() {
@@ -135,7 +136,9 @@ export function useCredentialEditFence() {
 export function useProviderStatusQuery() {
   const tenant = useTenantId();
   const { http } = usePorts();
-  return useQuery({ queryKey: credentialKeys.status(tenant),
+  // Provider inspection may contact a provider (including in controlled
+  // synthetic workspaces). Only the explicit check button should run it.
+  return useQuery({ queryKey: credentialKeys.status(tenant), enabled: false,
     queryFn: async () => parsed(statusSchema, await http.json<unknown>("GET", "/v1/providers/status"), "Provider readiness returned an invalid response."),
     meta: { suppressGlobalErrorToast: true },
   });
@@ -163,5 +166,5 @@ export function useVerifyCodexProviderMutation() {
 
 export const credentialEvents: FeatureEventHandler = {
   eventTypes: ["CredentialsUpdated", "SettingsUpdated"],
-  handle(event, client) { void refresh(client, event.tenantId); },
+  handle(event, invalidate) { invalidate(settingsKey(event.tenantId)); },
 };

@@ -8,6 +8,23 @@ Apply is the employer-facing boundary. JobCtrl prepares a specific application,
 lets you inspect it and records a separate decision before any authorized
 external action. Final submission on an employer website remains manual.
 
+In the Original redesign source candidate, open the selected job's **Resume**
+and **Application** tasks, or **Jobs → Applications** for the cross-job review
+queue. The selected review identifies the actual job title and employer; check
+that identity before approving its outgoing packet. The actual Plate editor
+remains embedded in the job workspace. Preparing,
+editing, accepting a document and approving an outgoing application are separate
+decisions. The [redesign ledger](../plans/2026-11-11-original-app-redesign.md)
+records integration/verification; source controls do not establish an installed
+release or hosted deployment.
+
+When Preparation is mounted, the selected application uses the same resume-mode
+choice and **Prepare resume** action as the job workspace. Its exact result opens
+document review, and an unfinished Plate edit must be saved or discarded before
+new preparation. This does not approve or execute the application. Without the
+optional Preparation feature, **Resume type → Create resume** retains direct
+draft creation with explicit checks/rendering and separate acceptance/export.
+
 ::: info Python transformation in progress
 The behavior below is the accepted target and current feature contract. Its
 integrated web, worker and installed-runtime journeys are still being verified;

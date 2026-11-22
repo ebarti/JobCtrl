@@ -4,9 +4,15 @@ on:
   pull_request:
     paths:
       - ".github/workflows/release-distribution.yml"
+      - ".github/workflows/release-installed-journeys.yml"
       - ".github/workflows/release-shell-compat.yml"
       - "scripts/release-resume-pypi.sh"
   workflow_dispatch:
+    inputs:
+      installed_bundle:
+        description: Build and qualify an unsigned bundle from the selected ref
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,3 +35,85 @@ jobs:
           node-version: 22.21.1
       - name: Parse release recovery with the actual system Bash
         run: /bin/bash --noprofile --norc -n scripts/release-resume-pypi.sh
+
+  installed-bundle:
+    name: Build an unsigned macOS bundle
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.installed_bundle }}
+    runs-on: macos-15
+    timeout-minutes: 75
+    outputs:
+      candidate_artifact_id: ${{ steps.candidate.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.21.1
+      - uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: 0.11.7
+      - name: Install locked workspace dependencies
+        run: corepack pnpm install --frozen-lockfile
+      - name: Assemble the unsigned bundle and check the extracted runtime
+        run: |
+          node scripts/distribution-build.mjs real --output "$RUNNER_TEMP/unsigned" \
+            --build-id "local-qualification-${GITHUB_SHA}" \
+            --source-date-epoch "$(git show -s --format=%ct HEAD)" --installed-journeys deferred
+      - name: Retain the archive and browser test inventory
+        id: candidate
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jobctrl-installed-candidate-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/unsigned/jobctrl-*-darwin-arm64.zip
+            ${{ runner.temp }}/unsigned/build-result.json
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain failed build evidence
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: jobctrl-unsigned-build-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/unsigned/build-failure.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  installed-journeys:
+    name: Qualify the extracted unsigned bundle
+    needs: installed-bundle
+    uses: ./.github/workflows/release-installed-journeys.yml
+    with:
+      source_ref: ${{ github.sha }}
+      candidate_artifact_id: ${{ needs.installed-bundle.outputs.candidate_artifact_id }}
+
+  verify-installed-bundle:
+    name: Verify complete installed Chromium coverage
+    needs: [installed-bundle, installed-journeys]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.21.1
+      - name: Download the unsigned archive and inventory
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.installed-bundle.outputs.candidate_artifact_id }}
+          path: ${{ runner.temp }}/installed-candidate
+      - name: Download the passing shard evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: jobctrl-installed-journeys-*
+          path: ${{ runner.temp }}/installed-journeys
+      - name: Verify every planned case passed exactly once
+        run: |
+          node scripts/verify-installed-journeys.mjs \
+            "$RUNNER_TEMP/installed-candidate/build-result.json" "$RUNNER_TEMP/installed-journeys" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+        shell: bash

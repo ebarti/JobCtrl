@@ -1,17 +1,16 @@
-import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
 
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
-import type { DomainEventEnvelope } from "../../shared/ports/EventStreamPort.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
 
 const bullet = z.object({ id: z.string(), text: z.string() }).passthrough();
 const role = z.object({ id: z.string(), title: z.string(), company: z.string(), location: z.string(), date_range: z.string(), summary: z.string(), bullets: z.array(bullet) }).passthrough();
 const education = z.object({ id: z.string(), degree: z.string(), institution: z.string(), location: z.string(), date: z.string(), details: z.string() }).passthrough();
+const language = z.object({ id: z.string(), language: z.string(), proficiency: z.string() }).passthrough();
 const documentSchema = z.object({ personal: z.object({ full_name: z.string(), address: z.string(), contact_items: z.array(z.unknown()) }).passthrough(),
-  summary: z.string(), experience: z.array(role), education: z.array(education), skills: z.array(z.unknown()) }).passthrough();
+  summary: z.string(), experience: z.array(role), education: z.array(education), skills: z.array(z.unknown()), languages: z.array(language).optional() }).passthrough();
 const review = z.object({ status: z.enum(["pending", "running", "pass", "findings", "timeout", "failed", "not_applicable"]),
   findings: z.array(z.object({ detail: z.string() }).passthrough()), failure_code: z.string().nullable().optional() }).passthrough();
 const revision = z.object({
@@ -29,6 +28,7 @@ const locale = z.object({ locale_id: z.string(), source_locale: z.string(), targ
   document: documentSchema.nullable(),
 }).passthrough();
 const resume = z.object({ resume_id: z.string(), job_id: z.string(), version: z.number(), current_revision: z.string(),
+  composition_freshness: z.object({ current: z.boolean(), stale_reasons: z.array(z.string()), revision_id: z.string() }).optional(),
   accepted_revision_id: z.string().nullable(), revisions: z.array(revision),
   acceptances: z.array(z.object({ revision_id: z.string(), review_status: z.string(), review_override: z.boolean() }).passthrough()),
   locales: z.array(locale),
@@ -94,7 +94,7 @@ export function useResumeActions(jobId: string) {
   const save = (result: Resume) => {
     client.setQueryData<Resume[]>(resumeKeys.list(tenantId, jobId), (previous = []) => {
       const current = previous.find((item) => item.resume_id === result.resume_id);
-      return current && current.version > result.version ? previous : [result, ...previous.filter((item) => item.resume_id !== result.resume_id)];
+      return current && current.version > result.version ? previous : [...previous.filter((item) => item.resume_id !== result.resume_id), result];
     });
   };
   const compose = useMutation({ mutationFn: async (body: { job_id: string; profile_id: string; expected_profile_revision: number; mode: "tailored" | "baseline_copy" }) =>
@@ -110,7 +110,3 @@ export function useResumeActions(jobId: string) {
   } });
   return { compose, action, exportFile };
 }
-export const resumesInvalidation = {
-  eventTypes: ["ResumeComposed", "ResumeEdited", "ResumeReviewStarted", "ResumeReviewed", "ResumeRendered", "ResumeAccepted", "ResumeLocaleUpdated", "ResumeTemplateUpdated", "ResumeCommentUpdated", "ProfileUpdated", "ProfileWordingUpdated", "ProfileSourceUpdated", "JobSourceObserved", "JobUpdated", "RequirementsUpdated", "RequirementBindingCorrected", "RequirementMeaningRevised", "FitAssessed", "FitCorrected", "FitRequirementCorrected", "FitCoverageUpdated"] as const,
-  handle(event: DomainEventEnvelope, client: QueryClient) { void invalidateQueriesWithOptimisticOwnership(client, resumeKeys.all(event.tenantId)); },
-};

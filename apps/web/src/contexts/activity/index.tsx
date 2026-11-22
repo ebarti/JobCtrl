@@ -3,7 +3,6 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { z } from "zod";
 
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
 import type { HttpLoaderReadContext, HttpReadContext } from "../../shared/lib/loaderReadContext.js";
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
@@ -39,9 +38,9 @@ export function ensureActivityEvent(context: HttpLoaderReadContext, eventId: str
 }
 export const activityEvents: FeatureEventHandler = {
   eventTypes: ["*"],
-  handle(event, client) {
-    void invalidateQueriesWithOptimisticOwnership(client, activityKeys.pages(event.tenantId));
-    void invalidateQueriesWithOptimisticOwnership(client, activityKeys.recent(event.tenantId));
+  handle(event, invalidate) {
+    invalidate(activityKeys.pages(event.tenantId));
+    invalidate(activityKeys.recent(event.tenantId));
   },
 };
 
@@ -51,7 +50,7 @@ export function RecentActivityPanel() {
     const result = pageSchema.safeParse(await http.json<unknown>("GET", "/v1/activity", { query: { limit: 5 } }));
     if (!result.success) throw new Error("The activity response is invalid."); return result.data;
   }, meta: { suppressGlobalErrorToast: true } });
-  return <section className="card" aria-label="Recent activity"><h2>Recent activity</h2>
+  return <section className="card operational-panel operational-summary-panel" aria-label="Recent activity"><h2>Recent activity</h2>
     {query.isPending ? <p>Loading activity…</p> : null}
     {query.error ? <p role="alert">Recent activity could not be refreshed: {query.error.message}{query.data ? " Showing the last loaded events." : ""}</p> : null}
     {query.data?.events.length ? <ul>{query.data.events.map((event) => <li key={event.eventId}><Link to="/activity/$eventId" params={{ eventId: event.eventId }}>{event.type}</Link>{` · ${event.occurredAt}`}</li>)}</ul> : query.data ? <p>No activity recorded yet.</p> : null}
@@ -85,31 +84,31 @@ export function ActivityPage({ filters, onFilterChange }: { readonly filters: Ac
     meta: { suppressGlobalErrorToast: true },
   });
   const events = query.data?.pages.flatMap((page) => page.events) ?? [];
-  return <div>
+  return <div className="operational-workspace activity-workspace">
     <PageHead eyebrow="Activity" title="Activity" subtitle="Committed changes in this workspace." />
-    <details><summary>Filter activity{Object.values(filters).some(Boolean) ? " (active)" : ""}</summary>
-      <form onSubmit={(event) => { event.preventDefault(); onFilterChange(draft); }}>
+    <details className="card operational-filters"><summary>Filter activity{Object.values(filters).some(Boolean) ? " (active)" : ""}</summary>
+      <form className="operational-filter-form" onSubmit={(event) => { event.preventDefault(); onFilterChange(draft); }}>
         <label>Search events or record IDs<input value={draft.q} onChange={(event) => setDraft({ ...draft, q: event.target.value })} /></label>
-        <label htmlFor="activity-level">Level</label><Select value={draft.level} onValueChange={(value) => { if (value !== null) setDraft({ ...draft, level: value }); }}><SelectTrigger id="activity-level"><SelectValue>{({ "": "All levels", debug: "Debug", info: "Info", warn: "Warning", error: "Error" } as Record<string, string>)[draft.level] ?? draft.level}</SelectValue></SelectTrigger><SelectContent><SelectItem value="">All levels</SelectItem><SelectItem value="debug">Debug</SelectItem><SelectItem value="info">Info</SelectItem><SelectItem value="warn">Warning</SelectItem><SelectItem value="error">Error</SelectItem></SelectContent></Select>
+        <div className="operational-field"><label htmlFor="activity-level">Level</label><Select value={draft.level} onValueChange={(value) => { if (value !== null) setDraft({ ...draft, level: value }); }}><SelectTrigger id="activity-level"><SelectValue>{({ "": "All levels", debug: "Debug", info: "Info", warn: "Warning", error: "Error" } as Record<string, string>)[draft.level] ?? draft.level}</SelectValue></SelectTrigger><SelectContent><SelectItem value="">All levels</SelectItem><SelectItem value="debug">Debug</SelectItem><SelectItem value="info">Info</SelectItem><SelectItem value="warn">Warning</SelectItem><SelectItem value="error">Error</SelectItem></SelectContent></Select></div>
         <label>Stage<input value={draft.stage} onChange={(event) => setDraft({ ...draft, stage: event.target.value })} /></label>
         <label>Event type<input value={draft.eventType} onChange={(event) => setDraft({ ...draft, eventType: event.target.value })} /></label>
         <label>Feature<input value={draft.feature} onChange={(event) => setDraft({ ...draft, feature: event.target.value })} /></label>
         <label>Record ID<input value={draft.aggregateId} onChange={(event) => setDraft({ ...draft, aggregateId: event.target.value })} /></label>
         <label>Since (ISO timestamp with timezone)<input value={draft.since} onChange={(event) => setDraft({ ...draft, since: event.target.value })} /></label>
         <label>Until (ISO timestamp with timezone)<input value={draft.until} onChange={(event) => setDraft({ ...draft, until: event.target.value })} /></label>
-        <Button type="submit">Apply filters</Button>
+        <div className="operational-filter-actions"><Button type="submit">Apply filters</Button>
         <Button type="button" variant="outline" onClick={() => {
           const empty = { q: "", level: "", stage: "", eventType: "", feature: "", aggregateId: "", since: "", until: "" };
           setDraft(empty); onFilterChange(empty);
-        }}>Clear filters</Button>
+        }}>Clear filters</Button></div>
       </form>
     </details>
     {query.error ? <p role="alert">Activity could not be refreshed: {query.error.message}{query.data ? " Previously loaded events remain visible." : ""}</p> : null}
     {query.isPending ? <p>Loading activity…</p> : null}
     {query.data && events.length === 0 ? <p>No activity recorded yet.</p> : null}
-    {events.length ? <ul>{events.map((event) => <li key={event.eventId}>
+    {events.length ? <ul className="card operational-record-list">{events.map((event) => <li key={event.eventId}>
       <Link to="/activity/$eventId" params={{ eventId: event.eventId }}>{event.type}</Link>
-      {` · ${event.feature} · ${event.level}${event.stage ? ` · ${event.stage}` : ""} · ${event.occurredAt}`}
+      <span>{event.feature} · {event.level}{event.stage ? ` · ${event.stage}` : ""} · {event.occurredAt}</span>
     </li>)}</ul> : null}
     {query.hasNextPage ? <Button type="button" variant="outline" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? "Loading…" : "Load older activity"}</Button> : null}
   </div>;
@@ -119,11 +118,11 @@ export function ActivityEventPage({ eventId }: { readonly eventId: string }) {
   const tenantId = useTenantId();
   const { http } = usePorts();
   const query = useQuery({ ...activityEventQuery({ tenantId, ports: { http } }, eventId), meta: { suppressGlobalErrorToast: true } });
-  return <div>
+  return <div className="operational-workspace activity-detail-workspace">
     <PageHead eyebrow="Activity" title="Activity detail" />
     <Link to="/debug" search={{ page: 1, pageSize: 50, sort: "occurred_at", dir: "desc", q: "", level: "", stage: "", eventType: "", feature: "", aggregateId: "", since: "", until: "" }}>Back to activity</Link>
     {query.isPending ? <p>Loading event…</p> : null}
     {query.error ? <p role="alert">{query.error.message}</p> : null}
-    {query.data ? <section className="card"><h2>{query.data.type}</h2><p>{query.data.feature} · {query.data.level}{query.data.stage ? ` · ${query.data.stage}` : ""} · {query.data.occurredAt}</p><p>Event {query.data.eventId}{query.data.aggregateId ? ` · Record ${query.data.aggregateId}` : ""}</p><details><summary>Event details</summary><pre>{JSON.stringify(query.data.payload, null, 2)}</pre></details></section> : null}
+    {query.data ? <section className="card operational-panel"><h2>{query.data.type}</h2><p>{query.data.feature} · {query.data.level}{query.data.stage ? ` · ${query.data.stage}` : ""} · {query.data.occurredAt}</p><p>Event {query.data.eventId}{query.data.aggregateId ? ` · Record ${query.data.aggregateId}` : ""}</p><details><summary>Event details</summary><pre>{JSON.stringify(query.data.payload, null, 2)}</pre></details></section> : null}
   </div>;
 }

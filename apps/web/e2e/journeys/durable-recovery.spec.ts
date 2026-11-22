@@ -10,6 +10,7 @@ import {
   type ExternalCall,
 } from "../harness/fixtures.js";
 import { acceptBaseline, createBaseline, createPosting } from "./core-data.js";
+import { catalogMatching, typedExtraction } from "./requirements-data.js";
 
 type Source = { source_id: string; text: string };
 type Requirements = {
@@ -21,24 +22,7 @@ const citations = (values: Source[]) =>
   values.map((source) => ({ source_id: source.source_id, quote: source.text }));
 function extracted(call: ExternalCall) {
   const source = sources(call)[0]!;
-  return {
-    status: "complete",
-    requirements: [
-      {
-        local_id: "recovery",
-        text: source.text,
-        definition: "Implement durable workflow recovery",
-        qualifiers: [],
-        scope: "resume",
-        tier: "must_have",
-        weight: 1,
-        support: "supported",
-        spans: [{ start: 0, end: source.text.length, quote: source.text }],
-      },
-    ],
-    reason: "Explicit supported requirement from this synthetic posting.",
-    citations: citations([source]),
-  };
+  return typedExtraction(call, { requirements: [{ localId: "recovery", text: source.text, definition: "Implement durable workflow recovery" }] });
 }
 
 test("cancellation survives an actual worker kill and its replacement resumes durable work without losing accepted artifacts", async ({
@@ -52,12 +36,8 @@ test("cancellation survives an actual worker kill and its replacement resumes du
   });
   const extraction = await modelCall(app, "requirements.extract");
   extraction.reply(extracted(extraction));
-  const novelty = await modelCall(app, "requirements.novelty");
-  novelty.reply({
-    verdict: "new",
-    reason: "The complete sweep is explicitly distinct.",
-    citations: citations(sources(novelty)),
-  });
+  const matching = await modelCall(app, "requirements.match_catalog");
+  matching.reply(catalogMatching(matching, { recovery: { verdict: "new" } }));
   const initialResponse = await first;
   expect(initialResponse.status(), await initialResponse.text()).toBe(200);
   const accepted: Requirements = await initialResponse.json();
@@ -134,12 +114,13 @@ test("cancellation survives an actual worker kill and its replacement resumes du
   expect(deniedResult["status"]).toBe("failed");
   expect(deniedResult["errorCode"]).toBe("spend_accounting_unresolved");
   expect(app.external.calls).toHaveLength(callsBeforeRefusal);
-  const health = await json<{ llmSpend: { accountingComplete: boolean } }>(
+  const health = await json<{ llmSpend: { accountingComplete: boolean; costStatus: string; unresolvedCalls: number; costUsd: number | null } }>(
     api,
     "get",
     "/v1/health",
   );
   expect(health.llmSpend.accountingComplete).toBe(false);
+  expect(health.llmSpend).toMatchObject({ costStatus: "unresolved", unresolvedCalls: 1, costUsd: null, accountingBlocked: true });
 
   // Explicitly select the public unlimited-money policy to exercise fresh
   // work on the replacement. Unknown prior accounting remains visible; lane
@@ -159,20 +140,15 @@ test("cancellation survives an actual worker kill and its replacement resumes du
   expect(resumed.runId).not.toBe(denied.runId);
   const refreshed = await modelCall(app, "requirements.extract");
   refreshed.reply(extracted(refreshed));
-  const comparison = await modelCall(app, "requirements.compare");
-  const context = comparison.body["context"] as {
-    candidates: { requirement_id: string; revision: number }[];
-  };
-  comparison.reply({
-    decisions: context.candidates.map((candidate) => ({
-      requirement_id: candidate.requirement_id,
-      requirement_revision: candidate.revision,
-      relation: "equivalent",
-      reason:
-        "The unchanged qualified requirement retains its canonical identity.",
-      citations: citations(sources(comparison)),
-    })),
-  });
+  const comparison = await modelCall(app, "requirements.match_catalog");
+  comparison.reply(
+    catalogMatching(comparison, {
+      recovery: {
+        verdict: "equivalent",
+        requirementId: accepted.requirements[0]!.requirement_id,
+      },
+    }),
+  );
   const completedRun = await completed(api, resumed.runId);
   expect(completedRun["runId"]).toBe(resumed.runId);
   const final = await json<Requirements>(

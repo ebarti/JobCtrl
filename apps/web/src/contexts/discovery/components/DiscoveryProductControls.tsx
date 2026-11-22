@@ -1,3 +1,4 @@
+import { boardLabel } from "../boards.js";
 import type {
   DiscoveryFeedbackKind,
   ManualCaptureImportRequest,
@@ -5,7 +6,6 @@ import type {
   QuarantineListResponse,
   SourceRegistryEntrySummary,
 } from "@jobctrl/contracts";
-import { SourceUpsertRequestSchema } from "@jobctrl/contracts";
 import type { SavedTableView } from "@jobctrl/contracts";
 import {
   IconAlertTriangle,
@@ -13,7 +13,6 @@ import {
   IconCheck,
   IconExternalLink,
   IconEye,
-  IconPlus,
   IconThumbUp,
   IconUpload,
   IconX,
@@ -27,7 +26,6 @@ import {
   useDiscoverySourcePreviewQuery,
   useManualCaptureQueueQuery,
   useRoleMatchFeedbackQuery,
-  useSourceLocatorCandidatesQuery,
   useSourceRegistryQuery,
 } from "../hooks/useDiscoveryProductControlsQuery.js";
 import { Button } from "../../../shared/ui/button.js";
@@ -83,16 +81,11 @@ import {
   useManualCaptureDismissMutation,
   useManualCaptureImportMutation,
   usePatchDiscoverySourceStateMutation,
-  usePromoteSourceLocatorCandidateMutation,
-  useRejectSourceLocatorCandidateMutation,
-  useResetSourceLocatorCandidateMutation,
   useRoleMatchFeedbackDecisionMutation,
-  useUpsertDiscoverySourceMutation,
 } from "../hooks/useDiscoveryProductControlMutations.js";
 
 type QuarantineEntry = QuarantineListResponse["entries"][number];
 type ManualCaptureItem = ManualCaptureListResponse["items"][number];
-type LocatorCandidate = import("../contracts.js").LocatorCandidate;
 type RoleMatchSuggestion = import("../contracts.js").RoleFeedback["suggestions"][number];
 type PreviewLead = import("../contracts.js").DiscoveryPreview["leads"][number];
 function sourceRevision(source: SourceRegistryEntrySummary): number | null {
@@ -112,17 +105,6 @@ export interface DiscoverySourceTableControls {
   readonly onPresentationChange: (presentation: SavedTablePresentation) => void;
   readonly onApplyView: (view: SavedTableView) => void;
 }
-
-const SOURCE_KINDS = [
-  "ats_api",
-  "employer_careers_page",
-  "official_api",
-  "licensed_feed",
-  "niche_board",
-  "broad_board",
-  "smart_extract",
-  "user_mediated_capture",
-] as const;
 
 const CAPTURE_MODES: Array<{
   value: ManualCaptureImportRequest["captureMode"];
@@ -160,59 +142,8 @@ function label(value: string): string {
   return value.replaceAll("_", " ");
 }
 
-function titleCaseSourceName(value: string): string {
-  return value
-    .split(/[\s._-]+/)
-    .filter(Boolean)
-    .map((part) =>
-      part.length <= 3 && part === part.toUpperCase()
-        ? part
-        : `${part.charAt(0).toUpperCase()}${part.slice(1)}`,
-    )
-    .join(" ");
-}
-
 function sourceCompanyName(source: SourceRegistryEntrySummary): string {
-  const rawName = source.displayName.trim();
-  const rawSourceId = source.sourceId.split(":").at(1) ?? source.sourceId;
-  if (rawName && !rawName.includes(".") && !rawName.includes("-"))
-    return rawName;
-  const candidate = rawName || rawSourceId;
-  const withoutKnownHost = candidate
-    .replace(/\.wd\d+\.myworkdayjobs\.com$/i, "")
-    .replace(/\.myworkdayjobs\.com$/i, "")
-    .replace(/\.greenhouse\.io$/i, "")
-    .replace(/\.lever\.co$/i, "")
-    .replace(/\.ashbyhq\.com$/i, "")
-    .replace(/-wd\d+-myworkdayjobs-com$/i, "")
-    .replace(/-myworkdayjobs-com$/i, "")
-    .replace(/-greenhouse-io$/i, "")
-    .replace(/-lever-co$/i, "")
-    .replace(/-ashbyhq-com$/i, "");
-
-  return titleCaseSourceName(withoutKnownHost || rawName || rawSourceId);
-}
-
-function sourceTypeLabel(source: SourceRegistryEntrySummary): string {
-  const sourceId = source.sourceId.toLowerCase();
-  const policyId = source.policyId.toLowerCase();
-  if (sourceId.startsWith("workday:") || policyId.includes("workday"))
-    return "Workday ATS";
-  if (sourceId.startsWith("greenhouse:") || policyId.includes("greenhouse"))
-    return "Greenhouse ATS";
-  if (sourceId.startsWith("lever:") || policyId.includes("lever"))
-    return "Lever ATS";
-  if (sourceId.startsWith("ashby:") || policyId.includes("ashby"))
-    return "Ashby ATS";
-  if (sourceId.startsWith("jobspy:")) return "Broad board";
-  if (sourceId.startsWith("smart_extract:")) return "Smart extract";
-  if (source.kind === "ats_api") return "ATS API";
-  if (source.kind === "employer_careers_page") return "Employer careers page";
-  if (source.kind === "official_api") return "Official API";
-  if (source.kind === "licensed_feed") return "Licensed feed";
-  if (source.kind === "niche_board") return "Niche board";
-  if (source.kind === "broad_board") return "Broad board";
-  return "Manual capture";
+  return boardLabel(source.sourceId.slice("jobstreaming:".length));
 }
 
 function manualActionLabel(value: ManualCaptureItem["reason"]): string {
@@ -372,16 +303,6 @@ function SourceMetricText({
   );
 }
 
-function candidateEvidence(candidate: LocatorCandidate): string {
-  return [
-    candidate.employerDomainMatched ? "Domain matched" : "Domain not verified",
-    candidate.manualActionReason
-      ? `Manual review: ${manualActionLabel(candidate.manualActionReason)}`
-      : "Awaiting your review",
-    `discovered ${new Date(candidate.discoveredAt).toLocaleDateString()}`,
-  ].join(" · ");
-}
-
 export function DiscoveryProductControls({
   layout = "grid",
   sourceTable,
@@ -390,12 +311,10 @@ export function DiscoveryProductControls({
   readonly sourceTable?: DiscoverySourceTableControls;
 } = {}) {
   const sources = useSourceRegistryQuery();
-  const locatorCandidates = useSourceLocatorCandidatesQuery();
   const quarantine = useDiscoveryQuarantineQuery();
   const manualCapture = useManualCaptureQueueQuery();
   const roleMatchFeedback = useRoleMatchFeedbackQuery();
   const sourceCount = sources.data ? String(sources.data.sources.length) : sources.isPending ? "loading" : "unavailable";
-  const candidateCount = locatorCandidates.data ? String(locatorCandidates.data.candidates.length) : locatorCandidates.isPending ? "loading" : "unavailable";
   const pendingRoleSuggestionCount =
     roleMatchFeedback.data?.suggestions.filter(
       (suggestion) => suggestion.status === "pending",
@@ -404,14 +323,12 @@ export function DiscoveryProductControls({
     sources.error ??
     quarantine.error ??
     manualCapture.error ??
-    locatorCandidates.error ??
     roleMatchFeedback.error;
   const message = error instanceof Error ? error.message : null;
   const reviewCount = quarantine.data && manualCapture.data && roleMatchFeedback.data
     ? String(quarantine.data.entries.length + manualCapture.data.items.length + pendingRoleSuggestionCount)
     : quarantine.isPending || manualCapture.isPending || roleMatchFeedback.isPending ? "loading" : "unavailable";
   const sourcePanel = sources.data || sources.isPending ? <SourceRegistryPanel defaultStateFilter={layout === "tabs" ? "active" : "all"} sources={sources.data?.sources ?? []} loading={sources.isLoading} {...(sourceTable ? { sourceTable } : {})} /> : <p role="alert">Source registry unavailable.</p>;
-  const locatorPanel = locatorCandidates.data || locatorCandidates.isPending ? <SourceLocatorPanel candidates={locatorCandidates.data?.candidates ?? []} loading={locatorCandidates.isLoading} /> : <p role="alert">Source candidates unavailable.</p>;
   const quarantinePanel = quarantine.data || quarantine.isPending ? <QuarantinePanel entries={quarantine.data?.entries ?? []} loading={quarantine.isLoading} /> : <p role="alert">Quarantine unavailable.</p>;
   const feedbackPanel = roleMatchFeedback.data || roleMatchFeedback.isPending ? <RoleMatchFeedbackPanel suggestions={roleMatchFeedback.data?.suggestions ?? []} loading={roleMatchFeedback.isLoading} /> : <p role="alert">Role matching feedback unavailable.</p>;
   const capturePanel = manualCapture.data || manualCapture.isPending ? <ManualCapturePanel items={manualCapture.data?.items ?? []} loading={manualCapture.isLoading} /> : <p role="alert">Manual capture queue unavailable.</p>;
@@ -420,23 +337,19 @@ export function DiscoveryProductControls({
     <section className="card full discovery-controls">
       <CardHeader
         title="Discovery controls"
-        meta={`${sourceCount} sources · ${candidateCount} candidates · ${reviewCount} review`}
+        meta={`${sourceCount} JobStreaming boards · ${reviewCount} review`}
       />
       {message ? <div className="banner inline" role="alert">{message} Previously loaded results remain visible where available.</div> : null}
       {layout === "tabs" ? (
         <Tabs defaultValue="sources" className="discovery-tabs">
           <TabsList aria-label="Discovery tools" className="discovery-tab-list">
-            <TabsTrigger value="sources">Source registry</TabsTrigger>
-            <TabsTrigger value="locator">Source locator</TabsTrigger>
+            <TabsTrigger value="sources">JobStreaming boards</TabsTrigger>
             <TabsTrigger value="quarantine">Quarantine review</TabsTrigger>
             <TabsTrigger value="role-match">Role matching</TabsTrigger>
             <TabsTrigger value="manual">Manual capture</TabsTrigger>
           </TabsList>
           <TabsContent value="sources" className="discovery-tab-panel">
             {sourcePanel}
-          </TabsContent>
-          <TabsContent value="locator" className="discovery-tab-panel">
-            {locatorPanel}
           </TabsContent>
           <TabsContent value="quarantine" className="discovery-tab-panel">
             {quarantinePanel}
@@ -451,7 +364,6 @@ export function DiscoveryProductControls({
       ) : (
         <div className="discovery-control-grid">
           {sourcePanel}
-          {locatorPanel}
           {quarantinePanel}
           {feedbackPanel}
           {capturePanel}
@@ -474,17 +386,9 @@ function SourceRegistryPanel({
 }) {
   const { featureFlags } = usePorts();
   const isDemo = featureFlags.get("demoMode", false);
-  const upsert = useUpsertDiscoverySourceMutation();
   const patchState = usePatchDiscoverySourceStateMutation();
   const [previewSourceId, setPreviewSourceId] = useState<string | null>(null);
   const preview = useDiscoverySourcePreviewQuery(previewSourceId);
-  const [sourceId, setSourceId] = useState("");
-  const [sourceFormError, setSourceFormError] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [kind, setKind] = useState<(typeof SOURCE_KINDS)[number]>(
-    "employer_careers_page",
-  );
-  const [seedUrl, setSeedUrl] = useState("");
   const stats = sourceRegistryStats(sources);
   const initialFilters = useMemo<DataGridFilterState>(
     () =>
@@ -535,11 +439,11 @@ function SourceRegistryPanel({
         label: "Type",
         render: (source) => (
           <span className="source-table-category" data-typography="label">
-            {sourceTypeLabel(source)}
+            {"JobStreaming board"}
           </span>
         ),
-        getSortValue: (source) => sourceTypeLabel(source).toLowerCase(),
-        getFilterValue: sourceTypeLabel,
+        getSortValue: (source) => "JobStreaming board".toLowerCase(),
+        getFilterValue: () => "JobStreaming board",
       },
       {
         id: "state",
@@ -823,36 +727,15 @@ function SourceRegistryPanel({
     });
   };
 
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const parsed = SourceUpsertRequestSchema.safeParse({
-      sourceId: sourceId.trim(),
-      displayName: displayName.trim(),
-      kind,
-      priority: "standard",
-      state: "experimental",
-      ...(seedUrl.trim() ? { seedUrl: seedUrl.trim() } : {}),
-    });
-    if (!parsed.success) { setSourceFormError(parsed.error.issues[0]?.message ?? "Review the source fields."); return; }
-    setSourceFormError("");
-    const original = { sourceId, displayName, seedUrl };
-    upsert.mutate(parsed.data, { onSuccess: () => {
-      setSourceId((current) => current === original.sourceId ? "" : current);
-      setDisplayName((current) => current === original.displayName ? "" : current);
-      setSeedUrl((current) => current === original.seedUrl ? "" : current);
-    } });
-  };
-
   return (
     <div className="discovery-control-panel">
       <div className="discovery-panel-head">
-        <h3 data-typography="component-title">Source registry</h3>
+        <h3 data-typography="component-title">JobStreaming boards</h3>
         <span className="meta" data-typography="metadata">
           {sources.length} total
         </span>
       </div>
-      {upsert.error || patchState.error ? <p role="alert">The source change could not be confirmed. Review the current registry before retrying.</p> : null}
-      {sourceFormError ? <p role="alert">{sourceFormError}</p> : null}
+      {patchState.error ? <p role="alert">The source change could not be confirmed. Review the current registry before retrying.</p> : null}
       <div
         className="discovery-source-summary"
         aria-label="Source registry summary"
@@ -881,7 +764,7 @@ function SourceRegistryPanel({
         getRowId={(source) => source.sourceId}
         loading={loading}
         loadingMessage="Loading sources."
-        emptyMessage="No sources registered."
+        emptyMessage="No JobStreaming boards match this view."
         initialSort={{ columnId: "displayName", direction: "asc" }}
         mobileLayout="cards"
         initialFilters={initialFilters}
@@ -913,76 +796,6 @@ function SourceRegistryPanel({
         paginate
         initialPageSize={25}
       />
-      <form className="source-upsert-form" onSubmit={submit}>
-        <Field className="field">
-          <FieldLabel htmlFor="source-id">Source ID</FieldLabel>
-          <Input
-            id="source-id"
-            value={sourceId}
-            onChange={(event) => setSourceId(event.target.value)}
-            required
-          />
-        </Field>
-        <Field className="field">
-          <FieldLabel htmlFor="source-name">Name</FieldLabel>
-          <Input
-            id="source-name"
-            value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
-            required
-          />
-        </Field>
-        <Field className="field">
-          <FieldLabel htmlFor="source-kind">Kind</FieldLabel>
-          <Select
-            items={SOURCE_KINDS.map((value) => ({
-              label: label(value),
-              value,
-            }))}
-            value={kind}
-            onValueChange={(value) => {
-              if (value !== null) {
-                setKind(value as (typeof SOURCE_KINDS)[number]);
-              }
-            }}
-          >
-            <SelectTrigger
-              id="source-kind"
-              aria-label="Kind"
-              className="w-full"
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectGroup>
-                {SOURCE_KINDS.map((value) => (
-                  <SelectItem key={value} value={value}>
-                    {label(value)}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
-        </Field>
-        <Field className="field wide">
-          <FieldLabel htmlFor="source-seed-url">Seed URL</FieldLabel>
-          <Input
-            id="source-seed-url"
-            type="url"
-            value={seedUrl}
-            onChange={(event) => setSeedUrl(event.target.value)}
-            placeholder="https://example.com/careers"
-          />
-        </Field>
-        <Button
-          type="submit"
-          size="sm"
-          disabled={upsert.isPending || !sourceId.trim() || !displayName.trim()}
-        >
-          <IconPlus size={14} aria-hidden="true" />
-          Add source
-        </Button>
-      </form>
       {previewSourceId ? (
         <SourcePreview
           sourceId={previewSourceId}
@@ -1035,134 +848,6 @@ function SourcePreview({
               loading
                 ? "Loading source preview."
                 : "No observed leads for this source."
-            }
-          />
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function SourceLocatorPanel({
-  candidates,
-  loading,
-}: {
-  candidates: LocatorCandidate[];
-  loading: boolean;
-}) {
-  const promote = usePromoteSourceLocatorCandidateMutation();
-  const reject = useRejectSourceLocatorCandidateMutation();
-  const reset = useResetSourceLocatorCandidateMutation();
-
-  return (
-    <div className="discovery-control-panel">
-      <div className="discovery-panel-head">
-        <h3 data-typography="component-title">Source locator</h3>
-        <span className="meta" data-typography="metadata">
-          {candidates.length} candidates
-        </span>
-      </div>
-      {promote.error || reject.error || reset.error ? <p role="alert">Source decision could not be saved. Refresh and review the current candidate before retrying.</p> : null}
-      <div className="rows compact">
-        {candidates.map((candidate) => (
-          <div className="discovery-review-row" key={candidate.candidateId}>
-            <IconExternalLink size={16} aria-hidden="true" />
-            <span className="title-stack">
-              <b data-typography="strong-body">{candidate.candidateUrl}</b>
-              <span>
-                {label(candidate.sourceKind)} · {candidate.proposal ? "Saved posting history · Review required" : `confidence ${pct(candidate.confidence)}`} ·{" "}
-                {candidate.detectedAtsKind
-                  ? `${candidate.detectedAtsKind} detected`
-                  : "ATS unknown"}
-              </span>
-              <span>{candidateEvidence(candidate)}</span>
-              <span>Decision: {candidate.decision ?? "unknown"}{!Number.isInteger(candidate.revision) ? " · revision unavailable" : ""}</span>
-              {candidate.proposal ? (
-                <>
-                  <span>Board: {candidate.proposal.sourceId}{candidate.proposal.boardToken ? ` · ${candidate.proposal.boardToken}` : ""} · Completeness unknown</span>
-                  <span>{candidate.proposal.overlaps.length
-                    ? `Existing sources: ${candidate.proposal.overlaps.map((entry) => `${entry.sourceId} (${entry.state})`).join(", ")}`
-                    : "No existing source overlap"}</span>
-                  {candidate.proposal.promotionBlockedReason ? <span>{candidate.proposal.promotionBlockedReason}</span> : null}
-                  <span>{candidate.proposal.evidence.length} saved origin records · Up to 3 samples shown</span>
-                  {candidate.proposal.evidence.slice(0, 3).map((evidence, index) => (
-                    <span key={`${evidence.originJobId}:${evidence.urlKind}:${index}`}>
-                      {evidence.sample.title} · {evidence.sample.company} · {evidence.sample.descriptionExcerpt}
-                      <br />Origin posting: {evidence.originPostingUrl} · Job: {evidence.originJobId} · {evidence.urlKind}: {evidence.inputUrl}
-                      <br />Runs: {evidence.observations.map((observation) => observation.runId || "No recorded run").join(", ") || "No recorded run"}
-                      {` · Extraction: ${evidence.extraction.tier ?? "unknown"} · Snapshot: ${evidence.extraction.snapshotVersion ?? "unknown"}`}
-                      {evidence.extraction.snapshotEvidence?.length ? <><br />Saved extraction evidence: {evidence.extraction.snapshotEvidence.join(" · ")}</> : null}
-                    </span>
-                  ))}
-                </>
-              ) : null}
-            </span>
-            <div className="row-actions">
-              <Button
-                size="icon"
-                variant="ghost"
-                nativeButton={false}
-                render={
-                  <a
-                    aria-label={`Open ${candidate.candidateUrl}`}
-                    href={candidate.candidateUrl}
-                    role="link"
-                    target="_blank"
-                    rel="noreferrer"
-                  />
-                }
-                title="Open candidate"
-              >
-                <IconExternalLink size={14} aria-hidden="true" />
-              </Button>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                aria-label={`Promote ${candidate.candidateUrl}`}
-                title="Promote candidate"
-                disabled={promote.isPending || reject.isPending || reset.isPending || !Number.isInteger(candidate.revision) || !candidate.decision || candidate.decision === "reject" || candidate.decision === "promote" || Boolean(candidate.proposal?.promotionBlockedReason) || candidate.proposal?.overlaps.some((entry) => entry.state !== "active")}
-                onClick={() =>
-                  promote.mutate({
-                    candidateId: candidate.candidateId,
-                    body: {
-                      reason:
-                        "User promoted source locator candidate from product controls.",
-                      expectedRevision: candidate.revision!,
-                    },
-                  })
-                }
-              >
-                <IconCheck size={14} aria-hidden="true" />
-              </Button>
-              <Button
-                type="button"
-                size="icon"
-                variant="ghost"
-                aria-label={`Reject ${candidate.candidateUrl}`}
-                title="Reject candidate"
-                disabled={promote.isPending || reject.isPending || reset.isPending || !Number.isInteger(candidate.revision) || !candidate.decision || candidate.decision === "reject" || candidate.decision === "promote"}
-                onClick={() =>
-                  reject.mutate({
-                    candidateId: candidate.candidateId,
-                    body: {
-                      reason:
-                        "User rejected source locator candidate from product controls.",
-                      expectedRevision: candidate.revision!,
-                    },
-                  })
-                }
-              >
-                <IconX size={14} aria-hidden="true" />
-              </Button>
-              {candidate.decision === "reject" ? <Button type="button" variant="outline" size="sm" disabled={reset.isPending || promote.isPending || reject.isPending || !Number.isInteger(candidate.revision)} onClick={() => reset.mutate({ candidateId: candidate.candidateId, expectedRevision: candidate.revision! })}>Reopen rejected candidate</Button> : null}
-            </div>
-          </div>
-        ))}
-        {!candidates.length ? (
-          <Empty
-            title={
-              loading ? "Loading locator candidates." : "No source candidates."
             }
           />
         ) : null}

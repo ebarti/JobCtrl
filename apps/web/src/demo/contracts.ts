@@ -143,7 +143,6 @@ export interface DemoReadModel {
     readonly sources: ApiClientResponse<"discoverySources">;
     readonly sourcePreviews: Readonly<Record<string, ApiClientResponse<"discoverySourcePreview">>>;
     readonly compensationSources: ApiClientResponse<"compensationSources">;
-    readonly locatorCandidates: ApiClientResponse<"discoveryLocatorCandidates">;
     readonly quarantine: ApiClientResponse<"discoveryQuarantine">;
     readonly manualCapture: ApiClientResponse<"manualCaptureQueue">;
     readonly roleMatchFeedback: ApiClientResponse<"roleMatchFeedbackSuggestions">;
@@ -194,7 +193,7 @@ export interface DemoReadModel {
 
 export interface DemoSeedValue {
   readonly schemaVersion: 1;
-  readonly seedVersion: "2026-11-06.1";
+  readonly seedVersion: "2026-11-13.1";
   readonly title: string;
   readonly artifacts: DemoArtifacts;
   readonly readModel: DemoReadModel;

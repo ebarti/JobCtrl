@@ -110,6 +110,12 @@ export const createOutreachDraftRejected = event(
 );
 export const createProfileImported = event("ProfileImported", "profile");
 export const createProfileUpdated = event("ProfileUpdated", "profile");
+export const createResumeComposed = event("ResumeComposed", "resumes");
+export const createResumeRendered = event("ResumeRendered", "resumes");
+export const createPreparationUpdated = event(
+  "PreparationUpdated",
+  "preparation",
+);
 export const createResumeTemplateDefaultChanged = event(
   "ResumeTemplateDefaultChanged",
   "resumes",
@@ -122,14 +128,6 @@ export const createScoreCorrected = event("ScoreCorrected", "fit");
 export const createScoreRescoreRequested = event(
   "ScoreRescoreRequested",
   "fit",
-);
-export const createSourceLocationCandidatePromoted = event(
-  "SourceLocationCandidatePromoted",
-  "discovery",
-);
-export const createSourceRegistryEntryCreated = event(
-  "SourceRegistryEntryCreated",
-  "discovery",
 );
 export const createSourceRegistryEntryUpdated = event(
   "SourceRegistryEntryUpdated",
@@ -171,12 +169,13 @@ export const DEMO_EVENT_TYPES = [
   "OutreachDraftRejected",
   "ProfileImported",
   "ProfileUpdated",
+  "ResumeComposed",
+  "ResumeRendered",
+  "PreparationUpdated",
   "ResumeTemplateDefaultChanged",
   "ResumeTemplateVersionSaved",
   "ScoreCorrected",
   "ScoreRescoreRequested",
-  "SourceLocationCandidatePromoted",
-  "SourceRegistryEntryCreated",
   "SourceRegistryEntryUpdated",
   "SourceStateChanged",
   "StageCanceled",
@@ -193,13 +192,11 @@ const publicTypes: Readonly<Record<string, string>> = {
   JobDiscovered: "JobCaptured",
   ScoreCorrected: "FitCorrected",
   ScoreRescoreRequested: "FitUpdated",
-  SourceRegistryEntryCreated: "DiscoverySourceUpdated",
   SourceRegistryEntryUpdated: "DiscoverySourceUpdated",
   SourceStateChanged: "DiscoverySourceUpdated",
   ResumeTemplateDefaultChanged: "ResumeTemplateUpdated",
   ResumeTemplateVersionSaved: "ResumeTemplateUpdated",
   JobResumeTemplateAssigned: "ResumeTemplateUpdated",
-  SourceLocationCandidatePromoted: "SourceProposalUpdated",
   DiscoveryFeedbackRecorded: "DiscoveryFeedbackUpdated",
   ContactResearchTaskCompleted: "ContactResearchTaskUpdated",
   WorkflowCanceled: "ActionCancellationRequested",

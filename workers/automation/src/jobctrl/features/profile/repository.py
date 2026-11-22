@@ -9,7 +9,7 @@ import json
 from uuid import uuid4
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
-from .models import ProfileSnapshot, canonical, fingerprint, profile_identity
+from .models import ProfileSnapshot, authoring_request_summary, canonical, fingerprint, profile_identity
 from .shape import DEFAULT_STYLE, DEFAULT_TEMPLATE, empty_profile
 
 
@@ -57,6 +57,46 @@ class ProfileRepository:
                       canonical(provenance or {"kind": "user_authored"}), now()))
         return self.variant(self.variant_row(conn, profile_id, variant_id))
 
+    def update_pending_variant(self, conn, *, profile_id, row, text):
+        # Retain the exact earlier draft using the existing transferable decision
+        # ledger. Accepted variants are immutable and never enter this path.
+        self.decision(conn, profile_id=profile_id, kind="wording_revision", subject_id=row["variant_id"],
+                      revision=row["revision"], decision="retain", exact=self.variant(row))
+        previous_provenance = json.loads(row["provenance_json"])
+        provenance = {"kind": "user_edited", "previous_revision": row["revision"],
+                      "original_provenance": previous_provenance.get("original_provenance", previous_provenance),
+                      **{key: previous_provenance[key] for key in (
+                          "replaces_variant_id", "replaces_variant_revision", "replaces_variant_ids", "intended_requirement_ids", "authoring_action",
+                      ) if key in previous_provenance}}
+        conn.execute("UPDATE profile_variants SET text=?,revision=revision+1,provenance_json=? WHERE profile_id=? AND variant_id=?",
+                     (text, canonical(provenance), profile_id, row["variant_id"]))
+
+    def wording_history(self, conn, profile_id, variant_id):
+        rows = conn.execute("SELECT exact_content_json FROM profile_decisions WHERE profile_id=? "
+                            "AND subject_kind='wording_revision' AND subject_id=? ORDER BY subject_revision",
+                            (profile_id, variant_id))
+        return [json.loads(row[0]) for row in rows]
+
+    def recovery(self, profile_id="default", connection=None):
+        with self.reader(connection) as conn:
+            current = self.config(profile_id, conn)
+            active_roles = {row["id"]: row for row in current["profile"]["resume"]["experience_entries"]}
+            active_achievements = {ident for role in active_roles.values() for ident in role.get("achievement_ids", [])}
+            roles, achievements = {}, {}
+            for version in conn.execute("SELECT revision,snapshot_json FROM profile_versions WHERE profile_id=? ORDER BY revision DESC", (profile_id,)):
+                document = json.loads(version["snapshot_json"])["document"]
+                for role in document["resume"]["experience_entries"]:
+                    role_id = role["id"]
+                    if role_id not in active_roles and role_id not in roles:
+                        roles[role_id] = {"role_id": role_id, "profile_revision": version["revision"], "role": role}
+                    if role_id in active_roles:
+                        for index, achievement_id in enumerate(role.get("achievement_ids", [])):
+                            if achievement_id not in active_achievements and achievement_id not in achievements:
+                                achievements[achievement_id] = {"role_id": role_id, "achievement_id": achievement_id,
+                                    "profile_revision": version["revision"], "text": role["bullets"][index], "position": index}
+            return {"ok": True, "profileVersion": current["profileVersion"],
+                    "roles": list(roles.values()), "achievements": list(achievements.values())}
+
     def set_variant_decision(self, conn, *, profile_id, variant_id, status, approval_id, origin_key):
         conn.execute("UPDATE profile_variants SET status=?,approval_id=? WHERE profile_id=? AND variant_id=?",
                      (status, approval_id, profile_id, variant_id))
@@ -87,19 +127,30 @@ class ProfileRepository:
             return conn.execute("SELECT * FROM profile_authoring_requests WHERE profile_id=? AND origin_key=?", (profile_id, origin_key)).fetchone()
         return conn.execute("SELECT * FROM profile_authoring_requests WHERE profile_id=? AND proposal_id=?", (profile_id, proposal_id)).fetchone()
 
-    def recover_interrupted_authoring(self, conn, profile_id, row):
+    def authoring_retry_successor(self, conn, profile_id, proposal_id):
+        return conn.execute("""SELECT * FROM profile_authoring_requests WHERE profile_id=?
+            AND json_extract(brief_json,'$.origin_metadata.retry_of_proposal_id')=? ORDER BY rowid DESC LIMIT 1""",
+            (profile_id, proposal_id)).fetchone()
+
+    @staticmethod
+    def authoring_interrupted(row):
         import os
         if row["status"] != "generating":
-            return row
+            return False
         owner = json.loads(row["brief_json"]).get("_authoring_owner", {}).get("pid")
         if type(owner) is int:
             try:
                 os.kill(owner, 0)
             except ProcessLookupError:
-                self.fail_authoring(conn, profile_id, row["origin_key"], "authoring_interrupted")
-                return self.authoring_row(conn, profile_id, origin_key=row["origin_key"])
+                return True
             except PermissionError:
                 pass
+        return False
+
+    def recover_interrupted_authoring(self, conn, profile_id, row):
+        if self.authoring_interrupted(row):
+            self.fail_authoring(conn, profile_id, row["origin_key"], "authoring_interrupted")
+            return self.authoring_row(conn, profile_id, origin_key=row["origin_key"])
         return row
 
     def start_authoring(self, conn, *, profile_id, origin_key, brief):
@@ -145,6 +196,7 @@ class ProfileRepository:
                 return {"ok": True, "profileVersion": None, "profile": empty_profile(),
                         "style": deepcopy(DEFAULT_STYLE), "templateText": DEFAULT_TEMPLATE}
             document = json.loads(row["document_json"])
+            document["resume"].setdefault("language_entries", [])
             # Confirmation is derived from saved decisions. Client flags cannot
             # invent authority or clear an unresolved imported confirmation.
             for role in document.get("resume", {}).get("experience_entries", []):
@@ -208,6 +260,10 @@ class ProfileRepository:
             # Raw historical cells remain in owned storage/transfer archives;
             # the public document exposes current recorded authority only.
             document = self.config(profile_id, conn)["profile"]
+            if "language_entries" not in json.loads(row["document_json"])["resume"]:
+                # Editor defaults do not alter an immutable source fingerprint
+                # for a saved document from before Languages was introduced.
+                document["resume"].pop("language_entries", None)
             achievements = [dict(item) for item in conn.execute(
                 "SELECT * FROM profile_achievements WHERE profile_id=? AND active=1 ORDER BY position,achievement_id", (profile_id,))]
             roles = []
@@ -296,6 +352,11 @@ class ProfileRepository:
                             for role in old_document.get("resume", {}).get("experience_entries", [])
                             for item in role.get("achievement_evidence", [])}
             document = deepcopy(document)
+            # An empty form default adds no fact and must not invalidate a
+            # previously accepted Profile or resume on an otherwise empty save.
+            if (before and "language_entries" not in old_document.get("resume", {})
+                    and document.get("resume", {}).get("language_entries") == []):
+                document["resume"].pop("language_entries")
             for role in document.get("resume", {}).get("experience_entries", []):
                 for item in role.get("achievement_evidence", []):
                     previous_item = old_evidence.get((role["id"], item["id"]))
@@ -342,11 +403,15 @@ class ProfileRepository:
                 self.upsert_source(conn, profile_id, profile_identity("field", profile_id, section, key), {"kind": "fact", "origin": "profile", "text": value if isinstance(value, str) else canonical(value), "path": [section, key]})
         resume = document["resume"]
         for key, value in resume.items():
-            if key not in {"experience_entries", "education_entries", "skill_categories", "tailoring_rules"}:
+            if key not in {"experience_entries", "education_entries", "skill_categories", "language_entries", "tailoring_rules"}:
                 self.upsert_source(conn, profile_id, profile_identity("baseline-field", profile_id, key), {"kind": "authored_baseline", "origin": "profile", "text": value if isinstance(value, str) else canonical(value), "path": ["resume", key]})
         for section in ("education_entries", "skill_categories"):
             for item in resume.get(section, []):
                 self.upsert_source(conn, profile_id, profile_identity("entry", profile_id, section, item["id"]), {"kind": "fact", "origin": "profile", "text": canonical(item), "path": ["resume", section, item["id"]]})
+        for item in resume.get("language_entries", []):
+            self.upsert_source(conn, profile_id, profile_identity("entry", profile_id, "language_entries", item["id"]),
+                               {"kind": "language", "origin": "profile", "text": canonical(item),
+                                "path": ["resume", "language_entries", item["id"]], "record": deepcopy(item)})
         old_roles = {item["id"]: item for item in old_document.get("resume", {}).get("experience_entries", [])}
         for role in resume["experience_entries"]:
             role_id = role["id"]
@@ -411,6 +476,7 @@ class ProfileRepository:
             for item in variants:
                 if item["achievement_id"] not in active or not self.current_refs(conn, item["source_refs"], profile_id):
                     item["status"] = "stale"
-            proposals = [dict(row) for row in conn.execute("SELECT proposal_id,origin_key,status,variant_id,failure_code FROM profile_authoring_requests WHERE profile_id=? ORDER BY proposal_id", (profile_id,))]
+            proposals = [authoring_request_summary(row) for row in conn.execute(
+                "SELECT * FROM profile_authoring_requests WHERE profile_id=? ORDER BY proposal_id", (profile_id,))]
             return {"ok": True, "profileVersion": snapshot.profile_revision, "wordingRevision": snapshot.wording_revision,
                     "roles": list(snapshot.roles), "variants": variants, "proposals": proposals}

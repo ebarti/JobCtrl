@@ -66,14 +66,18 @@ has one defining page; other pages summarize it briefly and link to that owner.
 ### The Job-Search Lifecycle
 
 - [`user/candidate-profile.md`](user/candidate-profile.md): canonical candidate
-  facts, preferences, attestations, versions, and downstream consumers.
-- [`user/discovery.md`](user/discovery.md): target search, source registry,
-  runtime controls, schedules, crawl policy, and SQLite ownership.
+  facts, preferences, attestations, approved wording, and manual updates to
+  affected matches after saved changes.
+- [`user/discovery.md`](user/discovery.md): target search through JobStreaming, direct posting URL imports, board states, schedules, and SQLite ownership.
 - [`user/enrichment-and-extraction.md`](user/enrichment-and-extraction.md): job
   capture, extraction, normalization, deduplication, snapshots, and provenance.
 - [`user/scoring-and-employer-analysis.md`](user/scoring-and-employer-analysis.md):
-  fit evidence, requirement assessment, policy, corrections, and ranking; it
-  consumes the employer analysis owned by Discovery.
+  fit evidence, shared requirement matching, factual support versus wording
+  coverage, policy, corrections, and ranking; it consumes the employer analysis
+  owned by Discovery.
+- [`user/requirements-library.md`](user/requirements-library.md): canonical
+  Skills/Professional Experience meanings, linked achievements, exact wording coverage, unassessed user links
+  and source/revision history in the redesign candidate.
 - [`user/company-briefings.md`](user/company-briefings.md): optional public-source company context, explicit identity links, bounded CLI refresh and shared job/interview/digest reads.
 - [`user/materials-and-tailoring.md`](user/materials-and-tailoring.md): generated
   materials, provenance, validation, review, and accepted-artifact history.
@@ -200,6 +204,13 @@ These documents remain in the repository but are not separate site sections:
 - [GitHub Issues](https://github.com/ebarti/JobCtrl/issues): actionable work; [migration index #881](https://github.com/ebarti/JobCtrl/issues/881) accounts for the historical backlog.
 - [`claims-ledger.md`](claims-ledger.md): public product claims and supporting references.
 - [`plans/`](plans/): active proposals and immutable implemented-plan history.
+  The active [Original app redesign](plans/2026-11-11-original-app-redesign.md)
+  maps whole-product outcomes, retained independent capabilities and pending
+  candidate verification across the application, demo and documentation.
+  The active [Typed job requirements](plans/typed-requirements.md) plan defines
+  the `requirements-v2` generation, direct Education/Languages demands,
+  equal-item Fit and pending upgrade/product proof. Source work does not
+  establish a live rollout.
   The active [sensitive-artifact retention and cleanup
   proposal](plans/sensitive-artifact-retention.md) defines the unshipped local
   inventory, preservation, preview, containment, and recovery contract tracked

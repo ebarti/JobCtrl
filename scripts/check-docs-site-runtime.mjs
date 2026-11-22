@@ -53,7 +53,7 @@ const PAGES = [
   },
   {
     path: "/guides/at-most-once-job-application-submission",
-    visualSelector: ".mermaid svg",
+    visualSelector: null,
     images: false,
   },
   {
@@ -61,16 +61,17 @@ const PAGES = [
     visualSelector: null,
     images: false,
   },
-  { path: "/architecture/", visualSelector: ".system-topology", images: false },
+  { path: "/architecture/", visualSelector: ".vp-doc table", images: false },
+  { path: "/architecture/runtime", visualSelector: ".vp-doc table", images: false },
   { path: "/developer/", visualSelector: null, images: false },
   {
     path: "/architecture/scoring",
-    visualSelector: ".mermaid svg",
+    visualSelector: null,
     images: false,
   },
   {
     path: "/architecture/pipeline/operations",
-    visualSelector: ".mermaid svg",
+    visualSelector: null,
     images: false,
   },
   {
@@ -79,6 +80,7 @@ const PAGES = [
     images: true,
   },
   { path: "/user/getting-started", visualSelector: null, images: false },
+  { path: "/user/configuration", visualSelector: null, images: false },
   { path: "/user/product-tour", visualSelector: null, images: true },
   {
     path: "/user/data-and-safety",
@@ -91,10 +93,11 @@ const PAGES = [
     images: false,
   },
   { path: "/user/discovery", visualSelector: null, images: false },
+  { path: "/user/requirements-library", visualSelector: null, images: false },
   { path: "/user/apply", visualSelector: null, images: false },
   {
     path: "/user/candidate-profile",
-    visualSelector: null,
+    visualSelector: ".candidate-profile-flow",
     images: false,
   },
   {
@@ -104,7 +107,7 @@ const PAGES = [
   },
   {
     path: "/user/materials-and-tailoring",
-    visualSelector: ".mermaid svg",
+    visualSelector: null,
     images: false,
   },
   {
@@ -155,16 +158,136 @@ const DOCS_ANALYTICS_CONSENT_STORAGE_KEY =
   "jobctrl-docs-analytics-consent-v1";
 const observedSocialDescriptions = new Map();
 
-const LIFECYCLE_EXPLANATION_CONTRACTS = [
+// Assert the current Python feature documentation explicitly. Retired diagrams
+// and TypeScript-era wording are not evidence of a rendering failure.
+const EXPLANATION_CONTRACTS = [
+  {
+    path: "/guides/at-most-once-job-application-submission",
+    heading: "#approval-is-bound-at-the-mutation-boundary",
+    selectors: [
+      "#at-most-once-is-not-exactly-once",
+      "#local-stops-do-not-resolve-external-uncertainty",
+      "#browser-and-email-have-different-submission-boundaries",
+    ],
+    tokens: [
+      "needs_verification",
+      "one unique intent",
+      "pinned bytes",
+      "final form submission is manual",
+      "sender does not retry an existing intent",
+    ],
+  },
+  {
+    path: "/architecture/",
+    heading: "#architecture",
+    selectors: [".vp-doc table"],
+    tokens: [
+      "workers/automation/src/jobctrl/app/",
+      "workers/automation/src/jobctrl/features/<owner>/",
+      "Temporal runs the same Python application actions",
+      "no sibling-private-table reads or alternate business writers",
+      "Missing wording cannot lower factual qualification",
+    ],
+  },
+  {
+    path: "/architecture/runtime",
+    heading: "#admission-and-readiness",
+    selectors: ["#processes-and-entrypoints", "#model-execution-and-shutdown"],
+    tokens: [
+      "Every request checks the actual peer and Host",
+      "Tokens and credentials never enter ordinary settings, event payloads or application logs",
+      "lane capacity and spend checks",
+      "Credentials are loaded only at the provider boundary and remain outside prompts",
+      "Model failures preserve the feature's accepted artifact",
+    ],
+  },
+  {
+    path: "/architecture/scoring",
+    heading: "#inputs-and-semantic-authority",
+    selectors: [
+      "#typed-requirements-and-permitted-evidence",
+      "#deterministic-score-resolution",
+      "#profile-edits-and-explicit-refresh",
+      "#generation-history-and-rollout",
+    ],
+    tokens: [
+      "All rows pass schema, evidence and immutable gateway-receipt validation",
+      "Invalid, stale, refused or cancelled work preserves accepted assessments and scores",
+      "document gap and does not reduce factual fit",
+      "requirements-v2",
+      "requirement-fit-v3-equal",
+      "one item",
+      "For N = 0, no score is calculated",
+      "no source importance weights, must-have multipliers, blocker caps or invented source priorities",
+      "selected jobs' direct Education and Languages demands",
+      "Incompatible operation",
+      "stop old writers and back up the workspace",
+      "Rollback after such writes restores that backup",
+    ],
+  },
+  {
+    path: "/user/data-and-safety",
+    heading: "#typed-requirements-upgrade",
+    selectors: ["#back-up-and-restore"],
+    tokens: [
+      "stop every old application and worker writer",
+      "consistent workspace backup",
+      "workflow history and referenced accepted artifacts",
+      "active Skills/Professional Experience catalog",
+      "Incompatible old operations are refused",
+      "rollback restores the verified pre-upgrade backup",
+      "Installing an older binary alone is unsafe",
+      "source implementation alone does not establish a release or operational rollout",
+      "It does not reset the catalog on startup",
+      "stable identities, aliases and combined job demands atomically",
+      "Reads and Profile saves never start that work",
+    ],
+  },
+  {
+    path: "/architecture/pipeline/operations",
+    heading: "#automatic-preparation-recovery",
+    selectors: [
+      "#discovery-schedule",
+      "#domain-events-projections-and-sse",
+      "#spend-ceiling",
+    ],
+    tokens: [
+      "Recurring discovery is off by default",
+      "preserve committed progress, respect the user's stop",
+      "Feature mutations and bounded invalidations commit together",
+      "lane/spend preflight before external calls",
+      "none permits lexical fallback or destruction of an accepted artifact",
+    ],
+  },
+  {
+    path: "/user/configuration",
+    heading: "#configuration-sources",
+    tokens: [
+      "macOS Keychain",
+      "Windows Credential Manager",
+      "Linux Secret Service",
+      "resolves native-store credentials for each new provider execution",
+      "A nonempty value in the launch environment takes precedence",
+      "An in-flight request retains its existing credentials",
+      "Stored secret values are never rendered",
+      "inspection_failed",
+      "does not save submitted secrets to a plaintext fallback",
+      "all-or-nothing",
+      "failed change preserves the previous configuration",
+    ],
+  },
   {
     path: "/user/discovery",
     heading: "#runtime-sources-and-schedule",
     selectors: [
       "#runtime-setting-job-boards",
-      "#runtime-setting-parallel-source-families",
+      "#runtime-setting-posting-lookback-hours",
       "#runtime-setting-schedule-cron",
     ],
-    tokens: ["SQLite", "four", "SKIP", "task-queue depth"],
+    tokens: [
+      "SQLite", "expectedRevision", "expectedPolicyRevision", "expectedProfileVersion",
+      "Check previous search", "Stop requested",
+    ],
   },
   {
     path: "/user/apply",
@@ -173,12 +296,15 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
       "#candidate-profile-application-fields",
       "#approval-and-automation-modes",
       "#browser-apply-automation",
+      "#final-browser-submission-is-manual",
+      "#skip-and-safe-reset",
     ],
     tokens: [
-      "missing_profile_data:<field>",
-      "autoApply",
-      "applyApprovalRequired",
-      "at-most-once",
+      "partial coverage",
+      "read-only",
+      "exact recipient, subject, body and accepted resume bytes",
+      "commits a unique intent",
+      "blocks automatic resending",
       "CAPTCHA",
     ],
   },
@@ -187,10 +313,10 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
     heading: "#how-profile-data-becomes-runtime-evidence",
     labels: [
       "Import creates a draft.",
-      "Save validates and normalizes.",
+      "Save validates and retains the authored data.",
       "Work receives an immutable snapshot.",
-      "Consumers bind to the version they used.",
-      "Propagation remains explicit and recoverable.",
+      "Fact and wording revisions remain separate.",
+      "Refresh preserves accepted work.",
     ],
     tokens: ["ProfileSnapshot", "profile version", "Apply approval"],
   },
@@ -209,15 +335,33 @@ const LIFECYCLE_EXPLANATION_CONTRACTS = [
   {
     path: "/user/materials-and-tailoring",
     heading: "#how-jobctrl-chooses-a-resume",
-    selectors: [".mermaid svg"],
-    labels: ["Bind canonical inputs.", "Generate candidates with anchors.", "Verify the final text.", "Repair bounded failures.", "Persist accepted output."],
-    tokens: ["claim-verification", "quality judge", "verbatim", "line IDs", "last accepted generation"],
+    selectors: [".vp-doc .custom-block.info"],
+    tokens: [
+      "retain every approved role and achievement",
+      "select one approved wording per achievement",
+      "Person fit remains separate from document coverage",
+      "advisory coherence review",
+      "Baseline-copy mode makes no resume model calls",
+      "failed refresh preserves the last accepted resume",
+      "integration verification are in progress",
+    ],
   },
   {
     path: "/user/outcomes-and-feedback",
     heading: "#how-email-becomes-an-outcome-suggestion",
-    labels: ["A user-started scan bounds application anchors.", "A model reads bounded headers.", "A second determination classifies the linked body.", "Both decisions are persisted.", "Accept or correct creates an outcome.", "Ignore records only the suggestion decision."],
-    tokens: ["application anchors", "bounded headers", "verbatim span", "prompt/model versions", "blocked reason", "Raw bodies remain local", "applied_at", "discovered_at", "45-day", "five applied", "five response-time"],
+    selectors: ["#retrying-a-manual-record", "#source-of-truth-and-ownership"],
+    tokens: [
+      "20 anchors",
+      "10 results per anchor",
+      "45-day",
+      "before the body is read",
+      "result is a suggestion, not a reviewed outcome",
+      "ignoring records the decision without inventing one",
+      "preserves earlier committed suggestions and reviewed records",
+      "scoped local reads",
+      "sample-gated",
+      "does not erase the original submit intent",
+    ],
   },
   {
     path: "/user/contacts-and-outreach",
@@ -252,11 +396,11 @@ const ZOOMED_DESKTOP_CSS_VIEWPORT = { width: 720, height: 500 };
 const MOBILE_VIEWPORT = { width: 390, height: 844 };
 const galleryHeroScreenshot = path.join(
   root,
-  "docs/assets/screenshots/dashboard.png",
+  "docs/assets/screenshots/original-jobs.png",
 );
 const publicHeroScreenshot = path.join(
   root,
-  "docs/public/assets/screenshots/dashboard.png",
+  "docs/public/assets/screenshots/original-jobs.png",
 );
 
 async function sha256(file) {
@@ -309,6 +453,15 @@ async function productTourGeometry(page) {
       pageOverflows: document.documentElement.scrollWidth > window.innerWidth,
     };
   });
+}
+
+function contrastRatio(first, second) {
+  const luminance = (channels) => channels.slice(0, 3).map((value) => {
+    const normalized = value / 255;
+    return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+  }).reduce((total, value, index) => total + value * [0.2126, 0.7152, 0.0722][index], 0);
+  const left = luminance(first); const right = luminance(second);
+  return (Math.max(left, right) + 0.05) / (Math.min(left, right) + 0.05);
 }
 
 async function assertSocialMetadata(page, route) {
@@ -1037,7 +1190,7 @@ if (
   (await sha256(galleryHeroScreenshot)) !== (await sha256(publicHeroScreenshot))
 ) {
   fail(
-    "/ hero image: public hero screenshot is stale relative to docs/assets/screenshots/dashboard.png",
+    "/ hero image: public hero screenshot is stale relative to docs/assets/screenshots/original-jobs.png",
   );
 } else {
   console.log("ok    / hero image freshness");
@@ -1121,13 +1274,15 @@ try {
   const heroImage = await page
     .locator(".VPHome .VPHero img.image-src")
     .boundingBox();
+  const heroSource = await page.locator(".VPHome .VPHero img.image-src").getAttribute("src");
   if (
     !heroImage ||
+    heroSource !== "/assets/screenshots/original-jobs.png" ||
     heroImage.width < 420 ||
     heroImage.y > BASE_VIEWPORT.height
   ) {
     fail(
-      "/: product hero image is missing, too small, or below the first viewport",
+      "/: current source hero image is missing, stale, too small, or below the first viewport",
     );
   } else {
     console.log("ok    / hero image");
@@ -1206,7 +1361,8 @@ try {
   ];
   if (
     !/On this page/.test(tourOutline) ||
-    !/Set Up Your Profile|Apply Review|Runs History/.test(tourOutline) ||
+    !["Jobs: Compare And Act", "My Profile: Reusable Facts And Wording", "Settings: Shared Choices"]
+      .every((label) => tourOutline.includes(label)) ||
     internalTourCopy.some(
       (copy) => tourOutline.includes(copy) || tourText.includes(copy),
     )
@@ -1660,29 +1816,45 @@ try {
       (label) => (label.textContent ?? "").replace(/\s+/g, " ").trim(),
     );
     const requiredLabels = [
-      "Send the accepted requirements to the scorer.",
-      "Classify the returned evidence.",
-      "Apply evidence credit and requirement priority.",
-      "Assign the display band.",
+      "Skills",
+      "Professional Experience",
+      "Education",
+      "Languages",
+      "requirement-fit-v3-equal",
       "Confidence is a review signal, not a points adjustment.",
-      "Eligibility is recorded separately from soft fit.",
+      "Eligibility is recorded separately from fit.",
       "The minimum-fit threshold does not change the saved score.",
-      "A correction is not a hidden weight change.",
+      "A correction retains its own authority.",
     ];
     const requiredTokens = [
-      "requirement-fit-v1",
+      "requirements-v2",
+      "requirement-fit-v3-equal",
       "Direct match",
       "Strong match",
       "Transferable evidence",
-      "1.25×",
-      "score = 1 + round(9 × coverage)",
-      "45% technical fit",
-      "30% experience fit",
-      "25% role fit",
-      "evidence ID",
-      "capped at 4",
-      "Unavailable evidence",
-      "0–10",
+      "demand counts as one item",
+      "meaning do not increase its points",
+      "alternatives group counts as one demand",
+      "score = clamp(1 + floor(9 × qualification coverage + 0.5), 1, 10)",
+      "For N = 0, there is no calculated score",
+      "no posting importance weights, must-have multipliers, blocker caps or invented source priorities",
+      "professional experience only if the posting explicitly offers that alternative",
+      "Language / Proficiency records only",
+      "without claiming a degree",
+      "source categories, identities, revisions and citations",
+      "Personal traits, certifications and licenses, job conditions and detailed years-of-experience analysis are excluded",
+      "skipped rather than translated or assigned zero fit",
+      "Update affected matches",
+      "Saving a Profile starts neither action",
+      "contract-change refresh status",
+      "prior accepted score",
+      "no word-overlap or opaque dimension-score fallback",
+    ];
+    // The typed Fit owner uses equal-item arithmetic and refuses incomplete
+    // assessments. Retired weighted or opaque scoring must not return as guidance.
+    const retiredFallbackTokens = [
+      "45% technical fit", "30% experience fit", "25% role fit",
+      "requirement-fit-v2-scoped", "1.25×", "capped at 4",
     ];
     return {
       missingHeadings: [
@@ -1694,12 +1866,14 @@ try {
         (label) => !strongLabels.includes(label),
       ),
       missingTokens: requiredTokens.filter((token) => !text.includes(token)),
+      retiredFallbackTokens: retiredFallbackTokens.filter((token) => text.includes(token)),
     };
   });
   if (
     scoringExplanationContract.missingHeadings.length > 0 ||
     scoringExplanationContract.missingLabels.length > 0 ||
-    scoringExplanationContract.missingTokens.length > 0
+    scoringExplanationContract.missingTokens.length > 0 ||
+    scoringExplanationContract.retiredFallbackTokens.length > 0
   ) {
     fail(
       `/user/scoring-and-employer-analysis: public scoring explanation regressed (${JSON.stringify(scoringExplanationContract)})`,
@@ -1710,11 +1884,11 @@ try {
     );
   }
 
-  for (const contract of LIFECYCLE_EXPLANATION_CONTRACTS) {
+  for (const contract of EXPLANATION_CONTRACTS) {
     await page.goto(`http://127.0.0.1:${port}${contract.path}`, {
       waitUntil: "networkidle",
     });
-    const lifecycleExplanation = await page.evaluate(
+    const explanation = await page.evaluate(
       ({ heading, labels = [], tokens = [], selectors = [] }) => {
         const doc = document.querySelector(".vp-doc");
         const text = (doc?.textContent ?? "").replace(/\s+/g, " ").trim();
@@ -1735,62 +1909,67 @@ try {
       contract,
     );
     if (
-      !lifecycleExplanation.hasExplanationHeading ||
-      lifecycleExplanation.missingLabels.length > 0 ||
-      lifecycleExplanation.missingTokens.length > 0 ||
-      lifecycleExplanation.missingSelectors.length > 0
+      !explanation.hasExplanationHeading ||
+      explanation.missingLabels.length > 0 ||
+      explanation.missingTokens.length > 0 ||
+      explanation.missingSelectors.length > 0
     ) {
       fail(
-        `${contract.path}: public lifecycle explanation regressed (${JSON.stringify(lifecycleExplanation)})`,
+        `${contract.path}: public explanation regressed (${JSON.stringify(explanation)})`,
       );
     } else {
-      console.log(`ok    ${contract.path} lifecycle explanation`);
+      console.log(`ok    ${contract.path} explanation`);
     }
   }
 
   await page.goto(
-    `http://127.0.0.1:${port}/user/normal-flows#workers-activity-slots-and-queue-backlog`,
+    `http://127.0.0.1:${port}/user/normal-flows#settings-and-task-recovery`,
     { waitUntil: "networkidle" },
   );
-  const capacityExplanationContract = await page.evaluate(() => {
+  const connectedWorkflowContract = await page.evaluate(() => {
     const doc = document.querySelector(".vp-doc");
     const text = (doc?.textContent ?? "").replace(/\s+/g, " ").trim();
     const strongLabels = [...(doc?.querySelectorAll("strong") ?? [])].map(
       (label) => (label.textContent ?? "").replace(/\s+/g, " ").trim(),
     );
     const requiredLabels = [
-      "Worker processes online",
-      "Activity slots in use",
-      "Active work",
-      "Queue backlog",
+      "Jobs",
+      "My profile",
+      "Settings",
+      "Start search",
+      "Search preferences",
+      "Prepare resume",
+      "Needs verification",
+      "Settings → Data & diagnostics",
     ];
     const requiredTokens = [
-      "0 of 4",
-      "fresh worker processes",
-      "configured slots minus active slots",
-      "unknown, not zero",
-      "infrastructure pressure",
+      "Saving preferences does not start discovery.",
+      "Final submission on an employer website is manual.",
+      "Appearance saves in this browser",
+      "does not change resume-template typography.",
     ];
+    const requiredLinks = ["requirements-library", "candidate-profile", "configuration", "apply"];
+    const links = [...(doc?.querySelectorAll("a[href]") ?? [])].map(
+      (link) => link.getAttribute("href") ?? "",
+    );
     return {
-      hasHeading: Boolean(
-        document.querySelector("#workers-activity-slots-and-queue-backlog"),
-      ),
-      missingLabels: requiredLabels.filter(
-        (label) => !strongLabels.includes(label),
-      ),
+      hasHeading: Boolean(document.querySelector("#settings-and-task-recovery")),
+      missingLabels: requiredLabels.filter((label) => !strongLabels.includes(label)),
       missingTokens: requiredTokens.filter((token) => !text.includes(token)),
+      missingLinks: requiredLinks.filter((target) => !links.some((href) => href.includes(target))),
     };
   });
   if (
-    !capacityExplanationContract.hasHeading ||
-    capacityExplanationContract.missingLabels.length > 0 ||
-    capacityExplanationContract.missingTokens.length > 0
+    !connectedWorkflowContract.hasHeading ||
+    connectedWorkflowContract.missingLabels.length > 0 ||
+    connectedWorkflowContract.missingTokens.length > 0 ||
+    connectedWorkflowContract.missingLinks.length > 0
   ) {
     fail(
-      `/user/normal-flows: worker capacity explanation regressed (${JSON.stringify(capacityExplanationContract)})`,
+      `/user/normal-flows: connected workflow or recovery explanation regressed (${JSON.stringify(connectedWorkflowContract)})`,
     );
   } else {
-    console.log("ok    /user/normal-flows worker capacity explanation");
+    console.log("ok    /user/normal-flows connected workflow and task recovery");
   }
 
   await page.goto(`http://127.0.0.1:${port}/user/data-and-safety`, {
@@ -1889,74 +2068,6 @@ try {
     );
   } else {
     console.log("ok    /user/data-and-safety privacy contract");
-  }
-
-  await page.goto(`http://127.0.0.1:${port}/architecture/runtime`, {
-    waitUntil: "networkidle",
-  });
-  const credentialRuntimeContract = await page.evaluate(() => {
-    const heading = document.querySelector("#provider-credential-boundary");
-    const headingLevel = heading ? Number(heading.tagName.slice(1)) : 7;
-    const sectionElements = heading ? [heading] : [];
-    for (
-      let element = heading?.nextElementSibling;
-      element;
-      element = element.nextElementSibling
-    ) {
-      const level = /^H[1-6]$/.test(element.tagName)
-        ? Number(element.tagName.slice(1))
-        : undefined;
-      if (level !== undefined && level <= headingLevel) break;
-      sectionElements.push(element);
-    }
-    const text = sectionElements
-      .map((element) => element.textContent ?? "")
-      .join(" ")
-      .replace(/\s+/g, " ")
-      .trim();
-    return {
-      hasBoundary:
-        heading?.textContent?.includes("Provider Credential Boundary") ?? false,
-      hasAtomicBatchBoundary:
-        text.includes("PATCH /v1/credentials/batch") &&
-        text.includes("applies completely"),
-      hasPresenceOnlyBoundary: text.includes("responses return presence only"),
-      hasTriStateBoundary: text.includes("true, false, or null"),
-      hasInspectionFailureBoundary:
-        text.includes("configured=null") &&
-        text.includes("unavailableReason=inspection_failed"),
-      hasSanitizedOperationalFailure: text.includes(
-        "503 credential_store_unavailable",
-      ),
-      hasFixedAllowlist: text.includes("fixed allowlist covers"),
-      hasMissingOrEmptyBoundary: text.includes(
-        "only for a missing or empty value",
-      ),
-      hasProcessLocalBoundary: text.includes(
-        "only into that process's environment",
-      ),
-      hasNoHotReloadBoundary: text.includes("There is no hot reload"),
-      hasPlatformBoundary:
-        text.includes("macOS uses Keychain") &&
-        text.includes("Windows uses Credential Manager") &&
-        text.includes("Linux uses Secret Service") &&
-        text.includes("No adapter persists a plaintext fallback"),
-      hasProviderStatusBoundary:
-        text.includes("GET /v1/providers/status") &&
-        text.includes(
-          "sanitized Codex/Claude/Google configuration and readiness",
-        ),
-      hasRestartRequiredBoundary:
-        text.includes("requires a JobCtrl restart") &&
-        text.includes("before new values become ready"),
-    };
-  });
-  if (Object.values(credentialRuntimeContract).some((present) => !present)) {
-    fail(
-      `/architecture/runtime: credential boundary regressed (${JSON.stringify(credentialRuntimeContract)})`,
-    );
-  } else {
-    console.log("ok    /architecture/runtime credential boundary");
   }
 
   await page.goto(`http://127.0.0.1:${port}/comparison`, {
@@ -2089,7 +2200,7 @@ try {
         document
           .querySelector("[data-jh-comparison-carousel] img")
           ?.getAttribute("aria-label") ===
-        "Expand image: Apply Review editing a tailored resume with audit evidence",
+        "Expand image: Selected job Resume tab with the actual Plate editor",
     );
     const applyReviewImage = comparisonCarousel.locator("img");
     const applyReviewZoomLabel =
@@ -2128,29 +2239,29 @@ try {
       initialCarousel.imageCount !== 1 ||
       initialCarousel.visibleImageCount !== 1 ||
       initialCarousel.imageAlt !==
-        "Jobs table with fit scores, stages, and filters" ||
+        "Original Jobs table with recorded pay, fit and application state" ||
       initialCarousel.caption !==
-        "Jobs — scored and filterable, with every score inspectable" ||
+        "Jobs — compare recorded pay, fit and application state" ||
       initialCarousel.status !== "1 of 2" ||
       !initialPreviousDisabled ||
       initialNextDisabled ||
       nextCarousel.imageCount !== 1 ||
       nextCarousel.visibleImageCount !== 1 ||
       nextCarousel.imageAlt !==
-        "Apply Review editing a tailored resume with audit evidence" ||
+        "Selected job Resume tab with the actual Plate editor" ||
       nextCarousel.caption !==
-        "Apply Review — edit and approve the exact resume that ships" ||
+        "Resume — prepare and edit the actual document beside its job" ||
       nextCarousel.status !== "2 of 2" ||
       nextPreviousDisabled ||
       !nextNextDisabled ||
       applyReviewZoomLabel !==
-        "Expand image: Apply Review editing a tailored resume with audit evidence" ||
+        "Expand image: Selected job Resume tab with the actual Plate editor" ||
       expandedApplyReviewAlt !==
-        "Apply Review editing a tailored resume with audit evidence" ||
+        "Selected job Resume tab with the actual Plate editor" ||
       restoredCarousel.imageCount !== 1 ||
       restoredCarousel.visibleImageCount !== 1 ||
       restoredCarousel.imageAlt !==
-        "Jobs table with fit scores, stages, and filters" ||
+        "Original Jobs table with recorded pay, fit and application state" ||
       restoredCarousel.status !== "1 of 2" ||
       !restoredPreviousDisabled ||
       restoredNextDisabled
@@ -2524,42 +2635,72 @@ try {
         for (const route of ["/", "/user/normal-flows", "/guides/at-most-once-job-application-submission"]) {
           await themedPage.goto(`${themeBase}${route}`, { waitUntil: "networkidle" });
           await themedPage.locator("h1").first().waitFor({ state: "visible" });
-          if (route.includes("at-most-once")) {
-            await themedPage.locator(".mermaid svg").first().waitFor({ state: "visible" });
-          }
-          const style = await themedPage.evaluate(() => {
+          const style = await themedPage.evaluate(async () => {
+            await document.fonts.ready;
             const action = document.querySelector(".VPButton.brand");
+            const body = getComputedStyle(document.body);
+            const canvas = document.createElement("canvas"); canvas.width = 1; canvas.height = 1;
+            const context = canvas.getContext("2d");
+            const channels = (color) => {
+              context.clearRect(0, 0, 1, 1); context.fillStyle = color; context.fillRect(0, 0, 1, 1);
+              return Array.from(context.getImageData(0, 0, 1, 1).data);
+            };
+            const faces = [...document.fonts].filter((face) => face.family.replaceAll('"', "") === "Geist Variable");
+            const actionStyle = action ? getComputedStyle(action) : null;
             return {
               dark: document.documentElement.classList.contains("dark"),
-              // Computed colors normalize equivalent minified spellings (.16
-              // and 0.16) and verify the token reaches the rendered surface.
-              background: getComputedStyle(document.body).backgroundColor,
-              font: getComputedStyle(document.body).fontFamily,
-              radius: action ? getComputedStyle(action).borderRadius : null,
+              background: body.backgroundColor,
+              font: body.fontFamily,
+              fontLoaded: faces.some((face) => face.status === "loaded")
+                && document.fonts.check('400 14px "Geist Variable"', "JobCtrl")
+                && performance.getEntriesByType("resource").some((resource) => /geist[^/]*\.woff2(?:$|\?)/.test(resource.name)),
+              radius: actionStyle?.borderRadius ?? null,
+              textContrast: channels(body.color), backgroundChannels: channels(body.backgroundColor),
+              actionInk: actionStyle ? channels(actionStyle.color) : null,
+              actionBackground: actionStyle ? channels(actionStyle.backgroundColor) : null,
               overflow: document.documentElement.scrollWidth > innerWidth + 1,
             };
           });
-          const expectedBackground = colorScheme === "dark" ? "oklch(0.16 0 0)" : "oklch(1 0 0)";
+          const expectedBackground = colorScheme === "dark" ? "rgb(18, 22, 28)" : "rgb(247, 248, 250)";
+          const textContrast = contrastRatio(style.textContrast, style.backgroundChannels);
+          const actionContrast = style.actionInk ? contrastRatio(style.actionInk, style.actionBackground) : null;
           if (style.dark !== (colorScheme === "dark") || style.background !== expectedBackground ||
-              !style.font.startsWith('"Helvetica Neue"') || (style.radius !== null && style.radius !== "0px") || style.overflow) {
-            fail(`${route} ${colorScheme} ${viewport.width}px: shared theme/reflow mismatch (${JSON.stringify(style)})`);
+              !style.font.startsWith('"Geist Variable"') || !style.fontLoaded ||
+              (style.radius !== null && style.radius !== "7px") || textContrast < 4.5 ||
+              (actionContrast !== null && actionContrast < 4.5) || style.overflow) {
+            fail(`${route} ${colorScheme} ${viewport.width}px: shared theme/reflow mismatch (${JSON.stringify({ ...style, textContrast, actionContrast })})`);
           } else {
-            console.log(`ok    ${route} ${colorScheme} ${viewport.width}px shared theme and reflow`);
+            console.log(`ok    ${route} ${colorScheme} ${viewport.width}px shared theme, loaded Geist, contrast and reflow`);
           }
         }
         await themedPage.getByRole("button", { name: "Search", exact: true }).click();
         await themedPage.locator("input.search-input").fill("privacy");
         const searchFrame = await themedPage.locator(".VPLocalSearchBox .search-bar").evaluate((element) => {
           const style = getComputedStyle(element);
+          const probe = document.createElement("span"); element.append(probe);
+          const tokenColor = (token) => { probe.style.color = `var(${token})`; return getComputedStyle(probe).color; };
+          const expectedBorder = tokenColor("--input"); const expectedOutline = tokenColor("--ring"); probe.remove();
+          const canvas = document.createElement("canvas"); canvas.width = 1; canvas.height = 1;
+          const context = canvas.getContext("2d");
+          const channels = (color) => {
+            context.clearRect(0, 0, 1, 1); context.fillStyle = color; context.fillRect(0, 0, 1, 1);
+            return Array.from(context.getImageData(0, 0, 1, 1).data);
+          };
           return {
-            border: style.borderTopColor,
-            ink: getComputedStyle(document.body).color,
-            outline: style.outlineStyle,
-            outlineWidth: style.outlineWidth,
+            border: style.borderTopColor, expectedBorder,
+            outlineColor: style.outlineColor, expectedOutline,
+            borderChannels: channels(style.borderTopColor), outlineChannels: channels(style.outlineColor),
+            backgroundChannels: channels(getComputedStyle(document.body).backgroundColor),
+            outline: style.outlineStyle, outlineWidth: style.outlineWidth,
           };
         });
-        if (searchFrame.border !== searchFrame.ink || searchFrame.outline !== "solid" || searchFrame.outlineWidth !== "2px") {
-          fail(`/ search ${colorScheme} ${viewport.width}px: input outline or focus ring mismatch (${JSON.stringify(searchFrame)})`);
+        const borderContrast = contrastRatio(searchFrame.borderChannels, searchFrame.backgroundChannels);
+        const outlineContrast = contrastRatio(searchFrame.outlineChannels, searchFrame.backgroundChannels);
+        if (searchFrame.border !== searchFrame.expectedBorder || searchFrame.outlineColor !== searchFrame.expectedOutline ||
+            searchFrame.outline !== "solid" || searchFrame.outlineWidth !== "2px" || borderContrast < 3 || outlineContrast < 3) {
+          fail(`/ search ${colorScheme} ${viewport.width}px: input outline or focus ring mismatch (${JSON.stringify({ ...searchFrame, borderContrast, outlineContrast })})`);
+        } else {
+          console.log(`ok    / search ${colorScheme} ${viewport.width}px input border, focus ring and contrast`);
         }
         await themedPage.locator(".VPLocalSearchBox .result").first().waitFor({ state: "visible" });
         const firstResult = themedPage.locator(".VPLocalSearchBox .result").first();

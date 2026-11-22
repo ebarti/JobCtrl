@@ -14,6 +14,7 @@ import { PageHead } from "../../shared/ui/page-head.js";
 import { ArtifactFileActions } from "./ArtifactFileActions.js";
 import { ArtifactState, artifactBytes } from "./columns.js";
 import { ResumeRecordHistory } from "./ResumeRecordHistory.js";
+import "../../styles/artifact-detail.css";
 
 export interface ArtifactDetailPanelProps {
   readonly artifactId: string;
@@ -24,7 +25,7 @@ export function ArtifactDetailPanel({ artifactId }: ArtifactDetailPanelProps) {
   const files = useResumeArtifactFiles(artifact ?? null);
   const [htmlOpen, setHtmlOpen] = useState(false);
   return (
-    <main className="route-page grid gap-5" aria-label="Artifact details">
+    <main className="route-page artifact-detail-page grid gap-5" aria-label="Artifact details">
       <Link
         className="title-link"
         to="/artifacts"

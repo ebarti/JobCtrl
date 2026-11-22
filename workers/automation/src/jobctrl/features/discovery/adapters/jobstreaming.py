@@ -35,8 +35,13 @@ from jobstreaming import (
 
 from jobstreaming.batch import jobs_to_dataframe
 
+from jobctrl.app.errors import AppError
 from jobctrl.features.discovery.remote_search import RemoteSearchConfigurationError as RemoteSearchConfigurationError
-from jobctrl.features.discovery.remote_search import validate_remote_search_scope
+from jobctrl.features.discovery.remote_search import provider_scope, validate_remote_search_scope
+
+
+def supported_boards() -> tuple[str, ...]:
+    return tuple(site.value for site in default_registry().sites)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +51,7 @@ class JobStreamingSearchSpec:
     sites: tuple[str, ...]
     query: str
     location: str
-    results_per_site: int
+    results_per_site: int | None
     hours_old: int | None = None
     remote_only: bool = False
     country_indeed: str = "usa"
@@ -61,7 +66,7 @@ class JobStreamingSearchSpec:
             not self.location.strip() and not (self.location == "" and self.remote_only)
         ):
             raise ValueError("location must be non-empty unless remote-only")
-        if self.results_per_site < 1:
+        if self.results_per_site is not None and self.results_per_site < 1:
             raise ValueError("results_per_site must be positive")
 
 
@@ -81,28 +86,19 @@ class _RemoteScopeAdapter:
         self.capabilities = delegate.capabilities
 
     def scrape(self, scraper_input: SearchRequest, context: Any | None = None) -> Any:
-        required = {SearchFilter.IS_REMOTE}
-        if scraper_input.location:
+        scope = provider_scope(
+            self.site.value, location=scraper_input.location or "",
+            remote_only=scraper_input.is_remote, hours_old=scraper_input.hours_old,
+        )
+        required = {SearchFilter.IS_REMOTE} if scraper_input.is_remote else set()
+        if scope["location"]:
             required.add(SearchFilter.LOCATION)
-        if scraper_input.hours_old:
+        if scope["hours_old"]:
             required.add(SearchFilter.HOURS_OLD)
         if not required.issubset(self.capabilities.filters):
-            raise UnsupportedRemoteSearch("The board cannot apply the selected Remote search filters.")
-
-        # These pinned SDK adapters advertise each filter separately but cannot
-        # apply these combinations together. Inspect the real delegate rather
-        # than guessing from a site label or constructing an extra adapter.
-        from jobstreaming.glassdoor import Glassdoor
-        from jobstreaming.indeed import Indeed
-
-        actual = self._delegate
-        while isinstance(actual, _IntegralTlsTimeoutAdapter):
-            actual = actual._delegate
-        if isinstance(actual, Indeed) and scraper_input.hours_old:
-            raise UnsupportedRemoteSearch("Indeed cannot combine the selected Remote and lookback filters.")
-        if isinstance(actual, Glassdoor) and scraper_input.location:
-            raise UnsupportedRemoteSearch("Glassdoor cannot combine the selected Remote and location filters.")
-        return self._delegate.scrape(scraper_input, context=context)
+            raise UnsupportedRemoteSearch("The board cannot apply the selected search filters.")
+        normalized = scraper_input.model_copy(update={"hours_old": scope["hours_old"]})
+        return self._delegate.scrape(normalized, context=context)
 
     def close(self) -> None:
         close = getattr(self._delegate, "close", None)
@@ -113,8 +109,6 @@ class _RemoteScopeAdapter:
 def _remote_safe_registry(spec: JobStreamingSearchSpec, registry: AdapterRegistry | None) -> AdapterRegistry:
     """Retain unsupported boards as failures instead of broadening a search."""
     normalized = _normalize_tls_adapter_timeouts(registry)
-    if not spec.remote_only:
-        return normalized
     guarded = normalized.copy()
     registered = {site.value for site in normalized.sites}
     for site in spec.sites:
@@ -179,6 +173,9 @@ class _IntegralTlsTimeoutAdapter(Scraper):
         )
         return self._delegate.scrape(normalized, context=context)
 
+    def close(self) -> None:
+        self._delegate.close()
+
 
 def _normalize_tls_adapter_timeouts(
     registry: AdapterRegistry | None,
@@ -207,7 +204,18 @@ class JobStreamingGateway:
 
     @staticmethod
     def build_request(spec: JobStreamingSearchSpec) -> SearchRequest:
-        return build_search_request(
+        if spec.results_per_site is None:
+            try:
+                from jobstreaming import SiteTerminationReason  # noqa: F401
+
+                SearchRequest(site_type=spec.sites, results_wanted=None)
+            except (ImportError, ValueError, TypeError):
+                raise AppError(
+                    "discovery_source_policy_unsupported",
+                    "This search requires JobStreaming with uncapped results and typed source termination. Update the worker dependency before retrying.",
+                    503,
+                ) from None
+        request = build_search_request(
             site_name=list(spec.sites),
             search_term=spec.query,
             location=spec.location or None,
@@ -218,6 +226,9 @@ class JobStreamingGateway:
             description_format="markdown",
             linkedin_fetch_description=spec.linkedin_fetch_description,
         )
+        if spec.results_per_site is None and request.results_wanted is not None:
+            raise AppError("discovery_source_policy_unsupported", "The provider cannot retain the automatic source fetch policy.", 503)
+        return request
 
     def open_stream(
         self,

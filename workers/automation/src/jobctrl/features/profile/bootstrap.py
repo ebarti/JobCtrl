@@ -18,7 +18,9 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
             from jobctrl.app.errors import AppError
             raise AppError("action_cancelled", "Profile authoring was cancelled.", 409)
         context.heartbeat({"stage": "profile_authoring"})
-        return await service.request_authoring(payload, cancelled=context.cancelled)
+        return await service.request_authoring(payload, cancelled=context.cancelled,
+            expected_approved_variants=payload.get("expected_approved_variants"),
+            retry_of_proposal_id=payload.get("retry_of_proposal_id"))
 
     async def coach(context, payload):
         context.heartbeat({"stage": "profile_coaching"})

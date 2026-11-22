@@ -264,7 +264,7 @@ def _recipe_command(recipe: str):
     return command
 
 
-for _recipe in ("enrich", "analyze", "score", "tailor", "prepare"):
+for _recipe in ("assess", "enrich", "analyze", "score", "tailor", "prepare"):
     app.command(_recipe, help=f"Submit the explicit {_recipe} preparation recipe.")(_recipe_command(_recipe))
 
 
@@ -274,7 +274,7 @@ def discover(
     location: list[str] = typer.Option([], "--location"),
     board: list[str] = typer.Option([], "--board"),
     limit: int | None = typer.Option(None, "--limit", min=1, max=1000),
-    results_per_site: int | None = typer.Option(None, "--results-per-site", min=1, max=1000),
+    results_per_site: int | None = typer.Option(None, "--results-per-site", min=1, max=1000, hidden=True),
     hours_old: int | None = typer.Option(None, "--hours-old", min=1),
     wait: bool = typer.Option(False, "--wait"),
     idempotency_key: str | None = typer.Option(None, "--idempotency-key"),
@@ -306,8 +306,8 @@ def run(
     chosen = stages or ["run"]
     if chosen == ["all"]:
         chosen = ["discover"]
-    if len(chosen) != 1 or chosen[0] not in {"run", "discover", "enrich", "analyze", "score", "tailor", "prepare"}:
-        _fail("explicit_recipe_required", "Choose one recipe: run, discover, enrich, analyze, score, tailor or prepare. Custom implicit stage combinations are no longer accepted.", exit_code=2)
+    if len(chosen) != 1 or chosen[0] not in {"run", "discover", "assess", "enrich", "analyze", "score", "tailor", "prepare"}:
+        _fail("explicit_recipe_required", "Choose one recipe: run, discover, assess, enrich, analyze, score, tailor or prepare. Custom implicit stage combinations are no longer accepted.", exit_code=2)
     _output(_run(_preparation(chosen[0], job_id, limit=limit, force=force, min_fit_score=min_fit_score,
                              allow_below_threshold=allow_below_threshold, wait=wait, idempotency_key=idempotency_key)))
 
@@ -734,7 +734,7 @@ def extension_token(rotate: bool = typer.Option(False, "--rotate")) -> None:
 
 @app.command("profile-transfer")
 def profile_transfer(
-    source: Path = typer.Option(..., "--source", help="Existing source workspace; read-only."),
+    source: Path = typer.Option(..., "--source", help="Stopped legacy workspace to read."),
     target: Path = typer.Option(..., "--target", help="Nonexistent path for the fresh application workspace."),
     confirm_profile_only_reset: bool = typer.Option(False, "--confirm-profile-only-reset", help="Explicitly transfer only Profile; other application data starts empty."),
     browser_sources: Path = typer.Option(..., "--browser-sources", help="Complete read-only browser Profile sources/attachment manifest."),
@@ -838,11 +838,9 @@ def gmail_auth(no_open: bool = typer.Option(False, "--no-open"), timeout: int = 
 
 
 from jobctrl.company_briefing_cli import app as company_briefing_app  # noqa: E402
-from jobctrl.source_proposals_cli import app as source_proposals_app  # noqa: E402
 from jobctrl.legacy_evidence_cli import app as legacy_evidence_app  # noqa: E402
 
 app.add_typer(company_briefing_app, name="company-briefing")
-app.add_typer(source_proposals_app, name="source-proposals")
 app.add_typer(legacy_evidence_app, name="legacy-evidence")
 
 

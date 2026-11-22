@@ -5,9 +5,9 @@ import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { discoveryKeys } from "../queryKeys.js";
 import { DiscoverySettingsPythonSchema } from "../contracts.js";
 
-export function useDiscoverySettingsQuery(): UseQueryResult<DiscoverySettingsResponse> {
+export function useDiscoverySettingsQuery(workspaceIdentity?: string): UseQueryResult<DiscoverySettingsResponse> {
   const tenantId = useTenantId();
   const { http } = usePorts();
-  return useQuery({ queryKey: discoveryKeys.settings(tenantId),
-    queryFn: async () => DiscoverySettingsPythonSchema.parse(await http.json<unknown>("GET", "/v1/discovery/settings")) });
+  return useQuery({ queryKey: workspaceIdentity ? [...discoveryKeys.settings(tenantId), "workspace", workspaceIdentity] : discoveryKeys.settings(tenantId),
+    queryFn: async () => DiscoverySettingsPythonSchema.parse(await http.json<unknown>("GET", "/v1/discovery/settings", workspaceIdentity ? { expectedDatabaseInstanceId: workspaceIdentity } : {})) });
 }

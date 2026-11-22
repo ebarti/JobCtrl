@@ -79,6 +79,13 @@ jobs:
           corepack pnpm demo-edge:check
           corepack pnpm demo-edge:dry-run
           corepack pnpm docs:build
+      - name: Verify rendered documentation
+        if: inputs.surface == 'support'
+        timeout-minutes: 8
+        run: |
+          bash scripts/ci-apt-timeouts.sh
+          corepack pnpm --filter @jobctrl/web exec playwright install --with-deps chromium
+          corepack pnpm docs:check:runtime
       - name: Require unchanged dependency locks
         if: always()
         run: git diff --exit-code -- pnpm-lock.yaml workers/automation/uv.lock

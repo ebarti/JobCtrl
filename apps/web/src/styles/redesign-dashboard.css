@@ -143,8 +143,38 @@
   border-bottom: 0;
 }
 
+.dashboard-tail > .dashboard-panel {
+  min-width: 0;
+}
+
+.dashboard-tail > .dashboard-panel + .dashboard-panel {
+  border-block-start: 1px solid var(--border);
+}
+
+.dashboard-tail > .dashboard-panel > .card {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.dashboard-tail > .dashboard-panel > .card > .rows:last-child > .mini-row:last-child {
+  border-block-end: 0;
+}
+
 .dashboard-view .card {
   align-self: start;
+}
+
+.dashboard-view .jobs-dashboard-panel {
+  display: grid;
+  gap: 8px;
+  padding: 16px 20px;
+}
+
+.dashboard-view .jobs-dashboard-panel a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
 }
 
 .dashboard-view .funnel {

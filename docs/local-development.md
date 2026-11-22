@@ -54,7 +54,7 @@ corepack pnpm dev:setup
 
 `corepack pnpm dev:setup` installs the Node workspace dependencies and runs
 `uv --project workers/automation sync --extra dev`, which installs the Python
-worker, the pinned `jobstreaming==0.0.5` provider, its locked transitive
+worker, the pinned JobStreaming wheel, its locked transitive
 dependencies, and the Python dev tools used by local checks. It does not install Temporal or
 Playwright browser binaries. Do not set `UV_EXCLUDE_NEWER` (or a global uv
 `exclude-newer` config): it makes uv treat `uv.lock` as needing re-resolution,
@@ -88,6 +88,14 @@ for the managed Codex vendor login; ordinary readiness checks do not launch it.
 Source dependency provisioning remains in `scripts/install` and
 `corepack pnpm dev:setup`. Browser installation uses `scripts/install` or the
 explicit pinned Playwright command above, outside provider setup.
+
+This source candidate uses JobStreaming 0.0.6 from the exact Git commit recorded
+in `workers/automation/pyproject.toml` and `uv.lock`. It provides automatic source
+traversal and explicit completion reasons. The SDK candidate is not a published
+package. Source setup and QA use that immutable Git override; before a native
+release, replace it with the exact published SDK version and hashed wheel lock.
+The native core installer continues to require hashes and prebuilt wheels, so
+this source override does not establish release-build readiness.
 
 ## Run
 
@@ -134,7 +142,7 @@ For a detached stack, use `corepack pnpm dev:start`; inspect it with
 
 ### Workspace compatibility and source updates
 
-The Python application does not upgrade the previous application database in
+The Python application does not upgrade a pre-Python application database in
 place. It refuses a legacy workspace before opening its database with SQLite;
 this applies to source startup across platforms. Preserve the existing workspace
 and its history. Starting a checkout, updating source dependencies or an
@@ -158,8 +166,23 @@ synthetic data; development and QA never reset a real user's workspace.
 
 For source updates, stop the owned stack, preserve unrelated work, update the
 checkout and dependencies, and restart only after checking workspace
-compatibility. Updating a checkout does not publish or update an installed
-release. For ordinary development that does not need personal data, use a
+compatibility. The `requirements-v2` source generation requires stopped old
+writers and a verified workspace backup before new writes. Its active catalog
+starts empty while accepted history and bytes remain retained. After new writes,
+rollback restores that backup with compatible application/workflow state; an
+older binary alone is insufficient. See the
+[typed upgrade boundary](user/data-and-safety.md#typed-requirements-upgrade).
+The later capability-consolidation policy adds its own schema extension within
+that generation; it does not empty the retained catalog. Stop the owned writers
+and verify a paired workspace backup before adopting the new source. Starting
+it registers the extension but does not run semantic repair. **Jobs →
+Requirements → Consolidate skills** explicitly admits one complete retained
+catalog determination. Failed or cancelled work preserves the accepted catalog,
+scores and resume bytes. After successful publication, use the compatible
+backup and workflow state for rollback rather than starting an older checkout
+against the changed workspace. See the
+[consolidation contract](user/requirements-library.md).
+Updating a checkout does not publish or update an installed release. For ordinary development that does not need personal data, use a
 separate owned synthetic `JOBCTRL_DIR`, with synthetic credentials and sources;
 setting that path alone does not isolate inherited environment credentials.
 
@@ -276,6 +299,16 @@ in the MVP. The receipt history stays inspectable in the demo shell. The demo
 never falls back to the product API, SSE, an external origin, or a host-OS
 opener.
 
+**Demo guide → Explore matching and wording** opens a separate illustrative
+walkthrough of canonical requirement matching, saved changes, manual refresh
+outcomes and reusable wording. Its examples and choices live only in the dialog;
+they do not edit the synthetic workspace, create action receipts, assess a
+requirement or approve wording. The actual **Update affected matches** action
+remains unavailable in the public demo because it needs the local model-backed
+runtime. The walkthrough explains the implemented feature; it is not the
+pending whole-app redesign. Follow [Candidate Profile](user/candidate-profile.md)
+for the local application's control and recovery behavior.
+
 `DemoSeedValue.seedVersion` is the fixture-revision boundary, separate from the
 IndexedDB/workspace schema versions. Changing the canonical seed must bump this
 value. When a seed refresh changes the destructive writer contract, also advance
@@ -336,10 +369,21 @@ Maintainer approval remains required for workflow runs from external forks.
 The current CI configuration runs trusted privacy admission, direct static
 checks, and the complete Python/Chromium journey lane defined by
 `.github/workflows/ci-e2e.yml`. Admission examines the candidate before candidate
-code or dependencies run. The journey lane builds once and uses the same real
-application boundaries as the local command above. Inspect the actual run and
-candidate identity before reporting a pass; legacy unit, component, snapshot,
-Fastify and JSON-RPC test lanes do not establish target behavior.
+code or dependencies run. The journey lane uses two fixed Playwright shards,
+`--shard=1/2` and `--shard=2/2`, on separate runners. Each builds once and uses
+the same real application boundaries as the local command above, with one
+worker, zero retries and unchanged case/global deadlines. Both shards run even
+if one fails and retain separately named evidence. The stable **Browser / UI
+checks** aggregate requires both jobs to succeed; one shard cannot qualify the
+full inventory. See [Reliability & QA](local-reliability-qa.md) and the
+[hosted scheduling record](developer/qa/python-journeys.md#hosted-scheduling-follow-up).
+Inspect the actual run and candidate identity before reporting a pass; legacy
+unit, component, snapshot, Fastify and JSON-RPC test lanes do not establish
+target behavior.
+
+The Support lane also builds the documentation and runs `docs:check:runtime`
+in Chromium, so client rendering and documentation contracts are checked before
+merge as well as before the main-branch Docs Site publication.
 
 ## Test And Documentation Workspaces
 
@@ -529,6 +573,16 @@ capture wrapper targets a retired browser suite and is not a valid capture path
 for the Python application. Until a current capture workflow is implemented and
 verified, do not claim that it regenerates the gallery or run it against a real
 workspace. Images illustrate screens; they do not prove multi-step behavior.
+
+For the Original candidate, current imagery is captured from the real browser
+after public application journeys in a fresh owned synthetic Python workspace.
+Keep raw capture/evidence outside the repository. Inspect the image for private
+content, meaningful state, loaded fonts and clipping before copying an approved
+synthetic export into `docs/assets/screenshots/original-*.png`. Captions identify
+source-candidate and blocked/unknown states; a configured provider is not verified
+dispatch. Update the owning guide/tour and rerun documentation build/browser
+checks after changing its assets. This does not revive the retired wrapper or
+establish a hosted deployment.
 
 ### Launch Demo Asset Inventory
 

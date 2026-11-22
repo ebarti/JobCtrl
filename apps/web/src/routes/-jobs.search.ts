@@ -5,8 +5,9 @@ import {
 } from "@jobctrl/contracts";
 import { z } from "zod";
 
-import { JobStatesFilterSchema } from "@jobctrl/contracts";
+import { JobStatesFilterSchema, PostedPayFilterSchema } from "@jobctrl/contracts";
 import { PYTHON_JOBS_SORT_FIELDS } from "../shared/stores/saved-table-views.js";
+import { requirementsReturnTableSchema } from "../contexts/requirements/index.js";
 
 const STAGE_OR_ALL = [...STAGES, "all"] as const;
 const STATE_OR_ALL = [...STAGE_STATES, "all"] as const;
@@ -60,11 +61,16 @@ export const jobsSearchSchema = z.object({
   min_fit_score: gridScore, max_fit_score: gridScore,
   discovered_since: gridDate, scored_since: gridDate,
   posted_min_eur: gridNumber, posted_max_eur: gridNumber, market_min_eur: gridNumber, market_max_eur: gridNumber,
-  posted_known: z.enum(["all", "known", "unknown"]).optional(), market_known: z.enum(["all", "known", "unknown"]).optional(),
+  posted_known: PostedPayFilterSchema.optional(), market_known: z.enum(["all", "known", "unknown"]).optional(),
   compensation_confidence: z.string().max(100).refine((value) => !value || value.split(",").every((item) => ["none", "low", "medium", "high"].includes(item))).optional(),
   compensation_warnings: z.enum(["all", "present", "none"]).optional(),
   column_filters: columnFilters.optional(),
   query_revision: z.string().min(1).max(80).optional(),
+  jobTab: z.enum(["fit", "resume", "application", "people", "offer"]).optional(),
+  resumeMode: z.enum(["baseline", "tailored"]).optional(),
+  returnRequirement: z.string().min(1).max(200).optional(),
+  returnRequirementsFilter: z.string().max(10000).optional(),
+  returnRequirementsTable: requirementsReturnTableSchema,
 }).superRefine((value, context) => {
   if (value.grid === "v1" && (value.offset ?? 0) > 0 && !value.query_revision) {
     context.addIssue({ code: "custom", path: ["query_revision"], message: "Reload the first Jobs page to establish a query revision." });

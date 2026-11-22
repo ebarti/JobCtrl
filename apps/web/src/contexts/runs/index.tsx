@@ -41,7 +41,7 @@ export function ensureActionRun(context: HttpLoaderReadContext, runId: string) {
 }
 export const actionRunEvents: FeatureEventHandler = {
   eventTypes: ["ActionQueued", "ActionStarted", "ActionFailed", "ActionCompleted", "ActionCancellationRequested"],
-  handle(event, client) { void invalidateQueriesWithOptimisticOwnership(client, actionRunKeys.all(event.tenantId)); },
+  handle(event, invalidate) { invalidate(actionRunKeys.all(event.tenantId)); },
 };
 
 export function useActionRunSummary() {
@@ -54,7 +54,7 @@ export function useActionRunSummary() {
 
 export function ActionRunsDashboard() {
   const query = useActionRunSummary();
-  return <section className="card" aria-label="Active work"><h2>Active work</h2>
+  return <section className="card operational-panel operational-summary-panel" aria-label="Active work"><h2>Active work</h2>
     {query.isPending ? <p>Loading work status…</p> : null}
     {query.error ? <p role="alert">Work status could not be refreshed: {query.error.message}{query.data ? " Showing the last loaded counts." : ""}</p> : null}
     {query.data ? <p>{query.data.counts.running ?? 0} running · {query.data.counts.queued ?? 0} queued · {query.data.total} recorded · {query.data.pendingCancellation} cancellation requests pending</p> : null}
@@ -80,25 +80,25 @@ export function ActionRunsPage({ filters, onFilterChange }: { readonly filters: 
     }, getNextPageParam: (last) => last.nextCursor ?? undefined, meta: { suppressGlobalErrorToast: true },
   });
   const runs = query.data?.pages.flatMap((page) => page.runs) ?? [];
-  return <div>
+  return <div className="operational-workspace action-runs-workspace">
     <PageHead eyebrow="Activity" title="Runs" subtitle="Durable work and its recorded outcome." />
-    <details><summary>Filter runs{filters.status !== "all" || filters.action || filters.since || filters.until ? " (active)" : ""}</summary>
-      <form onSubmit={(event) => { event.preventDefault(); onFilterChange(draft); }}>
-        <label htmlFor="run-status">Status</label><Select value={draft.status} onValueChange={(value) => { if (value) setDraft({ ...draft, status: value as ActionRunStatusFilter }); }}>
+    <details className="card operational-filters"><summary>Filter runs{filters.status !== "all" || filters.action || filters.since || filters.until ? " (active)" : ""}</summary>
+      <form className="operational-filter-form" onSubmit={(event) => { event.preventDefault(); onFilterChange(draft); }}>
+        <div className="operational-field"><label htmlFor="run-status">Status</label><Select value={draft.status} onValueChange={(value) => { if (value) setDraft({ ...draft, status: value as ActionRunStatusFilter }); }}>
           <SelectTrigger id="run-status"><SelectValue>{({ all: "All statuses", pending: "Pending", queued: "Queued", running: "Running", succeeded: "Succeeded", failed: "Failed", cancelled: "Cancelled", start_failed: "Start failed" } as const)[draft.status]}</SelectValue></SelectTrigger>
           <SelectContent><SelectItem value="all">All statuses</SelectItem><SelectItem value="pending">Pending</SelectItem><SelectItem value="queued">Queued</SelectItem><SelectItem value="running">Running</SelectItem><SelectItem value="succeeded">Succeeded</SelectItem><SelectItem value="failed">Failed</SelectItem><SelectItem value="cancelled">Cancelled</SelectItem><SelectItem value="start_failed">Start failed</SelectItem></SelectContent>
-        </Select>
+        </Select></div>
         <label>Action name<input value={draft.action} onChange={(event) => setDraft({ ...draft, action: event.target.value })} /></label>
         <label>Since (ISO timestamp with timezone)<input value={draft.since} onChange={(event) => setDraft({ ...draft, since: event.target.value })} /></label>
         <label>Until (ISO timestamp with timezone)<input value={draft.until} onChange={(event) => setDraft({ ...draft, until: event.target.value })} /></label>
-        <Button type="submit">Apply filters</Button>
-        <Button type="button" variant="outline" onClick={() => { const empty: ActionRunFilters = { status: "all", action: "", since: "", until: "" }; setDraft(empty); onFilterChange(empty); }}>Clear filters</Button>
+        <div className="operational-filter-actions"><Button type="submit">Apply filters</Button>
+        <Button type="button" variant="outline" onClick={() => { const empty: ActionRunFilters = { status: "all", action: "", since: "", until: "" }; setDraft(empty); onFilterChange(empty); }}>Clear filters</Button></div>
       </form>
     </details>
     {query.error ? <p role="alert">Runs could not be refreshed: {query.error.message}{query.data ? " Previously loaded runs remain visible." : ""}</p> : null}
     {query.isPending ? <p>Loading runs…</p> : null}
     {query.data && !runs.length ? <p>No runs recorded yet.</p> : null}
-    {runs.length ? <ul>{runs.map((run) => <li key={run.runId}><Link to="/runs/$runId" params={{ runId: run.runId }}>{run.action}</Link>{` · ${run.status} · ${run.createdAt}`}</li>)}</ul> : null}
+    {runs.length ? <ul className="card operational-record-list">{runs.map((run) => <li key={run.runId}><Link to="/runs/$runId" params={{ runId: run.runId }}>{run.action}</Link><span>{run.status} · {run.createdAt}</span></li>)}</ul> : null}
     {query.hasNextPage ? <Button type="button" variant="outline" disabled={query.isFetchingNextPage} onClick={() => void query.fetchNextPage()}>{query.isFetchingNextPage ? "Loading…" : "Load older runs"}</Button> : null}
   </div>;
 }
@@ -111,18 +111,22 @@ export function ActionRunDetail({ runId, renderFeatureDetail }: { readonly runId
     onSettled: () => invalidateQueriesWithOptimisticOwnership(client, actionRunKeys.all(tenantId)) });
   const run = query.data;
   const temporalUrl = run && health.data?.temporal ? workflowUrl(health.data.temporal.uiBaseUrl, health.data.temporal.namespace, run.workflowId) : null;
-  return <div>
+  const canCancel = run ? ["pending", "queued", "running"].includes(run.status) && !run.cancellationRequested : false;
+  const featureDetail = run ? renderFeatureDetail?.(run) : null;
+  return <div className="operational-workspace action-run-detail-workspace">
     <PageHead eyebrow="Activity" title="Run detail" />
     <Link to="/runs">Back to runs</Link>
     {query.isPending ? <p>Loading run…</p> : null}
     {query.error ? <p role="alert">Run status could not be refreshed: {query.error.message}{run ? " The last loaded status remains below." : ""}</p> : null}
-    {run ? <section className="card"><h2>{run.action}</h2><p>Status: {run.status}{run.cancellationRequested ? " · cancellation requested" : ""}</p>
-      <dl><dt>Run</dt><dd>{run.runId}</dd><dt>Workflow</dt><dd>{run.workflowId}</dd><dt>Created</dt><dd>{run.createdAt}</dd><dt>Updated</dt><dd>{run.updatedAt}</dd>{run.errorCode ? <><dt>Error code</dt><dd>{run.errorCode}</dd></> : null}</dl>
+    {run ? <section className="card operational-panel"><h2>{run.action}</h2><p>Status: {run.status}{run.cancellationRequested ? " · cancellation requested" : ""}</p>
+      <dl className="operational-metadata"><div><dt>Run</dt><dd>{run.runId}</dd></div><div><dt>Workflow</dt><dd>{run.workflowId}</dd></div><div><dt>Created</dt><dd>{run.createdAt}</dd></div><div><dt>Updated</dt><dd>{run.updatedAt}</dd></div>{run.errorCode ? <div><dt>Error code</dt><dd>{run.errorCode}</dd></div> : null}</dl>
+      {temporalUrl || canCancel ? <div className="operational-actions">
       {temporalUrl ? <a href={temporalUrl} target="_blank" rel="noopener noreferrer">View workflow in Temporal</a> : null}
-      {["pending", "queued", "running"].includes(run.status) && !run.cancellationRequested ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate()}>Request cancellation</Button> : null}
+      {canCancel ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate()}>Request cancellation</Button> : null}
+      </div> : null}
       {cancel.error ? <p role="alert">{cancel.error.message} Check the current run state before retrying.</p> : null}
       {run.result !== null && run.result !== undefined ? <details><summary>Recorded result</summary><pre>{JSON.stringify(run.result, null, 2)}</pre></details> : null}
-      {renderFeatureDetail?.(run)}
+      {featureDetail ? <div className="operational-feature-detail">{featureDetail}</div> : null}
     </section> : null}
   </div>;
 }

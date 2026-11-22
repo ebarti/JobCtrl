@@ -28,6 +28,40 @@ retries. The run reports build, journey and total elapsed time; the hosted job
 also measures dependency preparation. See the exact scenario and coverage
 ledger in [Python application journeys](developer/qa/python-journeys.md).
 
+The workspace identity journey opens the same disposable database with a second
+API configured for a different workflow namespace. It verifies a write refusal,
+restarts the original worker and reads the saved job through the original API.
+The dispatch journey stops the owned Temporal server while the worker keeps
+heartbeating. It checks public status, refused admission and earlier receipts,
+then restores the same history and retries through the actions endpoint.
+
+Hosted Browser CI schedules that same inventory in six fixed, disjoint
+Playwright shards, `--shard=1/6` through `--shard=6/6`, on separate
+runners. Each hosted invocation uses two Playwright workers, zero retries, the
+existing case deadlines and the 720-second global deadline; the ordinary
+unsharded local command retains its one-worker default. Each shard builds once,
+each worker owns its Temporal service, and each journey owns its application
+workspace. Shards retain separately named evidence. Matrix fail-fast is disabled so a failed shard does
+not cancel its peers. The stable **Browser / UI checks** result passes only when
+all six shard jobs succeed. Record the result of every shard and the candidate
+revision to establish complete hosted coverage.
+
+Hosted Ubuntu transport recovery may prefer only the fixed Ubuntu-listed,
+operator-verified HTTPS candidate after all three completed original mirror
+HTTP probes fail and a bounded candidate GET exits zero with HTTP 200.
+An exit-zero original HTTP 200–399 response or an indeterminate original result
+retains the originals. Incomplete/unknown results cannot authorize fallback.
+If any required original mirror URL is absent, the optional priority rewrite is
+skipped with a sanitized diagnostic and the mirror file stays byte-for-byte
+unchanged. This does not admit fallback; normal verified APT installation must
+still succeed before the actual documentation or browser checks run.
+Original mirrors, suites,
+`Signed-By`, archive keys and signature/hash/freshness verification remain, as
+do setup/test caps and required cases. HTTP reachability does not qualify archive
+authenticity or package installation: actual APT verification/install and all
+required test gates must pass. See the [transport recovery record](developer/qa/python-journeys.md#conditional-transport-recovery-after-1d79df1b)
+for provenance and observed hosted limits.
+
 Run the affected type, architecture, Python lint, native vet, packaging or docs
 build as applicable. Invoke pnpm through Corepack and use the candidate's locked
 Python environment. A direct test listing or type check is not an executed
@@ -70,9 +104,90 @@ labeled corpus, baseline grading or recorded model-output replay.
 Exercise opposing supported/unsupported determinations, invalid schema/enums,
 foreign source IDs, non-verbatim spans, stale revisions, unavailable providers,
 budget refusal and cancellation. Require canonical receipt/source/model/lane IDs
-and failed-refresh preservation. Retrieval may narrow candidates; a top-k miss
-cannot prove novelty. Person qualification remains independent of approved
+and failed-refresh preservation. Requirement matching supplies the complete
+incoming batch and current catalog in one determination; a partial catalog,
+missing decision or uncertain response cannot authorize novelty. Exercise
+explicit size/refusal handling without truncation or automatic chunking.
+Person qualification remains independent of approved
 wording and document selection. A completed learning activity proves no skill.
+
+For `requirements-v2`, exercise the source-bound English-language gate before
+extraction: a non-English posting is skipped without translation or a score.
+Verify complete-batch Skills/Professional Experience matching, reuse of ordinary
+facets and separation of materially different capabilities. Education and
+Languages remain direct job-local demands. One missing-qualification batch
+covers all four categories, with section-specific evidence validation and the
+explicit equivalent-experience Education route recorded without claiming a
+degree. Reject language support from Skills, achievements or attachments.
+Current section-backed matches create no achievement-wording gap; supported
+Skills and direct demands must not trigger unnecessary achievement rewrites.
+Inspect `requirement-fit-v3-equal`, equal-item contributions, duplicate-occurrence
+invariance, alternatives counted once and no-score behavior for an empty set.
+
+For `requirements-capability-demand-v2`, exercise existing-only consolidation
+from a real predecessor-created catalog and the same mandatory gate during
+ingestion/correction. Include hidden retained members, complete existing-existing
+and incoming partitions, original-source preservation, stable aliases and exact
+historical reads. Ordinary facets share a capability; independently demanded
+technologies remain distinct. Same-capability jobs with different source demands
+must not share qualification, while identical normalized demands reuse the exact
+current assessment. A repeated occurrence contributes no extra score item.
+Require exact demand and policy pins in qualification, coverage, maintained
+wording, refresh checkpoints and currentness. A shared batch receipt cannot
+cross-authorize sibling demands. A common selected wording retains every exact
+covered binding; an uncovered sibling remains a gap. Manual selection and cached
+group decisions cannot overwrite newer maintained-head inputs.
+
+Reject missing/foreign members or occurrences, invalid reuse/citations, uncertainty,
+oversized/context refusal, stale posting/catalog/snapshot heads and cancellation
+without partial publication. Compare every predecessor schema entry byte-for-byte
+and allow only the declared additions for normalization, cohort operations,
+recovery and worker identity. Preserve old
+scores, approval history and accepted PDF bytes, while changed derivations become
+historical. No read/save starts repair or downstream work. Controlled boundary
+choices prove authority, not semantic accuracy; run the configured provider on
+the reported source-bound failure separately.
+
+For the separately versioned normalization citation-selection wire, exercise
+model-selected supplied segment references with exact multiline, quotation-mark
+and backslash source bytes. Require raw selection equality with the immutable
+receipt/cache independently of the derived quote projection. Check binder,
+selection, segment-catalog and derived-result fingerprints, same-source segment
+resolution, and unchanged semantic fields. Foreign references, wrong-source
+references, stale inputs and incompatible earlier wire versions must preserve
+accepted state. No reference may join source values, generate an offset, change
+whitespace or silently fall back to a literal quote. Retain old citation history
+and the one-call allowance through actual predecessor/recovery entrypoints.
+
+For required normalization response slots, remove a supplied member or occurrence
+key and supply a foreign key/reference: the actual provider schema must reject
+them before publication. Exercise opposing explicit root/same-as choices, alias
+cycles, cross-capability demand aliases and conflicting job demands. Explicit
+source uncertainty still preserves accepted state. Compare the immutable raw
+slot response, separately derived grouping and exact-quote projections, their
+distinct fingerprints and recorded source joins. Preserve actual v3 predecessor
+history and refuse incompatible durable replay without another call. Validate
+the final provider-adapted schema's required keys, shared enums and supported
+composition; an inventory listing or schema check does not prove model quality.
+
+Post-edit Fit refresh is manually admitted. Prove that saves, approvals, reads
+and the operation's own writes make no additional model calls or queued work.
+Exercise complete-catalog accounting, exact current and mandatory per-item work
+selection, the single unresolved semantic impact partition with all factual
+sources, previously unsupported requirements made relevant by new evidence,
+separate structural/model provenance, reuse of unaffected decisions,
+and grouped wording preparation. Check fixed input versions and job selection,
+including the selected jobs' exact direct-demand snapshots,
+duplicate admission, persisted call/item/deadline limits, cancellation and real
+worker restart. Changes while queued or running must refuse stale work without
+expanding the operation. Report recorded monetary spend separately from work
+limits; ordinary lane/daily spend admission is not a guaranteed per-operation
+maximum charge.
+Real fixed-predecessor worker pauses must cover completed/unsettled call-only
+recovery across impact and qualification transport changes. Reuse the exact
+retained request or refuse; no counter reset, guessed wire or duplicate call is
+permitted. A debugger may observe/pause the unmodified owned predecessor process;
+it cannot alter locals, results, production code or domain rows.
 
 A controlled boundary proves authority and failure handling. Real SDK/provider
 compatibility, authentication, a provider/model change and pre-release readiness
@@ -95,9 +210,23 @@ A failed refresh, model result, render, publication or cancellation preserves th
 last accepted version and exact artifact bytes. Rejected candidates and failures
 remain separate audit state. Resume composition retains every authored role and
 achievement and selects exactly one current approved variant for each, with
-stable weighted-coverage selection. Baseline-copy makes zero resume model calls,
+one composition policy point per eligible canonical requirement, complementary
+depth and stable ties. All other baseline sections, including Language /
+Proficiency, survive Profile editing, Plate and supported text/PDF/DOCX/locale
+exports. Existing four-section templates remain usable and empty language
+defaults do not create a factual revision. Baseline-copy makes zero resume model calls,
 including explicit review requests. Advisory coherence findings/timeouts remain
 honest when the user explicitly overrides review.
+
+Exercise the typed-requirement generation upgrade in an owned workspace created
+through the predecessor application's public entrypoints. Start with accepted
+history and artifact bytes, stop predecessor writers, capture a consistent
+workspace backup, then start the candidate. Verify unchanged schema strings,
+history, job revision ordering and accepted bytes; an empty active catalog;
+contract-change refresh status; no automatic model calls; and refusal of
+incompatible operation replay. After new-generation writes, restoring the
+pre-upgrade backup is the rollback proof. An older binary alone does not prove
+safe rollback. Report this synthetic proof separately from a live rollout.
 
 ## Discovery transaction recovery
 

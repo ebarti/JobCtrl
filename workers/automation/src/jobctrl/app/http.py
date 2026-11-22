@@ -52,7 +52,7 @@ class FrontendFiles(StaticFiles):
             response = await super().get_response("index.html", scope)
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; "
+            "img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' https://photon.komoot.io; "
             "object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
         )
         return response
@@ -61,6 +61,7 @@ class FrontendFiles(StaticFiles):
 def create_http_app(application: Application, *, static_dir: Path | None = None, port: int = 8787,
                     credential_service=None) -> Starlette:
     runtime = application.runtime
+    capabilities = sorted({name for feature in application.features.values() for name in feature.capabilities})
 
     def temporal_metadata():
         configured = os.environ.get("JOBCTRL_TEMPORAL_UI_URL", "")
@@ -80,15 +81,24 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
         return JSONResponse({
             "ok": True, "application": "jobctrl-python", "schemaVersion": SCHEMA_VERSION,
             "workspaceId": hashlib.sha256(str(runtime.workspace).encode()).hexdigest(),
-            "databaseInstanceId": runtime.database.instance_id,
-            "features": list(application.features), "worker": application.worker_status(),
+            "databaseInstanceId": runtime.database.instance_id, "runtimeIdentity": application.identity,
+            "features": list(application.features), "capabilities": capabilities, "worker": await application.dispatch_readiness(),
             "llmSpend": runtime.model.spend(),
             "temporal": temporal_metadata(),
         })
 
+    def settings_response(saved):
+        provider = saved["defaultProvider"]
+        model = saved["providerModels"].get(provider)
+        accounting = runtime.model.accounting_capability(
+            selection={"provider": provider, "model": model}, settings=saved,
+        ) if model else {"provider": provider, "model": None, "available": False,
+                         "costSource": None, "pricingQuote": None, "reason": "model_unavailable"}
+        return JSONResponse({**saved, "modelAccounting": accounting})
+
     async def settings(request):
         if request.method in {"GET", "HEAD"}:
-            return JSONResponse(runtime.settings.snapshot())
+            return settings_response(runtime.settings.snapshot())
         value = await json_object(request)
         expected = value.pop("expectedRevision", None)
         if type(expected) is not int:
@@ -115,7 +125,7 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
                     supported = {row["reasoningEffort"] for row in selected.get("supportedReasoningEfforts", [])}
                     if efforts[model] not in supported:
                         raise AppError("model_effort_unsupported", "The selected reasoning effort is unavailable for this model.", 409)
-        return JSONResponse(runtime.settings.update(value, expected_revision=expected))
+        return settings_response(runtime.settings.update(value, expected_revision=expected))
 
     async def submit(request):
         receipt = await application.submit(request.path_params["action"], await json_object(request),
@@ -262,7 +272,7 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
     if "jobs" in application.services:
         from jobctrl.extension_transport import build_extension_routes
         routes.extend(build_extension_routes(runtime, application.services["jobs"],
-                                            broker=application.extension_broker, application=application))
+                                            application=application))
     signatures = set()
     for route in routes:
         for method in getattr(route, "methods", ()) or ():
@@ -299,7 +309,8 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
         await asyncio.to_thread(close_provider_runtimes)
 
     app = Starlette(routes=routes, middleware=[Middleware(LocalSecurity, workspace=runtime.workspace, port=port,
-                                                         database_instance_id=runtime.database.instance_id)],
+                                                         database_instance_id=runtime.database.instance_id,
+                                                         validate_write_identity=application.require_write_identity)],
                     exception_handlers={AppError: app_error, json.JSONDecodeError: invalid_input,
                                         UnicodeDecodeError: invalid_input, ValidationError: invalid_input,
                                         Exception: unexpected}, lifespan=lifespan)

@@ -61,7 +61,7 @@ export function OutreachView() {
         }
       />
       <DueFollowUpsPanel />
-      <section className="card full data-list-card">
+      <section className="card full data-list-card contacts-list">
         {message ? <div className="banner inline">{message}</div> : null}
         {message && !data ? <ContactRefreshNotice initial retry={() => { void refetch(); }} /> : null}
         {isRefetchError ? <ContactRefreshNotice retry={() => { void refetch(); }} /> : null}

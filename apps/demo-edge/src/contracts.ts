@@ -57,6 +57,8 @@ export const routeNames = [
   "contact_detail",
   "activity",
   "settings",
+  "requirements",
+  "learning",
   "docs",
 ] as const;
 export type RouteName = (typeof routeNames)[number];
@@ -72,6 +74,10 @@ export const featureNames = [
   "apply",
   "outreach",
   "demo_tour",
+  "profile",
+  "requirements",
+  "preferences",
+  "appearance",
 ] as const;
 export type FeatureName = (typeof featureNames)[number];
 

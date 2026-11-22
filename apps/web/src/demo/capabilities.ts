@@ -6,6 +6,15 @@ const unavailable = (reason: string) => ({ class: "unavailable", reason }) as co
 
 export const DEMO_RESCORE_UNAVAILABLE_MESSAGE = "Rescoring is unavailable in the demo.";
 
+/** Feature-owned HTTP actions have no legacy ApiClientPort member. */
+export const DEMO_FEATURE_CAPABILITIES = {
+  prepareBaselineResume: local("Copies and renders the complete synthetic baseline in this browser; no worker or model provider is used."),
+  updateAffectedMatches: unavailable("The public demo has no model provider or local worker. Saved synthetic edits do not assess qualifications or wording coverage."),
+  selectCurrentWording: unavailable("A current requirement wording needs exact approved, assessed coverage in the local app. Manual links remain unassessed."),
+  discoverySearch: unavailable("Live job search needs the local worker and configured sources. The public demo makes no job-board request."),
+  placeLookup: unavailable("Place lookup is unavailable in the public demo; typed locations remain unverified."),
+} as const;
+
 /**
  * Every port member is deliberately classified before a demo adapter exists.
  * `satisfies` makes a newly added DemoApiClientPort member a compile-time failure.
@@ -62,16 +71,12 @@ export const DEMO_CAPABILITY_MANIFEST = {
   discoverySettings: local("Reads synthetic discovery preferences."),
   updateDiscoverySettings: local("Edits synthetic discovery preferences locally."),
   discoverySources: local("Reads synthetic discovery sources."),
-  upsertDiscoverySource: local("Edits a synthetic source locally."),
   patchDiscoverySourceState: local("Changes a synthetic source state locally."),
   discoverySourcePreview: local(
     "Reads saved synthetic source observations without contacting a provider or job board.",
   ),
   compensationSources: local("Reads synthetic compensation source policy."),
   updateCompensationSourcePolicy: local("Edits synthetic compensation policy locally."),
-  discoveryLocatorCandidates: local("Reads bundled source-locator candidates."),
-  promoteSourceLocatorCandidate: local("Promotes a bundled candidate locally."),
-  rejectSourceLocatorCandidate: local("Rejects a bundled candidate locally."),
   discoveryQuarantine: local("Reads synthetic quarantine records."),
   decideDiscoveryQuarantine: local("Decides a synthetic quarantine record locally."),
   manualCaptureQueue: local("Reads the bundled browser-capture fixture."),
@@ -157,7 +162,6 @@ export const DEMO_CAPABILITY_MANIFEST = {
   requiredBulletSuggestions: unavailable("Required bullet coaching needs a configured LLM provider."),
   importResume: unavailable("Resume extraction needs a configured model."),
   extensionCapabilityToken: unavailable("Browser-extension pairing is unavailable in the public demo."),
-  discoveryBrowserBridgeStatus: unavailable("Live Chrome Discovery is unavailable in the public demo."),
   rotateExtensionCapabilityToken: unavailable("Browser-extension pairing is unavailable in the public demo."),
   runPipelineStages: unavailable("Multi-stage pipeline runs are deferred from the public-demo MVP."),
   credentials: local("Shows a browser-local, read-only explanation with no configured credential values."),

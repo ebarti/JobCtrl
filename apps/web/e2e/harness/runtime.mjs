@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { externalBoundaries } from "./external-boundaries.mjs";
+import { upgradeRevisions } from "./upgrade-revisions.mjs";
 
 const execFile = promisify(execFileCallback);
 export const repo = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -257,50 +258,61 @@ export async function temporalStack() {
   const home = path.join(directory, "home");
   await mkdir(home, { mode: 0o700 });
   const address = `127.0.0.1:${await port()}`;
-  const service = await launch(
-    "temporal",
-    temporal,
-    [
-      "server",
-      "start-dev",
-      "--ip",
-      "127.0.0.1",
-      "--port",
-      address.split(":")[1],
-      "--headless",
-      "--db-filename",
-      path.join(directory, "history.db"),
-      "--log-level",
-      "error",
-    ],
-    { directory, env: environment(home) },
-  );
-  try {
-    await waitFor(
-      async () => {
-        service.assertRunning();
-        const { stdout } = await execFile(
-          temporal,
-          ["operator", "cluster", "health", "--address", address],
-          { timeout: 3_000, env: environment(home) },
-        );
-        return stdout.includes("SERVING");
-      },
-      "real Temporal health",
-      { timeout: 40_000 },
+  async function start() {
+    const service = await launch(
+      "temporal",
+      temporal,
+      [
+        "server",
+        "start-dev",
+        "--ip",
+        "127.0.0.1",
+        "--port",
+        address.split(":")[1],
+        "--headless",
+        "--db-filename",
+        path.join(directory, "history.db"),
+        "--log-level",
+        "error",
+      ],
+      { directory, env: environment(home) },
     );
-  } catch (error) {
-    await service.stop();
-    throw error;
+    try {
+      await waitFor(
+        async () => {
+          service.assertRunning();
+          const { stdout } = await execFile(
+            temporal,
+            ["operator", "cluster", "health", "--address", address],
+            { timeout: 3_000, env: environment(home) },
+          );
+          return stdout.includes("SERVING");
+        },
+        "real Temporal health",
+        { timeout: 40_000 },
+      );
+    } catch (error) {
+      await service.stop();
+      throw error;
+    }
+    return service;
   }
+  let service = await start();
   let retainState = false;
   return {
     address,
+    async pause() {
+      await service.stop();
+      service = null;
+    },
+    async resume() {
+      service = await start();
+    },
     retainForDiagnosis() {
       retainState = true;
     },
     async close() {
-      await service.stop();
+      await service?.stop();
       if (!retainState) await removeAllocated(directory, identity);
     },
   };
@@ -310,6 +322,11 @@ export async function applicationStack(
   temporalAddress,
   {
     features,
+    discoveryTransport = "jobstreaming",
+    nativeAccountingPreflight = false,
+    sourceRevision,
+    fitRecoveryDebugger = false,
+    cohortBoundaryDebugger = false,
     preflight = false,
     pythonExecutable = process.env.JOBCTRL_E2E_PYTHON ?? python,
     staticDir = process.env.JOBCTRL_E2E_STATIC_DIR ??
@@ -345,13 +362,25 @@ export async function applicationStack(
     JOBCTRL_E2E_TOKEN: token,
     JOBCTRL_E2E_PROVIDER_URL: `${external.url}/model`,
     JOBCTRL_GMAIL_API_ROOT: `${external.url}/gmail/v1`,
-    JOBCTRL_DISCOVERY_PROVIDER_ENDPOINT: `${external.url}/discovery`,
-    JOBCTRL_DISCOVERY_PROVIDER_TOKEN: token,
     JOBCTRL_E2E_COMPANY_PAGE_URL: `${external.url}/company-page`,
     JOBCTRL_E2E_COMPENSATION_URL: `${external.url}/compensation`,
     JOBCTRL_E2E_DNS_URL: `${external.url}/dns`,
     JOBCTRL_POSTING_PROVIDER_ENDPOINT: `${external.url}/posting-page`,
   };
+  if (nativeAccountingPreflight) {
+    // Exercise the ordinary native cost gate, never a model execution. The
+    // journey uses only settings/profile/Discovery and denies credential and
+    // provider routes; HOME is owned and outbound proxy access remains denied.
+    for (const key of Object.keys(env)) {
+      if (key === "JOBCTRL_SYNTHETIC_BOUNDARIES" || key.startsWith("JOBCTRL_E2E_")
+          || key === "JOBCTRL_GMAIL_API_ROOT" || key.startsWith("JOBCTRL_DISCOVERY_PROVIDER_")
+          || key === "JOBCTRL_POSTING_PROVIDER_ENDPOINT") delete env[key];
+    }
+  }
+  if (!nativeAccountingPreflight) {
+    env.JOBCTRL_JOBSTREAMING_PROVIDER_ENDPOINT = `${external.url}/jobstreaming`;
+    if (discoveryTransport !== "jobstreaming") env.JOBCTRL_E2E_BOARD_ACCESS = discoveryTransport;
+  }
   if (features !== undefined) env.JOBCTRL_FEATURES = features;
   if (
     process.env.JOBCTRL_E2E_INSTALLED !== "1" &&
@@ -363,25 +392,66 @@ export async function applicationStack(
   const renderFailure = path.join(directory, "fail-chromium-launch");
   const services = [];
   let worker;
+  let server;
+  let serverGeneration = 0;
+  let upgraded = false;
   let workerGeneration = 0;
-  async function startWorker() {
+  let recoveryDebuggerEnabled = fitRecoveryDebugger;
+  const recoveryArm = path.join(directory, "fit-recovery-arm");
+  const recoveryPaused = path.join(directory, "fit-recovery-paused.json");
+  const cohortArm = path.join(directory, "cohort-boundary-arm");
+  const cohortPaused = path.join(directory, "cohort-boundary-paused.json");
+  async function startWorker(workerFeatures) {
     worker = await launch(
       `worker-${++workerGeneration}`,
       pythonExecutable,
       [
-        "-m",
-        "jobctrl.app.worker",
+        ...(recoveryDebuggerEnabled ? [path.join(repo, "apps/web/e2e/harness/fit-recovery-debugger.py"), recoveryArm, recoveryPaused]
+          : cohortBoundaryDebugger ? [path.join(repo, "apps/web/e2e/harness/cohort-boundary-debugger.py"), cohortArm, cohortPaused]
+          : ["-m", "jobctrl.app.worker"]),
         "--workspace",
         workspace,
         "--temporal-address",
         temporalAddress,
       ],
-      { directory, env },
+      { directory, env: workerFeatures === undefined ? env : { ...env, JOBCTRL_FEATURES: workerFeatures } },
     );
     services.push(worker);
     return worker.pid;
   }
+  async function startServer() {
+    server = await launch(
+      ++serverGeneration === 1 ? "api" : `api-${serverGeneration}`,
+      pythonExecutable,
+      ["-m", "jobctrl.app.server", "--host", "127.0.0.1", "--port", env.JOBCTRL_API_PORT,
+        "--workspace", workspace, ...(preflight ? [] : ["--static-dir", staticDir])],
+      { directory, env },
+    );
+    services.push(server);
+    await waitFor(async () => {
+      server.assertRunning();
+      return (await fetch(`${baseURL}/v1/health`, { signal: AbortSignal.timeout(2_000) })).ok;
+    }, "Python HTTP health");
+  }
   try {
+    if (sourceRevision) {
+      if (!upgradeRevisions.includes(sourceRevision))
+        throw new Error("The source upgrade journey requires its exact fixed predecessor.");
+      const resolved = await execFile("git", ["rev-parse", "--verify", `${sourceRevision}^{commit}`], { cwd: repo, timeout: 5_000 });
+      if (resolved.stdout.trim() !== sourceRevision)
+        throw new Error("The predecessor source identity did not resolve exactly.");
+      const archive = path.join(directory, "predecessor-source.tar");
+      const extracted = path.join(directory, "predecessor-source");
+      await mkdir(extracted, { mode: 0o700 });
+      await execFile("git", ["archive", "--format=tar", "--output", archive, sourceRevision, "workers/automation/src"], { cwd: repo, timeout: 10_000 });
+      await execFile("tar", ["-xf", archive, "-C", extracted], { timeout: 10_000 });
+      await rm(archive);
+      env.PYTHONPATH = path.join(extracted, "workers/automation/src");
+    }
+    if (fitRecoveryDebugger && !["df06b08ae201f7a73dc2c359944c06daf517c69e", "b49dc52e3d727356870317069304ac6ceb9f1237"].includes(sourceRevision))
+      throw new Error("The durable-gap debugger requires an exact declared Fit predecessor.");
+    if (cohortBoundaryDebugger && (sourceRevision || fitRecoveryDebugger))
+      throw new Error("The cohort guard debugger requires the exact current candidate worker.");
     if (process.env.JOBCTRL_E2E_INSTALLED === "1") {
       const payloadRoot = await realpath(process.env.JOBCTRL_E2E_PAYLOAD_DIR);
       const [executable, assets] = await Promise.all([
@@ -423,38 +493,16 @@ export async function applicationStack(
     }
     // The EXTERNAL OS credential command is also a real owned process, with
     // synthetic values held only in this workspace. No native store is read.
+    // Credential subprocesses filter Python env vars, so disable bytecode
+    // on the helper interpreter itself to keep the installed payload intact.
     const credentialHelper = path.join(workspace, "credential-helper");
     await writeFile(
       credentialHelper,
-      `#!${pythonExecutable}\nimport json, os, pathlib, sys\nroot = pathlib.Path(__file__).parent\noperation, key = sys.argv[1:]\nstore = root / 'synthetic-credential-store.json'\nvalue = json.loads(store.read_text()) if store.exists() else {}\nif (root / 'fail-credential-helper').exists(): sys.exit(70)\nif operation in ('inspect', 'read'):\n if key not in value: sys.exit(44)\n if operation == 'read': sys.stdout.write(value[key])\nelif operation == 'set':\n value[key] = sys.stdin.read()\n temporary = store.with_suffix('.pending')\n fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)\n with os.fdopen(fd, 'w') as stream:\n  json.dump(value, stream); stream.flush(); os.fsync(stream.fileno())\n os.replace(temporary, store)\nelif operation == 'delete':\n value.pop(key, None)\n store.write_text(json.dumps(value)); store.chmod(0o600)\nelse: sys.exit(64)\n`,
+      `#!${pythonExecutable} -B\nimport json, os, pathlib, sys\nroot = pathlib.Path(__file__).parent\noperation, key = sys.argv[1:]\nstore = root / 'synthetic-credential-store.json'\nvalue = json.loads(store.read_text()) if store.exists() else {}\nif (root / 'fail-credential-helper').exists(): sys.exit(70)\nif operation in ('inspect', 'read'):\n if key not in value: sys.exit(44)\n if operation == 'read': sys.stdout.write(value[key])\nelif operation == 'set':\n value[key] = sys.stdin.read()\n temporary = store.with_suffix('.pending')\n fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)\n with os.fdopen(fd, 'w') as stream:\n  json.dump(value, stream); stream.flush(); os.fsync(stream.fileno())\n os.replace(temporary, store)\nelif operation == 'delete':\n value.pop(key, None)\n store.write_text(json.dumps(value)); store.chmod(0o600)\nelse: sys.exit(64)\n`,
       { mode: 0o700, flag: "wx" },
     );
-    env.JOBCTRL_E2E_CREDENTIAL_HELPER = credentialHelper;
-    const server = await launch(
-      "api",
-      pythonExecutable,
-      [
-        "-m",
-        "jobctrl.app.server",
-        "--host",
-        "127.0.0.1",
-        "--port",
-        env.JOBCTRL_API_PORT,
-        "--workspace",
-        workspace,
-        ...(preflight ? [] : ["--static-dir", staticDir]),
-      ],
-      { directory, env },
-    );
-    services.push(server);
-    await waitFor(async () => {
-      server.assertRunning();
-      return (
-        await fetch(`${baseURL}/v1/health`, {
-          signal: AbortSignal.timeout(2_000),
-        })
-      ).ok;
-    }, "Python HTTP health");
+    if (!nativeAccountingPreflight) env.JOBCTRL_E2E_CREDENTIAL_HELPER = credentialHelper;
+    await startServer();
     if (!preflight) {
       await startWorker();
       await waitFor(async () => {
@@ -490,6 +538,176 @@ export async function applicationStack(
       setupMs: Math.round(performance.now() - started),
       get workerPid() {
         return worker?.pid;
+      },
+      async alternateNamespaceApi(namespace) {
+        const apiPort = String(await port());
+        const url = `http://127.0.0.1:${apiPort}`;
+        const alternate = await launch("alternate-api", pythonExecutable,
+          ["-m", "jobctrl.app.server", "--host", "127.0.0.1", "--port", apiPort, "--workspace", workspace],
+          { directory, env: { ...env, JOBCTRL_API_PORT: apiPort, JOBCTRL_TEMPORAL_NAMESPACE: namespace } });
+        services.push(alternate);
+        await waitFor(async () => {
+          alternate.assertRunning();
+          return (await fetch(`${url}/v1/health`)).ok;
+        }, "alternate workspace API health");
+        return url;
+      },
+      async armCohortBoundaryPause() {
+        if (!cohortBoundaryDebugger) throw new Error("The cohort guard debugger is not enabled.");
+        await writeFile(cohortArm, "final-currentness-guard", { mode: 0o600, flag: "wx" });
+      },
+      async armCohortReceiptPause() {
+        if (!cohortBoundaryDebugger) throw new Error("The cohort receipt debugger is not enabled.");
+        await writeFile(cohortArm, "fit-receipt", { mode: 0o600, flag: "wx" });
+      },
+      async waitForCohortBoundaryPause(boundary = "final-currentness-guard") {
+        await waitFor(async () => {
+          try { const pause = JSON.parse(await readFile(cohortPaused, "utf8")); return pause.pid === worker.pid && pause.boundary === boundary; }
+          catch (error) { if (error.code === "ENOENT") return false; throw error; }
+        }, `owned cohort ${boundary} pause`);
+      },
+      async resumeCohortBoundary() {
+        if (!cohortBoundaryDebugger || JSON.parse(await readFile(cohortPaused, "utf8")).pid !== worker.pid)
+          throw new Error("The paused cohort worker identity did not match.");
+        process.kill(worker.pid, "SIGCONT");
+        await rm(cohortPaused);
+      },
+      async cohortReceiptCheckpoint(runId) {
+        const inspected = await execFile(pythonExecutable, ["-c", `
+import json, os, pathlib, sqlite3, sys
+root = pathlib.Path(sys.argv[1])
+owner = json.loads((root / '.jobctrl-e2e-owned.json').read_text())
+assert root.resolve() == root and owner['workspace'] == str(root) and owner['token'] == os.environ['JOBCTRL_E2E_TOKEN']
+file = root / 'jobctrl.db'
+assert file.is_file() and not file.is_symlink()
+with sqlite3.connect(file.as_uri() + '?mode=ro', uri=True) as conn:
+    conn.execute('PRAGMA query_only=ON')
+    conn.row_factory = sqlite3.Row
+    phase = conn.execute("SELECT status,input_json FROM preparation_steps WHERE run_id=? AND job_id='' AND stage='fit_qualify'", (sys.argv[2],)).fetchone()
+    assert phase is not None
+    operation = json.loads(phase['input_json'])['_operation_id']
+    row = conn.execute('SELECT state_json FROM fit_initial_cohort_operations WHERE operation_id=?', (operation,)).fetchone()
+    assert row is not None
+    state = json.loads(row['state_json'])
+    call = state['call']
+    receipts = [dict(row) for row in conn.execute("SELECT receipt_id,status,operation,input_fingerprint FROM app_model_calls WHERE input_fingerprint=? ORDER BY receipt_id", (call['input_fingerprint'],))]
+    print(json.dumps({'operationId': operation, 'phaseStatus': phase['status'], 'stateStatus': state['status'],
+                      'callStatus': call['status'], 'inputFingerprint': call['input_fingerprint'],
+                      'storedReceiptId': (call.get('result') or {}).get('provenance', {}).get('receipt_id'), 'receipts': receipts}))
+`, workspace, runId], { env, timeout: 5_000, maxBuffer: 100_000 });
+        return JSON.parse(inspected.stdout);
+      },
+      async armFitRecoveryPause(operation) {
+        if (!recoveryDebuggerEnabled || !["fit.catalog-impact", "fit.qualification-batch"].includes(operation))
+          throw new Error("Only the declared predecessor external-call gap can be armed.");
+        await writeFile(recoveryArm, operation, { mode: 0o600, flag: "wx" });
+      },
+      async waitForFitRecoveryPause() {
+        await waitFor(async () => {
+          try { return JSON.parse(await readFile(recoveryPaused, "utf8")).pid === worker.pid; }
+          catch (error) { if (error.code === "ENOENT") return false; throw error; }
+        }, "owned predecessor debugger pause");
+      },
+      async fitRefreshCheckpoint(operationId) {
+        const result = await execFile(pythonExecutable, ["-c", `
+import json, pathlib, sqlite3, sys
+root = pathlib.Path(sys.argv[1])
+owned = json.loads((root / '.jobctrl-e2e-owned.json').read_text())
+if owned['workspace'] != str(root): raise RuntimeError('Workspace ownership mismatch')
+connection = sqlite3.connect((root / 'jobctrl.db').as_uri() + '?mode=ro', uri=True)
+connection.execute('PRAGMA query_only=ON')
+row = connection.execute('SELECT state_json FROM fit_refresh_operations WHERE operation_id=?', (sys.argv[2],)).fetchone()
+if row is None: raise RuntimeError('The admitted refresh has no checkpoint')
+state = json.loads(row[0])
+print(json.dumps({key: state[key] for key in ('calls', 'checkpoints', 'impact_selection_scope_version', 'qualification_transport_version') if key in state}))
+`, workspace, operationId], { env, timeout: 5_000, maxBuffer: 4 * 1024 * 1024 });
+        return JSON.parse(result.stdout);
+      },
+      async upgradeSource() {
+        if (!sourceRevision || upgraded || preflight)
+          throw new Error("Only the fixed owned predecessor runtime can upgrade once.");
+        const previous = worker.pid;
+        try {
+          if (JSON.parse(await readFile(recoveryPaused, "utf8")).pid === previous) worker.crash();
+        } catch (error) { if (error.code !== "ENOENT") throw error; }
+        for (const service of [worker, server]) {
+          await service.stop();
+          services.splice(services.indexOf(service), 1);
+        }
+        // The real public predecessor CLI takes the consistent backup after its
+        // HTTP/worker writers have stopped. No domain tables are seeded.
+        const backup = path.join(directory, "pre-upgrade.db");
+        await execFile(pythonExecutable, ["-m", "jobctrl", "--workspace", workspace, "backup", "--output", backup], { env, cwd: repo, timeout: 15_000 });
+        const installed = process.env.JOBCTRL_E2E_INSTALLED === "1";
+        if (installed) delete env.PYTHONPATH;
+        else env.PYTHONPATH = process.env.JOBCTRL_E2E_SOURCE_PATH ?? path.join(repo, "workers/automation/src");
+        recoveryDebuggerEnabled = false;
+        const origin = (await execFile(pythonExecutable, ["-c", "import pathlib,jobctrl\nprint(pathlib.Path(jobctrl.__file__).resolve())"], { env, cwd: directory, timeout: 5_000 })).stdout.trim();
+        if (installed ? !origin.startsWith(`${env.JOBCTRL_PAYLOAD_DIR}${path.sep}`)
+          : origin !== path.join(env.PYTHONPATH, "jobctrl/__init__.py"))
+          throw new Error("The upgraded application did not load its exact candidate source or installed payload.");
+        await startServer();
+        await startWorker();
+        await waitFor(async () => {
+          worker.assertRunning();
+          return (await (await fetch(`${baseURL}/v1/health`)).json()).worker?.healthy === true;
+        }, "upgraded Python worker registration");
+        upgraded = true;
+        return { previous, current: worker.pid, backup, candidateOrigin: origin, mode: installed ? "installed" : "source" };
+      },
+      async databaseSchemaFingerprint() {
+        const inspected = await execFile(pythonExecutable, ["-c", `
+import hashlib, json, os, pathlib, sqlite3, sys
+root = pathlib.Path(sys.argv[1])
+owner = json.loads((root / ".jobctrl-e2e-owned.json").read_text())
+assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
+file = root / "jobctrl.db"
+assert not file.is_symlink()
+with sqlite3.connect(file.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
+    conn.execute("PRAGMA query_only=ON")
+    schema = conn.execute("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").fetchall()
+print(hashlib.sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
+`, workspace], { env, timeout: 5_000, maxBuffer: 10_000 });
+        return inspected.stdout.trim();
+      },
+      async databaseSchemaInventory() {
+        const inspected = await execFile(pythonExecutable, ["-c", `
+import json, os, pathlib, sqlite3, sys
+root = pathlib.Path(sys.argv[1])
+owner = json.loads((root / ".jobctrl-e2e-owned.json").read_text())
+assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
+file = root / "jobctrl.db"
+assert not file.is_symlink()
+with sqlite3.connect(file.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
+    conn.execute("PRAGMA query_only=ON")
+    rows = conn.execute("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").fetchall()
+print(json.dumps([dict(zip(("type", "name", "table", "sql"), row)) for row in rows], sort_keys=True))
+`, workspace], { env, timeout: 5_000, maxBuffer: 200_000 });
+        return JSON.parse(inspected.stdout);
+      },
+      async requirementsReconciliation(operationId) {
+        const inspected = await execFile(pythonExecutable, ["-c", `
+import json, os, pathlib, sqlite3, sys
+root = pathlib.Path(sys.argv[1])
+assert root.is_dir() and root.resolve() == root
+marker = root / ".jobctrl-e2e-owned.json"
+assert not marker.is_symlink()
+owner = json.loads(marker.read_text())
+assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
+operation_id = sys.argv[2]
+assert 0 < len(operation_id) <= 240
+file = root / "jobctrl.db"
+assert file.is_file() and not file.is_symlink() and file.parent.resolve() == root
+with sqlite3.connect(file.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
+    conn.execute("PRAGMA query_only=ON")
+    conn.row_factory = sqlite3.Row
+    row = conn.execute("SELECT operation_id,action_fingerprint,input_fingerprint,captured_catalog_revision,published_catalog_revision,decision_json,receipt_json,report_json FROM requirements_reconciliations WHERE operation_id=?", (operation_id,)).fetchone()
+    assert row is not None
+    result = {key: row[key] for key in ("operation_id", "action_fingerprint", "input_fingerprint", "captured_catalog_revision", "published_catalog_revision")}
+    result.update(selection=json.loads(row["decision_json"]), authority_receipt=json.loads(row["receipt_json"]), stored_report=json.loads(row["report_json"]))
+print(json.dumps(result, sort_keys=True))
+`, workspace, operationId], { env, timeout: 5_000, maxBuffer: 2_000_000 });
+        return JSON.parse(inspected.stdout);
       },
       async failRendering() {
         await writeFile(renderFailure, "external browser process failure\n", {
@@ -554,12 +772,70 @@ export async function applicationStack(
           );
         return { ...result, images };
       },
-      async restartWorker() {
+      async inspectDocx(bytes) {
+        const file = path.join(directory, `export-${randomUUID()}.docx`);
+        await writeFile(file, bytes, { flag: "wx", mode: 0o600 });
+        const inspected = await execFile(pythonExecutable, ["-c", "import sys, zipfile, xml.etree.ElementTree as ET\nwith zipfile.ZipFile(sys.argv[1]) as archive:\n document = ET.fromstring(archive.read('word/document.xml'))\n print('\\n'.join(node.text or '' for node in document.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t')))\n", file], { env, timeout: 10_000, maxBuffer: 2_000_000 });
+        return inspected.stdout;
+      },
+      async discoveryCheckpoint(runId) {
+        // Read actual committed SDK checkpoints/receipts; never seed domain
+        // state or infer an acknowledgement from the next outbound request.
+        const inspected = await execFile(pythonExecutable, ["-c", `
+import hashlib, json, os, pathlib, sqlite3, sys
+root = pathlib.Path(sys.argv[1])
+owner = json.loads((root / ".jobctrl-e2e-owned.json").read_text())
+assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
+run_id = sys.argv[2]
+key = hashlib.sha256(json.dumps(run_id, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+directory = root / "discovery-checkpoints" / key
+assert not directory.is_symlink() and not directory.parent.is_symlink()
+adapters = []
+for path in directory.glob("*.sqlite3"):
+    assert not path.is_symlink() and path.resolve().is_relative_to(root.resolve())
+    with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
+        conn.execute("PRAGMA query_only=ON")
+        request_fingerprint = conn.execute("SELECT request_fingerprint FROM jobstreaming_search_checkpoint").fetchone()[0]
+        for site, state, emitted, completed in conn.execute("SELECT site,state_json,emitted_count,completed FROM jobstreaming_adapter_checkpoint"):
+            keys = [row[0] for row in conn.execute("SELECT job_key FROM jobstreaming_seen_job_key WHERE site=? ORDER BY position", (site,))]
+            adapters.append({"unitId": path.stem, "site": site, "state": json.loads(state), "emittedCount": emitted, "completed": bool(completed), "requestFingerprint": request_fingerprint, "acknowledgedKeys": keys})
+path = root / "jobctrl.db"
+assert not path.is_symlink()
+with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
+    conn.execute("PRAGMA query_only=ON")
+    receipts = dict(conn.execute("SELECT outcome,COUNT(*) FROM discovery_intake_receipts WHERE run_id=? GROUP BY outcome", (run_id,)))
+    receipt_keys = []
+    for unit_id, data in conn.execute("SELECT unit_id,data_json FROM discovery_intake_receipts WHERE run_id=? ORDER BY created_at,receipt_key", (run_id,)):
+        data = json.loads(data)
+        receipt_keys.append({"unitId": unit_id, "site": data["sourceId"].removeprefix("jobstreaming:"), "jobKey": data["sourceNativeId"], "isNew": data["isNew"]})
+    saved = conn.execute("SELECT request_json FROM discovery_runs WHERE run_id=?", (run_id,)).fetchone()
+    frozen_request = json.loads(saved[0]) if saved else {}
+    request = {
+        "fingerprint": hashlib.sha256(json.dumps(frozen_request, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest(),
+        "settings": {key: frozen_request.get("settings", {}).get(key) for key in ("resultsPerSite", "newJobLimit")},
+        **({"sourceFetchPolicy": frozen_request["sourceFetchPolicy"]} if "sourceFetchPolicy" in frozen_request else {}),
+    }
+    units = []
+    from jobstreaming import build_search_request
+    for unit_id, status, data, result in conn.execute("SELECT unit_id,status,data_json,result_json FROM discovery_units WHERE run_id=? ORDER BY unit_id", (run_id,)):
+        data = json.loads(data)
+        if "sites" not in data:
+            continue
+        sdk = build_search_request(site_name=data["sites"], search_term=data["query"], location=data["location"] or None,
+            results_wanted=data["results_per_site"], hours_old=data["hours_old"], is_remote=data["remote_only"],
+            country_indeed=data["country_indeed"], description_format="markdown", linkedin_fetch_description=data["linkedin_fetch_description"])
+        units.append({"unitId": unit_id, "status": status, "resultsPerSite": data["results_per_site"], "sdkFingerprint": sdk.fingerprint(),
+            "sdkResultsWanted": sdk.results_wanted, "sdkMaxPages": sdk.max_pages, "result": json.loads(result) if result else None})
+print(json.dumps({"adapters": adapters, "receipts": receipts, "receiptKeys": receipt_keys, "request": request, "units": units}))
+`, workspace, runId], { env, timeout: 5000, maxBuffer: 100_000 });
+        return JSON.parse(inspected.stdout);
+      },
+      async restartWorker(workerFeatures) {
         const previous = worker;
         previous.crash();
         await previous.stop();
         services.splice(services.indexOf(previous), 1);
-        const next = await startWorker();
+        const next = await startWorker(workerFeatures);
         if (next === previous.pid)
           throw new Error("Worker restart did not change process identity");
         await waitFor(async () => {

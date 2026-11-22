@@ -53,6 +53,11 @@ def translated_document(document, translations):
         identity = row.get("id", str(index))
         row["label"] = values.get(f"skills:{identity}:label", row["label"])
         row["items"] = [values.get(f"skills:{identity}:{item}", text) for item, text in enumerate(row["items"])]
+    for row in result.get("languages", []):
+        for field in ("language", "proficiency"):
+            identity = f"language:{row['id']}:{field}"
+            if identity in values:
+                row[field] = values[identity]
     return result
 
 
@@ -90,8 +95,9 @@ async def generate(service, resume_id, *, expected_version, source_locale, targe
                 "equivalence or omit content. Return each entire original line as its citation. Flag unsupported "
                 "language, missing terminology or ambiguous credential meaning with source citations."),
             sources=sources, context={"resume_id": resume_id, "revision_id": revision["revision_id"],
+                                     "contract_version": "requirements-v2",
                                      "source_locale": source_locale, "target_locale": target_locale},
-            response_schema=translation_schema(), prompt_version="resume-locale-translation-v1", lane="resumes",
+            response_schema=translation_schema(), prompt_version="resume-locale-translation-v2", lane="resumes",
         )
         lines = result.value["lines"]
         if [row["source_id"] for row in lines] != [row["source_id"] for row in sources]:
@@ -157,8 +163,9 @@ async def review(service, resume_id, locale_id, *, expected_version):
                 "language. Any omission, invented claim, mistranslation, missing terminology or ambiguous credential "
                 "requires findings. Cite complete original and translated source lines for each finding. Do not rewrite."),
             sources=sources, context={"resume_id": resume_id, "locale_id": locale_id,
+                                     "contract_version": "requirements-v2",
                                      "target_locale": locale["target_locale"], "source_sha256": locale["source_sha256"]},
-            response_schema=review_schema(), prompt_version="resume-locale-verification-v1", lane="resumes",
+            response_schema=review_schema(), prompt_version="resume-locale-verification-v2", lane="resumes",
         )
         outcome = validate_model_result(result, sources)
     except Exception as exc:

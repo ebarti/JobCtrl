@@ -31,8 +31,21 @@ def _json(value):
 
 
 class PreparationStore:
-    def __init__(self, database, events):
+    def __init__(self, database, events, record_cohort_attempts):
         self.database, self.events = database, events
+        self.record_cohort_attempts = record_cohort_attempts
+
+    @staticmethod
+    def _extraction_attempts(connection, run_id, job_id=None):
+        return connection.execute(
+            "SELECT job_id,json_extract(input_json,'$._operation_id') FROM preparation_steps "
+            "WHERE run_id=? AND stage='requirements_extract' AND json_extract(input_json,'$._operation_id') IS NOT NULL "
+            "AND (? IS NULL OR job_id=?)", (run_id, job_id, job_id)).fetchall()
+
+    @staticmethod
+    def _normalization_attempts(inputs):
+        return [(item["job_id"], item["operation_id"]) for item in (inputs or {}).get("prepared", [])
+                if item["status"] == "prepared"]
 
     def claim_job(self, run_id, job_id, owner_reclaimable):
         with self.database.transaction() as conn:
@@ -58,12 +71,38 @@ class PreparationStore:
                            level=level, stage=stage)
 
 
+    def record_capacity_wait(self, run_id, job_id, stage, reason):
+        with self.database.transaction() as connection:
+            self.events.append(connection, "PreparationWaitingForCapacity",
+                               {"runId": run_id, "jobId": job_id or None, "stage": stage, "reason": reason},
+                               feature="preparation", aggregate_id=run_id, stage=stage)
+
+    def admit_run(self, run_id, request, connection, *, parent=None, targets=None):
+        """Freeze new-action policy without a nested transaction or worker work."""
+        if parent is not None:
+            successor = connection.execute(
+                "SELECT run_id FROM preparation_runs WHERE parent_run_id=? LIMIT 1", (parent,),
+            ).fetchone()
+            if successor:
+                raise AppError("preparation_retry_superseded", "Continue from the existing retry run.", 409,
+                               {"runId": successor["run_id"]})
+        stamp = now()
+        connection.execute("INSERT INTO preparation_runs VALUES(?,?,?,?,?,?,?)",
+                           (run_id, _json(request), _json(targets) if targets is not None else None,
+                            "pending", parent, stamp, stamp))
+        if parent is not None:
+            self.inherit_retry_steps(run_id, parent, targets or [], connection=connection)
+        self._event(connection, run_id, "pending")
+
     def open_run(self, run_id, request, parent=None):
         with self.database.transaction() as conn:
             row = conn.execute("SELECT * FROM preparation_runs WHERE run_id=?", (run_id,)).fetchone()
             if row:
                 if row["request_json"] != _json(request) or row["parent_run_id"] != parent:
                     raise ConflictError("The preparation identity belongs to different input.")
+                if row["status"] == "pending":
+                    conn.execute("UPDATE preparation_runs SET status='running',updated_at=? WHERE run_id=?", (now(), run_id))
+                    self._event(conn, run_id, "running")
                 return
             stamp = now()
             conn.execute("INSERT INTO preparation_runs VALUES(?,?,?,?,?,?,?)",
@@ -71,14 +110,51 @@ class PreparationStore:
             self._event(conn, run_id, "running")
 
 
-    def set_status(self, run_id, status):
-        with self.database.transaction() as conn:
+    def set_status(self, run_id, status, connection=None):
+        with nullcontext(connection) if connection is not None else self.database.transaction() as conn:
             conn.execute("UPDATE preparation_runs SET status=?,updated_at=? WHERE run_id=?", (status, now(), run_id))
             self._event(conn, run_id, status)
 
+    def settle_search(self, run_id, failed, verify):
+        with self.database.transaction() as conn:
+            failed = verify(conn) or failed
+            self.set_status(run_id, "partial" if failed else "succeeded", connection=conn)
+            return failed
 
-    def step(self, run_id, job_id, stage):
-        with self.database.connect() as conn:
+    def finalize_run(self, run_id, status, error_code, connection):
+        """Seal interrupted preparation in the action owner's transaction."""
+        if status not in {"failed", "cancelled"}:
+            return
+        changed = connection.execute(
+            "UPDATE preparation_runs SET status=?,updated_at=? WHERE run_id=? AND status IN ('pending','running')",
+            (status, now(), run_id),
+        ).rowcount
+        if not changed:
+            current = connection.execute("SELECT status FROM preparation_runs WHERE run_id=?", (run_id,)).fetchone()
+            # The service may already have recorded terminal cancellation while
+            # sibling phases still have pending inputs. Seal them in this same
+            # Actions transaction rather than losing their operation pins.
+            if current is None or current["status"] != status:
+                return
+        steps = connection.execute(
+            "SELECT job_id,stage FROM preparation_steps WHERE run_id=? AND status IN ('pending','running')", (run_id,),
+        ).fetchall()
+        for step in steps:
+            connection.execute(
+                "UPDATE preparation_steps SET status=?,error_code=?,updated_at=? WHERE run_id=? AND job_id=? AND stage=?",
+                (status, error_code, now(), run_id, step["job_id"], step["stage"]),
+            )
+            self._event(connection, run_id, status, job_id=step["job_id"] or None, stage=step["stage"])
+        # A staged sibling can still be awaiting publication when a terminal
+        # action ends before its shared normalization checkpoint was created.
+        self.record_cohort_attempts(self._extraction_attempts(connection, run_id),
+                                    "cancelled" if status == "cancelled" else "blocked", error_code, connection)
+        connection.execute("DELETE FROM preparation_job_claims WHERE run_id=?", (run_id,))
+        self._event(connection, run_id, status)
+
+
+    def step(self, run_id, job_id, stage, connection=None):
+        with nullcontext(connection) if connection is not None else self.database.connect() as conn:
             row = conn.execute("SELECT * FROM preparation_steps WHERE run_id=? AND job_id=? AND stage=?",
                                (run_id, job_id, stage)).fetchone()
         if not row:
@@ -87,6 +163,17 @@ class PreparationStore:
                 "input": json.loads(row["input_json"]) if row["input_json"] else None,
                 "result": json.loads(row["result_json"]) if row["result_json"] else None,
                 "errorCode": row["error_code"], "updatedAt": row["updated_at"]}
+
+
+    def prepare_step(self, run_id, job_id, stage, inputs):
+        """Freeze pending inputs without reporting execution or replacing replay pins."""
+        with self.database.transaction() as conn:
+            changed = conn.execute(
+                "INSERT OR IGNORE INTO preparation_steps VALUES(?,?,?,?,?,?,?,?)",
+                (run_id, job_id, stage, "pending", _json(inputs), None, None, now()),
+            ).rowcount
+            if changed:
+                self._event(conn, run_id, "pending", job_id=job_id or None, stage=stage)
 
 
     def start_step(self, run_id, job_id, stage, inputs):
@@ -106,29 +193,48 @@ class PreparationStore:
                 saved = inputs
                 conn.execute("INSERT INTO preparation_steps VALUES(?,?,?,?,?,?,?,?)",
                              (run_id, job_id, stage, "running", _json(inputs), None, None, now()))
+            if stage == "requirements_normalize":
+                self.record_cohort_attempts(self._normalization_attempts(saved), "running", None, conn)
             self._event(conn, run_id, "running", job_id=job_id or None, stage=stage)
             return saved
 
 
-    def finish_step(self, run_id, job_id, stage, status, *, result=None, error_code=None):
-        with self.database.transaction() as conn:
+    def finish_step(self, run_id, job_id, stage, status, *, result=None, error_code=None, connection=None):
+        with nullcontext(connection) if connection is not None else self.database.transaction() as conn:
             conn.execute("INSERT INTO preparation_steps VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(run_id,job_id,stage) "
                          "DO UPDATE SET status=excluded.status,result_json=excluded.result_json,error_code=excluded.error_code,updated_at=excluded.updated_at",
                          (run_id, job_id, stage, status, None, _json(result) if result is not None else None, error_code, now()))
+            if stage in {"requirements_extract", "requirements_normalize"} and status in {"failed", "cancelled"}:
+                if stage == "requirements_extract":
+                    attempts = self._extraction_attempts(conn, run_id, job_id)
+                else:
+                    recorded = self.step(run_id, job_id, stage, connection=conn)
+                    attempts = self._normalization_attempts(recorded["input"])
+                self.record_cohort_attempts(attempts, "cancelled" if status == "cancelled" else "blocked", error_code, conn)
             self._event(conn, run_id, status, job_id=job_id or None, stage=stage)
 
 
-    def get_run(self, run_id):
-        with self.database.connect() as conn:
+    def get_run(self, run_id, connection=None):
+        with nullcontext(connection) if connection is not None else self.database.connect() as conn:
             row = conn.execute("SELECT * FROM preparation_runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None:
                 raise NotFoundError("The preparation run does not exist.")
-            steps = conn.execute("SELECT * FROM preparation_steps WHERE run_id=? ORDER BY rowid", (run_id,)).fetchall()
-        return {"runId": run_id, "status": row["status"], "recipe": json.loads(row["request_json"])["recipe"],
-                "scope": json.loads(row["request_json"])["scope"], "cohortFrozen": row["targets_json"] is not None,
+            steps = conn.execute(
+                "SELECT job_id,stage,status,result_json,error_code,updated_at,CASE "
+                "WHEN stage IN ('enrich','role_analysis') THEN json_extract(input_json,'$.expected_revision') "
+                "WHEN stage IN ('requirements','requirements_extract') THEN json_extract(input_json,'$.expected_posting_revision') "
+                "WHEN stage='fit' THEN json_extract(input_json,'$._requirements_binding.posting_revision') END posting_revision "
+                "FROM preparation_steps WHERE run_id=? ORDER BY rowid", (run_id,),
+            ).fetchall()
+        request = json.loads(row["request_json"])
+        return {"runId": run_id, "status": row["status"], "recipe": request["recipe"],
+                **({"executionPolicy": request["execution_policy"]} if "execution_policy" in request else {}),
+                **({"targetRoute": request["target_route"]} if "target_route" in request else {}),
+                "scope": request["scope"], "cohortFrozen": row["targets_json"] is not None,
                 "parentRunId": row["parent_run_id"], "jobIds": json.loads(row["targets_json"]) if row["targets_json"] else [],
                 "createdAt": row["created_at"], "updatedAt": row["updated_at"],
                 "steps": [{"jobId": step["job_id"] or None, "stage": step["stage"], "status": step["status"],
+                           **({"postingRevision": step["posting_revision"]} if type(step["posting_revision"]) is int else {}),
                            "result": json.loads(step["result_json"]) if step["result_json"] else None,
                            "errorCode": step["error_code"], "updatedAt": step["updated_at"]} for step in steps]}
 
@@ -147,7 +253,9 @@ class PreparationStore:
             conn.execute("BEGIN")
             rows = conn.execute(
                 "SELECT run_id,status,parent_run_id,created_at,updated_at,targets_json,"
-                "json_extract(request_json,'$.recipe') recipe,json_extract(request_json,'$.scope') scope "
+                "json_extract(request_json,'$.recipe') recipe,json_extract(request_json,'$.scope') scope,"
+                "json_extract(request_json,'$.execution_policy') execution_policy,"
+                "json_extract(request_json,'$.target_route') target_route "
                 "FROM preparation_runs WHERE (? IS NULL OR run_id=?) ORDER BY created_at DESC,run_id DESC LIMIT ?",
                 (run_id, run_id, limit),
             ).fetchall()
@@ -162,6 +270,8 @@ class PreparationStore:
                                              "status": step["status"], "errorCode": step["error_code"],
                                              "updatedAt": step["updated_at"]})
         return [{"runId": row["run_id"], "status": row["status"], "recipe": row["recipe"], "scope": row["scope"],
+                 **({"executionPolicy": json.loads(row["execution_policy"])} if row["execution_policy"] else {}),
+                 **({"targetRoute": row["target_route"]} if row["target_route"] else {}),
                  "cohortFrozen": row["targets_json"] is not None, "parentRunId": row["parent_run_id"],
                  "jobIds": json.loads(row["targets_json"]) if row["targets_json"] else [],
                  "createdAt": row["created_at"], "updatedAt": row["updated_at"], "steps": grouped[row["run_id"]]}
@@ -205,8 +315,8 @@ class PreparationStore:
         return result
 
 
-    def request(self, run_id):
-        with self.database.connect() as conn:
+    def request(self, run_id, connection=None):
+        with nullcontext(connection) if connection is not None else self.database.connect() as conn:
             row = conn.execute("SELECT request_json FROM preparation_runs WHERE run_id=?", (run_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
@@ -217,32 +327,80 @@ class PreparationStore:
             raise NotFoundError("The preparation run does not exist.")
         return json.loads(row[0]) if row[0] is not None else None
 
-    def save_targets(self, run_id, ids):
+    def save_targets(self, run_id, ids, *, route=None):
         with self.database.transaction() as conn:
-            conn.execute("UPDATE preparation_runs SET targets_json=?,updated_at=? WHERE run_id=? AND targets_json IS NULL", (_json(ids), now(), run_id))
-            saved = conn.execute("SELECT targets_json FROM preparation_runs WHERE run_id=?", (run_id,)).fetchone()[0]
-        return json.loads(saved)
+            row = conn.execute("SELECT targets_json,request_json FROM preparation_runs WHERE run_id=?", (run_id,)).fetchone()
+            if row is None:
+                raise NotFoundError("The preparation run does not exist.")
+            request = json.loads(row["request_json"])
+            if row["targets_json"] is not None:
+                return json.loads(row["targets_json"]), request.get("target_route")
+            if route is not None:
+                request["target_route"] = route
+            conn.execute("UPDATE preparation_runs SET targets_json=?,request_json=?,updated_at=? WHERE run_id=?",
+                         (_json(ids), _json(request), now(), run_id))
+            return ids, route
 
-    def inherit_retry_steps(self, run_id, parent, job_ids):
-        with self.database.transaction() as conn:
+    def inherit_retry_steps(self, run_id, parent, job_ids, connection=None):
+        with nullcontext(connection) if connection is not None else self.database.transaction() as conn:
+            row = conn.execute("SELECT request_json,targets_json FROM preparation_runs WHERE run_id=?", (parent,)).fetchone()
+            request = json.loads(row["request_json"]) if row else {}
+            cohort = bool(request.get("execution_policy") and request.get("target_route") != "per_job")
+            if cohort:
+                phases = conn.execute("SELECT * FROM preparation_steps WHERE run_id=? AND job_id='' "
+                                      "AND stage IN ('requirements_normalize','fit_qualify') AND input_json IS NOT NULL", (parent,)).fetchall()
+                if row["targets_json"] is not None and job_ids != json.loads(row["targets_json"]):
+                    raise ConflictError("The original cohort manifest must be retained on retry.")
+                for phase in phases:
+                    status = "succeeded" if phase["status"] == "succeeded" else "pending"
+                    conn.execute("INSERT OR IGNORE INTO preparation_steps VALUES(?,?,?,?,?,?,?,?)",
+                                 (run_id, "", phase["stage"], status, phase["input_json"],
+                                  phase["result_json"] if status != "pending" else None,
+                                  phase["error_code"] if status != "pending" else None, now()))
+                if phases:
+                    conn.execute("INSERT OR IGNORE INTO preparation_steps "
+                                 "SELECT ?,job_id,stage,status,input_json,result_json,error_code,? FROM preparation_steps "
+                                 "WHERE run_id=? AND stage IN ('enrich','role_analysis','requirements_extract') "
+                                 "AND status IN ('failed','blocked','cancelled')", (run_id, now(), parent))
+            if request.get("execution_policy"):
+                conn.execute("INSERT OR IGNORE INTO preparation_steps "
+                             "SELECT ?,job_id,stage,status,input_json,result_json,error_code,? FROM preparation_steps "
+                             "WHERE run_id=? AND job_id='' AND stage='discover' AND status='warning'",
+                             (run_id, now(), parent))
             conn.execute(
                 "INSERT OR IGNORE INTO preparation_steps "
                 "SELECT ?,job_id,stage,status,input_json,result_json,error_code,? FROM preparation_steps "
                 "WHERE run_id=? AND job_id='' AND stage='discover' AND status='succeeded'",
                 (run_id, now(), parent),
             )
-            for job_id in job_ids:
-                conn.execute(
-                    "INSERT OR IGNORE INTO preparation_steps "
-                    "SELECT ?,job_id,stage,status,input_json,result_json,error_code,? FROM preparation_steps "
-                    "WHERE run_id=? AND job_id=? AND status IN ('succeeded','skipped','warning')",
-                    (run_id, now(), parent, job_id),
-                )
-                # A cancelled stage may already have a committed feature result.
-                # Preserve its original operation identity and frozen inputs.
+            if not job_ids:
+                return
+            selection = "WHERE run_id=? AND job_id IN (SELECT value FROM json_each(?)) AND "
+            parameters = run_id, now(), parent, _json(job_ids)
+            conn.execute(
+                "INSERT OR IGNORE INTO preparation_steps "
+                "SELECT ?,job_id,stage,status,input_json,result_json,error_code,? FROM preparation_steps "
+                + selection + "status IN ('succeeded','skipped','warning') ORDER BY rowid", parameters,
+            )
+            if cohort:
+                # Strict score publication can safely recover its exact prior
+                # operation, even when the preparation acknowledgement failed.
                 conn.execute(
                     "INSERT OR IGNORE INTO preparation_steps "
                     "SELECT ?,job_id,stage,'pending',input_json,NULL,NULL,? FROM preparation_steps "
-                    "WHERE run_id=? AND job_id=? AND status='cancelled' AND input_json IS NOT NULL",
-                    (run_id, now(), parent, job_id),
+                    + selection + "stage='fit' AND status IN ('pending','running','failed') AND input_json IS NOT NULL",
+                    parameters,
                 )
+                if not phases:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO preparation_steps "
+                                 "SELECT ?,job_id,stage,'pending',input_json,NULL,NULL,? FROM preparation_steps "
+                        + selection + "stage='requirements_extract' AND status='failed' AND input_json IS NOT NULL",
+                        parameters,
+                    )
+            # Cancellation can occur after the feature committed its result.
+            conn.execute(
+                "INSERT OR IGNORE INTO preparation_steps "
+                "SELECT ?,job_id,stage,'pending',input_json,NULL,NULL,? FROM preparation_steps "
+                + selection + "status='cancelled' AND input_json IS NOT NULL", parameters,
+            )

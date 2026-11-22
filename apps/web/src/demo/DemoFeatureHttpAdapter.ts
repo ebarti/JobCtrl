@@ -16,10 +16,19 @@ import { DemoApiClientAdapter } from "./DemoApiClientAdapter.js";
 import { isDemoArtifactUrl } from "./artifacts.js";
 import { DemoCapabilityError } from "./ports.js";
 import { stableDemoStringify } from "./digest.js";
-import { demoEventEnvelope } from "./events.js";
+import { demoEventEnvelope, createResumeComposed, createResumeRendered, createPreparationUpdated } from "./events.js";
+import { LOCAL_TENANT } from "@jobctrl/domain-types";
 import { documentHtml, documentText, renderDemoResume } from "./DemoResumeRenderer.js";
 import { evaluateDemoJobQuery, type DemoJobQueryRow } from "./DemoJobQueries.js";
 import { demoWorkspaceIdentity } from "./identity.js";
+import {
+  demoWordingLibrary, demoProfileRecovery, restoreDemoProfile, exactDemoRefs,
+  type DemoProfileVersion, type DemoProfileSourceVersion,
+  type DemoWordingLibrary as WordingLibrary, type DemoWordingVariant as WordingVariant,
+} from "./profile-library.js";
+import { DEMO_NORMALIZATION_VERSION, DEMO_PLATFORM_DEMANDS, demoFitProfile, demoPlatformDemandAssessment,
+  demoCanonicalRequirements, demoRequirementLibrary, demoRequirementAssociations, demoAssociationView,
+  createDemoAssociation, reviseDemoAssociation, changeDemoAssociation, type DemoRequirementAssociations } from "./requirement-library.js";
 import type {
   DemoWorkspaceRepository,
   DemoWorkspaceMutationContext,
@@ -38,33 +47,6 @@ interface ProfileSource extends Data {
   kind: string;
   confirmation: string;
   origin: string;
-}
-interface WordingVariant {
-  variant_id: string;
-  revision: number;
-  achievement_id: string;
-  text: string;
-  status: string;
-  approval_id: string | null;
-  source_refs: SourceRef[];
-  origin_key: string | null;
-  provenance: Data;
-}
-interface WordingRole {
-  role_id: string;
-  achievements: {
-    achievement_id: string;
-    baseline_variant_id: string;
-    source_refs: SourceRef[];
-  }[];
-}
-interface WordingLibrary {
-  ok: true;
-  profileVersion: number;
-  wordingRevision: number;
-  roles: WordingRole[];
-  variants: WordingVariant[];
-  proposals: Data[];
 }
 interface Posting {
   job_id: string;
@@ -120,6 +102,19 @@ interface Resume {
   created_at: string;
   updated_at: string;
 }
+interface DemoPreparationRun {
+  runId: string;
+  status: "succeeded";
+  recipe: "prepare";
+  parentRunId: null;
+  jobIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  steps: { jobId: string; stage: string; status: string; result: Data; errorCode: null; updatedAt: string }[];
+  synthetic: true;
+  transport: "browser_local";
+  externalEffectOccurred: false;
+}
 
 /** Optional additions are reset atomically with the existing browser aggregate. */
 export interface DemoFeatureState {
@@ -128,6 +123,12 @@ export interface DemoFeatureState {
   profileSourcesChanged?: boolean;
   postings?: Record<string, Posting>;
   wording?: WordingLibrary;
+  wordingHistory?: Record<string, WordingVariant[]>;
+  profileVersions?: DemoProfileVersion[];
+  profileSourceVersions?: Record<string, DemoProfileSourceVersion>;
+  requirementAssociations?: DemoRequirementAssociations;
+  preparationRuns?: Record<string, DemoPreparationRun>;
+  preparationCommands?: Record<string, { request: string; runId: string }>;
   resumes?: Record<string, Resume>;
   compensationRevision?: number;
   profileSources?: ProfileSource[];
@@ -141,15 +142,6 @@ export interface DemoFeatureState {
   suggestionVersions?: Record<string, number>;
   runCancellationCommands?: Record<string, { runId: string; request: string }>;
   sourceRevisions?: Record<string, number>;
-  locatorStates?: Record<
-    string,
-    {
-      revision: number;
-      decision: "pending" | "promote" | "reject" | "reset";
-      decidedAt: string | null;
-    }
-  >;
-  locatorExamples?: Record<string, Data>;
   templatePreferenceRevision?: number;
   deleteSelections?: Record<
     string,
@@ -182,24 +174,24 @@ const postingExamples: Readonly<
 > = {
   "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35": {
     description:
-      "Guide reliable platform delivery. Coordinate incident response with the engineering team.",
+      "Guide reliable platform delivery. Coordinate incident response with the engineering team. Use release coordination to make delivery plans clear. Degree in engineering or equivalent professional experience. English at professional working proficiency. Spanish at professional working proficiency.",
     requirement: "Guide reliable platform delivery.",
     kind: "matched",
-    requirementId: "requirement-platform",
+    requirementId: "requirement:v2:demo:platform",
   },
   "job-contoso-reliability": {
     description:
       "Lead in a regulated domain. Guide a reliability engineering team.",
     requirement: "Lead in a regulated domain.",
     kind: "missing",
-    requirementId: "requirement-regulated-domain",
+    requirementId: "requirement:v2:demo:regulated-domain",
   },
   "job-fabrikam-systems": {
     description:
       "Lead systems delivery. Coordinate platform reliability improvements.",
     requirement: "Lead systems delivery.",
     kind: "matched",
-    requirementId: "requirement-systems",
+    requirementId: "requirement:v2:demo:systems",
   },
 };
 
@@ -217,6 +209,88 @@ export class DemoFeatureHttpAdapter {
   ): Promise<Result> {
     const [, owner, id, action, detail] = path;
     const body = data(options.body);
+    if (owner === "actions" && id === "preparation.run" && method === "POST") return handled(await this.prepareBaseline(body, options));
+    if (owner === "actions" && id === "preparation.retry" && method === "POST") throw new JobCtrlApiError(422, "Demo Action Unavailable",
+      "Browser-local baseline preparation commits only after composition and rendering succeed. There is no unfinished worker run to continue; prepare the baseline again.",
+      { error: { code: "demo_preparation_unavailable" } });
+    if (owner === "preparation" && id === "runs" && method === "GET") {
+      const snapshot = await this.workspace.snapshot();
+      const runs = Object.values(snapshot.state.features?.preparationRuns ?? {}).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      if (path.length === 3) return handled({ runs, synthetic: true, transport: "browser_local" });
+      const run = runs.find((item) => item.runId === action);
+      if (!run || path.length !== 4) throw notFound();
+      return handled(run);
+    }
+    if (owner === "requirements") {
+      if (method === "POST" && id === "index" && action === "rebuild") throw new DemoCapabilityError("rebuildRequirementIndex",
+        "The browser-local demo searches its bundled catalog directly; it has no separate retrieval index to rebuild.");
+      if (method !== "GET") throw new DemoCapabilityError("rescoreJob", "Requirement extraction and meaning corrections require a configured model in the local app. The synthetic catalog is unchanged.");
+      const snapshot = await this.workspace.snapshot();
+      const catalog = demoCanonicalRequirements(snapshot);
+      const limit = integer(options.query?.limit ?? 50, 1, 200);
+      const offset = integer(options.query?.offset ?? 0, 0);
+      if (path.length === 2) {
+        const query = String(options.query?.q ?? "").toLocaleLowerCase();
+        if (query.length > 2500) throw badRequest("The literal catalog query is too long.");
+        const matches = catalog.filter((row) => [row.name, row.definition, row.category]
+          .some((value) => value.toLocaleLowerCase().includes(query)));
+        return handled({ catalog_revision: 1, total: matches.length, requirements: matches.slice(offset, offset + limit), synthetic: true });
+      }
+      if (id === "index" && path.length === 3) return handled({ catalog_revision: 1, indexed_revision: 1, meaning_count: catalog.length,
+        indexed_count: catalog.length, fresh: true, synthetic: true });
+      const requirement = catalog.find((row) => row.requirement_id === id);
+      if (!requirement) throw notFound();
+      if (options.query?.revision !== undefined && integer(options.query.revision, 1) !== requirement.revision) throw notFound("This synthetic requirement revision is unavailable.");
+      const occurrences = await this.requirementOccurrences(snapshot, requirement.requirement_id);
+      if (action === "history") {
+        const kind = options.query?.kind ?? "revisions";
+        if (kind !== "revisions" && kind !== "occurrences") throw badRequest("Choose revisions or occurrences.");
+        const rows = kind === "revisions" ? [{ ...requirement, current: true, stale_reasons: [] }] : occurrences.map((row) => ({
+          ...row, accepted: true, snapshot_revision: 1, current: true, stale_reasons: [],
+        }));
+        return handled({ requirement_id: requirement.requirement_id, current_revision: requirement.revision, kind, total: rows.length,
+          limit, offset, rows: rows.slice(offset, offset + limit), synthetic: true });
+      }
+      if (path.length === 3) return handled({ ...requirement, current_revision: requirement.revision, occurrences: occurrences.slice(offset, offset + limit) });
+    }
+    if (owner === "fit" && id === "requirement-library" && method === "GET") {
+      if (options.query?.profile_id && options.query.profile_id !== "default") throw notFound();
+      return handled(demoRequirementLibrary(await this.workspace.snapshot()));
+    }
+    if (owner === "fit" && id === "associations") {
+      if (method === "POST") {
+        let result: unknown;
+        await this.commit((draft) => { result = path.length === 3 ? createDemoAssociation(draft, body) :
+          path.length === 5 && detail === "state" ? changeDemoAssociation(draft, action!, body) :
+          path.length === 5 && detail === "revisions" ? reviseDemoAssociation(draft, action!, body) : undefined;
+          if (result === undefined) throw notFound(); });
+        return handled(result);
+      }
+      if (method === "GET" && path.length === 5 && detail === "history") {
+        if (options.query?.profile_id && options.query.profile_id !== "default") throw notFound();
+        const snapshot = await this.workspace.snapshot();
+        const associations = demoRequirementAssociations(snapshot);
+        const record = associations.rows.find((row) => row.association_id === action);
+        if (!record) throw notFound();
+        const limit = integer(options.query?.limit ?? 50, 1, 200), offset = integer(options.query?.offset ?? 0, 0);
+        const rows = [...(associations.history[action!] ?? []), record].reverse().map((row) => demoAssociationView(snapshot, row));
+        return handled({ association_id: record.association_id, profile_id: "default", current_revision: record.revision,
+          total: rows.length, limit, offset, rows: rows.slice(offset, offset + limit) });
+      }
+    }
+    if (owner === "fit" && id === "current-wordings") {
+      if (method === "GET") throw notFound("No assessed current-wording assignments are recorded in this synthetic demo.");
+      throw new DemoCapabilityError("updateAffectedMatches", "Choosing a current wording for a requirement needs exact approved coverage in the local app. Browser-local manual links remain unassessed.");
+    }
+    if (owner === "profile" && id === "recovery") {
+      if (method === "GET" && path.length === 3) return handled(demoProfileRecovery(await this.workspace.snapshot()));
+      if (method === "POST" && action === "restore" && path.length === 4) {
+        const snapshot = await this.workspace.snapshot();
+        const profile = restoreDemoProfile(snapshot, body);
+        return handled(await this.api.executeHttpLocalCommand("updateProfile", [{ profile, expectedProfileVersion: body.expectedProfileVersion }],
+          (draft) => { restoreDemoProfile(draft, body); }));
+      }
+    }
     if (owner === "fit" && id === "evidence-map" && method === "GET") {
       const snapshot = await this.workspace.snapshot();
       const sources = this.sources(snapshot).sources.map((source) => ({ source_id: source.source_id, usages: [] }));
@@ -227,7 +301,7 @@ export class DemoFeatureHttpAdapter {
         for (const assessment of records(score.assessments ?? [])) if (["missing", "blocked"].includes(String(assessment.kind))) {
           gaps.push({ job_id: jobId, current: fit.current, score_revision: score.revision,
             requirement_id: assessment.requirement_id, requirement_revision: assessment.requirement_revision, text: assessment.text,
-            kind: assessment.kind, tier: assessment.tier, weight: assessment.weight, rationale: assessment.rationale,
+            kind: assessment.kind, category: assessment.category, name: assessment.name, rationale: assessment.rationale,
             determination_id: assessment.determination_id, synthetic: true });
         }
       }
@@ -261,9 +335,11 @@ export class DemoFeatureHttpAdapter {
         const fit = data(await this.fit(snapshot, jobId)); const score = data(fit.score);
         const savedResume = Object.values(snapshot.state.features?.resumes ?? {}).filter((resume) => resume.job_id === jobId).sort((left, right) => right.updated_at.localeCompare(left.updated_at))[0];
         const nativeApplication = snapshot.state.features?.applications?.[jobId];
+        const localPreparation = Object.values(snapshot.state.features?.preparationRuns ?? {}).filter((run) => run.jobIds.includes(jobId))
+          .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
         return { job: { ...posting, created_at: legacy?.job.discoveredAt ?? posting.observed_at },
           fit: { ...fit, score: fit.score === null ? null : { ...score, created_at: legacy?.job.scoredAt ?? null }, normalized_keywords: legacy?.job.scoreKeywords ?? [] },
-          preparation: legacy ? { stage: legacy.job.currentStage ?? null, state: legacy.job.currentState ?? null, updated_at: [...legacy.stages].map((stage) => stage.updatedAt).filter((value): value is string => typeof value === "string").sort().at(-1) ?? legacy.job.scoredAt ?? legacy.job.discoveredAt } : null,
+          preparation: localPreparation ? { stage: "render", state: localPreparation.status, updated_at: localPreparation.updatedAt } : legacy ? { stage: legacy.job.currentStage ?? null, state: legacy.job.currentState ?? null, updated_at: [...legacy.stages].map((stage) => stage.updatedAt).filter((value): value is string => typeof value === "string").sort().at(-1) ?? legacy.job.scoredAt ?? legacy.job.discoveredAt } : null,
           compensation: { summary: legacy?.job.compensationSummary ?? null, audit: legacy?.compensationAudit ?? null, refresh: null },
           application: nativeApplication ? { stage: "apply", state: nativeApplication.status ?? null, apply_status: nativeApplication.status ?? null, updated_at: nativeApplication.updatedAt } : legacy?.job.applyStatus ? { apply_status: legacy.job.applyStatus } : null,
           resume: savedResume ? { template: revisionOf(savedResume).template, revision: savedResume.version, resume_id: savedResume.resume_id } : null,
@@ -272,18 +348,24 @@ export class DemoFeatureHttpAdapter {
       return handled(await evaluateDemoJobQuery(rows, options.query));
     }
     if (owner === "action-runs" && id === "by-idempotency-key" && method === "GET") {
+      const snapshot = await this.workspace.snapshot();
+      const command = options.query?.action === "preparation.run" && options.idempotencyKey ? snapshot.state.features?.preparationCommands?.[options.idempotencyKey] : undefined;
+      const run = command ? this.actionRuns(snapshot).find((item) => item.runId === command.runId) : undefined;
+      if (run) return handled(run);
       throw notFound("No durable provider action was admitted in this browser demo workspace.");
     }
     if (owner === "discovery" && id === "target-search" && method === "GET") {
       const snapshot = await this.workspace.snapshot();
       return handled({
         ok: true,
-        current: null,
+        current: false,
         accepted: null,
-        targets: [],
+        targets: {},
         profileRevision: snapshot.state.readModel.profile.config.profileVersion,
       });
     }
+    if (owner === "discovery" && id === "runs" && path.length === 3 && method === "GET")
+      return handled({ ok: true, runs: [] });
     if (
       owner === "discovery" &&
       id === "sources" &&
@@ -294,7 +376,7 @@ export class DemoFeatureHttpAdapter {
       const response = snapshot.state.readModel.discovery.sources;
       return handled({
         ...structuredClone(response),
-        sources: response.sources.map((source) => ({
+        sources: response.sources.filter((source) => source.sourceId.startsWith("jobstreaming:")).map((source) => ({
           ...source,
           revision:
             snapshot.state.features?.sourceRevisions?.[source.sourceId] ?? 1,
@@ -304,51 +386,21 @@ export class DemoFeatureHttpAdapter {
     if (
       owner === "discovery" &&
       id === "sources" &&
-      ((method === "POST" && path.length === 3) ||
-        (method === "PATCH" && action && detail === "state"))
+      method === "PATCH" && action && detail === "state"
     ) {
       const snapshot = await this.workspace.snapshot();
-      const sourceId = method === "POST" ? text(body.sourceId) : action!;
-      const exists = snapshot.state.readModel.discovery.sources.sources.some(
-        (source) => source.sourceId === sourceId,
-      );
-      const { createOnly, expectedRevision, ...patch } = body;
-      if (method === "POST" && createOnly === true && exists)
-        throw conflict(
-          "This source already exists. Review its current state before editing.",
-        );
-      const expected = exists ? integer(expectedRevision, 1) : 0;
-      const result = await this.api.executeHttpLocalCommand(
-        method === "POST"
-          ? "upsertDiscoverySource"
-          : "patchDiscoverySourceState",
-        method === "POST" ? [patch] : [sourceId, patch],
-        (draft) => {
-          if (draft.resetEpoch !== snapshot.resetEpoch)
-            throw conflict(
-              "The synthetic workspace was reset before the source change.",
-            );
-          const current = draft.state.readModel.discovery.sources.sources.some(
-            (source) => source.sourceId === sourceId,
-          );
-          const revisions = (features(draft).sourceRevisions ??= {});
-          if (
-            current !== exists ||
-            (current && (revisions[sourceId] ?? 1) !== expected)
-          )
-            throw conflict(
-              "The source revision changed. Review it before saving.",
-            );
-          revisions[sourceId] = current ? expected + 1 : 1;
-        },
-      );
-      return handled({
-        ...data(result),
-        source: {
-          ...data(data(result).source),
-          revision: exists ? expected + 1 : 1,
-        },
+      const sourceId = action;
+      const { expectedRevision, state, reason } = body;
+      const expected = integer(expectedRevision, 1);
+      const result = await this.api.executeHttpLocalCommand("patchDiscoverySourceState", [sourceId, { state, reason }], (draft) => {
+        const revisions = (features(draft).sourceRevisions ??= {});
+        if (!sourceId.startsWith("jobstreaming:") || !draft.state.readModel.discovery.sources.sources.some((source) => source.sourceId === sourceId))
+          throw notFound("The JobStreaming board does not exist.");
+        if (draft.resetEpoch !== snapshot.resetEpoch || (revisions[sourceId] ?? 1) !== expected)
+          throw conflict("The board changed. Review its state before saving.");
+        revisions[sourceId] = expected + 1;
       });
+      return handled({ ...data(result), source: { ...data(data(result).source), revision: expected + 1 } });
     }
     if (
       owner === "discovery" &&
@@ -358,77 +410,6 @@ export class DemoFeatureHttpAdapter {
       (method === "GET" || method === "POST")
     ) {
       return handled(await this.api.discoverySourcePreview(action));
-    }
-    if (owner === "discovery" && id === "locator-candidates") {
-      const snapshot = await this.workspace.snapshot();
-      const response = snapshot.state.readModel.discovery.locatorCandidates;
-      const candidates = new Map<string, Data>(
-        response.candidates.map((candidate) => [
-          candidate.candidateId,
-          data(candidate),
-        ]),
-      );
-      for (const [candidateId, candidate] of Object.entries(
-        snapshot.state.features?.locatorExamples ?? {},
-      ))
-        candidates.set(candidateId, candidate);
-      if (method === "GET" && path.length === 3)
-        return handled({
-          ...structuredClone(response),
-          candidates: [...candidates].map(([candidateId, candidate]) => ({
-            ...structuredClone(candidate),
-            ...(snapshot.state.features?.locatorStates?.[candidateId] ?? {
-              revision: 1,
-              decision: "pending",
-              decidedAt: null,
-            }),
-          })),
-        });
-      if (
-        method === "POST" &&
-        action &&
-        ["promote", "reject", "reset"].includes(detail ?? "")
-      ) {
-        const candidate = candidates.get(action);
-        if (!candidate) throw notFound();
-        const expected = integer(body.expectedRevision, 1);
-        const decidedAt = new Date().toISOString();
-        const guard = (draft: DemoWorkspaceSnapshot) => {
-          if (draft.resetEpoch !== snapshot.resetEpoch)
-            throw conflict(
-              "The synthetic workspace was reset before the proposal decision.",
-            );
-          const state = features(draft);
-          const current = state.locatorStates?.[action]?.revision ?? 1;
-          if (current !== expected)
-            throw conflict(
-              "The locator proposal changed. Review its current revision before deciding.",
-            );
-          (state.locatorExamples ??= {})[action] = structuredClone(candidate);
-          (state.locatorStates ??= {})[action] = {
-            revision: current + 1,
-            decision: detail as "promote" | "reject" | "reset",
-            decidedAt,
-          };
-        };
-        if (detail === "promote") {
-          const result = await this.api.executeHttpLocalCommand(
-            "promoteSourceLocatorCandidate",
-            [action, body],
-            guard,
-          );
-          return handled({ ...data(result), revision: expected + 1 });
-        }
-        await this.commit(guard, snapshot.resetEpoch);
-        return handled({
-          ok: true,
-          candidateId: action,
-          decision: detail,
-          source: null,
-          decidedAt,
-          revision: expected + 1,
-        });
-      }
     }
     if (owner === "discovery" && id === "settings") {
       if (method === "GET")
@@ -549,6 +530,7 @@ export class DemoFeatureHttpAdapter {
       if (method === "POST" && id && action === "cancel" && path.length === 4) {
         const original = runs.find((run) => run.runId === id);
         if (!original) throw notFound();
+        if (snapshot.state.features?.preparationRuns?.[id]) throw conflict("This browser-local baseline is already ready for review. There is no running worker action to cancel.");
         const key = options.idempotencyKey ?? `demo:cancel:${id}`;
         const request = stableDemoStringify({ runId: id, body });
         const prior = snapshot.state.features?.runCancellationCommands?.[key];
@@ -1041,6 +1023,7 @@ export class DemoFeatureHttpAdapter {
           "requirements",
           "fit",
           "resumes",
+          "preparation",
           "discovery",
           "companies",
           "contacts",
@@ -1058,6 +1041,10 @@ export class DemoFeatureHttpAdapter {
         },
         llmSpend: {
           costUsd: 0,
+          knownCostUsd: 0,
+          costStatus: "complete",
+          tokenStatus: "complete",
+          unlimited: this.settings(await this.workspace.snapshot()).dailyBudgetUsd <= 0,
           accountingComplete: true,
           costAuthority: "reported",
         },
@@ -1503,7 +1490,13 @@ export class DemoFeatureHttpAdapter {
     if (owner === "profile" && id === "wording") {
       if (method === "GET" && path.length === 3)
         return handled(this.library(await this.workspace.snapshot()));
-      if (method === "POST") {
+      if (method === "GET" && path.length === 5 && detail === "history") {
+        const snapshot = await this.workspace.snapshot();
+        const current = this.library(snapshot).variants.find((variant) => variant.variant_id === action);
+        if (!current) throw notFound();
+        return handled({ ok: true, revisions: [...structuredClone(snapshot.state.features?.wordingHistory?.[action!] ?? []), current] });
+      }
+      if (method === "POST" || method === "PATCH") {
         let accepted: WordingLibrary | undefined;
         await this.commit((draft) => {
           const library = this.library(draft);
@@ -1511,7 +1504,7 @@ export class DemoFeatureHttpAdapter {
             throw conflict(
               "The Profile changed. Review its current version before saving wording.",
             );
-          if (path.length === 3) {
+          if (method === "POST" && path.length === 3) {
             const achievement = library.roles
               .flatMap((role) => role.achievements)
               .find((item) => item.achievement_id === body.achievementId);
@@ -1520,19 +1513,19 @@ export class DemoFeatureHttpAdapter {
             const refs = refsFrom(body.sourceRefs);
             if (
               !refs.length ||
-              refs.some(
-                (ref) =>
-                  !achievement.source_refs.some(
-                    (current) =>
-                      current.source_id === ref.source_id &&
-                      current.revision === ref.revision,
-                  ),
-              )
+              !exactDemoRefs(refs, achievement.source_refs)
             ) {
               throw conflict(
                 "The wording sources changed. Review the current source revisions.",
               );
             }
+            let parent: WordingVariant | undefined;
+            if (body.replacesVariantId !== undefined || body.replacesVariantRevision !== undefined) {
+              parent = library.variants.find((variant) => variant.variant_id === body.replacesVariantId);
+              if (!parent || parent.achievement_id !== achievement.achievement_id || parent.revision !== body.replacesVariantRevision || parent.status === "stale")
+                throw conflict("The wording being revised changed. Review its current text before proposing a revision.");
+            }
+            const intendedRequirementIds = body.intendedRequirementIds === undefined ? undefined : jobIds(body.intendedRequirementIds, true);
             library.variants.push({
               variant_id: `wording:${crypto.randomUUID()}`,
               revision: 1,
@@ -1543,11 +1536,26 @@ export class DemoFeatureHttpAdapter {
               approval_id: null,
               origin_key: null,
               provenance: {
-                kind: "user_authored_browser_demo",
+                kind: parent ? "proposed_revision" : "user_authored_browser_demo",
                 synthetic: true,
+                assessment_status: "unassessed",
+                ...(parent ? { replaces_variant_id: parent.variant_id, replaces_variant_revision: parent.revision } : {}),
+                ...(intendedRequirementIds ? { intended_requirement_ids: intendedRequirementIds } : {}),
               },
             });
-          } else if (path.length === 5 && detail === "decision") {
+          } else if (method === "PATCH" && path.length === 4) {
+            const variant = library.variants.find((item) => item.variant_id === action);
+            if (!variant) throw notFound();
+            if (variant.revision !== body.expectedVariantRevision || variant.text !== body.exactText)
+              throw conflict("The wording draft changed. Review its current text.");
+            if (variant.status !== "pending") throw conflict("Create a separate draft to edit reviewed wording.");
+            const nextText = text(body.text);
+            if (nextText === variant.text) { accepted = library; return; }
+            ((features(draft).wordingHistory ??= {})[variant.variant_id] ??= []).push(structuredClone(variant));
+            variant.text = nextText;
+            variant.revision += 1;
+            variant.provenance = { kind: "user_edited", original_provenance: variant.provenance, synthetic: true, assessment_status: "unassessed" };
+          } else if (method === "POST" && path.length === 5 && detail === "decision") {
             const variant = library.variants.find(
               (item) => item.variant_id === action,
             );
@@ -1674,6 +1682,13 @@ export class DemoFeatureHttpAdapter {
       },
       effectiveSettings: {
         ...saved.effectiveSettings,
+        resultsPerSite: {
+          ...saved.effectiveSettings.resultsPerSite,
+          value: saved.settings.resultsPerSite,
+          activation: "inactive" as const,
+          editable: false as const,
+          locked: true as const,
+        },
         minFitScore: {
           ...saved.effectiveSettings.minFitScore,
           value: policy.minFitScore,
@@ -1736,6 +1751,17 @@ export class DemoFeatureHttpAdapter {
         })),
       ),
     );
+    const sections = [
+      ["skill_categories", profile.resume.skill_categories],
+      ["education_entries", profile.resume.education_entries],
+      ["language_entries", profile.resume.language_entries],
+      ["experience_entries", profile.resume.experience_entries.map(({ bullets: _bullets, achievement_ids: _ids, achievement_evidence: _evidence, ...role }) => role)],
+    ] as const;
+    for (const [section, rows] of sections) for (const record of rows) sources.push({
+      source_id: `demo:profile-section:${section}:${record.id}`,
+      revision: library.profileVersion, text: JSON.stringify(record), kind: "structured_profile_field", confirmation: "authored", origin: "profile",
+      path: ["resume", section, record.id], record: structuredClone(record), synthetic: true,
+    });
     const saved = (snapshot.state.features?.profileSources ?? []).filter(
       (source) =>
         source.origin !== "profile" ||
@@ -1771,7 +1797,7 @@ export class DemoFeatureHttpAdapter {
   }
 
   private actionRuns(snapshot: DemoWorkspaceSnapshot) {
-    return snapshot.state.readModel.runs.list.items
+    const legacy = snapshot.state.readModel.runs.list.items
       .map((run) => {
         if (!run.startedAt)
           throw conflict("A saved synthetic run has no recorded start time.");
@@ -1802,8 +1828,15 @@ export class DemoFeatureHttpAdapter {
           synthetic: true,
           externalEffectOccurred: false,
         };
-      })
-      .sort(
+      });
+    const local = Object.values(snapshot.state.features?.preparationRuns ?? {}).map((run) => ({
+      runId: run.runId, action: "preparation.run", status: run.status,
+      workflowId: `demo-browser:${run.runId}`, temporalRunId: null,
+      result: { resume_id: run.steps.find((step) => step.stage === "compose")?.result.resume_id ?? null },
+      errorCode: null, createdAt: run.createdAt, updatedAt: run.updatedAt, cancellationRequested: false,
+      synthetic: true, externalEffectOccurred: false, transport: "browser_local",
+    }));
+    return [...legacy, ...local].sort(
         (left, right) =>
           right.createdAt.localeCompare(left.createdAt) ||
           left.runId.localeCompare(right.runId),
@@ -1829,205 +1862,183 @@ export class DemoFeatureHttpAdapter {
   }
 
   private library(snapshot: DemoWorkspaceSnapshot): WordingLibrary {
-    const profileVersion =
-      snapshot.state.readModel.profile.config.profileVersion ?? 1;
-    const saved = snapshot.state.features?.wording;
-    if (saved?.profileVersion === profileVersion) return structuredClone(saved);
-    const profile = ProfileSchema.parse(
-      snapshot.state.readModel.profile.config.profile,
-    );
-    const variants: WordingVariant[] = [];
-    const roles = profile.resume.experience_entries.map((role) => ({
-      role_id: role.id,
-      achievements: role.bullets.map((bullet, index) => {
-        const achievementId = `demo:achievement:${role.id}:${index}`;
-        const source_refs = [
-          {
-            source_id: `achievement:${achievementId}`,
-            revision: profileVersion,
-          },
-        ];
-        const variant_id = `baseline:${achievementId}:${profileVersion}`;
-        variants.push({
-          variant_id,
-          revision: 1,
-          achievement_id: achievementId,
-          text: bullet,
-          status: "approved",
-          approval_id: `demo:authored-baseline:${variant_id}`,
-          source_refs,
-          origin_key: null,
-          provenance: {
-            kind: "authored_baseline",
-            authority: "authored_save",
-            synthetic: true,
-          },
-        });
-        return {
-          achievement_id: achievementId,
-          baseline_variant_id: variant_id,
-          source_refs,
-        };
-      }),
-    }));
-    return {
-      ok: true,
-      profileVersion,
-      wordingRevision: (saved?.wordingRevision ?? 0) + 1,
-      roles,
-      variants: [
-        ...variants,
-        ...(saved?.variants ?? []).map((variant) => ({
-          ...variant,
-          status: "stale",
-        })),
-      ],
-      proposals: saved?.proposals ?? [],
-    };
+    return demoWordingLibrary(snapshot);
   }
 
   private async requirements(snapshot: DemoWorkspaceSnapshot, id: string) {
     const posting = await this.posting(snapshot, id);
     const example = postingExamples[id];
     if (!example) return null;
-    const start = posting.description.indexOf(example.requirement);
-    if (start < 0)
-      throw conflict(
-        "The saved synthetic requirement does not belong to this posting revision.",
-      );
+    const catalog = demoCanonicalRequirements(snapshot);
+    const sourceExamples = [{ text: example.requirement, requirementId: example.requirementId }];
+    const isPlatform = id === "6e2f4a10-20be-4d5f-98a4-a4bb9a877a35";
+    if (isPlatform) sourceExamples.push(
+      { text: "Coordinate incident response with the engineering team.", requirementId: "requirement:v2:demo:incident-response" },
+      { text: "Use release coordination to make delivery plans clear.", requirementId: "requirement:v2:demo:release-coordination" },
+    );
+    const sharedDemand = DEMO_PLATFORM_DEMANDS.find((demand) => demand.jobId === id);
+    if (!isPlatform && sharedDemand && posting.revision === 1 && posting.description.includes(sharedDemand.definition)) {
+      sourceExamples.push({ text: sharedDemand.definition, requirementId: "requirement:v2:demo:platform" });
+    }
+    const quote = (text: string, evidenceId: string) => {
+      const start = posting.description.indexOf(text);
+      if (start < 0) throw conflict("The saved synthetic occurrence does not belong to this posting revision.");
+      return { evidence_id: evidenceId, source_id: posting.source_id, quote: text, start, end: start + text.length };
+    };
+    const sources = sourceExamples.map((item, index) => quote(item.text, `demo:quote:${id}:reusable:${index}`));
+    const directTexts = isPlatform ? [
+      "Degree in engineering or equivalent professional experience.",
+      "English at professional working proficiency.",
+      "Spanish at professional working proficiency.",
+    ] : [];
+    const directQuotes = directTexts.map((text, index) => quote(text, `demo:quote:${id}:direct:${index}`));
+    const languageQuote = quote(posting.description, `demo:quote:${id}:posting-language`);
+    const span = (item: ReturnType<typeof quote>) => [{ start: item.start, end: item.end, quote: item.quote }];
+    const provenance = { kind: "bundled_synthetic_occurrence", synthetic: true, model_called: false };
+    const direct = (index: number) => ({
+      contract_version: "requirements-v2", revision: 1, source_id: posting.source_id,
+      source_revision: posting.source_revision, source_hash: posting.source_hash, job_id: id, posting_revision: posting.revision,
+      evidence_refs: [directQuotes[index]!.evidence_id], spans: span(directQuotes[index]!), source_note: null, provenance,
+    });
     return {
-      job_id: id,
-      revision: 1,
-      posting_revision: posting.revision,
-      posting_hash: posting.source_hash,
-      catalog_revision: 1,
-      requirements: [
-        {
-          occurrence_id: `demo:occurrence:${id}`,
-          requirement_id: example.requirementId,
-          requirement_revision: 1,
-          text: example.requirement,
-          definition: example.requirement,
-          scope: "role",
-          tier: "must_have",
-          weight: 1,
-          qualifiers: [],
-          source_id: posting.source_id,
-          source_revision: posting.source_revision,
-          source_hash: posting.source_hash,
-          spans: [
-            {
-              start,
-              end: start + example.requirement.length,
-              quote: example.requirement,
-            },
-          ],
-          extraction_determination_id: `demo:bundled-synthetic:${id}`,
-          equivalence_determination_ids: [],
-          synthetic: true,
-        },
-      ],
-      stale: false,
-      latest_attempt: null,
-      synthetic: true,
+      contract_version: "requirements-v2", status: "complete" as const,
+      language: { classification: "english" as const, reason: "Bundled English-language illustration; no model language detection ran.", evidence_refs: [languageQuote.evidence_id] },
+      quotes: [languageQuote, ...sources, ...directQuotes],
+      job_id: id, revision: 1, posting_revision: posting.revision, posting_hash: posting.source_hash, catalog_revision: 1,
+      requirements: sourceExamples.map((sourceExample, index) => {
+        const canonical = catalog.find((requirement) => requirement.requirement_id === sourceExample.requirementId)!;
+        const normalized = posting.revision === 1 && canonical.requirement_id === "requirement:v2:demo:platform" && sharedDemand
+          && sourceExample.text === sharedDemand.definition ? {
+            normalization_version: DEMO_NORMALIZATION_VERSION, definition: sharedDemand.definition,
+            demand_fingerprint: sharedDemand.fingerprint, provenance: { kind: "bundled_synthetic_example", synthetic: true, model_called: false },
+          } : null;
+        return {
+          contract_version: "requirements-v2", occurrence_id: `demo:occurrence:v2:${id}:${index}`,
+          requirement_id: canonical.requirement_id, requirement_revision: 1, job_id: id, posting_revision: posting.revision,
+          text: sourceExample.text, name: canonical.name, category: canonical.category, definition: canonical.definition,
+          canonical: { contract_version: canonical.contract_version, category: canonical.category, name: canonical.name, definition: canonical.definition },
+          basis: "explicit", rationale: null, source_note: null, evidence_refs: [sources[index]!.evidence_id],
+          source_id: posting.source_id, source_revision: posting.source_revision, source_hash: posting.source_hash,
+          spans: span(sources[index]!), extraction_determination_id: `demo:bundled-synthetic:v2:${id}`,
+          equivalence_determination_ids: [], provenance, ...(normalized ? { normalized_demand: normalized } : {}), synthetic: true,
+        };
+      }),
+      education: isPlatform ? [{ ...direct(0), requirement_id: `demand:v2:demo:${id}:education`, category: "education" as const,
+        qualification: "Degree in engineering", subjects: ["Engineering"], alternative: "Equivalent professional experience" }] : [],
+      languages: isPlatform ? [
+        { ...direct(1), requirement_id: `demand:v2:demo:${id}:english`, category: "language" as const, language: "English", proficiency: "Professional working proficiency" },
+        { ...direct(2), requirement_id: `demand:v2:demo:${id}:spanish`, category: "language" as const, language: "Spanish", proficiency: "Professional working proficiency" },
+      ] : [],
+      unresolved: [], stale: false, stale_reasons: [], latest_attempt: null, synthetic: true,
     };
   }
 
+  private async requirementOccurrences(snapshot: DemoWorkspaceSnapshot, requirementId: string) {
+    const occurrences: Data[] = [];
+    for (const jobId of Object.keys(postingExamples)) {
+      const job = snapshot.state.readModel.jobs.details[jobId]?.job;
+      if (!job || job.deletedAt) continue;
+      const requirements = await this.requirements(snapshot, jobId);
+      if (requirements) occurrences.push(...requirements.requirements.filter((row) => row.requirement_id === requirementId));
+    }
+    return occurrences;
+  }
+
   private async fit(snapshot: DemoWorkspaceSnapshot, id: string) {
-    await this.posting(snapshot, id);
+    const posting = await this.posting(snapshot, id);
     const job = snapshot.state.readModel.jobs.details[id]?.job;
+    const requirements = await this.requirements(snapshot, id);
     const example = postingExamples[id];
-    if (!job || !example)
-      return {
-        job_id: id,
-        current: false,
-        stale_reasons: [],
-        score: null,
-        coverage: null,
-      };
-    const factsCurrent =
-      !snapshot.state.features?.profileSourcesChanged &&
-      snapshot.state.features?.fitProfileSourceSignature ===
-        stableDemoStringify(snapshot.state.readModel.profile.config.profile);
+    if (!job || !example || !requirements) return {
+      contract_version: "requirements-v2", job_id: id, current: false, requirements_current: false,
+      qualifications_current: false, stale_reasons: [], score: null, coverage: null, synthetic: true,
+    };
+    const { evidenceProfile: assessedProfile, current: factsCurrent } = demoFitProfile(snapshot);
     const current = factsCurrent && !job.scoreStaleness.isStale;
-    const library = this.library(snapshot);
-    const baseline = library.variants.find(
-      (variant) => variant.status === "approved",
-    );
+    // A fixed authored illustration keeps its original sources when visitors edit
+    // their synthetic Profile. It never decides a match from edited prose.
+    const sectionRef = (section: string, record: { id: string } | undefined) => record ? [{
+      source_id: `demo:profile-section:${section}:${record.id}`, revision: 1, quote: JSON.stringify(record),
+    }] : [];
+    const role = assessedProfile.resume.experience_entries[0];
+    const roleRecord = role ? (({ bullets: _bullets, achievement_ids: _ids, achievement_evidence: _evidence, ...record }) => record)(role) : undefined;
+    const achievementRef = (achievementId: string) => assessedProfile.resume.experience_entries.flatMap((entry) => {
+      const index = entry.achievement_ids?.indexOf(achievementId) ?? -1;
+      return index < 0 ? [] : [{ source_id: `achievement:${achievementId}`, revision: 1, quote: entry.bullets[index]! }];
+    });
+    const assessments: Data[] = requirements.requirements.map((requirement, index) => {
+      const authored = requirement.requirement_id === "requirement:v2:demo:platform" && "normalized_demand" in requirement
+        ? demoPlatformDemandAssessment(snapshot, id) : null;
+      if (authored) return { ...authored, text: authored.definition, strength: authored.kind === "matched" ? "direct" : null,
+        evidence_route: null, eligibility: "unknown", blocker_category: null, warning_category: null,
+        contribution: { max_points: 1, awarded_points: authored.kind === "matched" ? 1 : 0 }, synthetic: true };
+      const sectionBacked = requirement.requirement_id === "requirement:v2:demo:release-coordination";
+      const achievementId = requirement.requirement_id === "requirement:v2:demo:incident-response" ? "demo:achievement:incident-practice"
+        : requirement.requirement_id === "requirement:v2:demo:systems" ? "demo:achievement:systems-delivery" : "demo:achievement:platform-reliability";
+      const refs = sectionBacked ? sectionRef("skill_categories", assessedProfile.resume.skill_categories.find((item) => item.id === "demo:skills:delivery"))
+        : example.kind === "matched" ? achievementRef(achievementId) : [];
+      const kind = example.kind === "missing" ? "missing" : refs.length ? "matched" : "not_assessed";
+      const strength = kind === "matched" ? requirement.requirement_id === "requirement:v2:demo:incident-response" ? "strong" : "direct" : null;
+      return {
+        contract_version: "requirements-v2", assessment_id: `demo:assessment:v2:${id}:reusable:${index}`,
+        requirement_id: requirement.requirement_id, requirement_revision: requirement.requirement_revision,
+        category: requirement.category, name: requirement.name, text: requirement.definition, definition: requirement.definition,
+        kind, strength, confidence: kind === "not_assessed" ? "low" : "high",
+        rationale: sectionBacked ? "Authored illustration: the saved Skills section supplies release coordination; an achievement rewrite is unnecessary."
+          : example.kind === "missing" ? "Authored illustration: regulated-domain leadership is not established by the saved synthetic sources."
+          : "Authored illustration: this saved achievement supplies the recorded support. No model assessment ran.",
+        evidence_refs: refs, achievement_ids: kind === "matched" && !sectionBacked ? [achievementId] : [],
+        evidence_route: null, wording_support: kind === "matched" ? sectionBacked ? "section" : "achievement" : "none",
+        determination_id: `demo:bundled-synthetic:v2:${id}`, origin: "bundled_synthetic_example", eligibility: "unknown",
+        blocker_category: null, warning_category: null, contribution: { max_points: 1, awarded_points: strength === "direct" ? 1 : strength === "strong" ? 0.85 : 0 }, synthetic: true,
+      };
+    });
+    for (const demand of requirements.education) assessments.push({
+      contract_version: "requirements-v2", assessment_id: `demo:assessment:v2:${id}:education`, requirement_id: demand.requirement_id, requirement_revision: demand.revision,
+      category: "education", name: demand.qualification, text: `${demand.qualification} or ${demand.alternative}`, definition: `${demand.qualification} or ${demand.alternative}`,
+      kind: roleRecord ? "matched" : "not_assessed", strength: roleRecord ? "direct" : null, confidence: roleRecord ? "high" : "low",
+      rationale: "Authored illustration: the posting explicitly permits equivalent professional experience. The recorded route uses experience and does not claim a degree.",
+      evidence_refs: sectionRef("experience_entries", roleRecord), achievement_ids: [], evidence_route: "equivalent_experience", wording_support: "none",
+      determination_id: `demo:bundled-synthetic:v2:${id}`, origin: "bundled_synthetic_example", eligibility: "unknown",
+      blocker_category: null, warning_category: null, contribution: { max_points: 1, awarded_points: roleRecord ? 1 : 0 }, synthetic: true,
+    });
+    for (const demand of requirements.languages) {
+      // These authored examples bind exact fixture IDs, never visitor text.
+      const language = demand.requirement_id.endsWith(":english") ? assessedProfile.resume.language_entries.find((item) => item.id === "demo:language:english") : undefined;
+      assessments.push({
+        contract_version: "requirements-v2", assessment_id: `demo:assessment:v2:${id}:${demand.requirement_id}`, requirement_id: demand.requirement_id, requirement_revision: demand.revision,
+        category: "language", name: `${demand.language} · ${demand.proficiency}`, text: `${demand.language} at ${demand.proficiency}`, definition: `${demand.language} at ${demand.proficiency}`,
+        kind: language ? "matched" : "not_assessed", strength: language ? "direct" : null, confidence: language ? "high" : "low",
+        rationale: language ? "Authored illustration: the saved Languages / Proficiency entry supplies this language demand."
+          : "Authored illustration: no structured proficiency entry was recorded for this demand. Other Skills or experience do not establish it.",
+        evidence_refs: sectionRef("language_entries", language), achievement_ids: [], evidence_route: null, wording_support: "none",
+        determination_id: `demo:bundled-synthetic:v2:${id}`, origin: "bundled_synthetic_example", eligibility: "unknown",
+        blocker_category: null, warning_category: null, contribution: { max_points: 1, awarded_points: language ? 1 : 0 }, synthetic: true,
+      });
+    }
+    const count = assessments.length;
+    const coverage = count ? assessments.reduce((sum, item) => sum + Number(data(item.contribution).awarded_points), 0) / count : null;
+    const computed = coverage === null ? null : Math.max(1, Math.min(10, 1 + Math.floor(9 * coverage + 0.5)));
+    const score = job.scoreCorrection ? job.fitScore : computed;
     return {
-      job_id: id,
-      current,
-      stale_reasons: current
-        ? []
-        : [
-            !factsCurrent
-              ? "profile_facts_changed"
-              : "saved_synthetic_assessment_stale",
-          ],
+      contract_version: "requirements-v2", job_id: id, current, requirements_current: true, qualifications_current: current,
+      stale_reasons: current ? [] : [!factsCurrent ? "profile_facts_changed" : "saved_synthetic_assessment_stale"],
       score: {
-        revision: job.scoreVersion ?? 1,
-        score: job.fitScore ?? 0,
-        computed_score: job.scoreCorrection?.originalScore ?? job.fitScore ?? 0,
-        fit_band: job.scoreBreakdown?.fitBand ?? "unassessed",
-        confidence: job.scoreBreakdown?.confidence ?? "low",
-        eligibility: {
-          status: job.scoreBreakdown?.eligibility?.status ?? "unknown",
-          blockers: (job.scoreBreakdown?.eligibility?.hardBlockers ?? []).map((rationale) => ({ requirement_id: example.requirementId, rationale, evidence_refs: [] })),
-          warnings: (job.scoreBreakdown?.eligibility?.warnings ?? []).map((rationale) => ({ requirement_id: example.requirementId, rationale, evidence_refs: [] })),
-        },
-        assessments: [
-          {
-            assessment_id: `demo:assessment:${id}`,
-            requirement_id: example.requirementId,
-            requirement_revision: 1,
-            text: example.requirement,
-            definition: example.requirement,
-            scope: "role",
-            tier: "must_have",
-            weight: 1,
-            kind: example.kind,
-            strength: example.kind === "matched" ? "supported" : null,
-            confidence: "high",
-            rationale: job.scoreReasoning ?? "Saved synthetic tour example.",
-            evidence_refs: [],
-            achievement_ids: [],
-            determination_id: `demo:bundled-synthetic:${id}`,
-            origin: "bundled_synthetic_example",
-            eligibility: job.scoreBreakdown?.eligibility?.status ?? "unknown",
-            blocker_category: job.scoreBreakdown?.eligibility?.status === "blocked" ? "qualification" : null,
-            warning_category: null,
-            contribution: {
-              max_points: 10,
-              awarded_points: example.kind === "matched" ? 10 : 0,
-            },
-            synthetic: true,
-          },
-        ],
-        source_binding: {
-          profile_revision: 1,
-          fact_semantics_version: 1,
-          requirements_revision: 1,
-          posting_revision: 1,
-        },
+        contract_version: "requirements-v2", formula_version: "requirement-fit-v3-equal", policy_version: "requirement-fit-v3-equal",
+        revision: job.scoreVersion ?? 1, score, computed_score: computed,
+        fit_band: score === null ? null : score >= 9 ? "excellent" : score >= 7 ? "strong" : score >= 5 ? "plausible" : score >= 3 ? "stretch" : "poor",
+        confidence: assessments.some((item) => item.confidence === "low") ? "low" : "high",
+        summary: { qualification_coverage: coverage, weighted_fit: coverage, assessed_count: count,
+          supported_count: assessments.filter((item) => item.kind === "matched" || item.kind === "transferable").length, blocker_count: 0 },
+        eligibility: { status: "unknown", blockers: [], warnings: [] }, assessments,
+        source_binding: { profile_revision: 1, fact_semantics_version: 1, requirements_revision: 1, posting_revision: posting.revision },
       },
       coverage: {
-        status: current ? "not_assessed" : "stale",
-        relations: [],
-        wording_gaps:
-          example.kind === "missing"
-            ? [
-                {
-                  requirement_id: example.requirementId,
-                  status: "unsupported",
-                  proposal_id: null,
-                  proposal_status: null,
-                },
-              ]
-            : [],
-        synthetic: true,
-        approved_baseline_variant_id: baseline?.variant_id ?? null,
-      },
-      synthetic: true,
+        contract_version: "requirements-v2", status: current ? "not_assessed" : "stale", relations: [], wording_gaps: [],
+        section_support: assessments.filter((item) => item.wording_support === "section").map((item) => ({
+          requirement_id: item.requirement_id, assessment_id: item.assessment_id, category: item.category, evidence_refs: item.evidence_refs,
+        })), synthetic: true,
+      }, synthetic: true,
     };
   }
 
@@ -2360,6 +2371,81 @@ export class DemoFeatureHttpAdapter {
       };
     }, snapshot.resetEpoch);
     return handled(response);
+  }
+
+  /** Compose and verify real bytes before one atomic browser-local publication. */
+  private async prepareBaseline(body: Data, options: HttpRequestOptions) {
+    const unavailable = (message: string) => new JobCtrlApiError(422, "Demo Action Unavailable", message,
+      { error: { code: "demo_preparation_unavailable" } });
+    if (body.recipe !== "prepare" || body.resume_mode !== "baseline") throw unavailable(
+      "The public demo can prepare a full baseline in this browser. Tailoring, assessment and other preparation recipes need the local worker and a configured model.");
+    const parsed = z.object({ recipe: z.literal("prepare"), resume_mode: z.literal("baseline"),
+      job_ids: z.array(z.string().min(1).max(120)).length(1), scope: z.literal("selected").optional(),
+      limit: z.number().int().min(1).max(1000).optional(), force: z.boolean().optional(),
+      allow_below_threshold: z.boolean().optional(), min_fit_score: z.number().int().min(1).max(10).optional(),
+    }).strict().safeParse(body);
+    if (!parsed.success || !options.idempotencyKey || options.idempotencyKey.length > 200) throw new JobCtrlApiError(400, "Bad Request",
+      "Choose one synthetic job and use a stable request identity for browser-local baseline preparation.");
+    const key = options.idempotencyKey;
+    const request = stableDemoStringify({ action: "preparation.run", body });
+    const snapshot = await this.workspace.snapshot();
+    const receipt = (runId: string) => ({ runId, workflowId: `demo-browser:${runId}`, status: "succeeded" as const,
+      synthetic: true, transport: "browser_local", externalEffectOccurred: false, temporalRunId: null });
+    const existing = snapshot.state.features?.preparationCommands?.[key];
+    if (existing) {
+      if (existing.request !== request) throw conflict("This preparation identity already records different inputs.");
+      return receipt(existing.runId);
+    }
+    const jobId = parsed.data.job_ids[0]!;
+    const posting = await this.posting(snapshot, jobId);
+    if (posting.deleted) throw conflict("Restore this synthetic job before preparing its baseline.");
+    const library = this.library(snapshot);
+    const document = this.baselineDocument(snapshot, library);
+    const revision = this.newRevision(snapshot, library, document, 1);
+    let rendered: Awaited<ReturnType<typeof renderDemoResume>>;
+    try { rendered = await renderDemoResume(document, undefined, revision.theme, data(revision.template?.layout).plateDocument); }
+    catch { throw unavailable("The browser could not verify the baseline PDF. No preparation result was published; earlier documents and accepted PDFs remain available."); }
+    const now = new Date().toISOString();
+    const runId = `demo-preparation:${crypto.randomUUID()}`;
+    const resumeId = crypto.randomUUID(), artifactId = crypto.randomUUID();
+    const blobId = `resume:${resumeId}:${revision.revision_id}:${artifactId}`;
+    revision.renders.push({ artifact_id: artifactId, resume_id: resumeId, revision_id: revision.revision_id, filename: "resume.pdf", format: "pdf",
+      sha256: rendered.sha256, size_bytes: rendered.blob.size, page_count: rendered.pageCount, layout_boxes: rendered.layoutBoxes,
+      layout_conflicts: rendered.layoutConflicts, layout_metadata: rendered.layoutMetadata, text_verified: rendered.textVerified,
+      blob_id: blobId, content_type: "application/pdf", byte_count: rendered.blob.size, synthetic: true });
+    revision.render_attempts.push({ status: "succeeded", created_at: now, artifact_id: artifactId });
+    const resume: Resume = { resume_id: resumeId, job_id: jobId, profile_id: "default", version: 2,
+      current_revision: revision.revision_id, accepted_revision_id: null, revisions: [revision], acceptances: [], locales: [], comments: [], created_at: now, updated_at: now };
+    const step = (stage: string, status: string, result: Data): DemoPreparationRun["steps"][number] => ({
+      jobId, stage, status, result, errorCode: null, updatedAt: now,
+    });
+    const run: DemoPreparationRun = { runId, status: "succeeded", recipe: "prepare", parentRunId: null, jobIds: [jobId], createdAt: now, updatedAt: now,
+      steps: [step("requirements", "skipped", { skip: "browser_local_baseline_no_model" }), step("fit", "skipped", { skip: "browser_local_baseline_no_model" }),
+        step("compose", "succeeded", { resume_id: resumeId, revision_id: revision.revision_id, version: resume.version, mode: "baseline_copy" }),
+        step("review", "skipped", { skip: "baseline_copy", review_status: "not_applicable" }),
+        step("render", "succeeded", { resume_id: resumeId, version: resume.version, artifact_id: artifactId })],
+      synthetic: true, transport: "browser_local", externalEffectOccurred: false };
+    let acceptedRunId = runId;
+    await this.commit((draft, context) => {
+      const state = features(draft);
+      const prior = state.preparationCommands?.[key];
+      if (prior) {
+        if (prior.request !== request) throw conflict("This preparation identity already records different inputs.");
+        acceptedRunId = prior.runId;
+        return;
+      }
+      const currentJob = this.jobState(draft, jobId);
+      if (this.library(draft).profileVersion !== library.profileVersion || currentJob.revision !== posting.revision || currentJob.deleted)
+        throw conflict("The saved Profile or posting changed while the browser rendered this baseline. Earlier documents remain available.");
+      (state.resumes ??= {})[resumeId] = resume;
+      (state.preparationRuns ??= {})[runId] = run;
+      (state.preparationCommands ??= {})[key] = { request, runId };
+      context.putBlob(blobId, rendered.blob);
+      context.appendDomainEvent(createResumeComposed(LOCAL_TENANT, { jobId, resumeId, revisionId: revision.revision_id, synthetic: true }));
+      context.appendDomainEvent(createResumeRendered(LOCAL_TENANT, { jobId, resumeId, revisionId: revision.revision_id, artifactId, synthetic: true }));
+      context.appendDomainEvent(createPreparationUpdated(LOCAL_TENANT, { jobId, runId, status: "succeeded", transport: "browser_local", synthetic: true }));
+    }, snapshot.resetEpoch);
+    return receipt(acceptedRunId);
   }
 
   private async resume(
@@ -2741,6 +2827,7 @@ export class DemoFeatureHttpAdapter {
         details: String(data(entry).details ?? ""),
       })),
       skills: structuredClone(resume.skill_categories),
+      languages: structuredClone(resume.language_entries),
     };
   }
 

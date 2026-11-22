@@ -1,6 +1,6 @@
 [project]
 name = "jobctrl"
-version = "0.4.4"
+version = "0.5.0"
 description = "AI-powered end-to-end job application pipeline"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -19,7 +19,7 @@ classifiers = [
 
 dependencies = [
     # Shared lifecycle, capability and process-reuse boundary for agent SDKs.
-    "agent-runtime-kit>=0.5.4,<0.6",
+    "agent-runtime-kit>=0.5.7,<0.6",
     "certifi>=2026.10.19",
     "typer>=0.9.0",
     "click>=8.3.3",
@@ -45,7 +45,7 @@ dependencies = [
     "opentelemetry-instrumentation-httpx>=0.48b0",
     # Typed, concurrent job-board events plus resumable checkpoints. Pin the
     # integration contract so JobCtrl's durable adapter changes deliberately.
-    "jobstreaming==0.0.5",
+    "jobstreaming==0.0.6",
     # Feature domain schemas and strict structured-model requests use Pydantic
     # directly, independently of the SDKs that also depend on it.
     "pydantic>=2.10",
@@ -65,11 +65,11 @@ dev = [
     "ruff==0.17.3",
 ]
 providers = [
-    "claude-agent-sdk==0.2.121",
+    "claude-agent-sdk==0.2.186",
     "mcp>=1.28.1",
-    "openai-codex==0.163.0",
-    "openai-codex-cli-bin==0.163.0",
-    "google-antigravity==0.1.2",
+    "openai-codex==0.171.0",
+    "openai-codex-cli-bin==0.171.0",
+    "google-antigravity==0.1.24",
     "pyasn1>=0.6.4",
 ]
 
@@ -78,10 +78,10 @@ providers = [
 # and acquire provider wheels separately through the signed provider-pack path.
 [dependency-groups]
 provider-runtime = [
-    "claude-agent-sdk==0.2.121",
-    "openai-codex==0.163.0",
-    "openai-codex-cli-bin==0.163.0",
-    "google-antigravity==0.1.2",
+    "claude-agent-sdk==0.2.186",
+    "openai-codex==0.171.0",
+    "openai-codex-cli-bin==0.171.0",
+    "google-antigravity==0.1.24",
 ]
 release-build = ["build==1.6.1", "hatchling==1.32.4"]
 
@@ -101,6 +101,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jobctrl"]
+# Feature and network READMEs are contributor documentation.
+exclude = ["/src/jobctrl/**/README.md"]
 
 [tool.hatch.build]
 artifacts = ["src/jobctrl/config/*.yaml", "src/jobctrl/assets/fonts/*", "src/jobctrl/assets/interview/*.json", "src/jobctrl/assets/determinations/*.json"]
@@ -131,4 +133,4 @@ default-groups = ["provider-runtime"]
 # as a relative timestamp would make an unchanged lockfile fail `uv --locked`
 # as time passes. Provider runtimes and the audited JobStreaming integration
 # retain their explicit reviewed cutoffs.
-exclude-newer-package = { "google-antigravity" = "2026-06-04T21:19:27Z", "claude-agent-sdk" = "2026-07-18T00:00:00Z", "jobstreaming" = "2026-08-29T23:59:59Z" }
+exclude-newer-package = { "google-antigravity" = "2026-11-19T15:45:00Z", "claude-agent-sdk" = "2026-11-19T23:02:00Z", "jobstreaming" = "2026-11-18T08:43:00Z" }

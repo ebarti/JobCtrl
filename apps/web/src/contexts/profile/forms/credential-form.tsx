@@ -32,6 +32,7 @@ export interface CredentialFormProps {
   unavailableDescriptionId?: string;
   effectiveSource?: CredentialsResponse["credentials"][number]["effectiveSource"];
   editable?: boolean;
+  onSecretDraftChange?: (hasSecret: boolean) => void;
 }
 
 const EMPTY_VALUE: CredentialUpdateRequest["value"] = "";
@@ -45,11 +46,13 @@ export function CredentialForm({
   unavailableDescriptionId,
   effectiveSource,
   editable,
+  onSecretDraftChange,
 }: CredentialFormProps) {
   const updateCredential = useUpdateCredentialMutation();
   const fence = useCredentialEditFence();
   const deleteCredential = useDeleteCredentialMutation();
   const [statusMessage, setStatusMessage] = useState("");
+  useEffect(() => () => onSecretDraftChange?.(false), [onSecretDraftChange]);
 
   const form = useForm({
     defaultValues: {
@@ -81,7 +84,10 @@ export function CredentialForm({
       const checked = response.credentials.find(
         (entry) => entry.key === credentialKey,
       )?.configured;
-      if (checked === true && !newerInput) formApi.reset({ key: credentialKey, value: EMPTY_VALUE });
+      if (checked === true && !newerInput) {
+        formApi.reset({ key: credentialKey, value: EMPTY_VALUE });
+        onSecretDraftChange?.(false);
+      }
       const result = checked === true
         ? `${label} saved in the native credential store. Newly started actions use it immediately.`
         : `${label} was submitted, but JobCtrl could not verify it. Your input remains here; check credential status before another change.`;
@@ -104,7 +110,10 @@ export function CredentialForm({
       const newerInput = form.getFieldValue("value") !== submittedValue;
       fence.accept(response.revision, newerInput);
       const confirmed = response.credentials.find((entry) => entry.key === credentialKey)?.configured === false;
-      if (confirmed && !newerInput) form.reset({ key: credentialKey, value: EMPTY_VALUE });
+      if (confirmed && !newerInput) {
+        form.reset({ key: credentialKey, value: EMPTY_VALUE });
+        onSecretDraftChange?.(false);
+      }
       const result = confirmed
         ? `${label} removed from the native credential store. Newly started actions use the updated configuration.`
         : `${label} removal was submitted, but could not be verified. Your input remains here; check credential status before another change.`;
@@ -193,7 +202,7 @@ export function CredentialForm({
                 type="password"
                 value={field.state.value}
                 onBlur={field.handleBlur}
-                onChange={(event) => { fence.capture(); field.handleChange(event.target.value); }}
+                onChange={(event) => { fence.capture(); field.handleChange(event.target.value); onSecretDraftChange?.(event.target.value.length > 0); }}
               />
             )}
           </form.Field>

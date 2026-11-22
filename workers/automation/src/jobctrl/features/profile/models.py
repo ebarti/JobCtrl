@@ -22,6 +22,16 @@ def profile_identity(kind: str, *identifiers: Any) -> str:
     return f"profile:{kind}:{fingerprint(list(identifiers))}"
 
 
+def authoring_request_summary(row) -> dict:
+    brief = json.loads(row["brief_json"])
+    metadata = brief.get("origin_metadata", {})
+    return {**{key: row[key] for key in ("proposal_id", "origin_key", "status", "variant_id", "failure_code")},
+            "achievement_id": brief["achievement_id"],
+            **{key: metadata[key] for key in (
+                "retry_of_proposal_id", "retry_of_origin_key", "prior_remote_outcome", "gap_requirement_ids",
+            ) if key in metadata}}
+
+
 def validate_transfer_bundle(bundle: dict) -> dict:
     if (not isinstance(bundle, dict) or bundle.get("format") != "jobctrl.profile-transfer.v1"
             or not isinstance(bundle.get("data"), dict) or bundle.get("sha256") != fingerprint(bundle["data"])):

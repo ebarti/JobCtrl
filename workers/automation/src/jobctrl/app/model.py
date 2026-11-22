@@ -7,7 +7,7 @@ import hashlib
 import json
 import os
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
@@ -17,7 +17,8 @@ from jsonschema.exceptions import SchemaError, ValidationError
 from jobctrl.app.database import Database
 from jobctrl.app.errors import AppError, NotFoundError
 from jobctrl.app.events import now
-from jobctrl.app.settings import Settings
+from jobctrl.app.model_capacity import ModelCapacityBusy, admit_model_call
+from jobctrl.app.settings import PROVIDER_CONFIGURATION_KEYS, Settings
 from jobctrl.app.synthetic import synthetic_boundary
 
 
@@ -25,6 +26,28 @@ from jobctrl.app.synthetic import synthetic_boundary
 class ModelResult:
     value: dict
     provenance: dict
+
+
+@dataclass(frozen=True)
+class ModelExecution:
+    """One immutable non-secret execution selection, shared by lookup and call."""
+
+    provider: str
+    model: str
+    reasoning_effort: str | None
+    _provider_configuration: tuple[tuple[str, str], ...] = field(repr=False)
+
+    def identity(self) -> dict:
+        return {"reasoning_effort": self.reasoning_effort,
+                "provider_configuration_sha256": hashlib.sha256(
+                    _canonical(dict(self._provider_configuration)).encode()).hexdigest()}
+
+    def configuration(self) -> dict:
+        # Return a fresh container so a downstream adapter cannot mutate the
+        # frozen selection. Credentials are resolved only at its native boundary.
+        return {"providerConfiguration": dict(self._provider_configuration),
+                "codexReasoningEfforts": {self.model: self.reasoning_effort}
+                if self.provider == "codex" else {}}
 
 
 def _canonical(value) -> str:
@@ -48,8 +71,8 @@ class ModelGateway:
         self.settings = settings
         self.synthetic = synthetic_boundary(workspace, os.environ.get("JOBCTRL_E2E_PROVIDER_URL"))
 
-    def selection(self, model: str | None = None) -> dict:
-        settings = self.settings.snapshot()
+    @staticmethod
+    def _selection(settings: dict, model: str | None = None) -> dict:
         provider = settings["defaultProvider"]
         if model and ":" in model:
             provider, model = model.split(":", 1)
@@ -60,16 +83,46 @@ class ModelGateway:
             raise AppError("model_unavailable", "Select a model for this provider.", 503)
         return {"provider": provider, "model": selected}
 
-    def accounting_capability(self, model: str | None = None, *, selection: dict | None = None) -> dict:
+    def selection(self, model: str | None = None) -> dict:
+        return self._selection(self.settings.snapshot(), model)
+
+    def freeze_execution(self, model: str | None = None, *, selection: dict | None = None) -> ModelExecution:
+        """Resolve model and effective saved effort/configuration exactly once.
+
+        Cache owners pass the returned descriptor to both fingerprint and
+        determine. Accounting, admission and credentials deliberately stay live.
+        """
+        settings = self.settings.snapshot()
+        selected = selection or self._selection(settings, model)
+        provider, selected_model = selected["provider"], selected["model"]
+        if provider not in {"codex", "claude", "google"} or not isinstance(selected_model, str) or not selected_model.strip():
+            raise AppError("model_unavailable", "Choose a supported provider and model.")
+        effort = settings.get("codexReasoningEfforts", {}).get(selected_model, "high") if provider == "codex" else None
+        if provider == "codex" and effort not in {"low", "medium", "high", "xhigh", "max"}:
+            raise AppError("model_reasoning_effort_invalid", "Choose a supported Codex reasoning effort.")
+        configuration = settings.get("providerConfiguration", {})
+        return ModelExecution(provider, selected_model, effort,
+                              tuple(sorted((key, value) for key, value in configuration.items()
+                                           if key in PROVIDER_CONFIGURATION_KEYS)))
+
+    def _execution(self, execution, *, model=None, selection=None) -> ModelExecution:
+        frozen = execution if execution is not None else self.freeze_execution(model, selection=selection)
+        if (not isinstance(frozen, ModelExecution)
+                or model is not None and model not in {frozen.model, f"{frozen.provider}:{frozen.model}"}
+                or selection is not None and (selection.get("provider"), selection.get("model")) != (frozen.provider, frozen.model)):
+            raise AppError("model_execution_mismatch", "The frozen execution must match the selected provider and model.")
+        return frozen
+
+    def accounting_capability(self, model: str | None = None, *, selection: dict | None = None, settings: dict | None = None) -> dict:
         selected = selection or self.selection(model)
-        quote = self.settings.get("modelPricingQuotes", {}).get(f"{selected['provider']}:{selected['model']}")
+        quote = (settings if settings is not None else self.settings.snapshot()).get("modelPricingQuotes", {}).get(f"{selected['provider']}:{selected['model']}")
         source = "provider_reported" if self.synthetic else "sdk_estimate" if selected["provider"] == "claude" else "configured_pricing_estimate" if quote is not None else None
         return {**selected, "available": source is not None,
                 "costSource": source,
                 "pricingQuote": quote}
 
     def _payload(self, *, operation: str, instructions: str, sources, response_schema: dict,
-                 context: dict | None, prompt_version: str, lane: str, selection: dict) -> dict:
+                 context: dict | None, prompt_version: str, lane: str, execution: ModelExecution) -> dict:
         if (not isinstance(operation, str) or not operation or len(operation) > 160
                 or not isinstance(instructions, str) or not instructions.strip()
                 or not isinstance(sources, (list, dict)) or not sources
@@ -83,17 +136,18 @@ class ModelGateway:
             raise AppError("invalid_model_schema", "The model output schema is invalid.") from None
         value = dict(operation=operation, instructions=instructions, sources=sources,
                      response_schema=response_schema, context=context or {}, prompt_version=prompt_version,
-                     lane=lane, **selection)
-        if len(_canonical(value).encode()) > 1024 * 1024:
+                     lane=lane, provider=execution.provider, model=execution.model, execution=execution.identity())
+        encoded = _canonical(value)
+        if len(encoded.encode()) > 1024 * 1024:
             raise AppError("model_input_too_large", "The source-bound model input exceeds its limit.", 413)
-        return value
+        return json.loads(encoded)
 
     def fingerprint(self, *, operation: str, instructions: str, sources, response_schema: dict,
                     context: dict | None = None, prompt_version: str = "1", lane: str = "interactive",
-                    model: str | None = None, selection: dict | None = None) -> str:
+                    model: str | None = None, selection: dict | None = None, execution: ModelExecution | None = None) -> str:
         value = self._payload(operation=operation, instructions=instructions, sources=sources,
                               response_schema=response_schema, context=context, prompt_version=prompt_version,
-                              lane=lane, selection=selection or self.selection(model))
+                              lane=lane, execution=self._execution(execution, model=model, selection=selection))
         return hashlib.sha256(_canonical(value).encode()).hexdigest()
 
     def receipt(self, receipt_id: str, connection=None) -> dict:
@@ -126,6 +180,15 @@ class ModelGateway:
         ).fetchall()
         return [self.receipt(row[0], connection) for row in rows]
 
+    @staticmethod
+    def receipt_ids_in_window(operation: str, opened: str, closed: str, connection) -> list[str]:
+        """Distinguish no admission, a single admission, and ambiguous admissions."""
+        rows = connection.execute(
+            "SELECT receipt_id FROM app_model_calls WHERE operation=? AND created_at>=? AND created_at<=? "
+            "ORDER BY created_at,receipt_id LIMIT 2", (operation, opened, closed),
+        ).fetchall()
+        return [row[0] for row in rows]
+
     def find_succeeded(self, input_fingerprint: str, connection=None) -> dict | None:
         """Exact receipt lookup only; feature owners still validate acceptance."""
         if connection is None:
@@ -138,20 +201,63 @@ class ModelGateway:
         return self.receipt(row[0], connection) if row else None
 
     def spend(self) -> dict:
+        day = now()[:10]
         with self.database.connect() as connection:
+            connection.execute("BEGIN")
+            settings = self.settings.snapshot(connection)
+            budget = settings["dailyBudgetUsd"]
+            unlimited = budget <= 0
             rows = connection.execute(
                 "SELECT lane,COUNT(*) calls,COALESCE(SUM(CAST(input_tokens AS REAL)),0) input_tokens,"
                 "COALESCE(SUM(CAST(output_tokens AS REAL)),0) output_tokens,SUM(cost_usd) cost_usd,"
                 "SUM(CASE WHEN cost_source IN ('configured_pricing_estimate','sdk_estimate') THEN 1 ELSE 0 END) estimated_calls,"
-                "SUM(CASE WHEN provider_started IS NOT 0 AND (status IN ('running','uncertain') OR cost_usd IS NULL "
-                "OR input_tokens IS NULL OR output_tokens IS NULL) THEN 1 ELSE 0 END) unresolved "
-                "FROM app_model_calls WHERE created_at>=? GROUP BY lane", (now()[:10],)
+                "SUM(CASE WHEN provider_started IS NOT 0 AND status='uncertain' THEN 1 ELSE 0 END) unresolved,"
+                "SUM(CASE WHEN provider_started IS NOT 0 AND status NOT IN ('running','uncertain') "
+                "AND cost_usd IS NULL THEN 1 ELSE 0 END) unavailable_cost,"
+                "SUM(CASE WHEN provider_started IS NOT 0 AND status NOT IN ('running','uncertain') "
+                "AND (input_tokens IS NULL OR output_tokens IS NULL) THEN 1 ELSE 0 END) unavailable_tokens "
+                "FROM app_model_calls WHERE created_at>=? GROUP BY lane", (day,)
             ).fetchall()
-        complete = not any(row["unresolved"] for row in rows)
-        return {"day": now()[:10], "lanes": [dict(row) for row in rows],
-                "costUsd": sum(row["cost_usd"] or 0 for row in rows),
-                "accountingComplete": complete,
-                "costAuthority": "incomplete" if not complete else "includes_estimates" if any(row["estimated_calls"] for row in rows) else "reported"}
+            # A live reservation occupies its lane until it settles, across UTC days.
+            running = connection.execute(
+                "SELECT lane,owner_pid,COUNT(*) calls,SUM(created_at>=?) daily_calls FROM app_model_calls "
+                "WHERE status='running' GROUP BY lane,owner_pid", (day,)
+            ).fetchall()
+        lanes = {row["lane"]: {**dict(row), "active": 0} for row in rows}
+        owners = {pid: _alive(pid) for pid in {row["owner_pid"] for row in running}}
+        active = 0
+        for row in running:
+            alive = owners[row["owner_pid"]]
+            if alive:
+                active += row["calls"]
+            if row["daily_calls"]:
+                lanes[row["lane"]]["active" if alive else "unresolved"] += row["daily_calls"]
+        daily_active = sum(row["active"] for row in lanes.values())
+        unresolved = sum(row["unresolved"] for row in lanes.values())
+        missing_cost = sum(row["unavailable_cost"] for row in lanes.values())
+        missing_tokens = sum(row["unavailable_tokens"] for row in lanes.values())
+
+        def status(unavailable):
+            return "unresolved" if unresolved else "pending" if daily_active else "unavailable" if unavailable else "complete"
+
+        cost_status, token_status = status(missing_cost), status(missing_tokens)
+        known_cost = sum(row["cost_usd"] or 0 for row in lanes.values())
+        # Knowledge and admission are separate: unknown history is actionable
+        # only for an enabled policy that requires that missing evidence.
+        monetary_blocked = budget > 0 and (unresolved > 0 or missing_cost > 0)
+        blocked_lanes = sorted(name for name, row in lanes.items()
+                               if settings["laneTokenLimits"].get(name, 0) > 0
+                               and (row["unresolved"] > 0 or row["unavailable_tokens"] > 0))
+        return {"day": day, "lanes": list(lanes.values()), "unlimited": unlimited, "dailyBudgetUsd": budget,
+                "accountingBlocked": monetary_blocked or bool(blocked_lanes),
+                "monetaryAccountingBlocked": monetary_blocked, "tokenAccountingBlockedLanes": blocked_lanes,
+                "costUsd": known_cost if cost_status == "complete" else None, "knownCostUsd": known_cost,
+                "costStatus": cost_status, "tokenStatus": token_status,
+                "activeCalls": active, "dailyActiveCalls": daily_active, "unresolvedCalls": unresolved,
+                "unavailableCostCalls": missing_cost, "unavailableTokenCalls": missing_tokens,
+                "accountingComplete": cost_status == "complete" and token_status == "complete",
+                "costAuthority": "incomplete" if cost_status != "complete" else "includes_estimates"
+                if any(row["estimated_calls"] for row in rows) else "reported"}
 
     def lane_status(self) -> dict:
         with self.database.connect() as connection:
@@ -169,7 +275,7 @@ class ModelGateway:
                 "budgetBusy": settings["dailyBudgetUsd"] > 0 and any(item["active"] for item in lanes.values()),
                 "scope": "recorded model calls and configured lane limits; provider readiness is separate"}
 
-    def _admit(self, payload: dict, *, require_accounting: bool = False) -> str:
+    def _admit(self, payload: dict, *, require_accounting: bool = False, on_admitted=None) -> str:
         receipt_id = str(uuid.uuid4())
         with self.database.transaction() as connection:
             settings = self.settings.snapshot(connection)
@@ -207,11 +313,11 @@ class ModelGateway:
                 raise AppError("spend_limit_reached", "The configured model spend or lane token limit has been reached.", 409)
             active = connection.execute("SELECT COUNT(*) FROM app_model_calls WHERE status='running' AND lane=?", (lane,)).fetchone()[0]
             if active >= settings["laneConcurrency"].get(lane, 1):
-                raise AppError("model_lane_busy", "The model lane is at its configured capacity.", 429)
+                raise ModelCapacityBusy("model_lane_busy", "The model lane is at its configured capacity.", 429)
             # Capped accounting must settle one accepted call before admitting a
             # peer, otherwise concurrent checks could all spend the same budget.
             if budget and connection.execute("SELECT 1 FROM app_model_calls WHERE status='running' LIMIT 1").fetchone():
-                raise AppError("model_budget_busy", "A budgeted model call is still settling.", 429)
+                raise ModelCapacityBusy("model_budget_busy", "A budgeted model call is still settling.", 429)
             connection.execute(
                 "INSERT INTO app_model_calls(receipt_id,operation,provider,model,lane,prompt_version,input_fingerprint,created_at,status,owner_pid,pricing_json) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -219,9 +325,12 @@ class ModelGateway:
                  payload["prompt_version"], hashlib.sha256(_canonical(payload).encode()).hexdigest(), now(), "running", os.getpid(),
                  _canonical(quote) if quote is not None else None),
             )
+            if on_admitted is not None:
+                # The caller's durable phase must own this receipt before external execution can begin.
+                on_admitted(connection, receipt_id)
         return receipt_id
 
-    async def _external(self, payload: dict):
+    async def _external(self, payload: dict, execution: ModelExecution):
         if self.synthetic:
             url = os.environ.get("JOBCTRL_E2E_PROVIDER_URL")
             if not url:
@@ -242,7 +351,7 @@ class ModelGateway:
         result = await execute_provider(
             workspace=self.workspace, provider=payload["provider"], model=payload["model"],
             instructions=payload["instructions"], payload={"sources": payload["sources"], "context": payload["context"]},
-            response_schema=payload["response_schema"], configuration=self.settings.snapshot(),
+            response_schema=payload["response_schema"], configuration=execution.configuration(),
         )
         return result.value, dict(input_tokens=result.input_tokens, output_tokens=result.output_tokens,
                                  cost_usd=result.cost_usd, cost_source=result.cost_source,
@@ -250,19 +359,23 @@ class ModelGateway:
 
     async def determine(self, *, operation: str, instructions: str, sources, response_schema: dict,
                         context: dict | None = None, prompt_version: str = "1", lane: str = "interactive",
-                        model: str | None = None, require_accounting: bool = False) -> ModelResult:
+                        model: str | None = None, require_accounting: bool = False,
+                        execution: ModelExecution | None = None, on_admitted=None) -> ModelResult:
         if type(require_accounting) is not bool:
             raise AppError("invalid_model_request", "Accounting admission must be an explicit boolean.")
+        execution = self._execution(execution, model=model)
         payload = self._payload(operation=operation, instructions=instructions, sources=sources,
                                 response_schema=response_schema, context=context, prompt_version=prompt_version,
-                                lane=lane, selection=self.selection(model))
-        receipt_id = self._admit(payload, require_accounting=require_accounting)
+                                lane=lane, execution=execution)
+        receipt_id = await admit_model_call(
+            lane, lambda: self._admit(payload, require_accounting=require_accounting, on_admitted=on_admitted)
+        )
         usage = {}
         try:
-            value, usage = await self._external(payload)
+            value, usage = await self._external(payload, execution)
             if not isinstance(value, dict):
                 raise AppError("model_schema_violation", "The provider did not return a JSON object.", 502)
-            Draft202012Validator(response_schema).validate(value)
+            Draft202012Validator(payload["response_schema"]).validate(value)
             encoded = _canonical(value)
             if len(encoded.encode()) > 2 * 1024 * 1024:
                 raise AppError("model_output_too_large", "The provider output exceeds its limit.", 502)

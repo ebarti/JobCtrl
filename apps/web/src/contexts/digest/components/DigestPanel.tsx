@@ -12,6 +12,7 @@ import {
 } from "../hooks/useDigestQuery.js";
 import type { Digest } from "../contracts.js";
 import { formatDateTime } from "../../../shared/lib/formatters.js";
+import { modelActivityBeforeToday } from "../../../shared/lib/model-activity.js";
 import { Alert, AlertDescription, AlertTitle } from "../../../shared/ui/alert.js";
 import { CardHeader } from "../../../shared/ui/card-header.js";
 import { Button } from "../../../shared/ui/button.js";
@@ -33,7 +34,7 @@ interface DigestRow {
 
 function formatMoney(value: number | null): string {
   if (value === null) {
-    return "unlimited";
+    return "Unavailable";
   }
   return value.toLocaleString(undefined, {
     currency: "USD",
@@ -48,11 +49,24 @@ function digestRows(digest: Digest): readonly DigestRow[] {
     .slice(0, 2)
     .map((source) => source.displayName ?? source.sourceId)
     .join(", ");
-  const budgetDetail = digest.budget.status === "incomplete"
-    ? "LLM spend pending or unresolved"
-    : digest.budget.unlimited
-    ? `${formatMoney(digest.budget.estimatedUsd)} spent`
-    : `${formatMoney(digest.budget.remainingUsd)} remaining of ${formatMoney(digest.budget.dailyBudgetUsd)}`;
+  const budget = digest.budget;
+  const costStatus = budget.costStatus ?? (budget.status === "incomplete" ? "unresolved" : "complete");
+  const accountingBlocked = budget.accountingBlocked ?? (budget.status === "incomplete" && costStatus !== "pending");
+  const active = (budget.activeCalls ?? 0) > 0 || costStatus === "pending";
+  const earlierActivity = modelActivityBeforeToday(budget);
+  const budgetDetail = accountingBlocked
+    ? budget.monetaryAccountingBlocked === false
+      ? `Unknown past token usage prevents enforcing limits for: ${budget.tokenAccountingBlockedLanes?.join(", ") ?? "configured lanes"}.`
+      : "Unknown past cost prevents enforcing the daily dollar limit."
+    : costStatus === "unresolved"
+      ? `Some past model usage is unknown. No enabled accounting limit is blocked.${active ? " New model work is running." : ""}`
+    : costStatus === "pending"
+      ? `Model work is running.${budget.unlimited ? " No daily limit." : ""}`
+      : costStatus === "unavailable"
+        ? budget.unlimited ? "No daily limit. Dollar usage is unavailable." : "Dollar usage is unavailable, so the daily limit cannot be verified."
+        : budget.unlimited
+          ? `${formatMoney(budget.estimatedUsd)} recorded · No daily limit`
+          : `${formatMoney(budget.remainingUsd)} remaining of ${formatMoney(budget.dailyBudgetUsd)}`;
 
   return [
     {
@@ -118,11 +132,16 @@ function digestRows(digest: Digest): readonly DigestRow[] {
     {
       key: "budget",
       label: "Budget",
-      value: digest.budget.status === "incomplete" ? "unknown" : digest.budget.status === "over_budget" ? "over" : "ok",
-      detail: budgetDetail,
+      value: active ? "In progress"
+        : accountingBlocked ? "Usage tracking required"
+          : costStatus === "unresolved" ? "Past usage unknown"
+          : budget.status === "over_budget" ? "Limit reached"
+            : budget.unlimited ? "No daily limit"
+              : costStatus === "unavailable" ? "Cost unavailable" : "Within limit",
+      detail: earlierActivity ? `${budgetDetail} · ${earlierActivity}` : budgetDetail,
       href: digest.deepLinks.budget,
       actionLabel: "Open",
-      tone: digest.budget.status === "ok" ? "ok" : "warn",
+      tone: costStatus === "pending" ? undefined : budget.status === "ok" ? "ok" : "warn",
     },
   ];
 }

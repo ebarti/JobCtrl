@@ -2,6 +2,7 @@ import {
   test as base,
   expect,
   type APIRequestContext,
+  type APIResponse,
   type Request,
   type Response,
 } from "@playwright/test";
@@ -35,9 +36,37 @@ export type ApplicationStack = {
   external: {
     calls: ExternalCall[];
     sends: ExternalCall[];
+    setCatalog(value: { providers: Record<string, unknown>[] }): void;
     next(options?: { timeout?: number }): Promise<ExternalCall>;
   };
-  restartWorker(): Promise<{ previous: number; current: number }>;
+  discoveryCheckpoint(runId: string): Promise<{
+    adapters: { unitId: string; site: string; state: Record<string, unknown>; emittedCount: number; completed: boolean; requestFingerprint: string; acknowledgedKeys: string[] }[];
+    receipts: Record<string, number>;
+    receiptKeys: { unitId: string; site: string; jobKey: string; isNew: boolean }[];
+    request: { fingerprint: string; sourceFetchPolicy?: string; settings: { resultsPerSite: number; newJobLimit: number } };
+    units: { unitId: string; status: string; resultsPerSite: number | null; sdkFingerprint: string; sdkResultsWanted: number | null; sdkMaxPages: number; result: { termination?: string; sourceTerminations?: Record<string, string> } | null }[];
+  }>;
+  restartWorker(features?: string): Promise<{ previous: number; current: number }>;
+  alternateNamespaceApi(namespace: string): Promise<string>;
+  upgradeSource(): Promise<{ previous: number; current: number; backup: string; candidateOrigin: string; mode: "source" | "installed" }>;
+  armFitRecoveryPause(operation: "fit.catalog-impact" | "fit.qualification-batch"): Promise<void>;
+  waitForFitRecoveryPause(): Promise<void>;
+  armCohortBoundaryPause(): Promise<void>;
+  armCohortReceiptPause(): Promise<void>;
+  waitForCohortBoundaryPause(boundary?: "final-currentness-guard" | "fit-receipt"): Promise<void>;
+  resumeCohortBoundary(): Promise<void>;
+  cohortReceiptCheckpoint(runId: string): Promise<{ operationId: string; phaseStatus: string; stateStatus: string; callStatus: string;
+    inputFingerprint: string; storedReceiptId: string | null; receipts: { receipt_id: string; status: string; operation: string; input_fingerprint: string }[] }>;
+  fitRefreshCheckpoint(operationId: string): Promise<{ calls: Record<string, { kind: string; status: string; result?: { value: unknown; provenance: Record<string, unknown> } }>; checkpoints: Record<string, unknown>; impact_selection_scope_version?: string; qualification_transport_version?: string }>;
+  databaseSchemaFingerprint(): Promise<string>;
+  databaseSchemaInventory(): Promise<{ type: string; name: string; table: string; sql: string | null }[]>;
+  requirementsReconciliation(operationId: string): Promise<{
+    operation_id: string; action_fingerprint: string; input_fingerprint: string;
+    captured_catalog_revision: number; published_catalog_revision: number; selection: unknown;
+    authority_receipt: { value?: unknown; [key: string]: unknown };
+    stored_report: { storage_version?: string; report?: unknown; intermediate_selection?: unknown; partition_binding?: unknown; derived_decision?: unknown;
+      citation_binding?: unknown; [key: string]: unknown };
+  }>;
   failRendering(): Promise<void>;
   restoreRendering(): Promise<void>;
   cli(
@@ -47,6 +76,7 @@ export type ApplicationStack = {
   inspectPdf(
     bytes: Buffer,
   ): Promise<{ pages: number; text: string; images: Buffer[] }>;
+  inspectDocx(bytes: Buffer): Promise<string>;
   file(relative: string): Promise<Buffer>;
   close(options?: { retainState?: boolean }): Promise<void>;
 };
@@ -54,6 +84,8 @@ export type ApplicationStack = {
 type WorkerFixtures = {
   temporal: {
     address: string;
+    pause(): Promise<void>;
+    resume(): Promise<void>;
     retainForDiagnosis(): void;
     close(): Promise<void>;
   };
@@ -63,20 +95,32 @@ type Fixtures = {
   api: APIRequestContext;
   consoleErrors: string[];
   features: string | undefined;
+  discoveryTransport: "jobstreaming" | "jobstreaming-indeed-missing" | "jobstreaming-tls-failure";
+  nativeAccountingPreflight: boolean;
+  sourceRevision: string | undefined;
+  fitRecoveryDebugger: boolean;
+  cohortBoundaryDebugger: boolean;
   expectedTransportFailures: {
     request: Request;
     errorText: "net::ERR_FAILED";
   }[];
-  allowRequestFailure: (request: Request, errorText: "net::ERR_FAILED") => void;
+  allowRequestFailure: (request: Request, errorText: "net::ERR_FAILED", forwardedResponse?: APIResponse) => void;
   expectedResponseErrors: Response[];
   allowResponseError: (
     response: Response,
-    expected: { method: "GET" | "POST"; status: 409; code: string },
+    expected:
+      | { method: "GET" | "POST" | "PATCH"; status: 409; code: string }
+      | { method: "GET"; status: 404; code: "not_found"; action: "preparation.run"; idempotencyKey: string; databaseInstanceId: string },
   ) => Promise<void>;
 };
 
 export const test = base.extend<Fixtures, WorkerFixtures>({
   features: [undefined, { option: true }],
+  discoveryTransport: ["jobstreaming", { option: true }],
+  nativeAccountingPreflight: [false, { option: true }],
+  sourceRevision: [undefined, { option: true }],
+  fitRecoveryDebugger: [false, { option: true }],
+  cohortBoundaryDebugger: [false, { option: true }],
   expectedTransportFailures: async ({}, use) => {
     await use([]);
   },
@@ -85,10 +129,28 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
   },
   allowResponseError: async ({ app, expectedResponseErrors }, use) => {
     await use(async (response, expected) => {
-      expect(expected.status).toBe(409);
       expect(response.status()).toBe(expected.status);
       expect(response.request().method()).toBe(expected.method);
-      expect(new URL(response.url()).origin).toBe(app.baseURL);
+      const url = new URL(response.url());
+      expect(url.origin).toBe(app.baseURL);
+      if (expected.status === 404) {
+        expect(expected.method).toBe("GET");
+        expect(expected.action).toBe("preparation.run");
+        expect(expected.code).toBe("not_found");
+        expect(url.pathname).toBe("/v1/action-runs/by-idempotency-key");
+        expect([...url.searchParams.entries()]).toEqual([["action", expected.action]]);
+        expect(expected.idempotencyKey).toBeTruthy();
+        expect(expected.databaseInstanceId).toBeTruthy();
+        const headers = response.request().headers();
+        expect(headers["idempotency-key"]).toBe(expected.idempotencyKey);
+        expect(headers["expected-database-instance-id"]).toBe(expected.databaseInstanceId);
+      } else {
+        expect(expected.status).toBe(409);
+        if (expected.method === "PATCH") {
+          expect(url.pathname).toBe("/v1/profile");
+          expect(expected.code).toBe("revision_conflict");
+        }
+      }
       const body = (await response.json()) as { error?: { code?: unknown } };
       expect(
         body.error?.code,
@@ -98,10 +160,21 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       expectedResponseErrors.push(response);
     });
   },
-  allowRequestFailure: async ({ expectedTransportFailures }, use) => {
-    await use((request, errorText) => {
+  allowRequestFailure: async ({ app, expectedTransportFailures }, use) => {
+    await use((request, errorText, forwardedResponse) => {
       expect(errorText).toBe("net::ERR_FAILED");
-      expect(request.method()).toBe("POST");
+      expect(
+        request.method() === "POST" ||
+          (request.method() === "PATCH" &&
+            new URL(request.url()).origin === app.baseURL &&
+            ["/v1/credentials/batch", "/v1/profile"].includes(new URL(request.url()).pathname)),
+        "Only an observed admitted POST, credential batch or Profile acknowledgement may be severed",
+      ).toBe(true);
+      if (request.method() === "PATCH" && new URL(request.url()).pathname === "/v1/profile") {
+        expect(forwardedResponse, "A Profile acknowledgement allowance needs its actual forwarded response").toBeDefined();
+        expect(forwardedResponse!.status()).toBe(200);
+        expect(forwardedResponse!.url()).toBe(request.url());
+      }
       expect(
         request.failure()?.errorText,
         "Only an actually failed browser Request may allow its native transport console entry",
@@ -124,10 +197,10 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     { scope: "worker", timeout: 60_000 },
   ],
   app: [
-    async ({ temporal, features }, use, testInfo) => {
+    async ({ temporal, features, discoveryTransport, nativeAccountingPreflight, sourceRevision, fitRecoveryDebugger, cohortBoundaryDebugger }, use, testInfo) => {
       const runtime: ApplicationStack = await applicationStack(
         temporal.address,
-        { features },
+        { features, discoveryTransport, nativeAccountingPreflight, sourceRevision, fitRecoveryDebugger, cohortBoundaryDebugger },
       );
       await testInfo.attach("runtime-setup", {
         contentType: "application/json",
@@ -253,10 +326,14 @@ export async function completed(api: APIRequestContext, runId: string) {
 
 export async function terminal(api: APIRequestContext, runId: string) {
   let result: Record<string, unknown> = {};
+  const path = `/v1/action-runs/${runId}`;
   await expect
     .poll(
       async () => {
-        result = await json(api, "get", `/v1/action-runs/${runId}`);
+        // Recover an idle connection reset on this idempotent status read.
+        const response = await api.get(path, { maxRetries: 1 });
+        expect(response.ok(), `GET ${path}: ${await response.text()}`).toBe(true);
+        result = await response.json() as Record<string, unknown>;
         return ["succeeded", "failed", "cancelled"].includes(
           String(result["status"]),
         );

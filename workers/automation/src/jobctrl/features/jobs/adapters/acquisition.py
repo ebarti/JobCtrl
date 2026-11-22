@@ -10,6 +10,8 @@ from bs4 import BeautifulSoup
 from pydantic import ValidationError
 
 from jobctrl.app.errors import AppError
+from jobctrl.network.fetch_failures import PublicFetchFailureKind
+from jobctrl.network.ports import PolitenessOutcome
 from jobctrl.semantic import Citation, DeterminationFailure, Source, validate_citations
 from jobctrl.features.jobs.domain.capture import DetailPage
 from jobctrl.features.jobs.domain.analysis import RefreshIdentity
@@ -21,8 +23,16 @@ from jobctrl.features.jobs.domain.page_interpretation import (
     PostingSelectionExtraction,
 )
 from jobctrl.features.jobs.domain.postings import normalize_url, posting_url, utc_now
-from jobctrl.features.jobs.adapters.page_fetcher import PlaywrightDetailPageFetcher
+from jobctrl.features.jobs.adapters.page_fetcher import (
+    DetailPageFetchBlocked,
+    DetailPageFetchUnavailable,
+    PlaywrightDetailPageFetcher,
+)
 from jobctrl.features.jobs.adapters.posting_sources import posting_page_sources, rendered_page_text
+
+
+_FETCH_BLOCK_REASONS = ({value.value for value in PolitenessOutcome if value != PolitenessOutcome.ALLOWED}
+                        | {value.value for value in PublicFetchFailureKind} | {"unsafe_redirect"})
 
 
 class SourceBoundPostingAcquirer:
@@ -60,6 +70,24 @@ class SourceBoundPostingAcquirer:
             self.fetcher if session is None else PlaywrightDetailPageFetcher(session=session, raise_on_unavailable=True)
         )
 
+    async def _fetch_page(self, url, *, session=None):
+        try:
+            return await asyncio.to_thread(self._request_fetcher(session).fetch, url)
+        except AppError:
+            raise
+        except DetailPageFetchBlocked as error:
+            reason = error.reason_code if isinstance(error.reason_code, str) and error.reason_code in _FETCH_BLOCK_REASONS else "unknown"
+            raise AppError("posting_fetch_blocked", "The posting fetch was blocked; review its recorded acquisition reason.", 409,
+                           {"captureFailure": {"stage": "posting_fetch", "kind": "blocked", "reason_code": reason}}) from None
+        except DetailPageFetchUnavailable:
+            raise AppError("posting_fetch_unavailable", "The posting fetch was unavailable; no replacement source was accepted.", 503,
+                           {"captureFailure": {"stage": "posting_fetch", "kind": "unavailable", "reason_code": "unknown"}}) from None
+        except Exception:
+            # An unclassified runtime error cannot establish a network or policy
+            # cause. Do not copy exception messages, remote bodies or credentials.
+            raise AppError("posting_fetch_failed", "The posting fetch failed for an unknown reason.", 502,
+                           {"captureFailure": {"stage": "posting_fetch", "kind": "unknown", "reason_code": "unknown"}}) from None
+
     async def source_page(self, url, *, session=None, captured=None, cancelled=None):
         url = posting_url(url)
         if captured is not None:
@@ -76,8 +104,7 @@ class SourceBoundPostingAcquirer:
                 status_visibility_verified=captured.get("visibility_verified") is True,
             )
         else:
-            fetcher = self._request_fetcher(session)
-            page = await asyncio.to_thread(fetcher.fetch, url)
+            page = await self._fetch_page(url, session=session)
         if cancelled and cancelled():
             raise AppError("action_cancelled", "Source acquisition was cancelled.", 409)
         sources, origins = posting_page_sources(page, entity_id=url)
@@ -93,8 +120,8 @@ class SourceBoundPostingAcquirer:
             "raw_html_hash": page.raw_html_hash,
         }
 
-    async def _determine(self, *, operation, schema, instructions, sources, context, prompt_version):
-        response = await self.model.determine(
+    async def _determine(self, *, operation, schema, instructions, sources, context, prompt_version, import_calls=None):
+        request = dict(
             operation=operation,
             instructions=instructions,
             sources=[s.model_dump() for s in sources],
@@ -103,6 +130,7 @@ class SourceBoundPostingAcquirer:
             prompt_version=prompt_version,
             lane="enrichment",
         )
+        response = await import_calls.determine(self.model, **request) if import_calls else await self.model.determine(**request)
         try:
             value = schema.model_validate(response.value)
             validate_citations(value, sources)
@@ -114,7 +142,7 @@ class SourceBoundPostingAcquirer:
             ) from None
         return value, response.provenance
 
-    async def acquire(self, payload, *, cancelled=None):
+    async def acquire(self, payload, *, cancelled=None, import_calls=None):
         url = posting_url(payload.get("url") or payload.get("postingUrl") or "")
         captured = payload.get("html") or payload.get("bodyHtml") or payload.get("text") or payload.get("bodyText")
         if captured:
@@ -145,7 +173,7 @@ class SourceBoundPostingAcquirer:
                 raw_html_hash=hashlib.sha256(captured.encode()).hexdigest(),
             )
         else:
-            page = await asyncio.to_thread(self._request_fetcher().fetch, url)
+            page = await self._fetch_page(url)
         if cancelled and cancelled():
             raise AppError("action_cancelled", "Capture was cancelled.", 409)
         if not page.html and not page.json_ld:
@@ -166,6 +194,7 @@ class SourceBoundPostingAcquirer:
             *[s for s in sources if s.source_id != "rendered_page"],
         ]
         interpretation, interpretation_receipt = await self._determine(
+            import_calls=import_calls,
             operation="page_interpretation",
             schema=PageInterpretation,
             sources=interpretation_sources,
@@ -202,6 +231,7 @@ class SourceBoundPostingAcquirer:
             line_ranges[source.source_id] = ranges
             inventory.append({"source_id": source.source_id, "lines": lines})
         selected, extraction_receipt = await self._determine(
+            import_calls=import_calls,
             operation="posting_extraction",
             schema=PostingSelectionExtraction,
             sources=sources,
@@ -235,6 +265,7 @@ class SourceBoundPostingAcquirer:
             ),
         )
         quality, quality_receipt = await self._determine(
+            import_calls=import_calls,
             operation="description_quality",
             schema=DescriptionQuality,
             sources=[Source(source_id="description", text=description)],
@@ -276,7 +307,7 @@ class SourceBoundPostingAcquirer:
         }
 
     async def availability(self, posting, *, cancelled=None):
-        page = await asyncio.to_thread(self._request_fetcher().fetch, posting["url"])
+        page = await self._fetch_page(posting["url"])
         if cancelled and cancelled():
             raise AppError("action_cancelled", "Posting verification was cancelled.", 409)
         aliases = {normalize_url(url) for url in (posting["url"], posting.get("canonical_url")) if url}
@@ -323,6 +354,7 @@ class SourceBoundPostingAcquirer:
             "provenance": {
                 **posting.get("provenance", {}),
                 "availability": {
+                    "state": state,
                     "observedAt": observed_at,
                     "metadata": metadata,
                     "value": result.model_dump(),
@@ -332,7 +364,7 @@ class SourceBoundPostingAcquirer:
             },
         }
 
-    async def verify_refresh_identity(self, previous, candidate):
+    async def verify_refresh_identity(self, previous, candidate, *, import_calls=None):
         aliases = {normalize_url(url) for url in (previous["url"], previous.get("canonical_url")) if url}
         observed = normalize_url(candidate.get("canonical_url") or candidate["url"])
         if observed in aliases:
@@ -371,6 +403,7 @@ class SourceBoundPostingAcquirer:
         ]
         result, receipt = await self._determine(
             operation="jobs.refresh_identity",
+            import_calls=import_calls,
             schema=RefreshIdentity,
             sources=sources,
             context={"previousRevision": previous["revision"], "previousSourceHash": previous["source_hash"]},

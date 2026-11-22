@@ -13,6 +13,61 @@ returns 202 only after Temporal accepts it. The receipt identifies accepted
 work; it does not imply completion, external submission or approval. Features
 own validation, idempotency, source fences and external-effect authority.
 
+The complete application's `discovery.search` action composes acquisition and
+initial person-fit assessment under one run identity. Its source run may finish
+while the outer action remains `running`. A terminal result retains source
+`failures` and counts, with `preparationAvailable: true` and a separate
+`preparation` object: `status` (`succeeded` or `partial`), `assessedJobs`,
+`failedJobs` and `failures` containing exact `{jobId, stage, code}` entries.
+Either source or assessment failure makes the overall result `partial`.
+`acquisitionStatus` retains the source outcome independently, including all-source
+failure after accepted jobs. Those retained new jobs are still assessed; a source
+failure with no new jobs keeps the action failed. Composite `ok` is true only
+when acquisition and assessment both completed successfully.
+Reduced Discovery-only compositions report `preparationAvailable: false`.
+
+In the complete app, newly admitted searches freeze a preparation policy in the
+action transaction. The preparation read exposes `executionPolicy` and the
+recorded `stagePlan`. For up to ten new jobs the plan records per-job extraction,
+shared normalization and qualification, then per-job score outcomes. Larger
+cohorts retain the prior per-job plan. The selected plan and cohort stay fixed
+on replay. Retries of shared work retain its original scope and call identities.
+
+New `discovery.search` requests freeze automatic source pagination. Legacy
+`resultsPerSite` settings/action fields and CLI `--results-per-site` are accepted
+for compatibility but cannot impose a provider-emission limit on a new search.
+The CLI option is hidden from help. Settings retain its saved numeric value,
+while both metadata views mark it `activation: inactive`, `editable: false`
+and `locked: true`; it is not an effective control for a new search.
+`newJobLimit` bounds committed canonical new jobs across source families. Known
+and filtered provider emissions do not consume that quota. Previously admitted
+finite requests resume unchanged. The recorded unit termination distinguishes
+`budget_exhaustion`, confirmed `source_exhausted` and provider safety stops;
+page/provider limits or unknown termination cannot report source exhaustion.
+
+`POST /v1/actions/preparation.run` also accepts the explicit saved-job recovery
+body `{"recipe":"assess","scope":"selected","job_ids":["JOB_ID"],"limit":100}`.
+It requires one to 1,000 exact saved IDs and performs enrichment, role analysis,
+Requirements and Fit without acquisition, wording or resume work. The receipt's
+run joins `GET /v1/preparation/runs/{run_id}` for the frozen cohort and stage
+outcomes. A job step exposes `postingRevision` when it recorded the posting
+revision in its own input. The Jobs grid joins that revision or a preceding
+accepted posting checkpoint before showing a failure. For a job with no Fit
+score, the composed Jobs query also exposes the accepted Requirements status
+and revision when they are current for that posting. This initial-assessment recipe cannot bypass Fit's manual-refresh fence
+for previously accepted qualification. Failed work preserves accepted artifacts.
+The `requirements-v2` operation stamp includes the generation, frozen catalog
+and the selected jobs' direct Education/Languages demands. An operation from an
+incompatible generation cannot resume or replay under the new writer. Ordinary
+reads, Profile saves and wording decisions admit no refresh. A non-English
+posting's accepted language-gate outcome stops preparation before Fit and
+creates no zero-score substitute.
+Same-run worker replay retains terminal failed/blocked stages; only an explicit
+new preparation retry can reattempt them. The registered preparation finalizer
+seals interrupted run/step status when the action is cancelled or fails,
+including workflow recovery without a live feature handler. This changes no
+model receipt, uncertain usage or accepted score.
+
 ## Workflow Runs
 
 Reads should expose execution identity, progress, cancellation and truthful

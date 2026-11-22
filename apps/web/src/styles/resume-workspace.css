@@ -1,0 +1,70 @@
+.resume-controls-disclosure {
+  min-inline-size: 0;
+}
+
+.resume-controls-disclosure[open] {
+  margin-block-end: var(--jh-internal-gap);
+}
+
+.resume-controls-disclosure > summary {
+  cursor: pointer;
+}
+
+.resume-controls-body,
+.resume-translation-controls {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--jh-internal-gap);
+}
+
+.resume-controls-body {
+  margin-block-start: var(--jh-internal-gap);
+}
+
+.resume-controls-body > p {
+  margin: 0;
+}
+
+.resume-template-assignment-controls,
+.resume-control-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--jh-internal-gap);
+  min-inline-size: 0;
+}
+
+.resume-template-assignment-controls > .resume-control-field {
+  flex: 1 1 16rem;
+}
+
+.resume-control-field {
+  display: grid;
+  min-inline-size: 0;
+  gap: var(--jh-field-gap);
+}
+
+.resume-control-field > span {
+  font-size: var(--jh-type-label-size);
+  font-weight: var(--jh-type-label-weight);
+  line-height: var(--jh-type-label-line-height);
+}
+
+.resume-control-field > select {
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  min-block-size: var(--jh-control-height);
+}
+
+.resume-translation-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: var(--jh-field-grid-row-gap) var(--jh-field-grid-column-gap);
+  min-inline-size: 0;
+}
+
+.resume-template-assignment-controls > button,
+.resume-control-actions > button {
+  max-inline-size: 100%;
+}

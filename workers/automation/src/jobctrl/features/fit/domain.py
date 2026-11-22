@@ -1,16 +1,13 @@
-"""Deterministic policy over already qualified person evidence.
-
-This retains the previous requirement-fit-v2-scoped arithmetic. The only inputs
-that decide support are recorded model decisions or explicit user corrections.
-Wording coverage is deliberately absent from this calculation.
-"""
+"""Equal deterministic arithmetic over recorded, source-bound qualifications."""
 
 from __future__ import annotations
 
 import math
 from typing import Any
 
-FORMULA_VERSION = "requirement-fit-v2-scoped"
+from .contract import CONTRACT_VERSION, require_contract
+
+FORMULA_VERSION = "requirement-fit-v3-equal"
 FIT_VALUES = {"direct": 1.0, "strong": 0.85, "transferable": 0.6}
 
 
@@ -22,70 +19,38 @@ def fit_band(score: int) -> str:
 
 
 def calculate_score(assessments: list[dict[str, Any]]) -> dict[str, Any]:
-    """Arithmetic only; every row must already join its canonical requirement."""
-    total = awarded = must_total = must_awarded = 0.0
-    capability_blockers = 0
-    missing_high_weight = 0
-    rows: list[dict[str, Any]] = []
-    blockers: list[dict[str, Any]] = []
-    warnings: list[dict[str, Any]] = []
-    unknown_condition = False
-    confidences: list[str] = []
+    """Count a canonical meaning or job-local alternatives group exactly once."""
+    rows, confidences = [], []
+    seen = set()
+    awarded = 0.0
     for assessment in assessments:
+        require_contract(assessment)
+        ident = assessment["requirement_id"]
+        if ident in seen:
+            raise ValueError("duplicate_requirement")
+        seen.add(ident)
         row = dict(assessment)
-        weight = float(row["weight"])
-        scope = row["scope"]
-        tier = row["tier"]
-        if not math.isfinite(weight) or not 0 <= weight <= 1:
-            raise ValueError("invalid_requirement_weight")
-        if tier not in {"must_have", "nice_to_have"}:
-            raise ValueError("invalid_requirement_tier")
-        if scope not in {"resume", "eligibility", "logistics", "employer_condition"}:
-            raise ValueError("invalid_requirement_scope")
-        maximum = round(weight * (1.25 if tier == "must_have" else 1.0), 4) if scope == "resume" else 0.0
-        credit = 0.0
-        if row["kind"] == "matched":
-            credit = FIT_VALUES[row["strength"]]
-        elif row["kind"] == "transferable":
-            credit = FIT_VALUES["transferable"]
-        points = round(maximum * credit, 4)
-        row["contribution"] = {"max_points": maximum, "awarded_points": points, "scope": scope}
-        total += maximum
-        awarded += points
-        if scope == "resume":
-            capability_blockers += row["kind"] == "blocked"
-            missing_high_weight += row["kind"] in {"missing", "blocked"} and weight >= 0.75
-            if tier == "must_have":
-                must_total += maximum
-                must_awarded += points
-        condition = {
-            "requirement_id": row["requirement_id"], "rationale": row["rationale"],
-            "evidence_refs": row["evidence_refs"], "determination_id": row["determination_id"],
-        }
-        if row["eligibility"] == "blocked":
-            blockers.append({**condition, "category": row.get("blocker_category")})
-        elif row["eligibility"] == "warning":
-            warnings.append({**condition, "category": row.get("warning_category")})
-        elif scope != "resume" and row["eligibility"] == "unknown":
-            unknown_condition = True
+        if row["category"] not in {"skill", "professional_experience", "education", "language"}:
+            raise ValueError("invalid_requirement_category")
+        credit = (FIT_VALUES[row["strength"]] if row["kind"] == "matched" else
+                  FIT_VALUES["transferable"] if row["kind"] == "transferable" else 0.0)
+        row["contribution"] = {"max_points": 1, "awarded_points": credit}
+        awarded += credit
         confidences.append(row["confidence"])
         rows.append(row)
-    if total <= 0:
-        raise ValueError("no_weighted_capability_requirements")
-    coverage = awarded / total
-    resolved = max(1, min(10, 1 + math.floor(9 * coverage + 0.5)))
-    if capability_blockers:
-        resolved = min(resolved, 4)
-    status = "blocked" if blockers else "warning" if warnings else "unknown" if unknown_condition else "eligible"
+    count = len(rows)
+    coverage = awarded / count if count else None
+    resolved = max(1, min(10, 1 + math.floor(9 * coverage + 0.5))) if count else None
     return {
-        "score": resolved, "computed_score": resolved, "fit_band": fit_band(resolved),
+        "contract_version": CONTRACT_VERSION,
+        "score": resolved, "computed_score": resolved, "fit_band": fit_band(resolved) if resolved is not None else None,
         "formula_version": FORMULA_VERSION,
-        "confidence": "low" if "low" in confidences else "medium" if "medium" in confidences else "high",
-        "summary": {
-            "weighted_fit": round(coverage, 4),
-            "must_have_coverage": round(must_awarded / must_total, 4) if must_total else 0.0,
-            "blocker_count": capability_blockers, "missing_high_weight_count": missing_high_weight,
-        },
-        "eligibility": {"status": status, "blockers": blockers, "warnings": warnings},
+        "confidence": ("low" if "low" in confidences else "medium" if "medium" in confidences else "high") if count else None,
+        "summary": {"qualification_coverage": round(coverage, 4) if count else None,
+                    "weighted_fit": round(coverage, 4) if count else None,
+                    "assessed_count": count,
+                    "supported_count": sum(row["kind"] in {"matched", "transferable"} for row in rows),
+                    "blocker_count": sum(row["kind"] == "blocked" for row in rows)},
+        "eligibility": {"status": "unknown", "blockers": [], "warnings": []},
         "assessments": rows,
     }

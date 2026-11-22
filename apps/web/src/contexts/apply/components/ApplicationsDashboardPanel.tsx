@@ -9,6 +9,7 @@ export function ApplicationsDashboardPanel() {
   const queued = summary && summary.queueCountComplete && summary.queuedCount !== null ? summary.queuedCount : "Unavailable";
   return <section className="card col-span-full" aria-label="Application activity">
     <CardHeader title="Application activity" meta="Recorded application state" />
+    <div className="operational-panel applications-dashboard-body">
     {query.error ? <p role="alert">Application activity could not be loaded: {query.error.message}</p> : null}
     {query.isFetching && !summary ? <Empty title="Loading application activity." /> : null}
     {summary ? <>
@@ -28,5 +29,6 @@ export function ApplicationsDashboardPanel() {
         <ul>{summary.followUpJobIds.map((jobId) => <li key={jobId}><a href={`/jobs/${encodeURIComponent(jobId)}`}>{jobId}</a></li>)}</ul>
       </details> : null}
     </> : null}
+    </div>
   </section>;
 }

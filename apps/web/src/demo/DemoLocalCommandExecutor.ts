@@ -26,8 +26,6 @@ import {
   createResumeTemplateVersionSaved,
   createScoreCorrected,
   createScoreRescoreRequested,
-  createSourceLocationCandidatePromoted,
-  createSourceRegistryEntryCreated,
   createSourceRegistryEntryUpdated,
   createSourceStateChanged,
   createStageCanceled,
@@ -39,6 +37,8 @@ import { JobCtrlApiError } from "@jobctrl/api-client";
 import { ContactAttributeInputSchema, ContactUpdateRequestSchema, ManualApplicationOutcomeRequestSchema, ManualCaptureDismissSchema, OutcomeSuggestionDecisionRequestSchema, ResumeTemplateDefaultSelectionRequestSchema, ResumeTemplateVersionSaveRequestSchema, compareOutcomeSuggestionDecision } from "@jobctrl/contracts";
 import type { ApplicationOutcome, ApplyReviewApprovalGateReason, ContactDetail, OutcomeSuggestion } from "@jobctrl/contracts";
 import { demoContactFingerprint } from "./contact-fingerprint.js";
+import { demoProfileDocument, retainDemoProfile, reconcileDemoProfile, validateDemoProfileSave } from "./profile-library.js";
+import { demoRequirementAssociations } from "./requirement-library.js";
 import { LOCAL_TENANT } from "@jobctrl/domain-types";
 
 import type {
@@ -139,11 +139,8 @@ function demoSuggestionDecisionFact(suggestion: OutcomeSuggestion, outcome: Appl
 const BROWSER_LOCAL_COMMANDS = [
   "acknowledgeDigest",
   "updateDiscoverySettings",
-  "upsertDiscoverySource",
   "patchDiscoverySourceState",
   "updateCompensationSourcePolicy",
-  "promoteSourceLocatorCandidate",
-  "rejectSourceLocatorCandidate",
   "decideDiscoveryQuarantine",
   "dismissManualCapture",
   "recordDiscoveryFeedback",
@@ -191,7 +188,6 @@ export { BROWSER_LOCAL_COMMANDS as DEMO_BROWSER_LOCAL_COMMANDS };
 export const DEMO_PRODUCTION_NO_EVENT_COMMANDS = [
   "updateDiscoverySettings",
   "updateCompensationSourcePolicy",
-  "rejectSourceLocatorCandidate",
   "dismissManualCapture",
   "decideRoleMatchFeedbackSuggestion",
   "createResumeReviewDraft",
@@ -212,15 +208,22 @@ export class DemoCommandPersistenceError extends Error {
 export class DemoLocalCommandExecutor {
   private readonly clock: DemoCommandClock;
   private readonly createId: (prefix: string) => string;
-  private readonly permanentDeleteSelections = new Map<string, DemoPermanentDeleteSelection>();
-  private readonly permanentDeleteObservations = new Map<string, DemoPermanentDeleteObservation>();
+  private readonly permanentDeleteSelections: Map<string, DemoPermanentDeleteSelection>;
+  private readonly permanentDeleteObservations: Map<string, DemoPermanentDeleteObservation>;
 
   constructor(
     private readonly workspace: DemoWorkspaceRepository,
     options: DemoLocalCommandExecutorOptions = {},
+    private readonly requestParent?: DemoLocalCommandExecutor,
   ) {
-    this.clock = options.clock ?? systemClock;
-    this.createId = options.createId ?? defaultId;
+    this.clock = requestParent?.clock ?? options.clock ?? systemClock;
+    this.createId = requestParent?.createId ?? options.createId ?? defaultId;
+    this.permanentDeleteSelections = requestParent?.permanentDeleteSelections ?? new Map();
+    this.permanentDeleteObservations = requestParent?.permanentDeleteObservations ?? new Map();
+  }
+
+  forWorkspace(workspace: DemoWorkspaceRepository): DemoLocalCommandExecutor {
+    return new DemoLocalCommandExecutor(workspace, {}, this);
   }
 
   observePermanentDeleteSelection(
@@ -321,6 +324,7 @@ export class DemoLocalCommandExecutor {
   }
 
   dispose(): void {
+    if (this.requestParent) return;
     this.permanentDeleteSelections.clear();
     this.permanentDeleteObservations.clear();
   }
@@ -399,57 +403,6 @@ export class DemoLocalCommandExecutor {
         }
         return draft.state.readModel.discovery.settings;
       }
-      case "upsertDiscoverySource": {
-        const body = record(args[0]);
-        const sources = draft.state.readModel.discovery.sources.sources;
-        const sourceId = requiredString(body.sourceId, "sourceId");
-        let source = sources.find((candidate) => candidate.sourceId === sourceId);
-        const previous = source ? structuredClone(source) : null;
-        if (source) {
-          source.kind = requiredString(body.kind, "kind") as typeof source.kind;
-          source.displayName = requiredString(body.displayName, "displayName");
-          source.priority = requiredString(body.priority, "priority") as typeof source.priority;
-          source.state = requiredString(body.state, "state") as typeof source.state;
-        } else {
-          const base = structuredClone(sources[0]!);
-          source = Object.assign(base, {
-            sourceId,
-            kind: requiredString(body.kind, "kind") as typeof base.kind,
-            displayName: requiredString(body.displayName, "displayName"),
-            owner: "user",
-            priority: requiredString(body.priority, "priority") as typeof base.priority,
-            state: requiredString(body.state, "state") as typeof base.state,
-            policyId: `demo:${sourceId}`,
-            recommendedState: body.state === "disabled" ? "disabled" : "experimental",
-            lastRunId: null,
-            lastRunCompletedAt: null,
-            lastErrorClass: null,
-            consecutiveFailures: 0,
-            observedJobs: 0,
-            newJobs: 0,
-            duplicateRate: null,
-            activeVerificationRate: null,
-            fullDescriptionSuccessRate: null,
-            applyUrlSuccessRate: null,
-            qualityTrend: "unknown",
-          });
-          sources.push(source);
-        }
-        context.appendDomainEvent(previous
-          ? atTime(createSourceRegistryEntryUpdated(LOCAL_TENANT, {
-              sourceId,
-              changedFields: changedSourceFields(previous, source, body),
-              updatedAt: now,
-            }), now)
-          : atTime(createSourceRegistryEntryCreated(LOCAL_TENANT, {
-              sourceId,
-              kind: source.kind,
-              policyId: source.policyId,
-              state: source.state,
-              createdAt: now,
-            }), now));
-        return { ok: true, source };
-      }
       case "patchDiscoverySourceState": {
         const sourceId = requiredString(args[0], "sourceId");
         const source = requireById(
@@ -508,111 +461,6 @@ export class DemoLocalCommandExecutor {
         }
         source.control = control as unknown as typeof source.control;
         return draft.state.readModel.discovery.compensationSources;
-      }
-      case "promoteSourceLocatorCandidate": {
-        const candidateId = requiredString(args[0], "candidateId");
-        const sourceId = sourceIdForLocatorCandidate(candidateId);
-        const existing = draft.state.readModel.discovery.sources.sources.find(
-          (source) => source.sourceId === sourceId,
-        );
-        if (existing) {
-          const decision = [...draft.eventLog].reverse().find(
-              (entry) =>
-                entry.event.type === "SourceLocationCandidatePromoted" &&
-                entry.event.payload.candidateId === candidateId &&
-                entry.event.payload.sourceId === sourceId,
-            );
-          const decidedAt =
-            decision?.event.type === "SourceLocationCandidatePromoted"
-              ? decision.event.payload.promotedAt
-              : undefined;
-          const persistedDecisionAt = decidedAt ??
-            draft.state.readModel.discovery.sourcePreviews[sourceId]?.generatedAt;
-          if (!persistedDecisionAt) {
-            throw new Error(`Demo source promotion ${candidateId} has no persisted decision evidence.`);
-          }
-          return { ok: true, candidateId, decision: "promote", source: existing, decidedAt: persistedDecisionAt };
-        }
-        const candidates = draft.state.readModel.discovery.locatorCandidates.candidates;
-        const candidate = requireById(candidates, "candidateId", candidateId);
-        draft.state.readModel.discovery.locatorCandidates.candidates = candidates.filter(
-          (item) => item.candidateId !== candidateId,
-        );
-        const base = structuredClone(draft.state.readModel.discovery.sources.sources[0]!);
-        const source = {
-          ...base,
-          sourceId,
-          kind: candidate.sourceKind,
-          displayName: `Promoted ${candidateId.replace(/^locator-demo-/, "")} source`,
-          owner: "user" as const,
-          priority: "standard" as const,
-          state: "active" as const,
-          policyId: `demo-policy:${sourceId}`,
-          recommendedState: "normal" as const,
-          lastRunId: null,
-          lastRunCompletedAt: null,
-          lastErrorClass: null,
-          consecutiveFailures: 0,
-          observedJobs: 0,
-          newJobs: 0,
-          duplicateRate: null,
-          activeVerificationRate: null,
-          fullDescriptionSuccessRate: null,
-          applyUrlSuccessRate: null,
-          qualityTrend: "unknown" as const,
-        };
-        draft.state.readModel.discovery.sources.sources.push(source);
-        mutableMap(draft.state.readModel.discovery.sourcePreviews)[sourceId] = {
-          ok: true,
-          sourceId,
-          leads: [{
-            candidateUrl: candidate.candidateUrl,
-            title: "Bundled promoted opportunity",
-            company: "Synthetic promoted workshop",
-            location: "Distributed",
-            estimatedConfidence: candidate.confidence,
-          }],
-          generatedAt: now,
-        };
-        const health = structuredClone(draft.state.readModel.dashboard.summary.sourceHealth[0]!);
-        Object.assign(health, {
-          sourceId,
-          recommendedState: "active",
-          runCount: 0,
-          failedRunCount: 0,
-          consecutiveFailures: 0,
-          observedJobs: 0,
-          newJobs: 0,
-          existingJobs: 0,
-          duplicateRate: null,
-          activeVerificationRate: null,
-          fullDescriptionSuccessRate: null,
-          applyUrlSuccessRate: null,
-          lastRunId: null,
-          updatedAt: now,
-        });
-        draft.state.readModel.dashboard.summary.sourceHealth.push(health);
-        context.appendDomainEvent(atTime(createSourceLocationCandidatePromoted(LOCAL_TENANT, {
-          candidateId,
-          sourceId,
-          promotedAt: now,
-        }), now));
-        return {
-          ok: true,
-          candidateId,
-          decision: "promote",
-          source,
-          decidedAt: now,
-        };
-      }
-      case "rejectSourceLocatorCandidate": {
-        const candidateId = requiredString(args[0], "candidateId");
-        const candidates = draft.state.readModel.discovery.locatorCandidates.candidates;
-        requireById(candidates, "candidateId", candidateId);
-        draft.state.readModel.discovery.locatorCandidates.candidates = candidates.filter(
-          (item) => item.candidateId !== candidateId,
-        );
-        return { ok: true, candidateId, decision: "reject", source: null, decidedAt: now };
       }
       case "decideDiscoveryQuarantine": {
         const jobKey = requiredString(args[0], "jobKey");
@@ -1481,19 +1329,20 @@ export class DemoLocalCommandExecutor {
         const body = record(args[0]);
         const profile = draft.state.readModel.profile.config;
         const expectedVersion = numberValue(body.expectedProfileVersion);
-        if (expectedVersion !== null && expectedVersion !== profile.profileVersion) {
-          throw new Error(
-            `stale_profile_version: expected ${expectedVersion}, current ${profile.profileVersion ?? "none"}`,
-          );
-        }
+        if (expectedVersion === null || expectedVersion !== profile.profileVersion)
+          throw new JobCtrlApiError(409, "Conflict", "The Profile changed. Review its current version before saving.");
         const before = JSON.stringify(profile);
-        if (body.profile !== undefined) profile.profile = structuredClone(body.profile);
-        if (typeof body.profileText === "string") profile.profile = JSON.parse(body.profileText);
+        (draft.state.features ??= {}).requirementAssociations ??= demoRequirementAssociations(draft);
+        retainDemoProfile(draft);
+        if (body.profile !== undefined) profile.profile = validateDemoProfileSave(draft, body.profile);
+        if (typeof body.profileText === "string") profile.profile = validateDemoProfileSave(draft, JSON.parse(body.profileText));
         if (body.style !== undefined) profile.style = structuredClone(body.style);
         if (typeof body.styleText === "string") profile.style = JSON.parse(body.styleText);
         if (typeof body.templateText === "string") profile.templateText = body.templateText;
         if (JSON.stringify(profile) === before) return profile;
         profile.profileVersion = (profile.profileVersion ?? 0) + 1;
+        profile.profile = demoProfileDocument(profile.profile);
+        reconcileDemoProfile(draft);
         context.appendDomainEvent(atTime(createProfileUpdated(LOCAL_TENANT, {
           changedSections: Object.keys(body).filter((key) => key !== "expectedProfileVersion"),
           updatedAt: now,
@@ -1999,24 +1848,6 @@ function defaultId(prefix: string): string {
     ? crypto.randomUUID()
     : Math.random().toString(36).slice(2);
   return `demo-${prefix}-${suffix}`;
-}
-
-function sourceIdForLocatorCandidate(candidateId: string): string {
-  return `demo-source:locator:${candidateId}`;
-}
-
-function changedSourceFields(
-  previous: DemoWorkspaceSnapshot["state"]["readModel"]["discovery"]["sources"]["sources"][number],
-  next: DemoWorkspaceSnapshot["state"]["readModel"]["discovery"]["sources"]["sources"][number],
-  input: Record<string, unknown>,
-): string[] {
-  const changed: string[] = [];
-  if (previous.kind !== next.kind) changed.push("kind");
-  if (previous.displayName !== next.displayName) changed.push("displayName");
-  if (previous.priority !== next.priority) changed.push("priority");
-  if (previous.state !== next.state) changed.push("state");
-  if (Object.hasOwn(input, "seedUrl")) changed.push("seedUrl");
-  return changed.length > 0 ? changed : ["updatedAt"];
 }
 
 function manualCaptureJobKey(itemId: string): string {

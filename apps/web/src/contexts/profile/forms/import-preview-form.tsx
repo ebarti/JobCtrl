@@ -1,6 +1,7 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useForm } from "@tanstack/react-form";
 import { IconFileTypePdf } from "@tabler/icons-react";
+import { useCallback } from "react";
 import { z } from "zod";
 
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
@@ -39,7 +40,7 @@ const PreviewValidator = z
 
 export function ImportPreviewForm() {
   const navigate = useNavigate();
-  const { storage } = usePorts();
+  const { storage, profileTransfer } = usePorts();
   const filename = useProfileImportStore((state) => state.filename);
   const pdfBase64 = useProfileImportStore((state) => state.pdfBase64);
   const importProfile = useProfileImportStore((state) => state.importProfile);
@@ -47,6 +48,7 @@ export function ImportPreviewForm() {
   const setOptions = useProfileImportStore((state) => state.setOptions);
   const storageFailure = useProfileImportStore((state) => state.storageFailure);
   const completedImport = useProfileImportStore(hasCompletedImport);
+  const loadPdf = useCallback(() => profileTransfer.readPdf(pdfBase64), [pdfBase64, profileTransfer]);
 
   const form = useForm({
     defaultValues: { importProfile, importStyle } satisfies PreviewFormValues,
@@ -229,6 +231,7 @@ export function ImportPreviewForm() {
         <div className="resume-import-document-preview__viewer">
           <PdfPreviewViewer
             url={`data:application/pdf;base64,${pdfBase64}`}
+            loadPdf={loadPdf}
             cacheKey={filename}
             title="Uploaded resume"
             loadingTitle="Preparing resume preview"

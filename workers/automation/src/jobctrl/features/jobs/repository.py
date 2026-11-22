@@ -153,6 +153,7 @@ class SqliteJobsRepository:
         guard=None,
         on_accepted=None,
         connection=None,
+        discovery_observation=False,
     ):
         incoming = canonical_posting(data)
         receipt_fingerprint = receipt_fingerprint or digest(data)
@@ -190,8 +191,12 @@ class SqliteJobsRepository:
                 conn.execute(
                     "INSERT INTO jobs_jobs(job_id,created_at,updated_at) VALUES(?,?,?)", (job_id, timestamp, timestamp)
                 )
-            if previous and previous["description"] and not incoming["description"]:
-                # A listing-only provider observation cannot erase accepted detail.
+            if previous and (
+                discovery_observation and previous["content_state"] == "accepted_detail"
+                and incoming["content_state"] != "accepted_detail"
+                or previous["description"] and not incoming["description"]
+            ):
+                # Search cards are observations even when they contain a description.
                 accepted = previous
                 changed = False
             elif (
@@ -363,10 +368,45 @@ class SqliteJobsRepository:
                 if row
                 else current.get("provenance", {}).get("availability")
             )
+            # Read actual captures of this URL. Profile edits, imported listing guesses,
+            # and copies of an earlier observation do not renew its verification time.
+            observations = conn.execute(
+                """SELECT o.observed_at,
+                          COALESCE(json_extract(o.provenance_json, '$.availability.state'),
+                                   json_extract(p.data_json, '$.active_state')) AS verdict
+                   FROM jobs_observations o JOIN jobs_postings p
+                     ON p.job_id=o.job_id AND p.revision=o.posting_revision
+                   WHERE o.job_id=? AND o.observed_url=? AND (
+                     (json_extract(o.provenance_json,'$.availability.metadata.requested_url')=o.observed_url
+                      AND julianday(json_extract(o.provenance_json,'$.availability.observedAt'))=julianday(o.observed_at))
+                     OR (json_type(o.provenance_json,'$.availability') IS NULL
+                         AND json_extract(o.provenance_json,'$.authority')='source_bound_model'
+                         AND json_type(o.provenance_json,'$.pageInterpretation')='object'
+                         AND p.observed_at=o.observed_at))
+                   ORDER BY julianday(o.observed_at) DESC, o.rowid DESC""",
+                (job_id, current["url"]),
+            )
+            failure = conn.execute(
+                """SELECT started_at FROM jobs_capture_attempts WHERE job_id=? AND url=?
+                   AND json_extract(data_json,'$.operation')='availability'
+                   ORDER BY julianday(started_at) DESC, rowid DESC LIMIT 1""",
+                (job_id, current["url"]),
+            ).fetchone()
+            last_attempt = {"at": failure["started_at"], "outcome": "failed"} if failure else None
+            last_confirmed = None
+            for observed in observations:
+                outcome = observed["verdict"] or "unknown"
+                if last_attempt is None or datetime.fromisoformat(observed["observed_at"]) > datetime.fromisoformat(last_attempt["at"]):
+                    last_attempt = {"at": observed["observed_at"], "outcome": outcome}
+                if outcome != "unknown":
+                    last_confirmed = {"at": observed["observed_at"], "state": outcome}
+                    break
             return {
                 "job_id": job_id,
                 "revision": current["revision"],
                 "active_state": current["active_state"],
+                "last_confirmed": last_confirmed,
+                "last_attempt": last_attempt,
                 "observation_id": row["observation_id"] if row else None,
                 "checked_at": row["observed_at"] if row else None,
                 "availability": availability,
@@ -411,7 +451,7 @@ class SqliteJobsRepository:
                 }
                 for job in jobs
             ],
-            "retentionNotice": "This removes the selected Jobs and their job-owned records. Independently saved learning plans and cohorts, company research, source-review history, and model audit history remain.",
+            "retentionNotice": "This removes the selected Jobs and their job-owned records. Requirements used only by those Jobs and their links are permanently removed. Shared requirements, Profile facts and approved wording, independently saved learning plans and cohorts, company research, source-review history, and model audit history remain.",
             "retainedIndependentData": [
                 "learning_plans_and_cohorts",
                 "company_research_history",

@@ -15,28 +15,68 @@ user corrections and recorded relations between requirements and approved
 wording. Resumes consumes those public snapshots to compose and render a
 document; it does not read the other features' private tables.
 
-Requirement retrieval narrows candidates. The model determines qualified meaning,
+Requirements matches the complete incoming Skills/Professional Experience batch
+against the entire active catalog in one source-bound determination.
+Education and Languages remain direct job-local demands; they never enter
+achievement-wording matching or authoring. The model determines qualified meaning,
 equivalence, evidence support and wording coverage from cited sources; retrieval,
 word overlap, regexes and hand-tuned prose thresholds cannot decide meaning or
 prove novelty. Determinations carry source/version references and persisted
 provenance and perform lane/spend preflight. Invalid, stale or unavailable
 model results have no lexical fallback.
 
+Profile's current wording, proposed revisions and retained approval history are
+different records. Under the 11 November owner correction, one requirement on an
+achievement uses one maintained current wording; another maintained expression
+needs distinct coverage that cannot reuse or consolidate the current one.
+Canonical requirement names label it. Exact user approval or a manual association
+does not prove semantic coverage. The
+[current-wording decision](../decisions.md#_2026-11-11-requirement-led-current-wording-and-proposed-revisions)
+does not itself change the deterministic resume occurrence rule below.
+
 ## Deterministic composition
 
-Resumes retains every approved baseline role and achievement and chooses
-exactly one approved wording per achievement. It maximizes weighted distinct
-requirement coverage, then complementary depth across achievements, with stable
-tie-breaking. There is no hidden brevity penalty or silent omission. An
+Resumes retains every approved baseline section, role and achievement, including
+structured Language / Proficiency entries, and chooses exactly one approved
+wording per achievement. Each eligible canonical requirement supplies one policy
+point for distinct coverage, followed by complementary depth across achievements
+and stable tie-breaking. There is no hidden brevity penalty or silent omission. An
 unresolvable layout conflict is reported explicitly. The coverage manifest
 records exact selected wording IDs and requirement relationships for the
 assembled document.
+
+The unit coefficient is composition policy, never importance metadata attributed
+to the posting. Direct Education/Languages demands are outside achievement
+wording selection. Tailoring changes only approved achievement wording and
+preserves the other baseline sections through Plate and supported exports.
+
+Resumes' public input snapshot includes the relevant maintained current-wording
+pins and a job-scoped assignment fingerprint. It binds the job's canonical
+requirement IDs, participating Profile achievement IDs and matching assignment
+heads, including missing-to-present transitions. An unrelated requirement's
+assignment change does not stale this composition. Tailored choices use those
+maintained positive-coverage edges, with the authored baseline fallback where
+applicable. Earlier approved wording remains history and remains valid for an
+already accepted document whose exact bindings are unchanged. A new current
+assignment cannot rewrite that document, omit a baseline achievement or add an
+extra occurrence of the same achievement.
+
+`composition_freshness` is a pure list/detail projection over the selected
+Profile/Requirements/Fit pins and assignment fingerprint. It reports explicit
+stale reasons without replacing either draft or accepted pointer. Baseline
+currentness still checks Profile but skips Fit/Requirements coverage. Source
+freshness, exact approval, mechanical document validity and user acceptance
+remain separate facts; no freshness read schedules preparation.
 
 Person fit describes the person and stays separate from document coverage.
 Missing approved wording cannot lower factual qualification. A new supported
 requirement can prompt a grounded wording proposal, but Profile owns the
 proposal and only the user may approve it. Known requirements reuse recorded
 decisions; rejected or deferred proposals are not regenerated for every job.
+A current section-backed match creates no achievement-wording gap. Existing
+approved wording is reused; a new proposal requires an actual unsupported
+expression need and factual achievement support. Stylistic variation cannot
+justify rewriting already covered content.
 
 ## Review and acceptance
 
@@ -48,6 +88,10 @@ source-bound document despite a review finding or timeout. Review status,
 findings and acceptance are distinct records, so an override never claims that
 review passed. A failed or canceled refresh, model call, render or export
 preserves the last accepted artifact and its bytes.
+Legacy-generation requirement or Fit records cannot establish current
+composition readiness. Historical accepted artifacts retain their original
+bindings and bytes while a successful explicit refresh establishes current
+authority; an ordinary read cannot refresh or replace them.
 
 Baseline-copy/off mode remains available and makes zero resume model calls.
 Rendering, editing, review, acceptance and locale export belong to Resumes.

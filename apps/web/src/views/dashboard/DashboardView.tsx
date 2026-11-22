@@ -18,7 +18,7 @@ export function DashboardView({ panels = [] }: { readonly panels?: readonly Dash
       />
       <div className="dashboard-stack">
         <div className="dashboard-tail">
-          {panels.map((panel) => <div className="col-span-full" key={panel.id}>{panel.content}</div>)}
+          {panels.map((panel) => <div className="dashboard-panel col-span-full" key={panel.id}>{panel.content}</div>)}
         </div>
       </div>
     </div>

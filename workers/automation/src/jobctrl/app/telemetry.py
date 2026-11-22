@@ -32,7 +32,6 @@ class PreparationReadPort(Protocol):
 class ActionReadPort(Protocol):
     def action_run(self, run_id: str) -> dict: ...
     def run_summary(self) -> dict: ...
-    def worker_status(self) -> dict: ...
 
 
 class EventReadPort(Protocol):
@@ -446,11 +445,10 @@ class PipelineTelemetry:
             "caveats": caveats,
         }
 
-    def snapshot(self, run_id=None):
+    def snapshot(self, run_id, readiness):
         started = _now()
         queue = _read(self.actions.run_summary)
         queue["observedAt"] = _iso(_now())
-        readiness = _read(self.actions.worker_status)
         settings = _read(self.settings.snapshot)
         worker_time = _now()
         heartbeat = _time(readiness.get("heartbeatAt"))
@@ -459,6 +457,8 @@ class PipelineTelemetry:
             "observedAt": _iso(worker_time),
             "readiness": readiness.get("status"),
             "healthy": readiness.get("healthy"),
+            "reason": readiness.get("reason"),
+            "message": readiness.get("message"),
             "workerId": readiness.get("workerId"),
             "heartbeatAt": readiness.get("heartbeatAt"),
             "heartbeatAgeSeconds": round((worker_time - heartbeat).total_seconds(), 3) if heartbeat else None,
@@ -467,7 +467,7 @@ class PipelineTelemetry:
             "availableActivitySlots": None,
             "caveats": [
                 "Configured slots apply to worker starts and may differ from an already running worker.",
-                "Heartbeat readiness does not measure actual worker activity-slot occupancy.",
+                "Dispatch readiness does not measure actual worker activity-slot occupancy.",
             ],
         }
         if not settings["available"]:
@@ -587,6 +587,10 @@ def build_telemetry_routes(application) -> tuple[Route, ...]:
         run_id = request.query_params.get("runId")
         if run_id is not None and (not run_id or len(run_id) > 240):
             raise AppError("invalid_telemetry_run", "Choose a saved Preparation run.")
-        return JSONResponse(await run_in_threadpool(service.snapshot, run_id))
+        try:
+            readiness = {"available": True, **await application.dispatch_readiness()}
+        except Exception:
+            readiness = {"available": False, "errorCode": "telemetry_source_unavailable"}
+        return JSONResponse(await run_in_threadpool(service.snapshot, run_id, readiness))
 
     return (Route("/v1/telemetry/pipeline", read, methods=["GET"]),)

@@ -44,10 +44,28 @@ documentation, not the historical plan that first proposed it.
 | BR-009 | 2026-05-22 | Lists must support stable filtering, sorting, pagination, deep links, and selected-detail workspace state while background work updates local data. | Job seekers reviewing many jobs. | Keep navigation predictable as local data changes. | [frontend target](architecture/frontend/index.md), [local API](local-ts-api.md) |
 | BR-010 | 2026-05-22 | UI actions must call structured API actions where backend support exists, returning accepted command state and run identifiers instead of relying only on copied shell commands. | Job seekers. | Provide real product controls for actions that the API owns. | [local API](local-ts-api.md), [pipeline architecture](architecture/pipeline/index.md) |
 | BR-066 | 2026-07-29 | Discover, JobPreparation, and Apply executions must share one workflow-run history, status vocabulary, timeline, and idempotent cancellation experience, including truthful terminal state after a cancel request. | Job seekers and operators. | Make every long-running product stage equally inspectable and controllable. | [active delivery plan](plans/2026-07-29-stable-job-identity-workflow-feedback-learning.md), [pipeline architecture](architecture/pipeline/index.md) |
-| BR-056 | 2026-07-05 | Browser-extension assisted autofill must be available on ordinary HTTP(S) application forms without a fixed ATS-host allowlist, use model-mapped profile-backed suggestions that the user reviews and accepts, remain passive until explicitly invoked, and never submit applications. HTTP(S) host access is wildcarded for both those pages and explicit brokered Discovery API tasks; capture/autofill API calls remain loopback-only and the service worker must not originate remote traffic without a leased task. | Job seekers filling application forms. | Support application and source sites without per-host releases while preserving user control, bounded live-profile Discovery, local capture/autofill boundaries, and non-submission. | [README](../README.md), [security](user/security.md), [local reliability QA](local-reliability-qa.md) |
+| BR-056 | 2026-07-05 | Browser-assisted autofill must be available on ordinary HTTP(S) application forms and remain passive until the user invokes it. Model-mapped profile suggestions require review. The extension must limit its own API traffic to authenticated loopback routes. | Job seekers filling application forms. | Support user-directed capture and autofill while preserving local access control. | [README](../README.md), [security](user/security.md), [local reliability QA](local-reliability-qa.md) |
 | BR-061 | 2026-07-15 | The pipeline operations view must distinguish immutable Discover execution lineage, current-run work, its explicit existing-backlog sweep, global work, source-family progress, reconciliation, capacity, bounded active work, freshness, and typed ETA instead of presenting one blended completion percentage. | Job seekers and operators. | Make ownership, remaining work, and uncertainty inspectable without implying that source completion means pipeline completion. | [Operations & Events API](api/operations-and-events.md), [pipeline operations](architecture/pipeline/operations.md) |
 
 ### Discovery And Enrichment
+
+Owner correction, 11 November 2026: Jobs exposes **Start search** directly, with
+its actual lifecycle and canonical new/observed counts beside the comparison
+table. Search preferences remains the connected editor. One pending, queued or
+running search may be admitted per workspace, including planning and requests
+from other tabs or clients; exact same-key retries retain their original run.
+An unknown status blocks another launch. Stops refer to the exact run, and
+navigation, ordinary saves and status reads launch no work.
+
+Owner correction, 12 November 2026: valid Remote and posting-age preferences
+must not disable the whole search because one board cannot accept their combined
+request parameters. Adapt each board's acquisition request while preserving the
+saved criteria and enforcing the original cutoff against recorded publication
+dates. Unverifiable dates and unsupported source scopes remain explicit. A
+failed board must not cancel compatible boards, and its
+safe failure identity must survive worker recovery and exhaustion of the shared
+job budget. The terminal result distinguishes completed, partial and failed
+acquisition without treating an unstarted source as successful.
 
 | ID | Added | Requirement | For whom | Why | Related docs |
 | --- | --- | --- | --- | --- | --- |
@@ -57,7 +75,7 @@ documentation, not the historical plan that first proposed it.
 | BR-014 | 2026-05-22 | Remote discovery must filter for the configured target country or region. | Job seekers. | Keep remote results aligned with the user's legal and practical work target. | [local API](local-ts-api.md), [local reliability QA](local-reliability-qa.md) |
 | BR-015 | 2026-05-22 | Remote discovery for European target countries must also include jobs remote in Europe. | Job seekers. | Capture regional remote roles that are relevant even when not tied to one country. | [local API](local-ts-api.md), [local reliability QA](local-reliability-qa.md) |
 | BR-016 | 2026-05-22 | Profile-driven target discovery must search at least the last 30 days unless local configuration sets a larger lookback window. | Job seekers. | Avoid stale searches while allowing broader local search windows when requested. | [local API](local-ts-api.md) |
-| BR-017 | 2026-05-22 | Aggregators and broad boards may provide leads, but JobCtrl must prefer canonical employer, ATS, API, licensed feed, or official posting sources before downstream scoring and automation. | Job seekers. | Improve relevance, freshness, and applyability of jobs. | [pipeline architecture](architecture/pipeline/index.md) |
+| BR-017 | 2026-05-22 | JobStreaming must supply every acquisition board and its native search and detail operations. Jobs must support importing a single user-supplied public posting URL independently of Discovery. | Job seekers. | Give the SDK ownership of job sources and users direct access to known postings. | [pipeline architecture](architecture/pipeline/index.md) |
 | BR-018 | 2026-05-22 | Source quality must be observable and support trusted, normal, experimental, quarantined, and disabled states. Supported built-in JobStreaming boards are active rather than experimental; retained experimental defaults must upgrade without enabling disabled or quarantined sources. Bounded runs enforce their requested new-job limit and individual source allowances across retries and captured-posting recovery. | Job seekers and maintainers. | Stop low-quality sources from degrading the pipeline. | [local reliability QA](local-reliability-qa.md) |
 | BR-019 | 2026-05-22 | Manual capture must be available for useful leads that cannot be fetched safely, including user-provided URLs, saved HTML, pasted text, browser-extension active-page captures, or email-derived posting content. | Job seekers. | Allow user-mediated progress without bypassing third-party protections. | [README](../README.md), [pipeline architecture](architecture/pipeline/index.md), [local reliability QA](local-reliability-qa.md) |
 | BR-020 | 2026-05-22 | Discovery and enrichment must preserve provenance, source observations, canonical URLs, apply URLs, active state, full descriptions, snapshots, and source-native identifiers where available. | Job seekers and maintainers. | Make jobs auditable, deduplicable, and useful for scoring and materials. | [pipeline architecture](architecture/pipeline/index.md) |
@@ -68,7 +86,7 @@ documentation, not the historical plan that first proposed it.
 | BR-044 | 2026-05-30 | Pipeline progress text must describe whether a stage is running, complete, failed, or ready to run again without exposing prior-worker recovery implementation details as the primary user message. | Job seekers running local pipelines. | Make long-running discovery/apply work understandable and actionable from the Pipelines page. | [local API](local-ts-api.md), [pipeline architecture](architecture/pipeline/index.md), [local reliability QA](local-reliability-qa.md) |
 | BR-051 | 2026-07-04 | Scheduled discovery must be off by default; enabling a recurring discovery schedule must be an explicit operator action. | Job seekers. | Background automation and its cost must never be a surprise. | [pipeline operations](architecture/pipeline/operations.md) |
 | BR-062 | 2026-07-17 | An interrupted broad-board source activity must resume unfinished work under the same Discover execution without losing accepted postings or restarting the run-wide new-job limit; replay must be harmless, recovered work must be visible, and explicit cancellation must leave unfinished search units terminal rather than stale/resumable. | Job seekers and operators. | Long discovery runs must recover from worker loss without duplicating results or confusing a user-requested stop with a crash. | [discovery](user/discovery.md), [pipeline envelope](architecture/pipeline/envelope.md), [local reliability QA](local-reliability-qa.md) |
-| BR-069 | 2026-09-12 | Integrated Discovery and Enrich must work with or without the extension. Each acquisition setup must prefer the selected paired installation only when a bounded status probe reports connected; offline or unavailable status selects existing guarded public HTTP or anonymous Playwright. Once chosen, transport must not change after site, DNS, access, or cancellation failure. Execution references, leases, fences, checkpoints, cohorts, source policy, budgets, audit history, and authenticated broker authorization remain intact. Integrated acquisition must never adopt or copy a browser profile, including anonymous fallback. Discovery and Enrich must not request, evaluate or enforce robots.txt on either transport; historical robots-blocked records remain retryable with their audit history intact. Connected LinkedIn job rendering must use an active task-owned tab in an unfocused window without changing user focus; cleanup closes only task-owned tabs and rules, including late operations after cancellation. Another installation holding the token must not race for leases, and broker heartbeat, cancellation, timeout/tab cleanup, concurrency, exact-origin, and UTF-8 bounds remain mandatory. | Job seekers running Discovery and Enrich. | Allow anonymous operation while preferring the user's current Chrome session when available, without silently changing transport after acquisition fails. | [Discovery](user/discovery.md), [enrichment](user/enrichment-and-extraction.md), [runtime](architecture/runtime.md) |
+| BR-069 | 2026-09-12 | Automatic search must use the selected JobStreaming boards. Missing credentials, rate limits and unsupported scopes must produce source-specific outcomes. The user can import a known public posting URL while discovery runs. | Job seekers running Discovery and Enrich. | Keep acquisition, direct URL intake and their permission boundaries explicit. | [Discovery](user/discovery.md), [enrichment](user/enrichment-and-extraction.md), [runtime](architecture/runtime.md) |
 
 ### Single Discovery Preparation Stage
 
@@ -89,11 +107,11 @@ documentation, not the historical plan that first proposed it.
 | --- | --- | --- | --- | --- | --- |
 | BR-022 | 2026-05-22 | Scoring must be an applicant-side decision aid, not an autonomous hiring or application decision. | Job seekers. | Help users prioritize while preserving human judgment. | [pipeline architecture](architecture/pipeline/index.md) |
 | BR-023 | 2026-05-22 | Auto-apply must never be gated by score alone; hard blockers, missing materials, safety policy, and user approval requirements must still apply. | Job seekers. | Prevent high scores from overriding blockers, missing materials, or safety policy. | [pipeline architecture](architecture/pipeline/index.md) |
-| BR-024 | 2026-05-22 | Persisted fit scores must be deterministic outputs of a versioned scoring policy over structured evidence, including technical fit, experience/seniority fit, and role fit, plus a requirement-fit dimension resolved from employer-analysis requirement assessments when they are present. | Job seekers and maintainers. | Make scores comparable, explainable, and reproducible. | [pipeline architecture](architecture/pipeline/index.md) |
+| BR-024 | 2026-05-22 | Persisted fit scores must be deterministic outputs of a versioned policy over accepted typed requirement assessments. The current requirement-fit-v3-equal formula gives one item to each distinct canonical Skills/Professional Experience requirement and each distinct job-local Education/Languages demand; no source weights, must-have multipliers or blocker cap apply. | Job seekers and maintainers. | Make scores comparable, explainable, and reproducible. | [pipeline architecture](architecture/pipeline/index.md) |
 | BR-025 | 2026-05-22 | LLM scoring calls may extract evidence, gaps, blockers, transferable signals, confidence, and rationale, but must not be the final scoring authority. | Job seekers. | Reduce unsupported model opinion in decisions that affect applications. | [pipeline architecture](architecture/pipeline/index.md) |
 | BR-026 | 2026-05-22 | Low confidence must mean review needed, not a disguised low score, and missing evidence must reduce confidence even when a model proposes high fit. | Job seekers. | Distinguish weak evidence from poor fit. | [pipeline architecture](architecture/pipeline/index.md) |
 | BR-027 | 2026-05-22 | User score corrections must immediately affect future scoring, become calibration anchors, and mark comparable uncorrected scores stale until the user explicitly rescores them. | Job seekers. | Let the system learn from explicit user judgment without silently rewriting history. | [local API](local-ts-api.md) |
-| BR-028 | 2026-05-22 | Score details must expose fit, band, blockers, confidence, evidence, gaps, dimensions, policy version, stale state, and correction trace. | Job seekers. | Explain why a job is recommended, questionable, or blocked. | [local API](local-ts-api.md), [pipeline architecture](architecture/pipeline/index.md) |
+| BR-028 | 2026-05-22 | Score details must expose fit, band, blockers, confidence, evidence, gaps, formula version, assessed count, qualification coverage, stale state, and correction trace. | Job seekers. | Explain why a job is recommended, questionable, or blocked. | [local API](local-ts-api.md), [pipeline architecture](architecture/pipeline/index.md) |
 | BR-067 | 2026-07-29 | Learning from user feedback must preserve the shipped score-correction anchors and approved role-match exclusions, add structured tailoring-review learning through inspectable recommendations, and require an explicit user action before creating a versioned policy or preference revision; existing scores, artifacts, profile facts, thresholds, and Apply decisions remain unchanged until their normal explicit recomputation path runs. | Job seekers. | Personalize future work without duplicating existing feedback behavior or silently rewriting user data, historical decisions, or application eligibility. | [active delivery plan](plans/2026-07-29-stable-job-identity-workflow-feedback-learning.md), [outcomes and feedback](user/outcomes-and-feedback.md) |
 
 ### Materials, Profile, And Artifacts
@@ -110,19 +128,116 @@ documentation, not the historical plan that first proposed it.
 | BR-046 | 2026-06-24 | Apply Review must render current HTML/CSS-generated resumes from the same generated HTML source that prints the final PDF, using a Plate-backed resume surface with line selection and JobCtrl audit annotations inside the resume instead of a side-by-side PDF/image overlay. | Job seekers reviewing tailored materials. | Let users inspect the final resume layout and audit comments in one faithful document surface before approval. | [local API](local-ts-api.md), [local reliability QA](local-reliability-qa.md) |
 | BR-047 | 2026-06-24 | Retired 2026-11-06: the breaking transition starts non-Profile data fresh, so migration of historical generated LaTeX artifacts is not a cutover requirement. This historical ID must not be reused. | Job seekers with existing generated materials. | Preserve the historical requirement without implying non-Profile data transfer. | [README](../README.md), [local reliability QA](local-reliability-qa.md) |
 | BR-048 | 2026-06-26 | Resume template editing must let the user save style/layout templates, choose a default template, and override the template per job without persisting candidate profile data or job facts into the template payload. | Job seekers tailoring visual presentation. | Let users control resume appearance while preserving profile-data ownership and privacy. | [local API](local-ts-api.md), [frontend target](architecture/frontend/index.md), [local reliability QA](local-reliability-qa.md) |
-| BR-049 | 2026-06-30 | Resume composition must preserve every role and achievement in the approved Profile baseline, choose exactly one approved wording per achievement, and expose the selected IDs and requirement coverage without leaking private source text. No brevity penalty or silent omission is allowed. | Job seekers reviewing tailored materials. | Make generated resumes explainable and reviewable while keeping profile evidence and local artifacts private. | [tailoring](architecture/tailoring.md), [local API](local-ts-api.md), [local reliability QA](local-reliability-qa.md) |
+| BR-049 | 2026-06-30 | Resume composition must preserve every section, role and achievement in the approved Profile baseline, including structured Language / Proficiency, choose exactly one approved wording per achievement, and expose the selected IDs and requirement coverage without leaking private source text. No brevity penalty or silent omission is allowed. | Job seekers reviewing tailored materials. | Make generated resumes explainable and reviewable while keeping profile evidence and local artifacts private. | [tailoring](architecture/tailoring.md), [local API](local-ts-api.md), [local reliability QA](local-reliability-qa.md) |
 | BR-052 | 2026-07-04 | Apply Review must support interactive resume revision — draft edits, named revisions, and comment threads — with draft-aware approval, and revising must never destroy the last accepted artifact. | Job seekers reviewing materials. | Let users correct materials safely before submission. | [materials audit](architecture/materials.md), [local API](local-ts-api.md) |
 | BR-068 | 2026-08-20 | The saved Candidate Profile experience sequence must be the presentation order for baseline and tailored resumes. Profile editing must provide explicit move-up, move-down, and newest-first controls through the normal validated save path; renderers must not silently re-sort the sequence, and roles without bullets must not reserve empty-list spacing. | Job seekers maintaining resume history. | Make resume order deliberate, persistent, and visually predictable without adding a second ordering store. | [candidate profile](user/candidate-profile.md), [frontend patterns](architecture/frontend/patterns.md), [local reliability QA](local-reliability-qa.md) |
 | BR-070 | 2026-10-02 | Interviews must expose the full versioned draft catalog through searchable graph/list browsing without a job/provider; job-specific preparation must use bounded editable question and accepted-evidence selections, including explicit empty evidence choices, with responsibility/format-appropriate grounded outlines, retained source context, explicit legacy/stale history, and independent revisioned notes that never promote statements to Profile, fit, or Apply. Draft criteria and fixtures must not be described as validated grading or efficacy; reusable no-job preparation, rehearsal, and live assistance remain outside this first release. | Job seekers preparing for interviews. | Make guidance inspectable and personal preparation truthful, recoverable, and private. | [interview preparation](user/materials-and-tailoring.md#interview-preparation), [materials audit](architecture/materials.md#stored-interview-preparation), [issue #993](https://github.com/ebarti/JobCtrl/issues/993) |
-| BR-071 | 2026-10-04 | Saved posting availability must be observed independently of accepted content: current exact identity/status evidence, separate attempt/success clocks, visible uncertainty/overdue state, reversible unavailable outcomes, bounded recurring/explicit checks and durable fenced actual-host acquisition. Preparation reuses exact-URL observations attempted within six hours and refreshes missing or older observations; unknown stays unknown and can use accepted content without renewing positive verification or background retry clocks; exact-bound human-reviewed Apply with approval from the preceding 15 minutes, manual Apply and rehearsals remain possible under uncertainty, while unattended Apply requires active success within 15 minutes. Confirmed closure and changed candidates stop work. Checks run outside writer transactions; failed checks preserve materials, approvals, application outcomes and user visibility. Paired-extension presence cannot imply authenticated availability. | Job seekers preparing saved jobs. | Prevent stale or ambiguous employer state from authorizing work without discarding accepted evidence. | [Enrichment](user/enrichment-and-extraction.md#saved-posting-availability), [runtime](architecture/runtime.md#saved-posting-availability-runtime), [QA](developer/qa/regression-catalog.md#saved-posting-availability) |
+| BR-071 | 2026-10-04 | Saved posting availability must be observed independently of accepted content: current exact identity/status evidence, separate attempt/success clocks, visible uncertainty/overdue state, reversible unavailable outcomes, explicit manual checks and a stale warning at 24 hours and durable fenced actual-host acquisition. Preparation reuses exact-URL observations attempted within six hours and refreshes missing or older observations; unknown stays unknown and can use accepted content without renewing positive verification clocks; exact-bound human-reviewed Apply with approval from the preceding 15 minutes, manual Apply and rehearsals remain possible under uncertainty, while unattended Apply requires active success within 15 minutes. Confirmed closure and changed candidates stop work. Checks run outside writer transactions; failed checks preserve materials, approvals, application outcomes and user visibility. Paired-extension presence cannot imply authenticated availability. | Job seekers preparing saved jobs. | Prevent stale or ambiguous employer state from authorizing work without discarding accepted evidence. | [Enrichment](user/enrichment-and-extraction.md#saved-posting-availability), [runtime](architecture/runtime.md#saved-posting-availability-runtime), [QA](developer/qa/regression-catalog.md#saved-posting-availability) |
 | BR-075 | 2026-10-18 | Selected-job skill demand must refer to an explicit dated cohort, disclose size, missing descriptions, exact duplicates and uncertainty, and cite posting spans and unique confirmed candidate evidence. User-chosen learning/evidence milestones retain origin and completion statements; activity, aspirations, posting demand and confirmed capability remain distinct across source changes and never produce readiness or automatic Profile/fit changes. | Job seekers reviewing development choices. | Keep cohort observations and progress truthful and auditable. | [selected-job workflow](user/scoring-and-employer-analysis.md#selected-job-demand-and-learning-milestones), [issue #1038](https://github.com/ebarti/JobCtrl/issues/1038) |
 
 Profile-save clarification (2026-10-23): saving or autosaving candidate facts must
 not schedule scoring or material regeneration. Jobs disclose when the recorded
-score profile predates the saved profile. An explicitly requested score update
-uses a source-bound LLM significance check before recomputing for profile changes;
-insignificant edits retain the original score and recorded provenance. Failed or
-unavailable checks never become an insignificant verdict. See [Scoring](architecture/scoring.md#profile-edits-and-explicit-refresh).
+score profile predates the saved profile. The 2026-11-10 owner refinement makes
+post-edit reassessment an explicit, bounded manual operation. One source-bound
+decision considers the entire requirement catalog and changed saved evidence,
+including requirements previously missing support. Only affected requirements
+are reassessed; unchanged authority is reused with recorded revalidation.
+Saving facts, wording, approvals or requirement definitions must not start or
+restart that work. Each operation fixes its input versions, explicit job scope,
+identity and limits; concurrent changes remain pending for a later user action.
+Failures preserve accepted records. See [Scoring](architecture/scoring.md#profile-edits-and-explicit-refresh).
+
+Catalog-matching clarification (2026-11-10): after source extraction, send the
+complete incoming requirement batch and current canonical catalog, including
+qualified meanings and exact revisions, in one matching request. The same
+determination identifies existing, new or uncertain meanings. Do not use
+retrieval subsets, paged comparisons, separate novelty calls or truncation as a
+fallback. A refusal retains the last accepted catalog/posting binding. Current
+approved wording coverage is reused directly; actual expression gaps are grouped
+by achievement for bounded preparation and exact user review. This changes
+refresh and wording preparation, not the current resume composition cardinality
+rule in BR-049. The broader cardinality question remains open in
+[#1129](https://github.com/ebarti/JobCtrl/issues/1129).
+
+Qualification and exact-reuse clarification (2026-11-13): initial person-fit
+assessment must reuse current Profile/canonical-requirement/revision/factual-
+source authority first, then send the entire missing set in one source-bound
+qualification request. Require a complete, exact per-requirement partition,
+independent row identities and citations, and atomic publication of all new
+assessments. A job with no prior score may resolve only its fixed requirement
+set during explicit initial preparation even when older shared qualifications
+predate saved changes. Publication must recheck the absence of a score, compare
+captured current-source and historical assessment heads, retain history and
+rewrite no other job's score. Post-edit qualification for a
+previously scored job still requires manual refresh. Manual affected-match
+refresh retains its explicit frozen scope, complete-catalog accounting,
+checkpoints and finite work limits. Resolve exact current authority unchanged
+and enforced mandatory reassessments before one semantic impact decision over
+only unresolved changed-fact items, with all current facts and each included
+item's own prior baseline. Keep structural work authority separate from the raw
+model-subset receipt and verify the complete composed partition on recovery.
+Per-operation wire pins must preserve exact retained completed calls and refuse
+unsettled/conflicting calls without another allowance. Exact
+role-analysis and Requirements call reuse must bind complete semantic inputs,
+prompt/schema and frozen provider/model/effective effort/configuration identity.
+Semantic content identity must remain separate from each actual posting's
+publication identity and guards. No lexical fallback, truncation, chunks or
+rewritten shared receipt may establish authority. See the
+[batching and reuse decision](decisions.md#_2026-11-13-batch-missing-qualifications-and-separate-exact-reuse-from-publication).
+
+Cold-search cohort clarification (2026-11-17): new search admissions freeze an
+execution policy and exact new-job cohort. Stage each source-bound extraction,
+then consolidate the complete incoming cohort with the complete retained
+catalog once. Namespace extraction-local IDs by their destination source/job;
+never infer identity from matching local labels. Freeze the final demands and
+Profile before one shared missing-qualification request and atomically validate
+all included source, initial-score and assessment-head guards. Publish each
+score only from those exact frozen accepted assessments, without another model
+call. Preserve legacy pending requests, retries, raw receipts and failed-refresh
+history. Bounded independent stages may overlap across model lanes, without
+raising saved capacities; finite monetary caps retain serial model work.
+Source refusal, an unsettled call or a changed input cannot trigger hidden
+retry, truncated work, a weaker model or another allowance. Fresh-path timing
+includes all required stages and failures; unchanged-cohort reuse is measured
+separately. See the
+[cohort preparation decision](decisions.md#_2026-11-17-bounded-cold-search-cohort-preparation).
+
+Active Requirements library clarification (2026-11-15): a reusable canonical
+meaning appears in the active library only while at least one accepted
+occurrence belongs to an existing nondeleted Job. Hidden Jobs count. Soft
+deleting its last live Job removes the meaning from both ordinary and composed
+library lists; restoring the Job recovers the same identity and history without
+model work. Retain canonical semantic inventory, source history, user links,
+Profile capabilities, Fit records and accepted resume bytes independently.
+Historical support and user links alone do not keep a deleted-only meaning
+active. Semantic matching still considers the full retained catalog regardless
+of library visibility; a new accepted occurrence can reactivate the same
+meaning. Exact retained-meaning/history lookups distinguish active membership
+from storage retention. See the [library contract](api/jobs-and-materials.md#requirements-library-and-associations).
+Reviewed permanent job deletion physically removes only meanings with no other
+retained Job occurrence, including soft-deleted and historical occurrences.
+Owner callbacks remove dependent Fit links in the same transaction while
+preserving authored Profile facts/wording and independent immutable audit
+receipts. A later explicit extraction can establish a new meaning after that
+removal; deleted history cannot be restored.
+
+Capability-consolidation clarification (2026-11-15): every semantic publication
+must pass a complete retained-catalog consolidation decision, including
+existing-existing entries and hidden meanings. Ordinary phases, audiences,
+quality checks and outcomes must not multiply reusable capability identities;
+independent expertise and explicitly demanded named technologies stay distinct.
+Retain original source demands and bind qualification to a model-normalized
+combined demand per job/capability. One capability contributes at most one Fit
+and composition-policy item per job. Reuse requires its exact revision, demand,
+permitted Profile-source fingerprint and qualification-policy/prompt version.
+Append source-bound reconciliation, alias and replacement-snapshot authority
+atomically; preserve exact historical records, approvals and accepted bytes.
+An alias cannot inherit a favorable assessment or coverage. Uncertain, partial,
+stale, cancelled or refused work publishes no repair. There is no target count,
+lexical fallback, per-item inference fanout or automatic downstream refresh.
+The library shows demand-specific support rather than selecting one sibling
+assessment as global authority. See the
+[consolidation decision](decisions.md#capability-consolidation-and-source-demand).
 
 ## Technical Requirements
 
@@ -192,7 +307,7 @@ unavailable checks never become an insignificant verdict. See [Scoring](architec
 | TR-014 | 2026-05-22 | Observability must cover model, workflow and HTTP application activity without exporting raw private content such as resumes, generated materials, job text, credentials, local paths, logs or databases. | Maintainers and local operators. | Debug behavior and cost while preserving user privacy. | [architecture](architecture/index.md) |
 | TR-015 | 2026-05-22 | Langfuse and telemetry export must be configurable and disableable, including a local disable path for private runs. | Job seekers and maintainers. | Support local privacy choices and development diagnostics. | [architecture](architecture/index.md) |
 | BR-055 | 2026-07-04 | A release privacy gate must scan tracked and untracked files, plus built distribution archives, for private-profile needles, secret assignments, forbidden filenames, and browser-profile artifacts. It runs automatically on every push to `main` and release publication; public pull requests intentionally do not receive heavyweight CI automatically, so a maintainer must run the scanner locally or through the manual workflow after review and before merge. | Maintainers and future users. | Keep personal data and secrets out of the public repository without exposing unreviewed contributor code to privileged or heavyweight automation. | [developer security](developer/security.md) |
-| TR-046 | 2026-09-02 | The live Discovery browser bridge must bind bounded, idempotent tasks to the exact workflow/run execution; use loopback token authentication, public-URL validation, leases, cancellation, timeout, and payload caps; keep task bodies/results in process memory only; reject worker-supplied browser cookies/user-agent/origin headers; and expose a fresh heartbeat separately from token presence. Chrome must own its current cookies, session, proxy, and user agent, with the returned browser identity retained as transport metadata. | Maintainers and local users. | Prevent pairing from being mistaken for readiness, prevent stale or cross-execution browser results, and reuse live browser state without copying its secrets into worker configuration or durable bridge storage. | [security](user/security.md), [local API](local-ts-api.md), [local reliability QA](local-reliability-qa.md) |
+| TR-046 | 2026-09-02 | The extension must verify its capability token against authenticated loopback before saving it. Capture and autofill require user action. JobStreaming board acquisition must operate independently of the browser extension. | Maintainers and local users. | Keep browser permissions scoped to the user’s action and board access scoped to the SDK. | [security](user/security.md), [local API](local-ts-api.md), [local reliability QA](local-reliability-qa.md) |
 
 ### Verification And Quality
 
@@ -215,13 +330,44 @@ verification before they can be claimed as delivered.
 | --- | --- | --- | --- | --- | --- |
 | BR-076 | 2026-11-06 | All implemented capabilities except Cover Letters remain in the migration baseline; parked future expansion stays parked. | Job seekers | Preserve the current product through a deliberate breaking transition. | [transformation](plans/2026-11-06-python-transformation.md) |
 | BR-077 | 2026-11-06 | Fit records person qualification separately from approved-wording coverage. A document wording gap must not lower factual fit; supported new wording proposals require explicit user approval and rejected or deferred proposals are not regenerated for every job. | Job seekers | Distinguish demonstrated capability from how a resume expresses it. | [tailoring](architecture/tailoring.md) |
-| BR-078 | 2026-11-06 | Resume composition retains every baseline role and achievement, selects exactly one approved wording per achievement, maximizes weighted distinct requirement coverage then complementary depth with stable ties, and reports layout conflicts without silent omissions or a hidden brevity penalty. | Job seekers | Produce complete, reproducible and auditable documents. | [tailoring](architecture/tailoring.md) |
+| BR-078 | 2026-11-06 | Resume composition retains every baseline section, role and achievement, selects exactly one approved wording per achievement, gives each eligible canonical requirement one composition policy point then complementary depth with stable ties, and reports layout conflicts without silent omissions or a hidden brevity penalty. | Job seekers | Produce complete, reproducible and auditable documents. | [tailoring](architecture/tailoring.md) |
 | BR-079 | 2026-11-06 | Resume review consists of one advisory coherence determination. A user may explicitly accept a mechanically valid, source-bound document with a review finding or timeout; review and acceptance remain separate truthful records. | Job seekers | Preserve human authority without misrepresenting review status. | [tailoring](architecture/tailoring.md) |
 | BR-080 | 2026-11-06 | Baseline-copy/off mode remains available with zero resume model calls. | Job seekers | Provide a predictable no-generation path. | [tailoring](architecture/tailoring.md) |
 | TR-048 | 2026-11-06 | HTTP, CLI and durable workers call the same Python feature application actions. Cutover leaves no Fastify business API, JSON-RPC forwarding bridge, mixed backend or dual business writer. | Maintainers | Establish one authority for canonical actions and writes. | [domain integration](architecture/domain-model/integration.md) |
 | TR-049 | 2026-11-06 | Feature schemas and data are owned by their feature; consumers use immutable public snapshots and recorded IDs, never sibling-private tables. Missing required dependencies fail startup. | Maintainers | Keep features independently removable and ownership enforceable. | [domain model](architecture/domain-model/strategic.md) |
-| TR-050 | 2026-11-06 | Requirements meaning/equivalence, evidence support and wording coverage use source-bound model determinations with strict validation, persisted provenance, lane/spend preflight and no lexical fallback. Retrieval narrows candidates and cannot establish novelty. | Job seekers and maintainers | Keep semantic authority auditable and failure honest. | [semantic decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations) |
+| TR-050 | 2026-11-06 | Requirements meaning/equivalence, evidence support and wording coverage use source-bound model determinations with strict validation, persisted provenance, lane/spend preflight and no lexical fallback. Catalog matching receives the complete incoming batch and current canonical inventory in one determination; retrieval subsets, chunking and a separate novelty judge do not establish authority. | Job seekers and maintainers | Keep semantic authority auditable and failure honest. | [semantic decision](decisions.md#_2026-10-07-semantic-judgments-are-llm-determinations), [full catalog decision](decisions.md#_2026-11-10-full-catalog-matching-and-manual-affected-match-refresh) |
 | TR-051 | 2026-11-06 | The recurring suite starts fresh and is E2E-only: real application, API, SQLite, worker and renderer, with controlled external LLM, job and provider boundaries and no internal JobCtrl mocks or recorded-output replay corpus. Static checks and builds remain; synthetic Profile transfer proof is separate. | Maintainers | Verify actual composition and preserve meaningful authority boundaries. | [transformation](plans/2026-11-06-python-transformation.md), [QA](local-reliability-qa.md) |
+
+## Original Redesign Requirements
+
+These are accepted whole-product contracts, with implementation and integrated
+verification tracked in the [active redesign ledger](plans/2026-11-11-original-app-redesign.md).
+They do not establish a deployed or released candidate.
+
+| ID | Added | Requirement | For whom | Why | Related docs |
+| --- | --- | --- | --- | --- | --- |
+| BR-081 | 2026-11-11 | Jobs remains a comparative table with retained query/filter/sort/page, views/columns and supported selection. The connected job workspace owns preparation, actual Plate editing, review and outcomes; focused work returns to the same comparison context. My profile and Settings retain independent capabilities through reachable task paths. | Job seekers | Remove routine screen and operational work while preserving useful outcomes and unknown state. | [Daily workflow](user/normal-flows.md), [redesign ledger](plans/2026-11-11-original-app-redesign.md) |
+| BR-082 | 2026-11-11 | An achievement linked to one canonical requirement has one maintained current wording. Edits are proposed revisions with exact earlier approval/history retained. Additional maintained wording requires distinct requirement coverage that cannot reuse or consolidate the current wording; labels name canonical requirements. Editorial focus, numbering or a user link cannot establish independent semantic coverage. | Job seekers | Keep wording maintainable without losing exact approval, substance or history. | [wording decision](decisions.md#_2026-11-11-requirement-led-current-wording-and-proposed-revisions), [Profile](user/candidate-profile.md#approved-wording-library) |
+| BR-083 | 2026-11-11 | The independent Requirements library contains reusable Skills/Professional Experience and preserves canonical category/name/definition/revision, achievement-first grouping and original source occurrences. User requirement–achievement–optional-wording links are version-pinned, removable/restorable and always unassessed; they never create support, coverage, approval, score or automatic refresh. | Job seekers | Expose reusable meanings and intent without manufacturing authority. | [Requirements library](user/requirements-library.md), [API](api/jobs-and-materials.md#requirements-library-and-associations) |
+
+## Typed Requirement Generation
+
+The accepted `requirements-v2` contract is tracked in
+[#1477](https://github.com/ebarti/JobCtrl/issues/1477), stacked above
+[#1475](https://github.com/ebarti/JobCtrl/issues/1475). Source changes do not
+establish passing journeys, a live workspace rollout, release or deployment.
+The [typed-requirements plan](plans/typed-requirements.md) defines the pending
+integration proof.
+
+| ID | Added | Requirement | For whom | Why | Related docs |
+| --- | --- | --- | --- | --- | --- |
+| BR-084 | 2026-11-13 | The reusable requirement catalog contains Skills and Professional Experience only. Education and Languages are direct job-local demands and never enter catalog matching or achievement-wording authoring. Personal traits, certifications/licenses, job conditions and detailed tenure analysis are excluded; structured certification support remains separate in #1476. | Job seekers | Preserve meaning and evidence boundaries without turning every source sentence into a weighted demand. | [Scoring](architecture/scoring.md#typed-requirements-and-permitted-evidence), [library](user/requirements-library.md) |
+| BR-085 | 2026-11-13 | Skills may use structured Skills and factual roles/achievements; Professional Experience uses factual roles/achievements; Education uses Education records or professional experience only for an explicitly offered equivalent-experience route, recorded without asserting a degree; Languages uses structured Language / Proficiency records only. The model decides meaning/support within these permitted sections and code validates category/ID/revision/citation fences. | Job seekers | Keep qualification tied to the appropriate canonical facts. | [Scoring](user/scoring-and-employer-analysis.md#how-the-score-is-calculated) |
+| BR-086 | 2026-11-13 | A source-bound model language decision precedes extraction. Non-English postings are skipped without translation or a zero score. Extraction preserves original occurrence meaning, verbatim evidence, source notes, meaningful alternatives and unresolved ambiguity without importance weights, mandatory labels or an item for every task. | Job seekers | Report unsupported language honestly and preserve what the posting actually says. | [Typed API](api/jobs-and-materials.md#typed-job-requirements) |
+| BR-087 | 2026-11-13 | Current section-backed support creates no achievement-wording gap. Reuse approved expressions; new wording requires an actual unsupported expression need and factual achievement support. One expression may serve multiple requirements, and stylistic variation does not justify rewriting covered content. | Job seekers | Avoid unnecessary model work and preserve accepted wording. | [wording library](user/candidate-profile.md#approved-wording-library), [tailoring](architecture/tailoring.md) |
+| BR-088 | 2026-11-13 | Profile provides stable-ID authored Language / Proficiency entries through the normal validated autosave flow. Baseline, Plate and supported text/PDF/DOCX/locale exports retain them; existing four-section templates remain usable, and an empty default creates no factual revision or content deletion. | Job seekers | Preserve structured language evidence and complete baseline documents. | [Profile](user/candidate-profile.md), [Profile API](api/profile-and-settings.md#candidate-profile) |
+| TR-052 | 2026-11-13 | New requirement snapshots, occurrences, assessments, scores, operations, model identities and publication/currentness guards carry requirements-v2. Missing versions are legacy. Existing SQL schema strings remain byte-identical, new canonical IDs are namespaced, and the active catalog starts empty without promoting old meanings. Legacy accepted rows, job ordering and accepted bytes remain retained; incompatible operation replay/resumption is refused and only a successful refresh advances accepted pointers. | Maintainers and job seekers | Prevent mixed-generation authority while preserving history and recovery. | [Generation](architecture/scoring.md#generation-history-and-rollout) |
+| TR-053 | 2026-11-13 | Before live typed-requirement rollout, stop old writers and take a verified consistent workspace backup. After new-generation writes, rollback restores that backup with compatible application/workflow state; installing an older binary alone is insufficient. Development and QA use owned synthetic workspaces and authorize no real-user rollout or reset. | Maintainers and job seekers | Keep rollback concrete and preserve accepted data. | [Upgrade boundary](user/data-and-safety.md#typed-requirements-upgrade), [QA](local-reliability-qa.md) |
 
 ## Semantic Determination Requirement
 

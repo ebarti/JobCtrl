@@ -26,6 +26,7 @@ integrated parity.
 
 **Product strategy & repository shape**
 
+- [Requirement-Led Current Wording And Proposed Revisions](#_2026-11-11-requirement-led-current-wording-and-proposed-revisions) · 2026-11-11
 - [Python Modular Application And Approved-Wording Composition](#_2026-11-06-python-modular-application-and-approved-wording-composition) · 2026-11-06
 
 - [Local-First Before SaaS Hardening](#_2026-05-01-local-first-before-saas-hardening) · 2026-05-01
@@ -45,6 +46,7 @@ integrated parity.
 
 **Backend domain model (DDD + hexagonal)**
 
+- [Bounded Cold-Search Cohort Preparation](#_2026-11-17-bounded-cold-search-cohort-preparation) · 2026-11-17
 - [DDD + Hexagonal Architecture Adopted](#_2026-05-06-ddd-hexagonal-architecture-adopted) · 2026-05-06
 - [Per-Aggregate Repositories](#_2026-05-06-per-aggregate-repositories) · 2026-05-06
 - [In-Process EventPublisher + Read-Model Projections](#_2026-05-06-in-process-eventpublisher-read-model-projections) · 2026-05-06
@@ -87,6 +89,7 @@ integrated parity.
 
 **Discovery & compensation**
 
+- [Saved role targets govern discovery admission](#_2026-11-19-saved-role-targets-govern-discovery-admission) · 2026-11-19
 - [Compensation Is Warning-Only Evidence From Reported Company-Role Observations](#_2026-06-20-compensation-is-warning-only-evidence-from-reported-company-role-observations) · 2026-06-20
 - [Cross-Source Deduplication By Content Identity](#_2026-07-02-cross-source-deduplication-by-content-identity) · 2026-07-02
 - [Caller-Owned Search Units Make JobStreaming Resumable](#_2026-07-17-caller-owned-search-units-make-jobstreaming-resumable) · 2026-07-17
@@ -999,7 +1002,10 @@ Amended 2026-10-07 by [Semantic Judgments Are LLM Determinations](#_2026-10-07-s
 
 ## 2026-06-15: Requirement-Fit Ledger — Scores Resolve From Weighted Requirement Fit
 
-Status: accepted
+Status: historical arithmetic, superseded for the current source contract by
+[Typed Requirements and Equal-Item Fit](#typed-requirements-v2). Historical
+accepted reports retain their recorded formula and bytes. The original decision
+and subsequent amendments remain below for provenance.
 
 Amended (2026-11-03): explicit re-tailoring may run with a stale score and never
 implicitly requests re-scoring. Manual score corrections carry the existing
@@ -2260,6 +2266,32 @@ Cites: `docs/architecture/frontend/patterns.md`;
 
 Status: accepted
 
+Amended 2026-11-12 for the current Python implementation and pinned JobStreaming
+0.0.5: new plans isolate each selected board into its own immutable unit. Request
+adaptation retains authored settings, a run-frozen age reference and conservative
+publication-date admission receipts. Terminal source failures and fulfilled
+bounded units are read from canonical storage when settling a resumed run;
+an exhausted shared job budget must not erase failures or imply upstream
+completion. Existing running units may settle as `budget_exhausted`, while
+unstarted or scoped-out sources do not count as completed. See the
+[Discovery owner](../workers/automation/src/jobctrl/features/discovery/README.md)
+for exact source restrictions and precision rules. The historical migration
+decision below retains its original dependency version.
+
+Amended 2026-11-16: newly admitted requests freeze
+`sourceFetchPolicy=source-native-v1`. Their SDK requests use
+`results_wanted=None`, preserving connector-native page volume and bounded
+pagination; legacy `resultsPerSite` inputs cannot cap new acquisition. Unmarked
+admitted requests keep their original finite units and fingerprints. Discovery
+requires explicit SDK support rather than substituting an arbitrary large count.
+The transaction committing the last allowed new job also determines that the
+shared quota is full. Its receipt is acknowledged before acquisition stops;
+other families cannot admit beyond that transaction boundary. Persist
+`budget_exhaustion` separately from user cancellation and typed provider
+termination. Source completion reasons commit before their acknowledgements;
+page/provider limits and unknown termination never establish source exhaustion.
+Authentication, source intent, pacing and provider safety bounds remain intact.
+
 Decision: replace the `python-jobspy` provider with pinned JobStreaming 0.0.2,
 but keep execution reliability in JobCtrl. For Temporal-backed broad-board
 discovery, JobCtrl persists one immutable query/location/board unit under the
@@ -2672,6 +2704,11 @@ focus emulation from native visibility proof.
 
 ## 2026-10-04: Persist Bounded Saved-Posting Availability Separately
 
+**November 2026 amendment.** Saved postings use manual availability checks.
+Job Detail warns when a confirmation is 24 hours old. Periodic sweeps, catch-up
+and automated retries described in the original decision below are superseded.
+Scheduled discovery of new jobs and approval checks have separate contracts.
+
 Status: accepted
 
 Decision: Enrichment owns recurring and explicit posting observations in the
@@ -3013,6 +3050,10 @@ change source access policy or imply that a denied request will be accepted.
 
 ## 2026-10-23: Profile Saves Do Not Admit Scoring
 
+Refined by [Full Catalog Matching and Manual Affected-Match Refresh](#_2026-11-10-full-catalog-matching-and-manual-affected-match-refresh).
+The per-job significance step below is historical; the current refresh uses
+one complete-catalog impact decision and shared requirement assessments.
+
 Profile edits persist a version and audit event without starting Score or material
 preparation. Explicit score refresh first uses a strict source-bound LLM
 determination to assess changed-profile significance for the selected job.
@@ -3163,6 +3204,11 @@ automatically downgrade the workspace. See
 
 Status: accepted for implementation; integrated delivery and verification pending.
 
+The weighted composition clause below is superseded by
+[Typed Requirements and Equal-Item Fit](#typed-requirements-v2), which uses one
+policy point per eligible canonical requirement. The original transition
+and full-baseline ownership contract remain historical context.
+
 **Decision.** Replace the split business backend with a single Python modular
 application. HTTP, CLI and the durable worker call the same application actions
 and canonical writers. Explicit composition injects small public ports between
@@ -3222,3 +3268,527 @@ Moving files or declaring routes alone is not delivery. The accepted
 [foundation contract](plans/2026-11-06-python-contracts.md) record the
 workstream interfaces and acceptance gates. No real-user reset, release or
 deployment follows from this decision.
+
+## 2026-11-10: Full Catalog Matching and Manual Affected-Match Refresh
+
+**Decision.** At the current product scale, Requirements sends every incoming
+qualified requirement and the entire canonical catalog in one source-bound
+matching request after extraction. Stable IDs, revisions, definitions, scopes
+and qualifiers remain explicit. That response identifies equivalent existing
+meanings, new meanings or uncertainty, including equivalence inside the incoming
+batch. Search indexes serve browsing only; retrieval subsets, chunk/widen loops
+and a separate novelty judge do not belong to this path. A complete input or
+valid complete response that cannot be processed is refused without truncation
+or fallback. Catalog and posting changes fence publication.
+
+Profile and requirement saves record changes without starting model work.
+Post-edit intelligence refresh is an explicit Fit-owned action over saved
+inputs. Its input stamp, complete catalog, source and approved-wording versions,
+explicit job selection and work limits are fixed. One source-bound impact
+decision considers the full catalog, prior assessments and changed evidence,
+including new support for requirements previously missing or unlinked. Only
+affected requirements receive new qualification. Unaffected authority retains
+its original semantic receipt with a recorded current-source revalidation;
+jobs sharing a qualified requirement reuse that authority.
+
+Current requirement/achievement/approved-wording bindings are direct reuse.
+Expression gaps are collected by achievement with their relevant requirement
+set. Prefer approved wording reuse and a coherent consolidation before adding
+another maintained alternative. New text requires its exact sources, coverage
+and remaining gaps to be available for explicit Profile review. A rejected or
+deferred proposal remains a retained decision. Factual qualification and fit
+are independent of whether approved text already expresses the evidence.
+
+Admission prevents overlapping refreshes for one profile, including queued
+actions. Operation identity, finite call/item/deadline limits and completed work
+survive worker retries. Lane and spend admission remains in the model gateway;
+work limits do not imply a guaranteed maximum external monetary charge. No
+operation may expand itself after an edit, repeat until every gap is covered,
+or be scheduled by its own coverage/proposal writes or a subsequent approval.
+Stale input, refusal, cancellation and failure retain previously accepted
+records. Initial assessment of a newly admitted job remains part of its
+authorized preparation task; it cannot trigger retroactive profile-wide work.
+
+**Scope.** This refines the 2026-10-23 save policy and supersedes catalog paging,
+per-requirement post-edit impact calls and per-requirement wording generation.
+It leaves the current full-baseline composition rule intact. Whether a resume
+may use multiple occurrences of one achievement remains a separate open design
+question in [#1129](https://github.com/ebarti/JobCtrl/issues/1129).
+
+**Owning references.** [Scoring architecture](architecture/scoring.md),
+[Profile workflow](user/candidate-profile.md),
+[Fit API](../workers/automation/src/jobctrl/features/fit/README.md), and
+[auditability checks](developer/qa/regression-catalog.md#auditability-checks).
+[#1464](https://github.com/ebarti/JobCtrl/issues/1464) tracks implementation and
+integrated verification; this decision alone does not establish released behavior.
+
+## 2026-11-11: Requirement-Led Current Wording And Proposed Revisions
+
+**Decision.** Maintain one current wording for an achievement that serves one
+canonical requirement. An edit proposes a revision and retains exact earlier
+text, source pins, approval and history. Do not maintain another wording merely
+for a different editorial focus or presentation label. Additional maintained
+wording requires distinct requirement coverage that cannot reuse or consolidate
+the existing expression. Its label names the canonical requirement or
+requirements it serves, rather than an arbitrary alternative number.
+
+Profile owns the proposed revision, lineage and exact approval. Fit owns the
+recorded requirement/achievement/current-wording relationship and semantic
+coverage authority. Requirements owns the definition, scope, qualifiers and
+revision. User-authored intended-requirement IDs and manual associations remain
+unassessed intent; exact wording approval alone cannot establish coverage.
+Meaning, support and coverage continue to require source-bound determinations
+with persisted provenance, structural source/version fences and no lexical
+fallback.
+
+A current wording may serve several requirements. Preserve prior alternatives
+and rejected/deferred proposals as history instead of flattening them into one
+mutable record or silently deleting them. A proposed revision is not current
+until the owning exact review and recorded coverage/current-assignment rules
+permit it. Failed refresh, authoring, review or rendering preserves the last
+accepted wording and resume bytes. Ordinary saves, approvals and reads launch no
+model work; the explicit bounded affected-match refresh remains the admission
+path.
+
+**Scope and precedence.** This is the owner's 11 November correction to the
+Original redesign. It supersedes the earlier private-preview treatment of
+independently maintained editorial alternatives. It refines the reuse and
+consolidation policy in the 10 November decision; it does not itself change the
+complete-baseline resume occurrence rule, authorize data deletion, transfer
+approval or choose a new global preferred wording. The existing composer keeps
+its documented cardinality until an explicit composition decision changes it.
+
+**Delivery evidence.** The [whole-product redesign ledger](plans/2026-11-11-original-app-redesign.md)
+tracks implementation and integrated verification. This accepted contract alone
+establishes no current-wording migration result, provider quality, release or
+hosted deployment. See [Profile](user/candidate-profile.md#approved-wording-library),
+[Requirements Library](user/requirements-library.md) and
+[Fit/scoring ownership](architecture/scoring.md#requirements-library-and-user-intent).
+
+## 2026-11-13: Batch Missing Qualifications And Separate Exact Reuse From Publication
+
+**Decision.** Fit resolves the complete current requirement set against accepted
+person authority before inference. The reuse key remains Profile ID, canonical
+requirement ID/revision and the complete factual source/achievement fingerprint.
+All missing qualifications enter one source-bound batch with complete facts
+supplied once and one namespaced source per requirement. The exact requested
+IDs/revisions must appear once each, with independent source-valid decisions.
+All new assessment rows validate and publish atomically. Rows retain independent
+assessment identities and exact row fingerprints while sharing the immutable
+raw-batch receipt and its fingerprint. An all-current set makes no qualification
+call. No score arithmetic or provider/model/effort policy changes.
+
+Initial authorization is determined by the destination job's score history.
+A job with no prior score may reuse current authority and batch the remainder
+of its fixed requirement set, even when earlier shared qualifications predate
+saved Profile changes. Compare captured prior assessment heads before atomic
+publication and preserve all history. No other job's score is rewritten. A
+previously scored job needing post-edit qualification still requires explicit
+manual affected-match refresh; saves and reads admit no work. This preserves
+the 10 November distinction between initial job preparation and retroactive
+Profile-wide work.
+
+Requirements extraction and Jobs role analysis identify semantic content by the
+complete exact text, separate from destination Job/posting identity. Catalog
+matching also binds the entire incoming inventory and current catalog. Exact
+model-call reuse freezes provider/model, effective reasoning effort and
+allowlisted nonsecret configuration for both fingerprint lookup and invocation;
+prompt/schema, complete sources and context remain part of that identity.
+Feature owners validate immutable succeeded receipts before reuse. The gateway
+does not impose a blanket result cache. A forced refresh has a new action-bound
+identity; retries of the same action can reuse its settled result.
+
+Each destination records an explicit semantic-source-to-posting binding and
+passes its original publication/version/cancellation guards. Reuse cannot merge
+openings, fabricate an observation or rewrite a shared provider receipt.
+Gateway schema success alone is not owner acceptance. Failed or invalid results
+preserve accepted artifacts; a separately admitted retry is distinct from a
+within-attempt repair loop. No lexical fallback, normalized-text similarity,
+truncation or automatic chunking establishes semantic identity or support.
+
+**Scope.** This refines the 10 November complete-catalog and manual-refresh
+decision. Explicit affected-match admission, full-catalog impact selection,
+fixed scope, call/item/deadline limits and durable checkpoints remain. Selected
+uncheckpointed qualification work uses one batch and one call reservation.
+Saves, reads and wording approvals start no work. Factual fit, exact approved
+wording coverage and resume acceptance remain independent.
+
+**Owning references and evidence.** [Scoring architecture](architecture/scoring.md),
+[Fit](../workers/automation/src/jobctrl/features/fit/README.md#batched-qualification-authority),
+[Requirements](../workers/automation/src/jobctrl/features/requirements/README.md#exact-result-reuse-and-posting-publication),
+[Jobs](../workers/automation/src/jobctrl/features/jobs/README.md#exact-role-analysis-reuse)
+and the [QA ledger](developer/qa/python-journeys.md). Issue
+[#1473](https://github.com/ebarti/JobCtrl/issues/1473) tracks implementation and
+operational improvement. This contract alone establishes no passing journey,
+new timing, real-provider judgment quality, installed release or deployment.
+
+
+<a id="typed-requirements-v2"></a>
+
+## 2026-11-13: Typed Requirements and Equal-Item Fit
+
+Status: accepted for implementation; integrated journeys and live rollout are
+not established by this decision. [#1477](https://github.com/ebarti/JobCtrl/issues/1477)
+is stacked above [#1475](https://github.com/ebarti/JobCtrl/issues/1475).
+
+**Decision.** The `requirements-v2` reusable catalog contains Skills and
+Professional Experience only. Education and Languages are direct job-local
+demands; they never enter catalog matching, achievement links or wording
+authoring. Personal traits, certifications and licenses, job conditions and
+detailed years-of-experience analysis are excluded from this iteration.
+Structured certification support remains separate in
+[#1476](https://github.com/ebarti/JobCtrl/issues/1476).
+
+A source-bound model language decision precedes extraction. Non-English
+postings are skipped without translation or a zero fit score. Extraction retains
+exact excerpts, original occurrence meaning, source-bound notes, meaningful
+alternatives and unresolved ambiguity without generated importance weights,
+mandatory labels or a demand for every task. Canonical rows carry category,
+name and definition. Each occurrence retains its original meaning/evidence
+alongside its binding. The complete incoming Skills/Professional Experience
+batch and entire active catalog enter one matching determination. Ordinary
+facets of one competence may reuse a meaning; materially different capabilities
+remain distinct. Partial, invalid or uncertain decisions cannot authorize
+novelty. There is no lexical fallback.
+
+Fit reuses valid current authority, then qualifies the entire missing set across
+all four categories in one source-bound batch. Skills may cite structured Skills
+and factual roles/achievements. Professional Experience may cite factual
+roles/achievements. Education uses Education records, or professional experience
+only when the posting explicitly offers that alternative; the route is recorded
+without asserting a degree. Languages uses structured Language / Proficiency
+records only. Code validates permitted evidence categories, exact IDs, source
+revisions and citations; the model owns support, equivalence and proficiency.
+Direct demands bind their job and exact posting revision and cannot reuse
+another job's assessment.
+
+A current section-backed match creates no achievement-wording gap. Reuse
+existing approved expression. New achievement wording requires an actual
+unsupported expression need and factual achievement support; stylistic
+variation cannot justify rewriting covered content. One wording may serve
+several requirements. Tailoring retains all baseline sections, roles and
+achievements and changes only approved achievement wording. Each eligible
+canonical requirement receives one composition policy point, followed by
+complementary achievement depth and stable ties. That coefficient is internal
+policy, never importance metadata attributed to the posting.
+
+`requirement-fit-v3-equal` assigns one item to each distinct canonical requirement
+and each distinct job-local demand. Repeated canonical occurrences do not
+multiply points, and an alternatives group is one demand. Credits are direct
+`1`, strong `0.85`, transferable `0.6` and missing/blocked `0`. For `N > 0`,
+`score = clamp(1 + floor(9 * sum(credits) / N + 0.5), 1, 10)`; for `N = 0`, no
+score is calculated. Persist formula version, assessed count and qualification
+coverage. No source weights, must-have multiplier, blocker cap or invented
+source priority applies; source notes do not affect arithmetic. Confidence and
+downstream eligibility remain separate.
+
+Profile owns stable-ID authored Language / Proficiency rows in
+`resume.language_entries`. They use the existing validated autosave flow and
+remain in baseline rendering, Plate and supported text/PDF/DOCX/locale exports.
+Existing four-section templates remain valid. An empty default does not create
+a factual revision or remove earlier content. No Skills group or prose source
+is inferred into a language record.
+
+Post-edit refresh remains manually admitted and bounded. Saves, approvals,
+reads and the operation's writes start no cascades. The operation freezes the
+complete active catalog, Profile and wording versions, selected jobs' direct
+demands and finite limits. Reuse valid current assessments; stale inputs refuse
+the captured work rather than expanding it. Factual publication, wording
+proposals and document acceptance remain separate.
+
+New documents and all dependent model identities, operations and publication/
+currentness guards carry `contract_version: requirements-v2`. Missing versions
+are legacy. Existing SQL schema strings stay byte-identical; new canonical IDs
+are namespaced and the active catalog starts empty. Old fields that look
+compatible cannot promote a meaning into this generation. Preserve historical
+accepted rows, job revision ordering and accepted resume bytes, while old
+results require refresh and cannot prove current ranking or composition
+readiness. Reject incompatible operation resumption/replay. Replacement
+accepted pointers publish only on success, with prior accepted state retained
+on failure, cancellation or stale input.
+
+Operational rollout stops old writers and takes a verified consistent workspace
+backup first. After new-generation writes, rollback restores that backup with
+compatible workflow/application state; installing an older binary alone is
+unsafe. No live rollout occurred as part of this implementation decision.
+
+**Scope and precedence.** This replaces the current source arithmetic from the
+15 June / 20 October requirement-fit decisions and the weighted composition
+clause of the 6 November decision. It refines the 10 November complete-catalog
+and manual-refresh decision and the 13 November batch/exact-reuse decision with
+typed evidence and generation fences. Earlier accepted records retain their
+original policy, provenance and artifact bytes. Plans and archived decisions
+remain historical evidence.
+
+**Owning references and proof.** [Typed-requirements plan](plans/typed-requirements.md),
+[Scoring architecture](architecture/scoring.md),
+[Requirements library](user/requirements-library.md),
+[Profile](user/candidate-profile.md), [typed API](api/jobs-and-materials.md#typed-job-requirements)
+and [QA](local-reliability-qa.md). Completion requires actual owned synthetic
+upgrade, failure/concurrency, language/Plate/export and four-category application
+journeys; this contract alone establishes no passing result, real-provider
+judgment quality, installed release or deployment.
+
+<a id="capability-consolidation-and-source-demand"></a>
+
+## 2026-11-15: Mandatory Capability Consolidation and Source-Demand Authority
+
+Status: accepted correction, tracked in
+[#1488](https://github.com/ebarti/JobCtrl/issues/1488). Implementation, application
+verification and real-provider interpretation remain separate evidence.
+
+**Problem.** Copying a posting's complete extracted definition into a canonical
+identity lets ordinary phases, audiences, checks and outcomes become separate
+skills. Comparing only incoming entries with the catalog leaves earlier splits
+intact. These extra identities affect equal-item Fit and resume selection, so
+removing repeated rows in a reader cannot repair the defect. Conversely, merging
+their definitions into a global union can impose one posting's genuine demands
+on another; dropping those demands weakens the assessment.
+
+**Decision.** Requirements owns one reusable capability identity and a separate
+source-bound normalized demand for each job/capability. Original extraction and
+posting evidence remain immutable. Ordinary facets share capability identity;
+independently demanded expertise and named technologies remain distinct. Technical
+practice remains a Skill even when the posting calls it experience. There is no
+target catalog size or name-based merge rule.
+
+Original posting evidence outranks fallible derived definitions. Policy
+`requirements-capability-demand-v2` records an explicit correction witness when
+a retained historical member attributes an unsupported scope or relationship.
+This bounded correction requires no accepted occurrence of that member,
+including on deleted jobs; an exact prior claim, its own original source
+authority, its retained group and a valid group preserving the separately
+established demand remain pinned. The witness and receipt survive in
+reconciliation and root-revision provenance. It cannot split current occurrences,
+create a one-to-many alias, invent an unspecified subtype or remove a genuine
+job demand. Cases needing a broader source correction remain explicit review.
+
+An explicit repair and every semantic ingestion/correction path use the same
+mandatory whole-catalog consolidation gate. One determination sees the complete
+retained current-generation catalog, including hidden meanings, their original
+source authority, incoming entries and accepted occurrence bindings. Its result
+must exhaustively partition capabilities and account for every job occurrence in
+one combined demand per job/capability. Equivalent demands can share their exact
+normalized signature; materially different demands cannot share qualification
+merely because their capability is the same. An unchanged accepted capability or
+demand is explicitly reused rather than gratuitously rewritten.
+
+Code validates complete partitions, exact source citations, recorded IDs,
+revisions and the captured catalog/snapshot/posting identities. It chooses a
+stable surviving ID after the model decides the group. This selection is an
+identity rule, not a semantic classifier. Uncertain, incomplete, unsupported,
+oversized, cancelled or stale work publishes no partial repair and preserves
+accepted state. No lexical fallback, automatic chunking, per-requirement call
+fanout or retry-until-success loop is permitted.
+
+Publication appends capability revisions, explicit aliases, a reconciliation
+receipt/certificate and replacement Requirements snapshots atomically. Historical
+meaning/occurrence IDs and accepted artifacts remain available. Exact historical
+reads do not silently follow an alias or relabel an assessment. Current
+navigation can follow a recorded alias. A separately initialized schema extension
+stores reconciliation authority; previously registered schema strings are not
+edited. The normalization policy participates in action, cache and currentness
+bindings, so an old accepted snapshot cannot masquerade as normalized authority.
+
+**Citation selection.** Normalization's citation transport has its own explicit
+prompt/wire version. It does not change the capability/demand semantic policy.
+The single determination selects supplied source-segment references rather than
+generating evidence text. The complete sources and structural segment catalog
+are part of the fingerprinted input. Locations and lossless subdivisions follow
+source format and size boundaries; they do not classify meaning or omit text.
+
+The raw selection remains unchanged in the gateway receipt and feature cache.
+A separate deterministic binding derives the existing quote display from exact
+same-source segments and records binder version, selection fingerprint,
+segment-catalog fingerprint and derived-result fingerprint. It cannot alter a
+semantic decision, join fields or repair a paraphrased quote. Required-source,
+allowed-source, correction-witness, complete-partition and publication fences
+remain. Unknown, foreign or incompatible references refuse publication. A failed
+literal-citation receipt remains historical; it is not edited, partially accepted
+or repaired through another model call within the same operation.
+
+**Exhaustive terminal-group assignments.** The v5 provider response schema requires
+one property for every supplied member ID and occurrence ID. Each slot selects a
+pre-offered independent capability/demand handle or explicit unresolved meaning.
+Required group maps contain terminal semantic definitions for used handles and
+null for unused handles. No group can reference another group. This replaces the
+v4 recursive root/same-as wire, which permitted schema-valid all-alias cycles with
+no normalized definitions. Such v4 results remain rejected; code never chooses a
+root, collapses cycles or manufactures semantic authority.
+
+The model owns all memberships, normalized prose, citations and reuse choices.
+The binder only joins selected handles to recorded inputs. Used-but-undefined or
+unused-defined groups, demands across capabilities and conflicting demands for one
+job/capability refuse publication. Required properties guarantee accounting, not
+semantic correctness. The one-determination operation budget, complete source
+inventory, citation/reuse validators and atomic publication fences remain.
+
+Prompt v5, partition binder v2 and report envelope v3 separate this transport from
+v4. Explicit historical dispatch retains v4 graph validation and older envelopes;
+old accepted artifacts remain readable and unchanged. Incompatible durable action
+replay is refused. Raw receipts remain immutable; raw, intermediate and exact-quote
+fingerprints stay distinct. Semantic policy v2, demand fingerprints and SQL schemas
+do not change, so accepted catalog certificates are not staled by the new wire.
+
+**Role-specific citation references.** V6 retains the terminal-group shape and
+uses finite offered source-ID enums matching the existing citation authority.
+Demand evidence may select inventory, occurrence sources and eligible posting
+sources, with the final bound-group subset checked by the owner. Supplied accepted
+demand-definition documents support exact reuse selection, not original demand
+truth. They remain in the complete input and are excluded from demand citations.
+Other citation fields retain their broader source vocabulary and mandatory-source
+or correction-witness checks. Source roles follow recorded IDs/revisions; no prose
+classification is introduced. Exact source/segment binding is unchanged.
+
+This closes a mismatch in v5: the global citation vocabulary allowed real supplied
+prior definitions as extra demand evidence while publication correctly rejected
+their evidence role. The fix constrains the offered protocol; it neither strips
+citations from raw authority nor widens the validator. Exact v5 schemas remain in
+explicit historical dispatch. Prompt/schema v6 changes new request/action identity;
+partition binder v2, citation binder v1, envelope v3, semantic v2 and SQL remain.
+
+**Fit and wording.** Qualification reuse binds Profile, capability ID/revision,
+normalized demand, permitted factual sources and qualification-policy/prompt
+version. The existing complete missing-item batch handles all applicable demands;
+there is no second scoring layer or extra per-item inference. One job counts a
+capability once even when several source occurrences express it. Direct
+Education and Languages retain their job-local contracts.
+
+The library has one capability row and exposes demand-specific support. It never
+chooses the strongest or latest sibling assessment as global authority. Exact
+coverage binds the applicable demand and assessment as well as approved text.
+One maintained wording head per achievement/capability can retain several exact
+demand bindings under the same approved variant. An uncovered sibling stays a
+gap; it neither inherits coverage nor invalidates an unchanged sibling's exact
+binding. No alias transfers approval, qualification or coverage.
+
+Changed authority makes affected Fit and composition results historical. Updating
+them remains an explicitly admitted, finite manual operation. Catalog repair,
+Profile saves, reads, approvals and their own writes never launch downstream
+work. The last accepted resume bytes remain available on failure or staleness.
+
+**Proof.** Exercise existing-only repair, hidden retained members, source-demand
+reuse/separation, one-item scoring, exact wording bindings, predecessor upgrade,
+complete-output refusal, concurrent source/catalog changes, cancellation and
+recovery through real application entrypoints in owned synthetic workspaces.
+Controlled external choices establish structural/authority behavior; a separate
+configured-provider run is needed to assess the reported semantic failure.
+Neither schema validation nor a passing browser suite proves semantic infallibility.
+
+## 2026-11-17: Resolve Exact Fit Authority Before Impact Inference
+
+Explicit manual refresh still freezes and accounts for the complete active
+reusable catalog and selected jobs' direct demands. Resolve each exact current
+qualification unchanged, and mark items with the existing mandatory dependency
+predicate for reassessment, before constructing model sources. One source-bound
+impact determination covers only genuinely unresolved changed-fact items with
+all current facts and each included item's own prior baseline. This refines the
+10/13 November full-catalog policy: complete accounting does not require a model
+to repeat already fixed work decisions. No lexical rule, omission, truncation,
+chunking, relaxed input guard or semantic fallback is introduced.
+
+Keep fixed structural authority distinct from the raw model-subset receipt and
+the composed complete partition. Recompute the frozen predicates, exact binding
+partition, request/receipt joins and fingerprints on checkpoint recovery before
+qualification. All selected affected items remain one qualification batch, and
+publication retains the complete source/head/cancellation fences and unchanged
+unrelated scores.
+
+Pin impact scope and qualification transport independently per operation. Older
+operations retain the exact original impact call key. Reconstruct both historical
+inline and shared-scope qualification keys from frozen inputs when recovering an
+unpinned call-only operation: exactly one retained match replays its completed
+raw result or retains an unsettled-call refusal. Mismatched/conflicting calls
+cannot spend another allowance. No call means atomically pinning the current
+wire before reservation. Do not infer a wire from missing derived provenance or
+attach a scope binding to an inline result. Qualification policy/currentness,
+accepted receipts, operation counters and existing batch checkpoints remain
+unchanged.
+
+The [scoring reference](architecture/scoring.md#profile-edits-and-explicit-refresh),
+[Fit owner](../workers/automation/src/jobctrl/features/fit/README.md#manual-bounded-refresh)
+and [QA ledger](developer/qa/python-journeys.md) own implementation and observed
+proof. This decision alone does not establish real-provider recovery or hosted
+qualification of a future head.
+
+## 2026-11-17: Bounded Cold-Search Cohort Preparation
+
+**Decision.** Treat a fixed cohort of up to ten newly discovered jobs as one
+Requirements and qualification scope. Larger cohorts retain per-job
+preparation. Persist the route with the discovered target IDs before admitting
+assessment work. Per-job enrichment, role context and
+source-bound extraction remain independently inspectable. One normalization
+determination receives every incoming cohort member and the complete retained
+catalog; it publishes all affected Requirements snapshots atomically. Incoming
+member identities include their job/extraction/local identity so two jobs' local
+`r1` values cannot collide. Direct-only and unsupported-language results retain
+their own explicit outcomes without fabricated matching receipts.
+
+Freeze the final accepted demands, Profile/guidance, assessment heads and score
+heads after the Requirements producer barrier. Reuse exact current person
+authority and submit the distinct missing qualification bindings together.
+Publish new qualifications atomically under every captured source/head guard.
+Individual score commits then use only those frozen accepted assessments and
+existing deterministic arithmetic. They must not call the ordinary recapturing
+assessment path: changed or missing authority fails stale without another
+model call. Valid earlier score commits remain accepted if a later job fails;
+the outer action reports partial work truthfully.
+
+Persist the new execution policy only during first action admission, using the
+same transaction connection as the action insertion. Idempotent existing-action
+lookup returns before that hook. Pre-stored pending preparations explicitly
+promote to running and can finalize cancellation. Old queued/running requests
+and their retries retain their prior policy, operation IDs and request wires;
+deploying new code does not authorize new paid attempts.
+
+Durable cohort manifests distinguish staged extraction, frozen model inputs,
+completed raw receipts, domain publication and per-job score publication.
+Recovery checks accepted owner publication before recapturing inputs and
+retains the exact original request/call identity. Completed calls recover;
+unsettled, mismatched or conflicting calls refuse without another allowance.
+Transport compaction may share exact IDs/citations through explicit mappings;
+raw model selections and expanded owner decisions retain separate provenance,
+and the existing complete-partition/category/source validators still apply.
+
+Independent stages may overlap across distinct model lanes with bounded
+workers, ordered inputs and retained prerequisite/claim/cancellation guards.
+Saved lane capacities, selected model/effort, payload limits and live spend
+admission remain unchanged. Finite daily spending caps retain serial model
+execution. This does not parallelize durable source consumers, introduce a
+semantic repair loop, remove a source or move required work after completion.
+
+**Reason.** Per-requirement batching alone left repeated full-catalog
+normalization and per-job qualification on the fresh-search critical path.
+Whole-job serialization also exceeded the actual dependency between different
+lanes. A zero-call unchanged-cohort result cannot prove this path's speed.
+
+**Proof and limits.** Measure a public fresh five-new-job search using the real
+configured Profile/provider after owned application failure/recovery/race
+journeys pass. Include acquisition, every required stage, failures/recovery
+gaps and final canonical currentness on the clock; report actual new/reused
+qualification counts and model receipts. Do not describe one operational
+sample as a universal latency guarantee. The [concurrency reference](architecture/pipeline/concurrency.md#new-search-cohort-preparation),
+[Requirements owner](../workers/automation/src/jobctrl/features/requirements/README.md),
+[Fit owner](../workers/automation/src/jobctrl/features/fit/README.md) and
+[QA ledger](developer/qa/python-journeys.md) own the implementation and observed
+evidence for [#1473](https://github.com/ebarti/JobCtrl/issues/1473).
+
+## 2026-11-19: Saved role targets govern discovery admission
+
+New searches that use a saved target plan freeze a role admission policy.
+Boards can return keyword hits outside the role a person asked for, and corporate
+feeds can list several unrelated functions. Before consuming a new-job place,
+Discovery requires a typed role determination supported by the posting
+description and the user's authored role criteria. A native detail fetch can
+complete a board card. Missing evidence, an unresolved role and a confirmed
+mismatch are separate outcomes. Candidate career history enters the subsequent
+person Fit workflow. The frozen request, exact sources and model receipt bind
+the decision across worker recovery. Historical run admission, manual job
+capture and explicit exploratory query overrides retain their original scopes.
+
+
+## 2026-11-20 — JobStreaming owns automatic discovery
+
+**Accepted.** JobStreaming supplies the list of boards, their native query operations, pagination and posting details. JobCtrl stores the user’s selections, per-board state, run checkpoints and admitted jobs. A saved target search uses the source-bound role determination before admission and sends new jobs to person Fit.
+
+A workspace upgrade keeps its previous jobs, run receipts and board selections. An unfinished request that selected an active employer feed from an earlier version reports the retired source and requires a new search. **Import posting URL** belongs to Jobs and uses its durable request receipt when model capacity is occupied. The browser extension supports user-initiated capture and form assistance.

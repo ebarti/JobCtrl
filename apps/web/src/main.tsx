@@ -39,6 +39,7 @@ import "./styles/redesign-route-gaps.css";
 import "./styles/redesign-route-workspaces.css";
 import "./styles/redesign-decision-workflows.css";
 import "./styles/redesign-operational.css";
+import "./styles/job-workspace.css";
 import "./styles/visual-roles.css";
 
 const queryClient = createQueryClient();
@@ -104,6 +105,7 @@ async function mountApplication(consentClient?: DemoConsentClient): Promise<void
       mode: appMode,
       apiBaseUrl: import.meta.env.VITE_JOBCTRL_API_BASE_URL ?? "",
       ...(demoTelemetry ? { demoTelemetry } : {}),
+      ...(appMode === "demo" ? { onDemoWorkspaceReset: () => queryClient.clear() } : {}),
     });
   } catch {
     if (consentClient) {

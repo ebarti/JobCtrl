@@ -1,5 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ModelReceiptSchema } from "@jobctrl/contracts";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { z } from "zod";
 
@@ -7,25 +6,18 @@ import { createUnconfirmedWriteError } from "../../../shared/lib/unconfirmed-wri
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { Button } from "../../../shared/ui/button.js";
+import { DisclosureSection } from "../../../shared/ui/disclosure-section.js";
 import { discoveryKeys } from "../queryKeys.js";
 import { useDiscoveryActionRecovery } from "../hooks/useDiscoveryActionRecovery.js";
+import { useDiscoveryTargetPlanQuery } from "../hooks/useDiscoveryTargetPlanQuery.js";
 
-const Query = z.object({ query: z.string(), tier: z.number(), source_scope: z.array(z.string()),
-  authority: z.string().optional(), rationale: z.string().optional(),
-  citations: z.array(z.object({ source_id: z.string(), quote: z.string() }).passthrough()).optional() }).passthrough();
-const TargetPlan = z.object({ ok: z.literal(true), current: z.boolean(), accepted: z.object({
-  planId: z.string(), profileRevision: z.number(), profileFingerprint: z.string(), queries: z.array(Query),
-  locations: z.array(z.object({ location: z.string(), remote: z.boolean() }).passthrough()),
-  provenance: ModelReceiptSchema.nullable(), createdAt: z.string(),
-}).passthrough().nullable(), targets: z.record(z.string(), z.unknown()), profileRevision: z.number().int().positive().optional() }).passthrough();
 const RunReceipt = z.object({ runId: z.string().min(1), workflowId: z.string().min(1), status: z.string().min(1) });
 
-export function DiscoveryTargetPlan() {
+export function DiscoveryTargetPlan({ defaultOpen = true }: { readonly defaultOpen?: boolean } = {}) {
   const tenantId = useTenantId(); const { http } = usePorts(); const client = useQueryClient();
   const [runId, setRunId] = useState<string | null>(null);
   const recovery = useDiscoveryActionRecovery("discovery.refresh_targets");
-  const query = useQuery({ queryKey: discoveryKeys.targetPlan(tenantId),
-    queryFn: async () => TargetPlan.parse(await http.json<unknown>("GET", "/v1/discovery/target-search")) });
+  const query = useDiscoveryTargetPlanQuery();
   const refresh = useMutation({ mutationFn: async (profileRevision: number) => {
     const body = { force: true, expectedProfileVersion: profileRevision };
     const { requestId, databaseInstanceId } = await recovery.begin(body, profileRevision);
@@ -35,8 +27,7 @@ export function DiscoveryTargetPlan() {
   }, onSuccess: (result) => setRunId(result.runId), onSettled: () => { recovery.refresh(); void client.invalidateQueries({ queryKey: discoveryKeys.targetPlan(tenantId) }); } });
   const plan = query.data?.accepted;
   const status = recovery.status?.status;
-  return <section className="card full p-4" aria-label="Profile search plan">
-    <h2>Profile search plan</h2>
+  return <DisclosureSection className="discovery-target-plan" aria-label="Profile search plan" title="Profile search plan" defaultOpen={defaultOpen} description="Inspect the saved queries, locations and source provenance for your preferences.">
     <p>These queries use the target fields you saved. A query expands search recall; it does not establish job fit.</p>
     {query.error ? <p role="alert">Search plan could not be refreshed. {plan ? "The last loaded plan remains below." : ""}</p> : null}
     {refresh.error ? <p role="alert">Search plan refresh could not be confirmed: {refresh.error.message}.{plan ? " The previous plan remains available." : ""}</p> : null}
@@ -59,5 +50,5 @@ export function DiscoveryTargetPlan() {
       const revision = recovery.record?.sourceRevision ?? query.data?.profileRevision;
       if (revision) refresh.mutate(revision);
     }}>{refresh.isPending ? "Queueing refresh…" : recovery.record ? "Retry the same refresh request" : "Refresh search plan"}</Button>
-  </section>;
+  </DisclosureSection>;
 }

@@ -113,6 +113,42 @@ async function payload(sequence){
  return {buildId,out,payload};
 }
 async function install(release,{stage=false,commandEnv=env}={}){return run(installer,['--allow-unsigned-local','--home',runtime,'--descriptor-file',path.join(release.out,'descriptor.json'),'--signature-file',path.join(release.out,'descriptor.sig'),'--archive-file',path.join(release.out,'payload.zip'),'--json',...(stage?['--stage-only']:[])],{commandEnv});}
+async function verifyCurlReinstall(candidate) {
+  const directory = path.join(root, 'curl-reinstall');
+  const user = path.join(directory, 'user');
+  const store = path.join(directory, 'runtime');
+  const bin = path.join(user, '.local/bin');
+  const profile = path.join(user, '.zprofile');
+  const command = path.join(bin, 'jobctrl');
+  const contract = path.join(directory, 'local-fixture.contract');
+  const acquisition = path.join(store, 'acquisition.json');
+  const commandEnv = { ...env, HOME: user, SHELL: '/bin/zsh', JOBCTRL_RUNTIME_HOME: store, JOBCTRL_DIR: path.join(directory, 'workspace') };
+  await put(profile, '# User profile\n');
+  await put(contract, [
+    'MODE=local-fixture', 'PLATFORM=darwin-arm64', 'INSTALLER_VERSION=2.0.0',
+    'INSTALLER_URL=' + pathToFileURL(installer).href, 'INSTALLER_SHA256=' + digest(await readFile(installer)),
+    'DESCRIPTOR_FILE=' + path.join(candidate.out, 'descriptor.json'), 'SIGNATURE_FILE=' + path.join(candidate.out, 'descriptor.sig'),
+    'ARCHIVE_FILE=' + path.join(candidate.out, 'payload.zip'), '',
+  ].join('\n'));
+  const get = path.join(repo, 'scripts/get');
+  const args = ['--local-fixture-contract', contract];
+  await run(get, args, { commandEnv });
+  const before = await readFile(acquisition);
+  const initialProfile = await readFile(profile);
+  const target = await readlink(command);
+  assert.equal(JSON.parse(before).profile, profile);
+  await run('/bin/zsh', ['-c', 'source "$1"; shift; exec "$@"', 'test', profile, get, ...args], { commandEnv });
+  assert.deepEqual(await readFile(acquisition), before);
+  assert.deepEqual(await readFile(profile), initialProfile);
+  const refused = await run(get, [...args, '--bin-dir', path.join(directory, 'other')], { commandEnv, acceptFailure: true });
+  assert.notEqual(refused.code, 0);
+  assert.deepEqual(await readFile(acquisition), before);
+  assert.equal(await readlink(command), target);
+  await run(command, ['uninstall'], { commandEnv });
+  await assert.rejects(readlink(command), { code: 'ENOENT' });
+  assert.equal((await readFile(profile, 'utf8')).trim(), '# User profile');
+  passed('fresh-shell-reinstall-preserves-owned-exposure-until-uninstall');
+}
 async function stop(){const result=await run(selector,['stop'],{acceptFailure:true});assert.equal(result.code,0,result.stderr);for(const pid of await childPids())await dead(pid);}
 
 async function liveAuthority(){
@@ -172,7 +208,7 @@ async function lifecycle(first,second){
 async function legacyAdmission(first,candidate){
  const legacy=path.join(root,'legacy');await mkdir(legacy,{mode:0o700});
  await run(python,['-I','-B','-c',`import pathlib,sqlite3,sys
-p=pathlib.Path(sys.argv[1]);c=sqlite3.connect(p/'jobctrl.db');c.execute('CREATE TABLE legacy_profile(value TEXT)');c.execute("INSERT INTO legacy_profile VALUES ('owned source')");c.execute('PRAGMA user_version=15');c.commit();c.close();(p/'jobctrl.db').chmod(0o600)
+p=pathlib.Path(sys.argv[1]);c=sqlite3.connect(p/'jobctrl.db');c.execute('CREATE TABLE legacy_profile(value TEXT)');c.execute("INSERT INTO legacy_profile VALUES ('owned source')");c.execute('PRAGMA user_version=15');c.commit();c.close();(p/'jobctrl.db').chmod(0o644)
 c=sqlite3.connect(p/'temporal.db');c.execute('CREATE TABLE legacy_history(value TEXT)');c.commit();c.close();(p/'temporal.db').chmod(0o600)
 (p/'jobctrl.db-wal').write_bytes(b'owned legacy companion');(p/'config.json').write_text('owned synthetic source')`,legacy]);
  const before=await tree(legacy),activeBefore=await readFile(path.join(runtime,'active.json')),selectorBefore=await readFile(selector),journalBefore=await readFile(path.join(runtime,'transition.json'));
@@ -183,11 +219,26 @@ c=sqlite3.connect(p/'temporal.db');c.execute('CREATE TABLE legacy_history(value 
  assert.deepEqual(await readFile(path.join(runtime,'active.json')),activeBefore);assert.deepEqual(await readFile(selector),selectorBefore);assert.deepEqual(await readFile(path.join(runtime,'transition.json')),journalBefore);
  const refusedHome=path.join(root,'refused-legacy-install');
  const admission=await run(installer,['--allow-unsigned-local','--home',refusedHome,'--descriptor-file',path.join(first.out,'descriptor.json'),'--signature-file',path.join(first.out,'descriptor.sig'),'--archive-file',path.join(first.out,'payload.zip'),'--json'],{commandEnv:{...legacyEnv,JOBCTRL_RUNTIME_HOME:refusedHome},acceptFailure:true});
- assert.notEqual(admission.code,0,'Installer selected legacy data');assert.deepEqual(await tree(legacy),before);
+ assert.notEqual(admission.code,0,'Installer selected legacy data');
+ assert.match(admission.stderr,/requires explicit Profile-only transfer/);
+ assert.deepEqual(await tree(legacy),before);
+ assert.equal((await stat(path.join(legacy,'jobctrl.db'))).mode & 0o777,0o644);
  for(const selected of ['active.json','transition.json','bin/jobctrl'])await assert.rejects(stat(path.join(refusedHome,selected)),{code:'ENOENT'});
  passed('installer-first-selection-refuses-legacy-before-selector-or-journal-publication');
  await run(selector,['stop'],{commandEnv:legacyEnv});assert.deepEqual(await tree(legacy),before);
  passed('legacy-start-backup-update-rollback-refuse-with-exact-source-preservation');
+
+ const current = path.join(workspace,'jobctrl.db');
+ const currentMode = (await stat(current)).mode & 0o777;
+ await chmod(current,0o644);
+ try {
+  const result = await run(selector,['start','--no-open'],{acceptFailure:true});
+  assert.notEqual(result.code,0);
+  assert.match(result.stderr,/cannot inspect Python application database/);
+ } finally {
+  await chmod(current,currentMode);
+ }
+ passed('nonprivate-python-database-cannot-start');
 }
 
 async function receiptRefusals(){
@@ -287,6 +338,7 @@ try{
  if(custodySelected)await put(path.join(workspace,'.qa-custody'),'owned native process control\n',0o600);
  control=spawn('/bin/sleep',['3600'],{env:{},stdio:'ignore'});
  const first=await payload(1);
+ if(lifecycleSelected)await verifyCurlReinstall(first);
  await install(first);installed=true;
  await run(selector,['start','--no-open']);
  const health=await api('/v1/health');assert.equal(health.application,'jobctrl-python');assert.equal(health.worker.status,'healthy');

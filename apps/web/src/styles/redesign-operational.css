@@ -1,5 +1,188 @@
 /* Route-level operational view overrides. Shared primitives stay in their owning stylesheets. */
 
+/* Current feature-owned panels: these hooks also own Dashboard summary insets. */
+.operational-workspace {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--jh-section-gap);
+}
+
+.operational-workspace > .page-head {
+  margin: 0;
+}
+
+.operational-workspace > a,
+.operational-workspace > button {
+  justify-self: start;
+}
+
+.operational-panel {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--jh-internal-gap);
+  padding: var(--jh-panel-padding);
+  overflow-wrap: anywhere;
+}
+
+.operational-panel > :is(h2, h3, p, dl, ul, ol, details) {
+  margin: 0;
+}
+
+.operational-panel > h2 {
+  font-size: var(--jh-type-component-title-size);
+  font-weight: var(--jh-type-component-title-weight);
+  line-height: var(--jh-type-component-title-line-height);
+}
+
+.operational-panel > h3 {
+  margin-block-start: calc(var(--jh-internal-gap) / 2);
+}
+
+.operational-summary-panel > ul {
+  display: grid;
+  gap: var(--jh-internal-gap);
+  padding-inline-start: 1.25rem;
+  list-style: disc;
+}
+
+.operational-panel summary {
+  min-height: var(--jh-control-height);
+  padding-block: calc(var(--jh-internal-gap) / 2);
+  cursor: pointer;
+  font-weight: var(--jh-type-label-weight);
+}
+
+.operational-panel details[open] > summary {
+  margin-block-end: var(--jh-internal-gap);
+}
+
+.operational-panel summary:focus-visible,
+.operational-filters > summary:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+.operational-panel pre {
+  max-width: 100%;
+  margin: 0;
+  padding: var(--jh-internal-gap);
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.operational-metadata {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr));
+  gap: var(--jh-internal-gap) var(--jh-section-gap);
+}
+
+.operational-metadata > div {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: calc(var(--jh-internal-gap) / 2);
+}
+
+.operational-metadata dt {
+  color: var(--muted-foreground);
+}
+
+.operational-metadata dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.operational-actions,
+.operational-filter-actions {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jh-internal-gap);
+}
+
+.operational-feature-detail {
+  min-width: 0;
+  padding-block-start: var(--jh-section-gap);
+  border-block-start: 1px solid var(--border);
+}
+
+.operational-filters > summary {
+  min-height: var(--jh-row-height);
+  padding: var(--jh-internal-gap) var(--jh-panel-padding);
+  cursor: pointer;
+  font-weight: var(--jh-type-label-weight);
+}
+
+.operational-filter-form {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  align-items: start;
+  gap: var(--jh-field-grid-row-gap) var(--jh-field-grid-column-gap);
+  padding: 0 var(--jh-panel-padding) var(--jh-panel-padding);
+}
+
+.operational-filter-form > label,
+.operational-field {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: calc(var(--jh-internal-gap) / 2);
+}
+
+.operational-filter-form :is(input, [data-slot="select-trigger"]) {
+  width: 100%;
+  min-width: 0;
+}
+
+.operational-filter-actions {
+  grid-column: 1 / -1;
+}
+
+.operational-record-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.operational-record-list > li {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: calc(var(--jh-internal-gap) / 2) var(--jh-section-gap);
+  padding: var(--jh-internal-gap) var(--jh-panel-padding);
+  overflow-wrap: anywhere;
+}
+
+.operational-record-list > li + li {
+  border-block-start: 1px solid var(--border);
+}
+
+.operational-record-list > li > span {
+  color: var(--muted-foreground);
+}
+
+@media (max-width: 520px) {
+  .operational-filter-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .operational-record-list > li {
+    display: grid;
+  }
+}
+
 /* Run detail ------------------------------------------------------------- */
 
 .route-page--workflow-run-detail

@@ -71,15 +71,19 @@ try:
     info=os.fstat(fd)
     header=os.read(fd,100)
 finally: os.close(fd)
-if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or (os.name!="nt" and (info.st_uid!=os.getuid() or info.st_mode&0o077)):
+if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or (os.name!="nt" and (info.st_uid!=os.getuid() or info.st_mode&0o033)):
     raise SystemExit(2)
 if len(header)!=100 or header[:16]!=b"SQLite format 3\x00":
     raise SystemExit(3)
 # The target identity is published before WAL is enabled. Never open SQLite
 # against a legacy workspace: even mode=ro can create WAL shared memory.
+# Legacy JobCtrl created mode-0644 databases. Reading their headers is enough
+# to tell the owner how to transfer the Profile without changing the source.
 if struct.unpack(">I",header[68:72])[0]!=0x4A435354 or struct.unpack(">I",header[60:64])[0]!=1:
     print("profile-transfer-required")
     raise SystemExit(0)
+if os.name!="nt" and info.st_mode&0o077:
+    raise SystemExit(2)
 p=path.resolve().as_uri()+"?mode=ro"
 c=sqlite3.connect(p,uri=True,timeout=2)
 try:

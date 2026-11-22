@@ -49,6 +49,12 @@
   line-height: var(--jh-type-control-line-height) !important;
 }
 
+/* Form values are read as body text; controls such as buttons stay semibold. */
+input[data-typography="control"],
+textarea[data-typography="control"] {
+  font-weight: var(--jh-type-body-weight) !important;
+}
+
 [data-typography="label"],
 [data-typography="table-header"] {
   font-size: var(--jh-type-label-size) !important;
@@ -99,7 +105,7 @@
   text-transform: none !important;
 }
 
-/* A page heading is the visual focal point; breadcrumbs remain context. */
+/* A page heading is the visual focal point; supporting context stays quiet. */
 .page-head-text {
   display: flex !important;
   flex-direction: column;
@@ -117,16 +123,17 @@
   min-width: 0;
 }
 
-.page-head [data-slot="breadcrumb-list"],
 .page-head [data-slot="page-head-subtitle"] {
-  font-size: var(--jh-type-metadata-size) !important;
-  font-weight: var(--jh-type-metadata-weight) !important;
-  line-height: var(--jh-type-metadata-line-height) !important;
+  font-size: var(--jh-type-body-size) !important;
+  font-weight: var(--jh-type-body-weight) !important;
+  line-height: var(--jh-type-body-line-height) !important;
 }
 
-.page-head [data-slot="breadcrumb-page"],
 .page-head [data-slot="page-head-eyebrow"] {
-  font: inherit !important;
+  color: var(--primary);
+  font-size: var(--jh-type-metadata-size) !important;
+  font-weight: var(--jh-type-label-weight) !important;
+  line-height: var(--jh-type-metadata-line-height) !important;
 }
 
 /* Disabled is a state, never an emphasized action color. */
