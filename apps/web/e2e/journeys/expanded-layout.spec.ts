@@ -207,10 +207,14 @@ test("Discovery source tools expose every read-only tab and nested disclosure at
   const profileBefore = await json(api, "get", "/v1/profile");
   const callsBefore = app.external.calls.filter((item) => item.path === "/model").length;
   const actionsBefore = await actionIdentitySnapshot(api);
-  await visitExpanded(page, testInfo, "discovery", "/discovery", "Search for jobs");
+  await visitExpanded(page, testInfo, "discovery", "/discovery", "Search for jobs", async () => {
+    await page.getByText("Search plans, schedules and source behavior", { exact: true }).click();
+    // The outer disclosure opens before its toggle handler mounts the tools.
+    await expect(page.getByText("One-off search with temporary criteria", { exact: true })).toBeVisible();
+  });
   await page.getByRole("button", { name: "Manage search sources", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Search sources", exact: true })).toBeVisible();
-  for (const tab of ["Source registry", "Source locator", "Quarantine review", "Role matching", "Manual capture"] as const) {
+  for (const tab of ["JobStreaming boards", "Quarantine review", "Role matching", "Manual capture"] as const) {
     await page.getByRole("tablist", { name: "Discovery tools", exact: true }).getByRole("tab", { name: tab, exact: true }).click();
     await captureExpanded(page, testInfo, `discovery-${tab.toLowerCase().replaceAll(" ", "-")}`, "Search for jobs");
   }

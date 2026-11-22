@@ -71,6 +71,13 @@ cached release is first activated, the normal-user bootstrap checks Apple
 notarization before running the installer; the installer verifies the complete
 runtime before activation. No Homebrew sandbox patch is required.
 
+For a curl reinstall, use the original bin directory. JobCtrl remembers the
+PATH entry it added even when your new shell already has it on PATH.
+
+If the installer reports that it discarded a corrupt cached archive, rerun the
+same install command to download and verify it again. An interrupted partial
+download can still resume.
+
 ### Build and run from source
 
 Use the source option when you want to inspect, modify, or contribute to the

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { SavedTableView, SavedTableViewUrlFilters } from "@jobctrl/contracts";
+import { PostedPayFilterSchema, type PostedPayFilter, type SavedTableView, type SavedTableViewUrlFilters } from "@jobctrl/contracts";
 import type { DataGridFilterState, DataGridSortState } from "../../shared/ui/filterable-data-grid.js";
 import type { JobGridQuery } from "../../contexts/jobs/index.js";
 
@@ -7,7 +7,7 @@ export interface GridCriteria {
   q: string; jobState: string; fitState: "all" | "current" | "stale" | "unassessed";
   minFitScore?: number; maxFitScore?: number; discoveredSince?: string; scoredSince?: string;
   postedMinEur?: number; postedMaxEur?: number; marketMinEur?: number; marketMaxEur?: number;
-  postedKnown: "all" | "known" | "unknown"; marketKnown: "all" | "known" | "unknown";
+  postedKnown: PostedPayFilter; marketKnown: "all" | "known" | "unknown";
   compensationConfidence: string; compensationWarnings: "all" | "present" | "none";
 }
 export const defaultCriteria: GridCriteria = { q: "", jobState: "active", fitState: "all", postedKnown: "all", marketKnown: "all", compensationConfidence: "", compensationWarnings: "all" };
@@ -27,7 +27,7 @@ export const advancedFiltersSchema = z.object({
   jobState: stateSet, fitState: z.enum(["all", "current", "stale", "unassessed"]),
   minFitScore: score, maxFitScore: score, discoveredSince: z.string(), scoredSince: z.string(),
   postedMinEur: amount, postedMaxEur: amount, marketMinEur: amount, marketMaxEur: amount,
-  postedKnown: z.enum(["all", "known", "unknown"]), marketKnown: z.enum(["all", "known", "unknown"]),
+  postedKnown: PostedPayFilterSchema, marketKnown: z.enum(["all", "known", "unknown"]),
   compensationConfidence: confidenceSet, compensationWarnings: z.enum(["all", "present", "none"]),
 }).superRefine((value, context) => {
   for (const [low, high] of [["minFitScore", "maxFitScore"], ["postedMinEur", "postedMaxEur"], ["marketMinEur", "marketMaxEur"]] as const) {

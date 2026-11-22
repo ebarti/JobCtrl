@@ -17,7 +17,14 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   app,
 }, testInfo) => {
   const languages = [{ id: "english", language: "English", proficiency: "Professional working proficiency" }, { id: "catalan", language: "Catalan", proficiency: "Native proficiency" }];
-  const { library } = await createBaseline(api, { ...baseline, resume: { ...baseline.resume, language_entries: languages } });
+  const wrappedSummary = (
+    "Prepared step-by-step handover guides for long-running experiments, cross-team reviews and repeatable follow-up checks. " +
+    "Documented short-term milestones and long-term ownership for inter-team projects. "
+  ).repeat(3).trim();
+  const { library } = await createBaseline(api, {
+    ...baseline,
+    resume: { ...baseline.resume, executive_profile: { baseline_text: wrappedSummary }, language_entries: languages },
+  });
   const posting = await createPosting(api);
   await page.goto(`/jobs/${posting.job_id}`);
   await page
@@ -124,6 +131,7 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   const inspected = await app.inspectPdf(bytes);
   expect(inspected.pages).toBeGreaterThanOrEqual(1);
   expect(inspected.text).toContain(baseline.personal.full_name);
+  expect(inspected.text.replace(/\s+/g, " ")).toContain(wrappedSummary);
   for (const language of languages) {
     expect(inspected.text).toContain(language.language);
     expect(inspected.text).toContain(language.proficiency);

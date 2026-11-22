@@ -80,13 +80,20 @@ commands are retired; use the current [operational QA gates](../local-reliabilit
 and retain their real results. Do not rely on `set -e` alone to stop after a
 failed `[[ ... ]]` assertion in the system Bash; make the failure explicit.
 
-Unsigned preparation runs the full Chromium suite against the extracted
-runtime with bounded workers, a one-hour suite ceiling and the regular
-per-case deadlines. Poppler supplies the PDF image assertions on the QA runner.
-Download the installed qualification report when preparation fails. To reproduce
-the build and installed tests on a hosted Mac from a branch, dispatch
-`release-shell-compat.yml` with `installed_bundle=true`. The diagnostic job
-uses synthetic workspaces and runs before signing and publication.
+Unsigned preparation assembles one archive, verifies its extracted runtime, and
+records the full installed Chromium test inventory. Four macOS runners each
+download that archive and run a disjoint Playwright shard with bounded workers,
+a one-hour suite ceiling and the regular per-case deadlines. Poppler supplies
+the PDF image assertions. Each shard verifies the manifest and payload bytes
+and records its passing test IDs and duration.
+
+Signing starts after the shard jobs pass. Before reading signing secrets, the
+signer checks that the four reports bind the prepared archive, manifest and
+source commit and contain every planned test exactly once. Download the failed
+shard report to diagnose a failure. To exercise the same build and shards from
+a branch, dispatch `release-shell-compat.yml` with `installed_bundle=true`.
+That workflow uses synthetic workspaces and verifies the full set of passing
+tests without signing or publication.
 
 For the Python cutover, require explicit fresh-target Profile/source transfer
 integrity and legacy-admission refusal, plus target-to-target lifecycle proof

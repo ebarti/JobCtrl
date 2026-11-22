@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { SavedTableView } from "@jobctrl/contracts";
 import { z } from "zod";
 
-import { useJobActions, useJobBulkActions, useComposedJobs, useJobs, useJobGridNavigationStore, useJobGridSelectionStore, type JobGridQuery, type PostingSnapshot } from "../../contexts/jobs/index.js";
+import { useJobActions, useJobBulkActions, useComposedJobs, useJobs, useJobGridNavigationStore, useJobGridSelectionStore, useUrlImports, type JobGridQuery, type PostingSnapshot } from "../../contexts/jobs/index.js";
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
@@ -25,6 +25,9 @@ const unavailableFieldsSchema = z.object({ error: z.object({ code: z.literal("qu
 const EMPTY_SELECTION: Readonly<Record<string, PostingSnapshot>> = {};
 const EMPTY_FILTERS: DataGridFilterState = {};
 const DEFAULT_PRESENTATION: SavedTablePresentation = { columns: { order: [...JOBS_TABLE_COLUMN_IDS], hidden: [...DEFAULT_JOBS_HIDDEN_COLUMN_IDS], widths: {} }, density: null, grouping: null, colorRules: [] };
+const openImportStates = new Set(["pending", "start_failed", "queued", "running", "waiting_for_capacity"]);
+const importLabels = { pending: "Starting", queued: "Queued", running: "Importing", waiting_for_capacity: "Queued for model capacity",
+  start_failed: "Queue admission unconfirmed", succeeded: "Imported", failed: "Import failed", cancelled: "Cancelled" };
 function initialSavedView() {
   const state = usePythonJobsTableViewsStore.getState();
   const id = state.activeViewIdByTable[JOBS_TABLE_ID] ?? DEFAULT_SAVED_TABLE_VIEW_ID;
@@ -44,9 +47,10 @@ function gridQuery(criteria: GridCriteria, filters: DataGridFilterState, sort: D
 }
 
 function CaptureJob() {
-  const { capture, importUrl } = useJobActions();
+  const { capture } = useJobActions();
   const { featureFlags } = usePorts();
   const importAvailability = getApiCapabilityAvailability(featureFlags, "importJobUrl");
+  const imports = useUrlImports(importAvailability.available);
   const [validation, setValidation] = useState("");
   const form = useForm({ defaultValues: { url: "", title: "", company: "", description: "", location: "" }, onSubmit: async ({ value }) => {
     const parsed = captureSchema.safeParse(value);
@@ -59,13 +63,14 @@ function CaptureJob() {
     const parsed = urlSchema.safeParse(value.url);
     if (!parsed.success) { setValidation("Enter a valid posting URL."); return; }
     setValidation("");
-    try { await importUrl.mutateAsync(parsed.data); urlForm.reset(); } catch { /* Retain URL for retry. */ }
+    try { await imports.start.mutateAsync(parsed.data); urlForm.reset(); } catch { /* Retain URL for exact request recovery. */ }
   } });
   return <section className="card jobs-capture" aria-label="Add a job">
     <h2>Add a job</h2>
     <details><summary>Import posting URL</summary><form className="jobs-capture__url" onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void urlForm.handleSubmit(); }}>
       <urlForm.Field name="url">{(field) => <label>Posting URL<input type="url" value={field.state.value} onBlur={field.handleBlur} onChange={(event) => field.handleChange(event.currentTarget.value)} /></label>}</urlForm.Field>
-      <Button type="submit" disabled={!importAvailability.available || importUrl.isPending}>Import job</Button>
+      {imports.mode === "action" ? <p>This server provides action status only. A busy model lane can fail the import without waiting. <Link to="/runs" search={{ workflowType: "jobs.capture_url" }}>View URL import runs</Link></p> : null}
+      <Button type="submit" disabled={!importAvailability.available || !imports.ready || imports.start.isPending}>Import job</Button>
       {!importAvailability.available ? <p>{importAvailability.reason}</p> : null}
     </form></details>
     <details><summary>Manual capture</summary><form className="jobs-capture__manual" onSubmit={(event) => { event.preventDefault(); event.stopPropagation(); void form.handleSubmit(); }}>
@@ -77,8 +82,18 @@ function CaptureJob() {
       <Button type="submit" disabled={capture.isPending}>Save job</Button>
     </form></details>
     {validation ? <p role="alert">{validation}</p> : null}
-    {capture.error || importUrl.error ? <p role="alert">{(capture.error ?? importUrl.error)?.message}</p> : null}
-    {capture.data || importUrl.data ? <p role="status">Job captured. <Link to="/jobs/$jobId" params={{ jobId: (capture.data ?? importUrl.data)!.job_id }} search={(previous) => previous}>Open job</Link></p> : null}
+    {capture.error || imports.start.error || imports.recoveryError ? <p role="alert">{(capture.error ?? imports.start.error ?? imports.recoveryError)?.message}</p> : null}
+    {capture.data ? <p role="status">Job captured. <Link to="/jobs/$jobId" params={{ jobId: capture.data.job_id }} search={(previous) => previous}>Open job</Link></p> : null}
+    {imports.receipt ? <p role="status">URL import action recorded. <Link to="/runs/$runId" params={{ runId: imports.receipt.runId }}>View import run</Link></p> : null}
+    {imports.list.error ? <p role="alert">URL import status is unavailable. <Button type="button" onClick={() => void imports.list.refetch()}>Check imports</Button></p> : null}
+    {imports.list.data?.imports.length ? <section aria-label="Recent URL imports"><h3>Recent URL imports</h3><ul>
+      {imports.list.data.imports.map((item) => <li key={item.runId}>
+        <span>{item.url}</span>{" · "}<span>{item.cancellationRequested && openImportStates.has(item.status) ? "Cancellation requested" : importLabels[item.status]}</span>{" "}
+        {item.status === "failed" && item.errorCode ? <span>({item.errorCode}) </span> : null}
+        {item.jobId ? <Link to="/jobs/$jobId" params={{ jobId: item.jobId }} search={(previous) => previous}>Open job</Link> : null}
+        {openImportStates.has(item.status) && !item.cancellationRequested
+          ? <Button type="button" disabled={imports.cancel.isPending} onClick={() => imports.cancel.mutate(item.runId)}>Cancel import</Button> : null}
+      </li>)}</ul>{imports.cancel.error ? <p role="alert">{imports.cancel.error.message}</p> : null}</section> : null}
   </section>;
 }
 

@@ -281,7 +281,7 @@ const EXPLANATION_CONTRACTS = [
     heading: "#runtime-sources-and-schedule",
     selectors: [
       "#runtime-setting-job-boards",
-      "#runtime-setting-parallel-source-families",
+      "#runtime-setting-posting-lookback-hours",
       "#runtime-setting-schedule-cron",
     ],
     tokens: [

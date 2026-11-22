@@ -9,7 +9,7 @@ there is no Fastify business authority or TypeScript/Python JSON-RPC hop.
 
 | Route | Contract |
 | --- | --- |
-| `GET /v1/health` | Application/schema/workspace identity, selected features, live worker heartbeat and model accounting. |
+| `GET /v1/health` | Application/schema/workspace identity, selected features, live dispatch readiness and model accounting. |
 | `GET /v1/setup/status` | Public Profile/provider/browser/Temporal/policy readiness; configuration and verified readiness are distinct. |
 | `GET /v1/settings` | Direct non-secret settings snapshot with integer `revision` and derived read-only `modelAccounting` (selected provider/model, availability, cost source and exact quote). Derivation does not contact providers or inspect credentials. |
 | `PATCH /v1/settings` | Partial top-level values plus required `expectedRevision`; returns a new snapshot or 409 for stale input. Nested maps replace the supplied map. |
@@ -32,16 +32,20 @@ The health `llmSpend` read model separates `costStatus` and `tokenStatus`, each
 have unavailable monetary cost and complete token usage. `costUsd` is nullable
 unless the complete monetary total is known; `knownCostUsd` is only the recorded
 subtotal. `costAuthority` describes monetary evidence, while
-`accountingComplete` requires both dimensions complete. `activeCalls`,
-`unresolvedCalls`, `unavailableCostCalls` and `unavailableTokenCalls` retain the
-distinction; `unlimited` reflects the current zero-dollar-cap setting. These are
+`accountingComplete` requires both dimensions complete. `activeCalls` counts all
+running model receipts with a live owner, including calls admitted on earlier
+UTC days. `dailyActiveCalls`, each `lanes[].active` count, both usage statuses,
+amounts, `unresolvedCalls`, `unavailableCostCalls` and `unavailableTokenCalls`
+relate to calls admitted on the reported UTC day. Predecessor responses omit
+`dailyActiveCalls` and count only today's running calls in `activeCalls`.
+`unlimited` reflects the current zero-dollar-cap setting. These are
 read-only classifications and do not change receipt or admission policy.
 `dailyBudgetUsd`, `accountingBlocked`, `monetaryAccountingBlocked` and
 `tokenAccountingBlockedLanes` derive from the same settings/receipt snapshot.
 The blockers describe historical uncertain or unavailable usage under enabled
 limits, not running-call progress or known usage reaching a ceiling. An empty
 blocked-lane list means no finite token lane lacks the evidence required for
-admission. Digest carries these blockers plus active/unresolved counts; unknown
+admission. Digest carries these blockers plus both active counts and the daily unresolved count; unknown
 history alone no longer makes its budget status incomplete. Exact amounts and
 knowledge statuses remain unchanged even when accounting does not block work.
 
@@ -49,6 +53,23 @@ Feature-owned routes cover Profile, Jobs, Requirements, Fit, Resumes and the
 retained optional capabilities. Their owners validate input and publish exact
 DTOs. Missing optional features remove their routes; unknown API paths return an
 explicit 404, including when static frontend assets are served.
+
+The Jobs URL form submits `POST /v1/actions/jobs.capture_url` with `{ "url": "…" }`,
+an `Idempotency-Key` and `Expected-Database-Instance-Id`. The 202 response
+identifies the durable run. `GET /v1/jobs/url-imports` returns its source URL,
+run ID, current status, cancellation state, failure code and captured job ID.
+The mounted Jobs feature advertises `jobs.url_import_queue` in the health
+response’s `capabilities` array when it supports this projection. For older
+servers the form uses the same action receipt and links to the filtered native
+run history at `GET /v1/action-runs?action=jobs.capture_url`.
+An active matching URL returns `action_scope_busy` with the existing run ID.
+Transient lane or monetary serialization is visible as `waiting_for_capacity`.
+The synchronous `POST /v1/jobs/import-url` returns a captured posting or an
+immediate error for clients that explicitly use it.
+
+`GET /v1/jobs/{job_id}/requirements/attempts/latest` reads the latest attempt
+and any recorded refusal details, even before a job has accepted Requirements.
+The snapshot read still returns null until an accepted revision exists.
 
 The reusable requirement library reads `/v1/requirements`,
 `/v1/requirements/{id}` and bounded `/v1/requirements/{id}/history` pages
@@ -110,16 +131,37 @@ retries return their original run before this check. A lost acknowledgement
 retains its key until exact reconciliation. The Jobs launch pins both the saved
 Profile revision and the database incarnation used to read its preferences.
 
+`GET /v1/discovery/sources` returns boards from the installed JobStreaming registry and their local state. Change an existing board with `PATCH /v1/discovery/sources/{source_id}/state` and its `expectedRevision`. A preview reads saved observations. Automatic searches run exclusively through JobStreaming. Jobs independently owns the durable `jobs.capture_url` action for a supplied posting URL.
+
 `GET /v1/discovery/runs` includes the canonical run's `failures` list alongside
-its counts and status. Board failures identify `sourceFamily`, `unitId`, `boards`,
-`code` and a safe actionable `message`; registered-source failures retain their
-`sourceId` and code. The action result carries the same recorded failures.
+its counts and status. Board failures identify `sourceFamily`, `unitId`, `boards`, `code` and a safe actionable `message`. Historical records retain their original source identifiers. The action result carries the same recorded failures.
+New SDK board access failures keep the code `discovery_provider_authentication_configuration`.
+Their optional `diagnostic` is `missing_credential`, `provider_access_denied`,
+`tls_configuration`, `proxy_configuration`, or `authentication_or_configuration`.
+An identified HTTP denial includes `httpStatus` (401 or 403). A committed
+`DiscoveryRunUpdated` warning at stage `board_search` includes the same
+failure in `payload.sourceFailure` before the SDK acknowledges the event.
+SDK board rate limits use `discovery_provider_rate_limited` and set
+`diagnostic` to `rate_limited` in the warning and run result. The run list also explains rate
+limits from historical records that stored this code with a generic message.
+Historical action receipts and already-published events retain their original fields.
 `partial` means at least one source unit completed or reached the new-job limit
 while another failed. A completed source may return no jobs. Reaching the limit
 records `budget_exhausted`, without asserting upstream provider completion.
 If every selected unit fails, the run is `failed`. Per-board request adaptation preserves saved search settings;
 see the [Discovery reference](../workers/automation/src/jobctrl/features/discovery/README.md)
 for cutoff, checkpoint and restart behavior.
+
+`GET /v1/discovery/runs/{run_id}/jobs/{job_id}/role-target` reads the current
+saved job's judgment against that run's frozen role preferences. A missing
+decision is `null`. `POST` on the same route takes `expectedPostingRevision`
+and can assess a saved job from an earlier run that recorded a target plan.
+The response identifies the posting revision, source hash, plan, verdict,
+source citations and model receipt. Review preserves the job, its original
+admission and its Fit score. Foreign run membership, absent frozen targets and
+stale writes are refused. Repeating a POST for the same revision returns its
+recorded decision or failure. An in-flight or interrupted role call returns
+`discovery_role_call_unsettled` and its outcome needs review.
 
 In the complete product, the same `discovery.search` identity stays active
 through Preparation's initial fit-only `search` recipe. Source status remains
@@ -203,3 +245,13 @@ business or semantic authority.
 
 See [runtime](architecture/runtime.md), [storage](architecture/storage.md), and
 [contract ownership](architecture/contracts-types-and-api-boundaries.md).
+
+The local `/v1/health` response includes `runtimeIdentity` with the startup
+build fingerprint, workspace, database instance, workflow history and queue.
+An unavailable worker supplies an actionable `message` and `reason`.
+Health, setup and pipeline telemetry use the same bounded check of the selected
+Temporal namespace and the worker's workflow and activity pollers. A refused
+new action creates no receipt. If confirmation of a start is lost, the 503
+includes the run ID and idempotency key. Sending the same payload and key
+reuses its workflow ID. A previously confirmed receipt can be read during
+a service outage.

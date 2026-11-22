@@ -120,8 +120,8 @@ class SourceBoundPostingAcquirer:
             "raw_html_hash": page.raw_html_hash,
         }
 
-    async def _determine(self, *, operation, schema, instructions, sources, context, prompt_version):
-        response = await self.model.determine(
+    async def _determine(self, *, operation, schema, instructions, sources, context, prompt_version, import_calls=None):
+        request = dict(
             operation=operation,
             instructions=instructions,
             sources=[s.model_dump() for s in sources],
@@ -130,6 +130,7 @@ class SourceBoundPostingAcquirer:
             prompt_version=prompt_version,
             lane="enrichment",
         )
+        response = await import_calls.determine(self.model, **request) if import_calls else await self.model.determine(**request)
         try:
             value = schema.model_validate(response.value)
             validate_citations(value, sources)
@@ -141,7 +142,7 @@ class SourceBoundPostingAcquirer:
             ) from None
         return value, response.provenance
 
-    async def acquire(self, payload, *, cancelled=None):
+    async def acquire(self, payload, *, cancelled=None, import_calls=None):
         url = posting_url(payload.get("url") or payload.get("postingUrl") or "")
         captured = payload.get("html") or payload.get("bodyHtml") or payload.get("text") or payload.get("bodyText")
         if captured:
@@ -193,6 +194,7 @@ class SourceBoundPostingAcquirer:
             *[s for s in sources if s.source_id != "rendered_page"],
         ]
         interpretation, interpretation_receipt = await self._determine(
+            import_calls=import_calls,
             operation="page_interpretation",
             schema=PageInterpretation,
             sources=interpretation_sources,
@@ -229,6 +231,7 @@ class SourceBoundPostingAcquirer:
             line_ranges[source.source_id] = ranges
             inventory.append({"source_id": source.source_id, "lines": lines})
         selected, extraction_receipt = await self._determine(
+            import_calls=import_calls,
             operation="posting_extraction",
             schema=PostingSelectionExtraction,
             sources=sources,
@@ -262,6 +265,7 @@ class SourceBoundPostingAcquirer:
             ),
         )
         quality, quality_receipt = await self._determine(
+            import_calls=import_calls,
             operation="description_quality",
             schema=DescriptionQuality,
             sources=[Source(source_id="description", text=description)],
@@ -350,6 +354,7 @@ class SourceBoundPostingAcquirer:
             "provenance": {
                 **posting.get("provenance", {}),
                 "availability": {
+                    "state": state,
                     "observedAt": observed_at,
                     "metadata": metadata,
                     "value": result.model_dump(),
@@ -359,7 +364,7 @@ class SourceBoundPostingAcquirer:
             },
         }
 
-    async def verify_refresh_identity(self, previous, candidate):
+    async def verify_refresh_identity(self, previous, candidate, *, import_calls=None):
         aliases = {normalize_url(url) for url in (previous["url"], previous.get("canonical_url")) if url}
         observed = normalize_url(candidate.get("canonical_url") or candidate["url"])
         if observed in aliases:
@@ -398,6 +403,7 @@ class SourceBoundPostingAcquirer:
         ]
         result, receipt = await self._determine(
             operation="jobs.refresh_identity",
+            import_calls=import_calls,
             schema=RefreshIdentity,
             sources=sources,
             context={"previousRevision": previous["revision"], "previousSourceHash": previous["source_hash"]},

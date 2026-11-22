@@ -1,3 +1,4 @@
+import { indeedPage } from "./indeed-data.js";
 import { test, expect, json, completed } from "../harness/fixtures.js";
 
 test("a lost preparation admission is reconciled after reload without starting it twice", async ({
@@ -19,7 +20,7 @@ test("a lost preparation admission is reconciled after reload without starting i
     expectedRevision: settings.revision,
     queries: ["Synthetic recovery engineer"],
     locations: [{ location: "Madrid", remote: false }],
-    boards: ["linkedin"],
+    boards: ["indeed"],
     resultsPerSite: 5,
     hoursOld: 0,
     newJobLimit: 5,
@@ -96,11 +97,9 @@ test("a lost preparation admission is reconciled after reload without starting i
   // The held provider proves that the actual admitted worker is still active
   // while the browser reloads and checks its recorded request identity.
   const provider = await app.external.next();
-  expect(provider.path).toBe("/discovery");
-  expect(provider.body["request"]).toMatchObject({
-    query: "Synthetic recovery engineer",
-    location: "Madrid",
-  });
+  expect(provider.path).toBe("/jobstreaming/indeed");
+  expect(String(provider.body["query"])).toContain('what: "Synthetic recovery engineer"');
+  expect(String(provider.body["query"])).toContain('where: "Madrid"');
   const storageKey = `jobctrl:request-recovery:local:${encodeURIComponent(JSON.stringify(["local", "preparation.run", "preparation"]))}`;
   const saved = await page.evaluate(
     (key) => sessionStorage.getItem(key),
@@ -164,10 +163,10 @@ test("a lost preparation admission is reconciled after reload without starting i
     controls.getByRole("button", { name: "Start work" }),
   ).toBeEnabled();
 
-  provider.respond({ jobs: [], cursor: null, complete: true });
+  provider.respond(indeedPage({ jobs: [], cursor: null, complete: true }));
   await completed(api, runId!);
   expect(
-    app.external.calls.filter((call) => call.path === "/discovery"),
+    app.external.calls.filter((call) => call.path === "/jobstreaming/indeed"),
   ).toHaveLength(1);
   const recorded = await json<{ runId: string; recipe: string }>(
     api,

@@ -1,13 +1,5 @@
 import { z } from "zod";
 import { DiscoverySettingsResponseSchema, ModelReceiptSchema } from "@jobctrl/contracts";
-import type { SourceLocatorListResponse } from "@jobctrl/contracts";
-
-export type LocatorCandidate = SourceLocatorListResponse["candidates"][number] & {
-  readonly revision?: number;
-  readonly decision?: "pending" | "promote" | "reject" | "reset";
-};
-export type LocatorList = Omit<SourceLocatorListResponse, "candidates"> & { candidates: LocatorCandidate[] };
-
 export const RoleFeedbackSchema = z.object({ ok: z.literal(true), suggestions: z.array(z.object({
   suggestionId: z.string(), status: z.enum(["pending", "approved", "declined"]),
   ruleKind: z.enum(["exact_title_exclusion", "target_role_review"]), titlePattern: z.string(), titleDisplay: z.string(), reason: z.string(),

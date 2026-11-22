@@ -17,19 +17,46 @@ class EvidenceError(ValueError):
     """A source, determination, rate, or arithmetic input cannot support publication."""
 
 
-_NUMBER = re.compile(r"(?<![\w.,])(?:[A-Z]{3})?(?P<number>\d+(?:,\d{3})*(?:\.\d+)?(?:[kKmM](?!\w))?)(?!\w|\.\w|,\d)")
+_NUMBER_PREFIX = r"(?<![\w.,])(?:[A-Z]{3})?"
+_NUMBER_SUFFIX = r"(?!\w|\.\w|,\d)"
+_NUMBER = re.compile(_NUMBER_PREFIX + r"(?P<number>\d+(?:,\d{3})*(?:\.\d+)?(?:[kKmM](?!\w))?)" + _NUMBER_SUFFIX)
+_PERIOD_GROUPED = re.compile(_NUMBER_PREFIX +
+    r"(?:(?P<grouped>[1-9]\d{0,2}(?:\.\d{3})+(?:,\d+)?)|(?P<number>\d+[kKmM]?))" + _NUMBER_SUFFIX)
 _WARNINGS = frozenset({"ambiguous_multiple_amounts", "bonus_component", "broad_range", "commission_component", "equity_component", "hourly_period", "missing_currency", "missing_period", "monthly_period", "no_amount_found", "one_sided_range", "ote_component", "source_text_truncated"})
 
 
-def _numbers(text: str) -> set[Decimal]:
-    values: set[Decimal] = set()
-    for match in _NUMBER.finditer(text):
-        token = match.group("number")
-        suffix = token[-1].lower()
-        factor = 1000 if suffix == "k" else 1000000 if suffix == "m" else 1
-        number = token[:-1] if suffix in {"k", "m"} else token
-        values.add(Decimal(number.replace(",", "")) * factor)
-    return values
+def has_citable_number(text: str) -> bool:
+    """A numeric bound can only be published if this literal grammar can verify it."""
+    return _NUMBER.search(text) is not None or _PERIOD_GROUPED.search(text) is not None
+
+
+def _number_value(token: str) -> Decimal:
+    suffix = token[-1].lower()
+    factor = 1000 if suffix == "k" else 1000000 if suffix == "m" else 1
+    number = token[:-1] if suffix in {"k", "m"} else token
+    return Decimal(number.replace(",", "")) * factor
+
+
+def _supports_cited_amounts(text: str, quotes: set[str], amounts: set[Decimal]) -> bool:
+    # Preserve the established decimal and comma-grouped spelling for existing receipts.
+    standard = {_number_value(match["number"]) for quote in quotes for match in _NUMBER.finditer(quote)}
+    if amounts <= standard:
+        return True
+    # Test the complete set under one alternative convention. A single 55.000
+    # cannot attest to both 55 and 55000 in the same range.
+    remaining = amounts.copy()
+    for match in _PERIOD_GROUPED.finditer(text):
+        grouped = match["grouped"]
+        value = Decimal(grouped.replace(".", "").replace(",", ".")) if grouped else _number_value(match["number"])
+        if value in remaining:
+            start, end = match.span("grouped" if grouped else "number")
+            # A verbatim quote covers this whole original numeric token only if
+            # it begins between end - len(quote) and start, inclusive.
+            if any(text.find(quote, max(0, end - len(quote)), start + len(quote)) >= 0 for quote in quotes):
+                remaining.remove(value)
+                if not remaining:
+                    return True
+    return False
 
 
 def validate_source_date(source: Source, valuation_date: str) -> None:
@@ -109,8 +136,8 @@ def posted_from_judgment(source: Source, result: PayJudgment) -> PostedFact:
     if result.parse_state == "parsed_range":
         if all(x is None for x in values):
             raise EvidenceError("missing_amount")
-        cited_numbers = set().union(*(_numbers(c.quote) for c in result.determination.citations))
-        if any(Decimal(x) not in cited_numbers for x in values if x is not None):
+        quotes = {citation.quote for citation in result.determination.citations}
+        if not _supports_cited_amounts(source.text, quotes, {Decimal(x) for x in values if x is not None}):
             raise EvidenceError("amount_not_in_citation")
     elif any(x is not None for x in values):
         raise EvidenceError("inconsistent_pay_state")

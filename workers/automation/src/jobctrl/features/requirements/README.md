@@ -47,6 +47,13 @@ software implementation and technology use remain Skills when phrased as
 experience or prior work. Professional Experience requires a separate source-
 established role, domain or operating-context prerequisite.
 
+One explicitly accepted choice among prior fields, roles or environments can
+itself define a single Professional Experience prerequisite. The normalized
+job demand retains which backgrounds qualify. A shared technical practice
+with example tools remains a Skill. Separately requested skills or background
+retain their own evidence. Material doubt about what the source requires
+continues to refuse the complete comparison.
+
 Personal attributes, certifications/licenses, job conditions, benefits and
 application instructions are excluded. Numerical duration/tenure analysis is
 excluded, including empty generic experience residues manufactured by removing
@@ -86,8 +93,11 @@ The strict single-posting extraction response contains:
 - `quotes`: the owned exact quote inventory.
 - `requirements`: `local_id`, `category` (`skill` or
   `professional_experience`), `name`, `definition`, `basis` (`explicit`,
-  `inferred` or `explicit_and_inferred`), nullable `rationale` and `source_note`,
-  and `evidence_refs`.
+  `inferred` or `explicit_and_inferred`), `rationale`, nullable `source_note`,
+  and `evidence_refs`. The v6 provider schema requires a nonblank rationale
+  for both inference bases. A fully explicit demand may use null or explain a
+  non-obvious boundary. Each staged v5 extraction or existing refresh attempt
+  retains its original prompt, schema and receipt identity during recovery.
 - `education`: `qualification`, `subjects`, nullable `alternative` and
   `source_note`, and `evidence_refs`.
 - `languages`: `language`, nullable `proficiency` and `source_note`, and
@@ -132,8 +142,7 @@ judgment and does not mutate the accepted snapshot.
 ## Complete matching and exact reuse
 
 One `requirements.match_catalog` determination uses semantic policy
-`requirements-capability-demand-v2` and citation wire/prompt
-`requirements-capability-demand-citation-v3`. It sees the complete incoming Skills/Experience
+`requirements-capability-demand-v2`. It sees the complete incoming Skills/Experience
 inventory and retained current-generation catalog, including hidden meanings.
 Canonical sources contain their definitions, original extraction and quoted
 posting evidence; accepted occurrences and available posting sources establish
@@ -141,6 +150,57 @@ job demands. The inventory binds its epoch, complete ID/revision set and source
 authority. There is no top-k selection, paging, chunking, lexical fallback or
 separate novelty judgment. Existing-only repair and every semantic ingestion or
 correction use this mandatory gate.
+
+New single-job refreshes use `requirements-capability-demand-partition-v11-cited-occurrences`.
+The request supplies named column lists for repeated object shapes, a dictionary
+of repeated whole strings across context and sources, and shared citation path
+layouts. Each source retains its own ID and its explicitly offered segment IDs.
+The owner reconstructs the complete context and each canonical source before
+dispatch and again for binding. It checks the whole context, source and citation
+hashes. Every member, occurrence and group handle remains an individually
+required property in the response schema, with shared JSON Schema definitions
+for their slot types. A capability group can reuse only an assigned retained
+capability whose category, name and definition agree verbatim. With no retained
+capability the only permitted reuse choice is null.
+
+The complete serialized request must fit the gateway's 1 MiB limit and the
+selected provider's context. Capacity depends on the number of distinct
+requirements, original postings, and source text as well as the number of jobs.
+A refusal preserves the accepted snapshot without truncating, splitting or
+automatically resending the request.
+
+Every V11 occurrence slot marks its source as `cited` or `unresolved`. The model
+assigns each cited occurrence once by selecting an offered segment of its
+original source in exactly one demand group. Posting and inventory citations
+retain their evidence roles. The owner verifies complete, unique occurrence
+membership, one capability per demand, and one demand for each job and
+capability. The receipt records the original response, the bound assignment map
+and the expanded decision fingerprints. Earlier V10 operations retain their
+explicit occurrence-to-group selections and reject contradictions with citations.
+
+Each V10 or V11 demand group makes one source-bound choice. `keep` selects the sole
+accepted demand found in its assigned occurrence sources and can apply it to
+new occurrences assigned to that group. If the group has zero or several
+distinct prior demands, the owner refuses `keep`. `select` identifies one exact
+offered prior demand by its short source ID. The accepted-demand table pairs
+that ID with the full definition and member IDs. Both choices retain the exact
+accepted definition and signature, require the matching category and a shared
+retained member, and cite every original occurrence. `author` supplies a new
+complete definition. The receipt binds the raw choice, expanded selection and
+final decision. Earlier table comparisons retain their original response schema.
+
+The durable `requirements.refresh` action records its transport in its original
+admission transaction. Searches record it in their initial preparation request
+and carry that request into retries. A missing marker selects v6, including
+unstarted jobs in a frozen search. A recorded v8 uses its original source
+string and citation path dictionaries. Previously paid requests retain their
+exact fingerprints and one-call allowance. Each active format preserves the
+source-established alternative-background instruction. Synchronous and durable
+single-job refreshes use V11 cited occurrence assignments, explicit catalog repair, corrections and
+independently started Preparation use v6, and shared initial-search cohorts
+use v7. Every earlier v6, v7, v8, v9 or v10 operation keeps its original
+instructions through recovery. An explicitly admitted fresh action may reuse
+its validated extraction when the source and execution binding still match.
 
 The v6 immutable model result, `CatalogNormalizationSlots`, contains `status`, exact
 `catalog_revision`, `member_slots`, `occurrence_slots`, `capability_groups`,
@@ -267,6 +327,12 @@ posting and accepted-head fences still apply.
 
 ## Initial Search cohort
 
+Durable Requirements refresh and Preparation wait through temporary model
+capacity contention. The gateway transaction records an extraction or
+normalization dispatch reservation when it allocates the provider receipt.
+An interrupted capacity wait leaves the operation eligible for admission. An
+already reserved, unsettled dispatch retains its recovery fence.
+
 Preparation calls `prepare_cohort_job` for each frozen job. Each posting keeps
 its original extraction local IDs, immutable source hash, extraction receipt and
 expected accepted revision. A job-scoped member ID distinguishes an `r1` from
@@ -274,7 +340,7 @@ another job's `r1`. Staging a receipt leaves the accepted snapshot untouched.
 
 `finalize_cohort` submits one complete retained catalog and all staged reusable
 occurrences to `requirements.match_catalog`. Its
-`requirements-capability-demand-partition-v7-cohort` wire stores repeated exact
+v7 cohort wire stores repeated exact
 source strings and citation path descriptors in request-local dictionaries. The
 owner verifies that expansion restores every original document and the complete
 context. The model can explicitly select a retained capability or demand
@@ -444,6 +510,10 @@ after purge cannot reuse a deleted ID/revision and revive old provenance.
 Errors expose safe codes without posting/model prose. Source/schema failures
 are 422, contract/revision/cancellation conflicts are 409, and complete-input
 catalog refusal is 503 `requirements_catalog_unavailable` with safe metadata.
+The attempt stores these details transactionally under its exact completion.
+`GET /v1/jobs/{job_id}/requirements/attempts/latest` reports them for first-use
+and refresh failures, including the gateway receipt ID when available. A
+legacy attempt without recorded details keeps its original failure code.
 
 ## Verification
 

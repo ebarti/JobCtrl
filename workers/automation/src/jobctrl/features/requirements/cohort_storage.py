@@ -66,18 +66,17 @@ class CohortStorage:
                            (canonical_json(state), operation_id))
         return state
 
-    def reserve_cohort_call(self, operation_id, model_fingerprint, request, guard, *, normalization=False):
-        with self.database.transaction() as connection:
-            guard(connection)
-            state = self.cohort_operation(operation_id, connection=connection)
-            if state.get("model_fingerprint") is not None:
-                raise RequirementError("requirements_cohort_interrupted")
-            state["model_fingerprint"] = model_fingerprint
-            if request.get("input_fingerprint") != model_fingerprint:
-                raise ConflictError("The cohort request does not match its retained call.")
-            if normalization:
-                self.reserve_normalization_call(operation_id, model_fingerprint, guard, connection=connection)
-            state["model_request"] = request
-            connection.execute("UPDATE requirements_cohort_operations SET state_json=? WHERE operation_id=?",
-                               (canonical_json(state), operation_id))
-            return 1
+    def reserve_cohort_call(self, operation_id, model_fingerprint, request, guard, *, connection, normalization=False):
+        guard(connection)
+        state = self.cohort_operation(operation_id, connection=connection)
+        if state.get("model_fingerprint") is not None:
+            raise RequirementError("requirements_cohort_interrupted")
+        state["model_fingerprint"] = model_fingerprint
+        if request.get("input_fingerprint") != model_fingerprint:
+            raise ConflictError("The cohort request does not match its retained call.")
+        if normalization:
+            self.reserve_normalization_call(operation_id, model_fingerprint, guard, connection=connection)
+        state["model_request"] = request
+        connection.execute("UPDATE requirements_cohort_operations SET state_json=? WHERE operation_id=?",
+                           (canonical_json(state), operation_id))
+        return 1

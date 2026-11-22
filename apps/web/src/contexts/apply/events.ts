@@ -1,4 +1,3 @@
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { applyKeys } from "./queryKeys.js";
 
@@ -28,10 +27,7 @@ export const applicationsEvents: FeatureEventHandler = {
     "FitCoverageUpdated",
     "SettingsUpdated",
   ],
-  handle(event, client) {
-    void invalidateQueriesWithOptimisticOwnership(
-      client,
-      applyKeys.all(event.tenantId),
-    );
+  handle(event, invalidate) {
+    invalidate(applyKeys.all(event.tenantId));
   },
 };

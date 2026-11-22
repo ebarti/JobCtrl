@@ -239,6 +239,23 @@ PY
   echo "$!"
 }
 
+wait_for_dependencies() {
+  [[ "$1" == "worker" ]] || return 0
+  local deadline=$((SECONDS + 30))
+  echo "worker: waiting for Temporal at $JOBCTRL_TEMPORAL_ADDRESS"
+  while [[ "$SECONDS" -lt "$deadline" ]]; do
+    [[ "${run_exit_code:-0}" -eq 0 ]] || return "$run_exit_code"
+    if temporal operator cluster health --address "$JOBCTRL_TEMPORAL_ADDRESS" \
+      --command-timeout 1s \
+      --disable-config-file --disable-config-env >/dev/null 2>&1; then
+      return "${run_exit_code:-0}"
+    fi
+    sleep 0.2
+  done
+  echo "dev: Temporal was not ready within 30 seconds; worker was not started. See $LOG_DIR/temporal.log." >&2
+  return 1
+}
+
 start_one() {
   local name="$1"
   if ! is_known "$name"; then
@@ -246,6 +263,7 @@ start_one() {
     return 1
   fi
   ensure_not_running "$name"
+  wait_for_dependencies "$name"
   local cmd log
   cmd=$(process_shell_command "$name")
   log=$(log_file "$name")
@@ -380,6 +398,7 @@ start_run_one() {
     echo "dev: unknown process '$name' (try: $(known_process_names))" >&2
     return 1
   fi
+  wait_for_dependencies "$name"
   (
     cd "$ROOT"
     exec python3 -B "$ROOT/scripts/dev-process-owner.py" launch "$PID_DIR" "$name" "$launch_id" "$cmd" "$log"

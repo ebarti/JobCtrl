@@ -12,7 +12,7 @@ const PROVIDER_TOP_LEVEL = ["claude-agent-sdk", "google-antigravity", "openai-co
 const PACKS = [
   {
     id: "claude-agent-sdk",
-    version: "0.2.121",
+    version: "0.2.186",
     owner: "Anthropic PBC",
     source: "https://pypi.org/project/claude-agent-sdk/",
     license: "MIT AND LicenseRef-Anthropic-Commercial-Terms",
@@ -20,7 +20,7 @@ const PACKS = [
   },
   {
     id: "codex-provider-runtime",
-    version: "0.163.0",
+    version: "0.171.0",
     owner: "OpenAI",
     source: "https://pypi.org/project/openai-codex-cli-bin/",
     license: "Apache-2.0",
@@ -28,7 +28,7 @@ const PACKS = [
   },
   {
     id: "antigravity-provider-runtime",
-    version: "0.1.2",
+    version: "0.1.24",
     owner: "Google LLC",
     source: "https://pypi.org/project/google-antigravity/",
     license: "Apache-2.0",

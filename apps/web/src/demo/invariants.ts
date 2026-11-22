@@ -164,7 +164,6 @@ function assertDemoReadModelInvariants(seed: DemoSeed): void {
   assertOkEnvelope(model.discovery.settings, "discovery settings");
   assertOkEnvelope(model.discovery.sources, "discovery sources");
   assertOkEnvelope(model.discovery.compensationSources, "compensation sources");
-  assertOkEnvelope(model.discovery.locatorCandidates, "source locator candidates");
   assertOkEnvelope(model.discovery.quarantine, "discovery quarantine");
   assertOkEnvelope(model.discovery.manualCapture, "manual capture queue");
   assertOkEnvelope(model.discovery.roleMatchFeedback, "role-match feedback");

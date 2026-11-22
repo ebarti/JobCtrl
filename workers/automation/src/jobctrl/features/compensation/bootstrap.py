@@ -13,7 +13,7 @@ from .model import GatewayModel
 from .repository import CompensationRepository
 from .schema import SCHEMA
 from .source_authority import OfficialDataVerifier
-from .service import CompensationService
+from .service import CompensationService, has_automatic_posted_source
 
 
 def build_feature(runtime: Runtime, **ports) -> Feature:
@@ -44,13 +44,23 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         automatic = payload.get("automatic", False)
         if type(automatic) is not bool:
             raise AppError("invalid_compensation_refresh", "Review the refresh options.")
+        event_ids = payload.get("jobIds")
+        if event_ids is not None and (not automatic or not stale_only or not isinstance(event_ids, list)
+                or not 1 <= len(event_ids) <= 200 or any(not isinstance(value, str) or not value for value in event_ids)):
+            raise AppError("invalid_compensation_refresh", "Event-driven compensation refresh requires changed job IDs.")
         if automatic and not service.automatic_enabled():
             return {"ok": True, "status": "skipped", "reason": "automatic_refresh_disabled", "results": []}
         try:
-            payload = RefreshRequest.model_validate({key: value for key, value in payload.items() if key != "automatic"}).model_dump(exclude_none=True)
+            payload = RefreshRequest.model_validate({key: value for key, value in payload.items()
+                if key not in {"automatic", "jobIds"}}).model_dump(exclude_none=True)
         except ValidationError:
             raise AppError("invalid_compensation_refresh", "Review the refresh options.") from None
         snapshots = jobs.list_job_snapshots()
+        if event_ids is not None:
+            changed = set(event_ids)
+            snapshots = [snapshot for snapshot in snapshots if snapshot["job_id"] in changed]
+        if automatic:
+            snapshots = [snapshot for snapshot in snapshots if has_automatic_posted_source(snapshot)]
         limit = payload.get("limit", 0)
         if limit:
             snapshots = snapshots[:limit]
@@ -83,4 +93,5 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
 
     return Feature(name="compensation", service=service, routes=routes(service),
                    actions={"compensation.refresh": refresh, "compensation.refresh_all": refresh_all,
-                            "compensation.refresh_stale": refresh_stale})
+                            "compensation.refresh_stale": refresh_stale},
+                   action_scopes={"compensation.refresh_stale": lambda _payload: "workspace"})

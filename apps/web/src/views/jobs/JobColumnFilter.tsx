@@ -25,13 +25,17 @@ export function clearJobColumnCriteria(columnId: string, criteria: GridCriteria)
   return next;
 }
 const euro = new Intl.NumberFormat("en-US", { maximumFractionDigits: 20 });
+const sourcePayOptions = [["source_known", "Known"], ["source_unknown", "Unknown"]] as const;
 const capitalize = (value: string) => value.charAt(0).toUpperCase() + value.slice(1);
 export function jobColumnFilterSummary(columnId: string, criteria: GridCriteria): string {
   const amount = (value: number | undefined, relation: string) => value === undefined ? "" : `${relation} €${euro.format(value)} / year`;
   switch (columnId) {
     case "job_state": return criteria.jobState === "all" ? "" : criteria.jobState.split(",").map(capitalize).join(", ");
     case "fit_score": return [criteria.fitState === "all" ? "" : criteria.fitState === "unassessed" ? "Not assessed" : capitalize(criteria.fitState), criteria.minFitScore === undefined ? "" : `≥ ${criteria.minFitScore}/10`, criteria.maxFitScore === undefined ? "" : `≤ ${criteria.maxFitScore}/10`].filter(Boolean).join("; ");
-    case "posted_compensation": return criteria.postedKnown === "all" ? "" : `${capitalize(criteria.postedKnown)} annual EUR pay`;
+    case "posted_compensation":
+      if (criteria.postedKnown === "source_known") return "Known employer-posted pay";
+      if (criteria.postedKnown === "source_unknown") return "Unknown employer-posted pay";
+      return criteria.postedKnown === "all" ? "" : `${capitalize(criteria.postedKnown)} annual EUR pay`;
     case "compensation_min_eur": return amount(criteria.postedMinEur, "Minimum ≥");
     case "compensation_max_eur": return amount(criteria.postedMaxEur, "Maximum ≤");
     case "compensation_market": return [criteria.marketKnown === "all" ? "" : `${capitalize(criteria.marketKnown)} annual EUR pay`, amount(criteria.marketMinEur, "Minimum ≥"), amount(criteria.marketMaxEur, "Maximum ≤")].filter(Boolean).join("; ");
@@ -43,8 +47,9 @@ export function jobColumnFilterSummary(columnId: string, criteria: GridCriteria)
   }
 }
 
-export function JobColumnFilter({ columnId, criteria, filter, literalContent, literalPredicate, unavailable, onApply, onClear, onClearLiteral }: {
+export function JobColumnFilter({ columnId, criteria, filter, literalContent, literalPredicate, unavailable, postedPayFilters, onApply, onClear, onClearLiteral }: {
   columnId: string; criteria: GridCriteria; filter: DataGridTextFilter; literalContent: ReactNode; literalPredicate: ReactNode; unavailable: string | null;
+  postedPayFilters: readonly string[];
   onApply: (next: GridCriteria, literal?: DataGridTextFilter) => void; onClear: () => void; onClearLiteral: () => void;
 }) {
   const [message, setMessage] = useState("");
@@ -78,7 +83,10 @@ export function JobColumnFilter({ columnId, criteria, filter, literalContent, li
   const fields: Record<string, ReactNode> = {
     job_state: choices("jobState", "Job state", [["active", "Active"], ["closed", "Closed"], ["hidden", "Hidden"], ["deleted", "Deleted"]]),
     fit_score: <>{select("fitState", "Fit assessment", [["all", "All"], ["current", "Current"], ["stale", "Stale"], ["unassessed", "Not assessed"]])}<div className="job-column-filter__range">{number("minFitScore", "Minimum person fit (1–10)")}{number("maxFitScore", "Maximum person fit (1–10)")}</div></>,
-    posted_compensation: <>{select("postedKnown", "Posted pay", known)}<p>Known means at least one current annual EUR bound is recorded. A source range in another currency or period can still be unknown here.</p></>,
+    posted_compensation: <>{select("postedKnown", "Posted pay", [
+      ["all", "All"], ...sourcePayOptions.filter(([value]) => postedPayFilters.includes(value) || criteria.postedKnown === value),
+      ["known", "Known annual EUR"], ["unknown", "Unknown annual EUR"],
+    ])}<p>{postedPayFilters.includes("source_known") ? "Known includes any current employer-stated amount, even if the pay period is unspecified." : "Annual EUR filters use current employer amounts that can be expressed in euros per year."}</p></>,
     compensation_min_eur: number("postedMinEur", "Posted annual minimum at least (€)"),
     compensation_max_eur: number("postedMaxEur", "Posted annual maximum at most (€)"),
     compensation_market: <>{select("marketKnown", "Market pay", known)}<div className="job-column-filter__range">{number("marketMinEur", "Market annual minimum at least (€)")}{number("marketMaxEur", "Market annual maximum at most (€)")}</div><p>Bounds use current market evidence normalized to EUR per year.</p></>,

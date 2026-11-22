@@ -1,9 +1,10 @@
+import { useEffect, useState } from "react";
 import { z } from "zod";
 
 import { Button } from "../../shared/ui/button.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
-import { useJobActions, type PostingSnapshot } from "./client.js";
+import { useJobActions, usePostingAvailability, type PostingSnapshot } from "./client.js";
 
 const availabilitySchema = z.object({ observedAt: z.string(), metadata: z.record(z.string(), z.unknown()),
   value: z.record(z.string(), z.unknown()), provenance: z.record(z.string(), z.unknown()),
@@ -13,10 +14,23 @@ export function PostingAvailabilityPanel({ posting }: { posting: PostingSnapshot
   const { featureFlags } = usePorts();
   const availability = getApiCapabilityAvailability(featureFlags, "checkPostingAvailability");
   const { checkAvailability } = useJobActions(posting.job_id);
-  const provenance = posting.provenance && typeof posting.provenance === "object" && "availability" in posting.provenance ? posting.provenance.availability : null;
-  const parsed = availabilitySchema.safeParse(provenance);
+  const read = usePostingAvailability(posting.job_id, availability.available);
+  const confirmed = read.data?.last_confirmed;
+  const latest = read.data?.last_attempt;
+  const staleAt = confirmed ? Date.parse(confirmed.at) + 24 * 60 * 60 * 1000 : 0;
+  const [, updateClock] = useState(0);
+  useEffect(() => {
+    const remaining = staleAt - Date.now();
+    if (remaining <= 0) return;
+    const timer = setTimeout(() => updateClock(value => value + 1), Math.min(remaining + 1, 2_147_483_647));
+    return () => clearTimeout(timer);
+  }, [staleAt]);
+  const parsed = availabilitySchema.safeParse(read.data?.availability);
   return <section className="section" aria-labelledby="availability-title"><h3 id="availability-title">Posting availability</h3>
-    <p role="status">{posting.active_state && posting.active_state !== "unknown" ? `Last recorded state: ${posting.active_state}` : "Availability is unverified."}</p>
+    {confirmed ? <p role="status">Last confirmed {confirmed.state} on <time dateTime={confirmed.at}>{new Date(confirmed.at).toLocaleString()}</time>.
+      {Date.now() >= staleAt ? " This check is stale. Check again for the current status." : null}</p>
+      : <p role="status">{availability.available && read.isPending ? "Reading saved availability…" : read.isError ? "Could not read saved availability." : "Availability is unverified."}</p>}
+    {latest && (latest.outcome === "unknown" || latest.outcome === "failed") ? <p role="status">The latest check on <time dateTime={latest.at}>{new Date(latest.at).toLocaleString()}</time> was inconclusive.</p> : null}
     {parsed.success ? <details><summary>Availability evidence</summary>
       <p>Observed {parsed.data.observedAt}. Provider: {typeof parsed.data.provenance.provider === "string" ? parsed.data.provenance.provider : "not recorded"}; model: {typeof parsed.data.provenance.model === "string" ? parsed.data.provenance.model : "not recorded"}.</p>
       {Object.entries(parsed.data.value).map(([name, item]) => {

@@ -8,7 +8,7 @@ export type RequirementSnapshot = {
   contract_version: "requirements-v2";
   job_id: string; revision: number; posting_revision: number; posting_hash: string; stale: boolean;
   requirements: {
-    occurrence_id: string; requirement_id: string; requirement_revision: number; job_id: string;
+    local_id: string; occurrence_id: string; requirement_id: string; requirement_revision: number; job_id: string;
     source_id: string; source_revision: number; source_hash: string; model_source_id: string;
     spans: { start: number; end: number; quote: string }[];
     extraction_determination_id: string; equivalence_determination_ids: string[];

@@ -1,3 +1,4 @@
+import { indeedPage } from "./indeed-data.js";
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -562,16 +563,26 @@ test("interview notes and learning activity preserve source ownership; the diges
     request.method() === "POST" &&
     new URL(request.url()).pathname === path &&
     request.postDataJSON()?.action === "compare";
+  // Reads during navigation or SSE updates can reach the same URL. Drop only
+  // the response to the comparison POST under test.
+  async function dropNextComparison(onResponse: (status: number) => void) {
+    const pattern = `**${path}`;
+    let forwarded = false;
+    const intercept = async (route: import("@playwright/test").Route) => {
+      if (forwarded || !isCompare(route.request())) return route.fallback();
+      forwarded = true;
+      try {
+        const response = await route.fetch();
+        onResponse(response.status());
+        await route.abort("failed");
+      } finally {
+        await page.unroute(pattern, intercept);
+      }
+    };
+    await page.route(pattern, intercept);
+  }
   let deliveredStatus: number | undefined;
-  await page.route(
-    `**${path}`,
-    async (route) => {
-      const response = await route.fetch();
-      deliveredStatus = response.status();
-      await route.abort("failed");
-    },
-    { times: 1 },
-  );
+  await dropNextComparison((status) => { deliveredStatus = status; });
   const sent = page.waitForRequest(isCompare);
   await page.getByRole("button", { name: "Compare reviewed postings" }).click();
   const browserRequest = await sent;
@@ -881,15 +892,7 @@ test("interview notes and learning activity preserve source ownership; the diges
     page.getByText("Review selected cohort before model comparison"),
   ).toBeVisible();
   let unresolvedStatus: number | undefined;
-  await page.route(
-    `**${path}`,
-    async (route) => {
-      const response = await route.fetch();
-      unresolvedStatus = response.status();
-      await route.abort("failed");
-    },
-    { times: 1 },
-  );
+  await dropNextComparison((status) => { unresolvedStatus = status; });
   const sentUnresolved = page.waitForRequest(isCompare);
   await page.getByRole("button", { name: "Compare reviewed postings" }).click();
   const unresolvedRequest = await sentUnresolved;
@@ -1432,7 +1435,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
   const settings = {
     queries: ["Synthetic Engineer"],
     locations: [{ location: "Madrid", remote: false }],
-    boards: ["linkedin"],
+    boards: ["indeed"],
     resultsPerSite: 5,
     hoursOld: 0,
     newJobLimit: 5,
@@ -1535,14 +1538,10 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
   const search = (await queued.json()) as { runId: string };
   const provider = await app.external.next();
   expect(provider.method).toBe("POST");
-  expect(provider.path).toBe("/discovery");
-  expect(provider.body["request"]).toMatchObject({
-    query: "Synthetic Engineer",
-    location: "Madrid",
-    remote_only: false,
-    sites: ["linkedin"],
-  });
-  provider.respond({
+  expect(provider.path).toBe("/jobstreaming/indeed");
+  expect(String(provider.body["query"])).toContain('what: "Synthetic Engineer"');
+  expect(String(provider.body["query"])).toContain('where: "Madrid"');
+  provider.respond(indeedPage({
     jobs: [
       {
         job_key: "synthetic-provider-job",
@@ -1555,7 +1554,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
     ],
     cursor: null,
     complete: true,
-  });
+  }));
   await completed(api, search.runId);
   await expect(page.locator(".discovery-runs-panel").getByRole("region", { name: "Job search progress", exact: true })).toContainText("Search completed");
   await expect(page.locator(".discovery-runs-panel").getByRole("region", { name: "Job search progress", exact: true })).toContainText("Initial fit assessment is unavailable in this application.");
@@ -1563,7 +1562,7 @@ test("Discovery ingests a controlled provider page and Companies retains a sourc
     sources: { sourceId: string; recommendedState: string }[];
   }>(api, "get", "/v1/discovery/sources");
   expect(sourceRegistry.sources).toContainEqual(
-    expect.objectContaining({ sourceId: "jobstreaming:linkedin" }),
+    expect.objectContaining({ sourceId: "jobstreaming:indeed" }),
   );
   const listing = await json<{ jobs: { job_id: string; title: string }[] }>(
     api,
@@ -1695,13 +1694,16 @@ test("compensation evidence cites the posting and an explicit manual report and 
   api,
   page,
 }) => {
-  const job = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+  const description = "Develop software. Base salary EUR 80000 to EUR 100000 per year.";
+  const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
+  const job = await json<{ job_id: string; revision: number }>(api, "post", "/v1/jobs/capture", {
     url: "https://example.com/jobs/pay",
     title: "Senior Software Engineer",
     company: "Synthetic Pay Company",
     location: "Madrid, Spain",
-    description: "Develop software.",
-    salary: "Base salary EUR 80000 to EUR 100000 per year.",
+    description,
+    full_description: description,
   });
   // This is an explicitly selected import file, not a database seed or a recorded model output.
   const observationsPath = path.join(app.workspace, "synthetic-pay.json");
@@ -1735,9 +1737,7 @@ test("compensation evidence cites the posting and an explicit manual report and 
   const run = (await submitted.json()) as { runId: string };
   const pay = await modelCall(app, "compensation.posted_pay");
   const postingSource = sources(pay.body)[0]!;
-  expect(postingSource.text).toBe(
-    "Base salary EUR 80000 to EUR 100000 per year.",
-  );
+  expect(postingSource.text).toBe(description);
   pay.reply({
     parse_state: "parsed_range",
     currency: "EUR",
@@ -1755,6 +1755,12 @@ test("compensation evidence cites the posting and an explicit manual report and 
   // Each explicit classification is bound to the actual posting or report row.
   for (const kind of ["posting", "report"] as const) {
     const call = await modelCall(app, "compensation.classification");
+    if (kind === "posting") {
+      const saved = await json<{ recordStatus: string; fact?: { minimumAmount: number; maximumAmount: number } }>(
+        api, "get", `/v1/jobs/${job.job_id}/compensation/posted`,
+      );
+      expect(saved).toMatchObject({ recordStatus: "recorded", fact: { minimumAmount: 80000, maximumAmount: 100000 } });
+    }
     const source = sources(call.body)[0]!;
     expect(source.source_id).toContain(
       kind === "posting"
@@ -1875,6 +1881,101 @@ test("compensation evidence cites the posting and an explicit manual report and 
     accepted.audit.posted.determination.receipt_id,
   );
   expect(retained.summary).toEqual(accepted.summary);
+
+  const revised = "Base salary EUR 82000 to EUR 105000 per year.";
+  await json(api, "patch", `/v1/jobs/${job.job_id}`, { expectedRevision: job.revision, description: revised });
+  const marketFailure = await action(api, "compensation.refresh", { ...options, jobId: job.job_id });
+  const revisedPay = await modelCall(app, "compensation.posted_pay");
+  const revisedSource = sources(revisedPay.body)[0]!;
+  expect(revisedSource.text).toBe(revised);
+  revisedPay.reply({
+    parse_state: "parsed_range", currency: "EUR", period: "year", component: "base_salary",
+    minimum_amount: 82000, maximum_amount: 105000, confidence: "high", warnings: [],
+    citations: [{ source_id: revisedSource.source_id, quote: revised }], rationale: "The new posting states this range.",
+  });
+  (await modelCall(app, "compensation.classification")).invalidJson();
+  await expect.poll(async () => (await json<{ status: string }>(api, "get", `/v1/action-runs/${marketFailure.runId}`)).status)
+    .toBe("failed");
+  const independent = await json<Compensation>(api, "get", `/v1/jobs/${job.job_id}/compensation`);
+  expect(independent.summary.posted.range).toMatchObject({ minimumAmount: 82000, maximumAmount: 105000 });
+  expect(independent.audit.posted.determination.receipt_id).not.toBe(accepted.audit.posted.determination.receipt_id);
+  expect(independent.summary.market.range).toEqual(accepted.summary.market.range);
+  expect(independent.audit.market).toMatchObject({ sourceCurrent: false, estimate: { sourceCount: 1 } });
+
+  const retry = await action(api, "compensation.refresh", { ...options, jobId: job.job_id });
+  // Only the failed market stage reaches the provider again for this exact revision.
+  (await modelCall(app, "compensation.classification")).invalidJson();
+  await expect.poll(async () => (await json<{ status: string }>(api, "get", `/v1/action-runs/${retry.runId}`)).status)
+    .toBe("failed");
+  const retried = await json<Compensation>(api, "get", `/v1/jobs/${job.job_id}/compensation`);
+  expect(retried.audit.posted.determination.receipt_id).toBe(independent.audit.posted.determination.receipt_id);
+});
+
+test("compensation retry rejects uncited pay and preserves an unsettled posting call", async ({ app, api }) => {
+  const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
+  const job = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/posted-receipt", title: "Synthetic role", company: "Synthetic employer",
+    salary: "Annual base salary EUR 40000 to 50000.",
+  });
+  const refresh = () => action(api, "compensation.refresh", { jobId: job.job_id, includeEuroTopTech: false });
+  const posted = () => json<{ recordStatus: string }>(api, "get", `/v1/jobs/${job.job_id}/compensation/posted`);
+  const run = (id: string) => json<{ status: string; errorCode: string | null }>(api, "get", `/v1/action-runs/${id}`);
+  const first = await refresh();
+  const bad = await modelCall(app, "compensation.posted_pay");
+  const source = sources(bad.body)[0]!;
+  bad.reply({
+    parse_state: "parsed_range", currency: "EUR", period: "year", component: "base_salary",
+    minimum_amount: 40000, maximum_amount: 90000, confidence: "high", warnings: [],
+    citations: [{ source_id: source.source_id, quote: source.text }], rationale: "The cited line states the range.",
+  });
+  await expect.poll(async () => (await run(first.runId)).status).toBe("failed");
+  expect((await posted()).recordStatus).toBe("not_recorded");
+  const second = await refresh();
+  const next = await modelCall(app, "compensation.posted_pay");
+  expect(sources(next.body)[0]).toEqual(source);
+  expect((await posted()).recordStatus).toBe("not_recorded");
+  next.disconnect();
+  await expect.poll(async () => (await run(second.runId)).status).toBe("failed");
+  const third = await refresh();
+  await expect.poll(() => run(third.runId)).toMatchObject({ status: "failed", errorCode: "compensation_posted_call_unsettled" });
+  expect((await posted()).recordStatus).toBe("not_recorded");
+});
+
+test("automatic compensation refreshes only changed postings with source text", async ({ app, api }) => {
+  type Refresh = { runId: string; result?: { results?: { jobId: string; status: string }[] } };
+  const setting = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", {
+    expectedRevision: setting.revision, compensationAutomationEnabled: true, dailyBudgetUsd: 0,
+  });
+  const capture = (id: string, description: string) => json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+    url: `https://example.com/jobs/${id}`, title: id, company: "Synthetic salary publisher", description,
+  });
+  await capture("card-without-salary", "");
+  const first = await capture("first-posting", "First public description.");
+  async function failedAttempt(jobId: string, checkConcurrentAdmission = false, title?: string) {
+    const pay = await modelCall(app, "compensation.posted_pay");
+    expect(sources(pay.body)[0]!.source_id).toContain(jobId);
+    if (title) expect(sources(pay.body)).toEqual([{ source_id: `posting:${jobId}:1:title`, text: title }]);
+    if (checkConcurrentAdmission) {
+      const concurrent = await api.post("/v1/actions/compensation.refresh_stale", { data: { automatic: true } });
+      expect(concurrent.status()).toBe(409);
+      expect(await concurrent.json()).toMatchObject({ error: { code: "action_scope_busy" } });
+    }
+    pay.invalidJson();
+    await expect.poll(async () => {
+      const page = await json<{runs: Refresh[]}>(api, "get", "/v1/action-runs?action=compensation.refresh_stale");
+      return page.runs.find((run) => run.result?.results?.some((r) => r.jobId === jobId))?.result?.results;
+    }, { timeout: 40_000 }).toEqual([{ jobId, status: "failed", code: "model_schema_violation" }]);
+  }
+  await failedAttempt(first.job_id, true);
+  const second = await capture("second-posting", "Second public description.");
+  await failedAttempt(second.job_id);
+  const title = "Synthetic title-only card | €60K - €80K";
+  const titled = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/titled-pay", title, company: "Synthetic salary publisher",
+  });
+  await failedAttempt(titled.job_id, false, title);
 });
 
 test("interview preparation honors an explicit empty evidence selection and retains the accepted preparation on failure", async ({

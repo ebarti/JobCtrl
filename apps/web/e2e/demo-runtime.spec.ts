@@ -1218,3 +1218,43 @@ test("demo tour retains local exact wording approval, durable edits and a real a
   expect(unexpectedExternalRequests).toEqual([]);
   expect(errors).toEqual([]);
 });
+
+test("returning demo visitor keeps consent when the browser drops its session cookie", async ({ browser, baseURL, context, page }) => {
+  if (!baseURL) throw new Error("Missing demo URL");
+  const analytics = /^https:\/\/[^/]*(googletagmanager|google-analytics)\.com\//;
+  await context.route(analytics, route => route.fulfill({ status: 204, body: "" }));
+  await page.goto("/");
+  await page.getByRole("button", { name: "Accept cookies and enter demo" }).click();
+  await expect(page.getByRole("button", { name: "Open demo guide" })).toBeVisible();
+  const chosen = await context.cookies();
+  const visitor = "__Host-jobctrl_demo_vid";
+  const session = "__Host-jobctrl_demo_session";
+  const cookie = (jar: typeof chosen, name: string) => jar.find(item => item.name === name);
+  expect(cookie(chosen, visitor)).toBeDefined();
+  expect(cookie(chosen, session)?.expires).toBe(-1);
+
+  const restarted = await browser.browserType().launch();
+  try {
+    const returning = await restarted.newContext({ baseURL, extraHTTPHeaders: { "CF-Connecting-IP": "127.0.0.1" } });
+    await returning.route(analytics, route => route.fulfill({ status: 204, body: "" }));
+    await returning.addCookies(chosen.filter(item => item.expires > 0));
+    const tab = await returning.newPage();
+    const grantWrites: string[] = [];
+    tab.on("request", request => {
+      if (request.url().endsWith("/api/demo-consent") && request.method() === "POST") grantWrites.push(request.url());
+    });
+    await tab.goto("/");
+    await expect(tab.getByRole("button", { name: "Open demo guide" })).toBeVisible();
+    const resumed = await returning.cookies();
+    expect(cookie(resumed, visitor)?.value).toBe(cookie(chosen, visitor)?.value);
+    const newSession = cookie(resumed, session);
+    expect(newSession).toMatchObject({ secure: true, httpOnly: true, expires: -1 });
+    expect(newSession?.value).not.toBe(cookie(chosen, session)?.value);
+    await tab.reload();
+    await expect(tab.getByRole("button", { name: "Open demo guide" })).toBeVisible();
+    expect(cookie(await returning.cookies(), session)?.value).toBe(newSession?.value);
+    expect(grantWrites).toEqual([]);
+  } finally {
+    await restarted.close();
+  }
+});

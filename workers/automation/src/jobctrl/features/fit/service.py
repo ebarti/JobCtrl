@@ -619,7 +619,7 @@ class FitService(InitialCohortService):
         ids = list(dict.fromkeys(job_ids))
         scores = read.score_batch(ids)
         scored = {ident: scored_demands(score) for ident, score in scores.items()}
-        requirement_bindings = read.requirement_bindings(list(scores), postings=postings, scored=scored)
+        requirement_bindings = read.requirement_bindings(ids if postings is not None else list(scores), postings=postings, scored=scored)
         profiles = {}
         for profile_id in {score["source_binding"]["profile_id"] for score in scores.values()}:
             try:
@@ -633,6 +633,14 @@ class FitService(InitialCohortService):
         ])
         result = {ident: {"contract_version": CONTRACT_VERSION, "job_id": ident, "current": False,
                           "qualifications_current": False, "stale_reasons": [], "score": None, "normalized_keywords": []} for ident in ids}
+        if postings is not None:
+            for ident in result.keys() - scores.keys():
+                requirements = requirement_bindings.get(ident)
+                result[ident]["current_requirements"] = (
+                    {"status": requirements["status"], "revision": requirements["revision"]}
+                    if requirements and requirements["status"] in {"complete", "unsupported_language"}
+                    and requirements["posting_available"] and not requirements["stale"]
+                    and requirements["posting_revision"] == postings[ident]["revision"] else None)
         for ident, score in scores.items():
             source = score["source_binding"]
             profile, guidance = profiles[source["profile_id"]]

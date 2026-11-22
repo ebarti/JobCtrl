@@ -2,7 +2,7 @@ export { discoveryKeys } from "./queryKeys.js";
 export { discoveryEvents } from "./events.js";
 export { useDiscoverySettingsQuery } from "./hooks/useDiscoverySettingsQuery.js";
 export { useDiscoveryTargetPlanQuery } from "./hooks/useDiscoveryTargetPlanQuery.js";
-export { useSourceRegistryQuery, useSourceLocatorCandidatesQuery, useDiscoverySourcePreviewQuery, useDiscoveryQuarantineQuery, useManualCaptureQueueQuery, useRoleMatchFeedbackQuery } from "./hooks/useDiscoveryProductControlsQuery.js";
+export { useSourceRegistryQuery, useDiscoverySourcePreviewQuery, useDiscoveryQuarantineQuery, useManualCaptureQueueQuery, useRoleMatchFeedbackQuery } from "./hooks/useDiscoveryProductControlsQuery.js";
 
 export { DiscoveryProductControls } from "./components/DiscoveryProductControls.js";
 export { DiscoverySourceHealthPanel } from "./components/DiscoverySourceHealthPanel.js";
@@ -22,6 +22,5 @@ export {
   useManualCaptureDismissMutation,
   useManualCaptureImportMutation,
   usePatchDiscoverySourceStateMutation,
-  useUpsertDiscoverySourceMutation,
 } from "./hooks/useDiscoveryProductControlMutations.js";
 export { useUpdateDiscoverySettingsMutation } from "./hooks/useUpdateDiscoverySettingsMutation.js";

@@ -142,15 +142,6 @@ export interface DemoFeatureState {
   suggestionVersions?: Record<string, number>;
   runCancellationCommands?: Record<string, { runId: string; request: string }>;
   sourceRevisions?: Record<string, number>;
-  locatorStates?: Record<
-    string,
-    {
-      revision: number;
-      decision: "pending" | "promote" | "reject" | "reset";
-      decidedAt: string | null;
-    }
-  >;
-  locatorExamples?: Record<string, Data>;
   templatePreferenceRevision?: number;
   deleteSelections?: Record<
     string,
@@ -385,7 +376,7 @@ export class DemoFeatureHttpAdapter {
       const response = snapshot.state.readModel.discovery.sources;
       return handled({
         ...structuredClone(response),
-        sources: response.sources.map((source) => ({
+        sources: response.sources.filter((source) => source.sourceId.startsWith("jobstreaming:")).map((source) => ({
           ...source,
           revision:
             snapshot.state.features?.sourceRevisions?.[source.sourceId] ?? 1,
@@ -395,51 +386,21 @@ export class DemoFeatureHttpAdapter {
     if (
       owner === "discovery" &&
       id === "sources" &&
-      ((method === "POST" && path.length === 3) ||
-        (method === "PATCH" && action && detail === "state"))
+      method === "PATCH" && action && detail === "state"
     ) {
       const snapshot = await this.workspace.snapshot();
-      const sourceId = method === "POST" ? text(body.sourceId) : action!;
-      const exists = snapshot.state.readModel.discovery.sources.sources.some(
-        (source) => source.sourceId === sourceId,
-      );
-      const { createOnly, expectedRevision, ...patch } = body;
-      if (method === "POST" && createOnly === true && exists)
-        throw conflict(
-          "This source already exists. Review its current state before editing.",
-        );
-      const expected = exists ? integer(expectedRevision, 1) : 0;
-      const result = await this.api.executeHttpLocalCommand(
-        method === "POST"
-          ? "upsertDiscoverySource"
-          : "patchDiscoverySourceState",
-        method === "POST" ? [patch] : [sourceId, patch],
-        (draft) => {
-          if (draft.resetEpoch !== snapshot.resetEpoch)
-            throw conflict(
-              "The synthetic workspace was reset before the source change.",
-            );
-          const current = draft.state.readModel.discovery.sources.sources.some(
-            (source) => source.sourceId === sourceId,
-          );
-          const revisions = (features(draft).sourceRevisions ??= {});
-          if (
-            current !== exists ||
-            (current && (revisions[sourceId] ?? 1) !== expected)
-          )
-            throw conflict(
-              "The source revision changed. Review it before saving.",
-            );
-          revisions[sourceId] = current ? expected + 1 : 1;
-        },
-      );
-      return handled({
-        ...data(result),
-        source: {
-          ...data(data(result).source),
-          revision: exists ? expected + 1 : 1,
-        },
+      const sourceId = action;
+      const { expectedRevision, state, reason } = body;
+      const expected = integer(expectedRevision, 1);
+      const result = await this.api.executeHttpLocalCommand("patchDiscoverySourceState", [sourceId, { state, reason }], (draft) => {
+        const revisions = (features(draft).sourceRevisions ??= {});
+        if (!sourceId.startsWith("jobstreaming:") || !draft.state.readModel.discovery.sources.sources.some((source) => source.sourceId === sourceId))
+          throw notFound("The JobStreaming board does not exist.");
+        if (draft.resetEpoch !== snapshot.resetEpoch || (revisions[sourceId] ?? 1) !== expected)
+          throw conflict("The board changed. Review its state before saving.");
+        revisions[sourceId] = expected + 1;
       });
+      return handled({ ...data(result), source: { ...data(data(result).source), revision: expected + 1 } });
     }
     if (
       owner === "discovery" &&
@@ -449,77 +410,6 @@ export class DemoFeatureHttpAdapter {
       (method === "GET" || method === "POST")
     ) {
       return handled(await this.api.discoverySourcePreview(action));
-    }
-    if (owner === "discovery" && id === "locator-candidates") {
-      const snapshot = await this.workspace.snapshot();
-      const response = snapshot.state.readModel.discovery.locatorCandidates;
-      const candidates = new Map<string, Data>(
-        response.candidates.map((candidate) => [
-          candidate.candidateId,
-          data(candidate),
-        ]),
-      );
-      for (const [candidateId, candidate] of Object.entries(
-        snapshot.state.features?.locatorExamples ?? {},
-      ))
-        candidates.set(candidateId, candidate);
-      if (method === "GET" && path.length === 3)
-        return handled({
-          ...structuredClone(response),
-          candidates: [...candidates].map(([candidateId, candidate]) => ({
-            ...structuredClone(candidate),
-            ...(snapshot.state.features?.locatorStates?.[candidateId] ?? {
-              revision: 1,
-              decision: "pending",
-              decidedAt: null,
-            }),
-          })),
-        });
-      if (
-        method === "POST" &&
-        action &&
-        ["promote", "reject", "reset"].includes(detail ?? "")
-      ) {
-        const candidate = candidates.get(action);
-        if (!candidate) throw notFound();
-        const expected = integer(body.expectedRevision, 1);
-        const decidedAt = new Date().toISOString();
-        const guard = (draft: DemoWorkspaceSnapshot) => {
-          if (draft.resetEpoch !== snapshot.resetEpoch)
-            throw conflict(
-              "The synthetic workspace was reset before the proposal decision.",
-            );
-          const state = features(draft);
-          const current = state.locatorStates?.[action]?.revision ?? 1;
-          if (current !== expected)
-            throw conflict(
-              "The locator proposal changed. Review its current revision before deciding.",
-            );
-          (state.locatorExamples ??= {})[action] = structuredClone(candidate);
-          (state.locatorStates ??= {})[action] = {
-            revision: current + 1,
-            decision: detail as "promote" | "reject" | "reset",
-            decidedAt,
-          };
-        };
-        if (detail === "promote") {
-          const result = await this.api.executeHttpLocalCommand(
-            "promoteSourceLocatorCandidate",
-            [action, body],
-            guard,
-          );
-          return handled({ ...data(result), revision: expected + 1 });
-        }
-        await this.commit(guard, snapshot.resetEpoch);
-        return handled({
-          ok: true,
-          candidateId: action,
-          decision: detail,
-          source: null,
-          decidedAt,
-          revision: expected + 1,
-        });
-      }
     }
     if (owner === "discovery" && id === "settings") {
       if (method === "GET")

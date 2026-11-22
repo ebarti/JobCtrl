@@ -179,8 +179,11 @@ the same table query and survive opening a job and returning.
 
 A fresh built-in **Default** view starts with Title, Company, Location, Posted
 pay, Fit and Apply, plus selection. Posted pay uses its recorded display range,
-currency and unit. Granular/source fields remain available in **Columns**, and
-existing custom or persisted layouts keep their saved choices.
+currency and unit. **Posted pay → Known** finds current employer-stated
+amounts in any currency, including ranges with an unspecified pay period.
+**Known annual EUR** and the salary minimum and maximum filters require a
+comparable amount in euros per year. Granular/source fields remain available in
+**Columns**, and existing custom or persisted layouts keep their saved choices.
 
 Open a job for its nearby task workspace. Return to the same comparison state
 when finished, including after full-size resume editing. Within the job, inspect
@@ -363,7 +366,6 @@ the owned runtime and resume forward with `jobctrl update`. See
 | `doctor` | Read the structured canonical setup/readiness report for Profile, providers, browser, worker, Temporal and budget. A successful read does not mean every capability is ready. |
 | `run [stages]` | Submit an explicit preparation recipe. The default `discover` recipe discovers and prepares new/pending work through the canonical worker; it does not implicitly submit applications. |
 | `legacy-evidence list` / `recover` / `decide` | Read retained originals/current cells; `recover --payload FILE` inventories a Profile recovery bundle or explicitly unavailable authority, and `decide --payload FILE` records the exact source/version-bound human decision. Neither command restores a database or overwrites current source text. |
-| `source-proposals from-history` / `list` / `reset CANDIDATE_ID` | Explicitly propose sources from saved canonical posting/application URLs, read retained evidence and review history, or reset one rejected coordinate. Review and promotion use the existing Source locator; see [Discovery](discovery.md#propose-sources-from-saved-posting-history). |
 | `discover` / `assess` / `enrich` / `analyze` / `score` / `tailor` / `prepare` | Submit the corresponding durable recipe. `assess` requires explicit `--job-id` selection and runs enrichment, role context, requirements and person fit without Discovery, wording or resume work. Preparation commands accept `--force` and `--wait`; inspect `--help` for each command's supported selectors. |
 | `job <JobId-or-saved-url>` | Read one saved job or explicitly request `--prepare`, `--score`, `--tailor` or a current approved `--apply`. It does not import a new URL or create submission approval. |
 | `apply` | Inspect with `--review-only` or `--recover`; rehearse with `--dry-run`; execute an exact current payload/approval or an approved batch. `--control` records an explicit version-fenced control decision. Standing polling consumes only eligible current approvals and never grants generic submit authority. |

@@ -19,8 +19,8 @@ export default defineConfig({
   retries: 0,
   workers: installed ? Math.min(4, Math.max(1, os.availableParallelism() - 1)) : 1,
   timeout: 90_000,
-  // Release qualification runs the full installed suite in one invocation.
-  // Source CI runs bounded shards, and every case keeps the same deadline.
+  // Hosted qualification partitions the installed suite across Mac runners.
+  // Every case keeps the same deadline in an individual or sharded run.
   globalTimeout: installed ? 3_600_000 : 720_000,
   expect: { timeout: 10_000 },
   reporter: [

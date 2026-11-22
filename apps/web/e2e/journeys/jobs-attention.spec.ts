@@ -4,7 +4,7 @@ import { observeSharedWorkerEventSource, sharedEventStreamTargets } from "../har
 import { createScoredFit, type FitState } from "./fit-data.js";
 import { createBaseline, type Profile } from "./core-data.js";
 import { authoredPartition, readCatalog, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
-import { typedExtraction, type CatalogContext } from "./requirements-data.js";
+import { catalogContext, typedExtraction } from "./requirements-data.js";
 import { qualificationBatchDecision } from "./qualification-data.js";
 import { acceptReuseRequirements, captureReusePosting } from "./reuse-data.js";
 
@@ -81,7 +81,7 @@ test("Fit flags accepted demand and evidence changes without treating catalog re
   }));
   const matching = await modelCall(app, "requirements.match_catalog");
   const retained = retainedCapability(matching, original.requirement_id, "recovery");
-  retained.memberIds.push(...(matching.body["context"] as CatalogContext).incoming.map((row) => row.member_id));
+  retained.memberIds.push(...catalogContext(matching).incoming.map((row) => row.member_id));
   matching.reply(authoredPartition(matching, [retained],
     [{ groupId: retained.groupId, definition: original.normalized_demand.definition, jobIds: [posting.job_id] }]));
   const accepted = await extracting;
@@ -319,18 +319,8 @@ test("Jobs attention distinguishes deliberately inactive sources from quarantine
   const sources = () =>
     json<{ sources: Source[] }>(api, "get", "/v1/discovery/sources");
   const digest = () => json<Digest>(api, "get", "/v1/digest");
-  const sourceId = "jobstreaming:linkedin";
-  const original = (await sources()).sources;
-  const prior = original.find((source) => source.sourceId === sourceId);
-  await json(api, "post", "/v1/discovery/sources", {
-    sourceId,
-    displayName: "Synthetic controlled source",
-    kind: "broad_board",
-    state: "active",
-    policyId: "broad_board_tolerated",
-    adapterConfig: { board: "linkedin" },
-    ...(prior ? { expectedRevision: prior.revision } : {}),
-  });
+  const sourceId = "jobstreaming:indeed";
+  expect((await sources()).sources).toContainEqual(expect.objectContaining({ sourceId, state: "active" }));
   const settings = await json<{ revision: number }>(
     api,
     "get",
@@ -340,7 +330,7 @@ test("Jobs attention distinguishes deliberately inactive sources from quarantine
     expectedRevision: settings.revision,
     queries: ["Synthetic source readiness engineer"],
     locations: [{ location: "Madrid", remote: false }],
-    boards: ["linkedin"],
+    boards: ["indeed"],
     resultsPerSite: 5,
     hoursOld: 0,
     newJobLimit: 5,
@@ -350,15 +340,9 @@ test("Jobs attention distinguishes deliberately inactive sources from quarantine
   for (let failure = 1; failure <= 3; failure += 1) {
     const run = await action(api, "discovery.search", {});
     const provider = await app.external.next();
-    expect(provider.path).toBe("/discovery");
-    expect(provider.body["request"]).toMatchObject({
-      query: "Synthetic source readiness engineer",
-      sites: ["linkedin"],
-    });
-    provider.respond(
-      { error: "controlled_external_provider_unavailable" },
-      503,
-    );
+    expect(provider.path).toBe("/jobstreaming/indeed");
+    expect(String(provider.body["query"])).toContain('what: "Synthetic source readiness engineer"');
+    provider.respond({ error: "access denied" }, 401);
     expect((await terminal(api, run.runId))["status"]).toBe("failed");
     const source = (await sources()).sources.find(
       (item) => item.sourceId === sourceId,
@@ -404,11 +388,9 @@ test("Jobs attention distinguishes deliberately inactive sources from quarantine
     (await sources()).sources.find((source) => source.sourceId === sourceId),
   ).toEqual(disabled);
 
-  await json(api, "post", "/v1/discovery/sources", {
-    sourceId: "qa:quarantined",
-    displayName: "Synthetic quarantined source",
-    kind: "ats_api",
-    state: "quarantined",
+  const otherBoard = (await sources()).sources.find((item) => item.sourceId === "jobstreaming:zip_recruiter")!;
+  await json(api, "patch", `/v1/discovery/sources/${otherBoard.sourceId}/state`, {
+    expectedRevision: otherBoard.revision, state: "quarantined",
   });
   const snapshot = (await sources()).sources;
   const blocked = await digest();
@@ -416,7 +398,7 @@ test("Jobs attention distinguishes deliberately inactive sources from quarantine
     count: 1,
     sources: [
       expect.objectContaining({
-        sourceId: "qa:quarantined",
+        sourceId: otherBoard.sourceId,
         consecutiveFailures: 0,
       }),
     ],

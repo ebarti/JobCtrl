@@ -15,6 +15,7 @@ from temporalio.client import (
 from temporalio.service import RPCError, RPCStatusCode
 
 from jobctrl.app.actions import Application, task_queue
+from jobctrl.app.errors import AppError
 
 log = logging.getLogger(__name__)
 SCHEMA = """
@@ -102,10 +103,20 @@ async def maintain(application: Application, stop: asyncio.Event):
                 events = runtime.events.since(after)
                 if events:
                     latest = int(events[-1]["eventId"])
-                    if compensation_enabled and any(event["type"] in {"JobCaptured", "JobSourceObserved"} for event in events):
-                        await application.submit("compensation.refresh_stale", {"automatic": True}, idempotency_key=f"compensation-events:{latest}")
+                    changed = list(dict.fromkeys(event["aggregateId"] for event in events
+                        if event["type"] in {"JobCaptured", "JobSourceObserved"} and event["aggregateId"]
+                        and event["payload"].get("postingChanged", True)))
+                    if compensation_enabled and changed:
+                        await application.submit("compensation.refresh_stale", {"automatic": True, "jobIds": changed},
+                                                 idempotency_key=f"compensation-posting-changes:{after}:{latest}")
                     with runtime.database.transaction() as connection:
-                        connection.execute("INSERT INTO app_schedule_cursors VALUES('compensation',?) ON CONFLICT(consumer) DO UPDATE SET event_id=excluded.event_id", (latest,))
+                        connection.execute("INSERT INTO app_schedule_cursors VALUES('compensation',?) ON CONFLICT(consumer) "
+                                           "DO UPDATE SET event_id=MAX(event_id,excluded.event_id)", (latest,))
+        except AppError as error:
+            # Another stale refresh owns the lane. Its completion releases the
+            # action scope and the next pass retries these unacknowledged events.
+            if error.code != "action_scope_busy":
+                log.warning("Schedule reconciliation failed error_code=%s", error.code)
         except Exception as error:
             # Recovery is bounded, visible and never advances the event cursor.
             # A later successful Temporal reconnect retries the same identities.
