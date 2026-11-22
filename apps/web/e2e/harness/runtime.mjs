@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { externalBoundaries } from "./external-boundaries.mjs";
+import { upgradeRevisions } from "./upgrade-revisions.mjs";
 
 const execFile = promisify(execFileCallback);
 export const repo = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -257,50 +258,61 @@ export async function temporalStack() {
   const home = path.join(directory, "home");
   await mkdir(home, { mode: 0o700 });
   const address = `127.0.0.1:${await port()}`;
-  const service = await launch(
-    "temporal",
-    temporal,
-    [
-      "server",
-      "start-dev",
-      "--ip",
-      "127.0.0.1",
-      "--port",
-      address.split(":")[1],
-      "--headless",
-      "--db-filename",
-      path.join(directory, "history.db"),
-      "--log-level",
-      "error",
-    ],
-    { directory, env: environment(home) },
-  );
-  try {
-    await waitFor(
-      async () => {
-        service.assertRunning();
-        const { stdout } = await execFile(
-          temporal,
-          ["operator", "cluster", "health", "--address", address],
-          { timeout: 3_000, env: environment(home) },
-        );
-        return stdout.includes("SERVING");
-      },
-      "real Temporal health",
-      { timeout: 40_000 },
+  async function start() {
+    const service = await launch(
+      "temporal",
+      temporal,
+      [
+        "server",
+        "start-dev",
+        "--ip",
+        "127.0.0.1",
+        "--port",
+        address.split(":")[1],
+        "--headless",
+        "--db-filename",
+        path.join(directory, "history.db"),
+        "--log-level",
+        "error",
+      ],
+      { directory, env: environment(home) },
     );
-  } catch (error) {
-    await service.stop();
-    throw error;
+    try {
+      await waitFor(
+        async () => {
+          service.assertRunning();
+          const { stdout } = await execFile(
+            temporal,
+            ["operator", "cluster", "health", "--address", address],
+            { timeout: 3_000, env: environment(home) },
+          );
+          return stdout.includes("SERVING");
+        },
+        "real Temporal health",
+        { timeout: 40_000 },
+      );
+    } catch (error) {
+      await service.stop();
+      throw error;
+    }
+    return service;
   }
+  let service = await start();
   let retainState = false;
   return {
     address,
+    async pause() {
+      await service.stop();
+      service = null;
+    },
+    async resume() {
+      service = await start();
+    },
     retainForDiagnosis() {
       retainState = true;
     },
     async close() {
-      await service.stop();
+      await service?.stop();
       if (!retainState) await removeAllocated(directory, identity);
     },
   };
@@ -310,7 +322,7 @@ export async function applicationStack(
   temporalAddress,
   {
     features,
-    discoveryTransport = "http",
+    discoveryTransport = "jobstreaming",
     nativeAccountingPreflight = false,
     sourceRevision,
     fitRecoveryDebugger = false,
@@ -350,8 +362,6 @@ export async function applicationStack(
     JOBCTRL_E2E_TOKEN: token,
     JOBCTRL_E2E_PROVIDER_URL: `${external.url}/model`,
     JOBCTRL_GMAIL_API_ROOT: `${external.url}/gmail/v1`,
-    JOBCTRL_DISCOVERY_PROVIDER_ENDPOINT: `${external.url}/discovery`,
-    JOBCTRL_DISCOVERY_PROVIDER_TOKEN: token,
     JOBCTRL_E2E_COMPANY_PAGE_URL: `${external.url}/company-page`,
     JOBCTRL_E2E_COMPENSATION_URL: `${external.url}/compensation`,
     JOBCTRL_E2E_DNS_URL: `${external.url}/dns`,
@@ -367,9 +377,9 @@ export async function applicationStack(
           || key === "JOBCTRL_POSTING_PROVIDER_ENDPOINT") delete env[key];
     }
   }
-  if (discoveryTransport === "jobstreaming") {
-    delete env.JOBCTRL_DISCOVERY_PROVIDER_ENDPOINT;
+  if (!nativeAccountingPreflight) {
     env.JOBCTRL_JOBSTREAMING_PROVIDER_ENDPOINT = `${external.url}/jobstreaming`;
+    if (discoveryTransport !== "jobstreaming") env.JOBCTRL_E2E_BOARD_ACCESS = discoveryTransport;
   }
   if (features !== undefined) env.JOBCTRL_FEATURES = features;
   if (
@@ -391,7 +401,7 @@ export async function applicationStack(
   const recoveryPaused = path.join(directory, "fit-recovery-paused.json");
   const cohortArm = path.join(directory, "cohort-boundary-arm");
   const cohortPaused = path.join(directory, "cohort-boundary-paused.json");
-  async function startWorker() {
+  async function startWorker(workerFeatures) {
     worker = await launch(
       `worker-${++workerGeneration}`,
       pythonExecutable,
@@ -404,7 +414,7 @@ export async function applicationStack(
         "--temporal-address",
         temporalAddress,
       ],
-      { directory, env },
+      { directory, env: workerFeatures === undefined ? env : { ...env, JOBCTRL_FEATURES: workerFeatures } },
     );
     services.push(worker);
     return worker.pid;
@@ -425,7 +435,7 @@ export async function applicationStack(
   }
   try {
     if (sourceRevision) {
-      if (!["8ab86e9232d66fff9795906e061d208e7a057d8b", "5b9db7ddfa20fa2d618687da1b311e2287286679", "6e4131061fb41aab4743701084a7c74a19fa21f3", "943c8b4d0c6f4a15521e10c04a015de726bfcbb9", "6f46b0ba5913383b7c57ffcce986729fa0bdbf0e", "5d3fda5352fe4418332b989c05f710e0529f578c", "df06b08ae201f7a73dc2c359944c06daf517c69e", "b49dc52e3d727356870317069304ac6ceb9f1237", "38ef94613ebb7c0413d8d5ee89987ef860f53b13"].includes(sourceRevision))
+      if (!upgradeRevisions.includes(sourceRevision))
         throw new Error("The source upgrade journey requires its exact fixed predecessor.");
       const resolved = await execFile("git", ["rev-parse", "--verify", `${sourceRevision}^{commit}`], { cwd: repo, timeout: 5_000 });
       if (resolved.stdout.trim() !== sourceRevision)
@@ -483,10 +493,12 @@ export async function applicationStack(
     }
     // The EXTERNAL OS credential command is also a real owned process, with
     // synthetic values held only in this workspace. No native store is read.
+    // Credential subprocesses filter Python env vars, so disable bytecode
+    // on the helper interpreter itself to keep the installed payload intact.
     const credentialHelper = path.join(workspace, "credential-helper");
     await writeFile(
       credentialHelper,
-      `#!${pythonExecutable}\nimport json, os, pathlib, sys\nroot = pathlib.Path(__file__).parent\noperation, key = sys.argv[1:]\nstore = root / 'synthetic-credential-store.json'\nvalue = json.loads(store.read_text()) if store.exists() else {}\nif (root / 'fail-credential-helper').exists(): sys.exit(70)\nif operation in ('inspect', 'read'):\n if key not in value: sys.exit(44)\n if operation == 'read': sys.stdout.write(value[key])\nelif operation == 'set':\n value[key] = sys.stdin.read()\n temporary = store.with_suffix('.pending')\n fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)\n with os.fdopen(fd, 'w') as stream:\n  json.dump(value, stream); stream.flush(); os.fsync(stream.fileno())\n os.replace(temporary, store)\nelif operation == 'delete':\n value.pop(key, None)\n store.write_text(json.dumps(value)); store.chmod(0o600)\nelse: sys.exit(64)\n`,
+      `#!${pythonExecutable} -B\nimport json, os, pathlib, sys\nroot = pathlib.Path(__file__).parent\noperation, key = sys.argv[1:]\nstore = root / 'synthetic-credential-store.json'\nvalue = json.loads(store.read_text()) if store.exists() else {}\nif (root / 'fail-credential-helper').exists(): sys.exit(70)\nif operation in ('inspect', 'read'):\n if key not in value: sys.exit(44)\n if operation == 'read': sys.stdout.write(value[key])\nelif operation == 'set':\n value[key] = sys.stdin.read()\n temporary = store.with_suffix('.pending')\n fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)\n with os.fdopen(fd, 'w') as stream:\n  json.dump(value, stream); stream.flush(); os.fsync(stream.fileno())\n os.replace(temporary, store)\nelif operation == 'delete':\n value.pop(key, None)\n store.write_text(json.dumps(value)); store.chmod(0o600)\nelse: sys.exit(64)\n`,
       { mode: 0o700, flag: "wx" },
     );
     if (!nativeAccountingPreflight) env.JOBCTRL_E2E_CREDENTIAL_HELPER = credentialHelper;
@@ -526,6 +538,19 @@ export async function applicationStack(
       setupMs: Math.round(performance.now() - started),
       get workerPid() {
         return worker?.pid;
+      },
+      async alternateNamespaceApi(namespace) {
+        const apiPort = String(await port());
+        const url = `http://127.0.0.1:${apiPort}`;
+        const alternate = await launch("alternate-api", pythonExecutable,
+          ["-m", "jobctrl.app.server", "--host", "127.0.0.1", "--port", apiPort, "--workspace", workspace],
+          { directory, env: { ...env, JOBCTRL_API_PORT: apiPort, JOBCTRL_TEMPORAL_NAMESPACE: namespace } });
+        services.push(alternate);
+        await waitFor(async () => {
+          alternate.assertRunning();
+          return (await fetch(`${url}/v1/health`)).ok;
+        }, "alternate workspace API health");
+        return url;
       },
       async armCohortBoundaryPause() {
         if (!cohortBoundaryDebugger) throw new Error("The cohort guard debugger is not enabled.");
@@ -805,12 +830,12 @@ print(json.dumps({"adapters": adapters, "receipts": receipts, "receiptKeys": rec
 `, workspace, runId], { env, timeout: 5000, maxBuffer: 100_000 });
         return JSON.parse(inspected.stdout);
       },
-      async restartWorker() {
+      async restartWorker(workerFeatures) {
         const previous = worker;
         previous.crash();
         await previous.stop();
         services.splice(services.indexOf(previous), 1);
-        const next = await startWorker();
+        const next = await startWorker(workerFeatures);
         if (next === previous.pid)
           throw new Error("Worker restart did not change process identity");
         await waitFor(async () => {

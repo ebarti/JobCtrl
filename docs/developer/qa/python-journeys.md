@@ -58,18 +58,36 @@ traces and reports and excludes databases, native HOME and provider state.
 
 ## Coverage ledger
 
-The current configured inventory is **178 journeys in 49 project-file groups**.
-It includes **177 Chromium cases in 48 spec files** and **one demo case in one file**.
+The current configured inventory is **224 journeys in 63 project-file groups**.
+It includes **223 Chromium cases in 62 spec files** and **one demo case in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts, keyboard-driven Profile saves, posting-fetch refusals and the
 actual terminal-root v4 and terminal-group v5 predecessor upgrades, demand-citation
 role refusals, Fit schema refusals, rediscovery recovery and accepted-score
-currentness. The four hosted shard listings contain 48 / 53 / 34 / 43 cases
-and match the unsharded inventory exactly once.
+currentness. The six hosted shard listings contain 50 / 26 / 37 / 43 / 41 / 27
+cases and match the unsharded inventory exactly once.
 Listing these scenarios is not evidence that the complete current candidate passed.
 
 ### Accepted postings and Fit currentness
+
+The [predecessor Fit journey](../../../apps/web/e2e/journeys/legacy-fit-reasons.spec.ts)
+checks the Jobs grid before and after a matching Fit skip is recorded. It uses
+an exact posting revision and hash from the search. A fresh language decision
+on the unchanged posting updates the Fit tab. The grid links the earlier search’s
+skip until a posting refresh changes the source. The grid uses bulk reads.
+
+The [URL import journeys](../../../apps/web/e2e/journeys/posting-fetch-failures.spec.ts)
+hold the enrichment lane with a separate request and submit a posting through
+Jobs. The browser shows the persisted queue, a duplicate joins the existing
+run and a second waiter can be cancelled. After the browser closes and the
+worker restarts, releasing the holder produces one saved observation. A separate
+restart after a paid call begins checks its receipt and counts external calls:
+completed stages are reused and an interrupted call remains available for review.
+The current form also runs against the actual pre-queue server. A busy lane
+leaves a failed native action and a subsequent, explicitly submitted import
+can succeed. Both receipts remain in native run history after reload, with zero
+requests to the unavailable queue endpoint.
 
 The [predecessor upgrade journey](../../../apps/web/e2e/journeys/preparation-cohort.spec.ts)
 starts with a scored full posting, downgrades it through the predecessor's real
@@ -103,6 +121,32 @@ checks compact source and line references, persisted raw and expanded citation
 fingerprints, retained-definition references, and the stored reconciliation.
 It also observes distinct live model lanes overlapping while preserving the
 configured single-lane capacities.
+
+The [single-job refresh journey](../../../apps/web/e2e/journeys/requirements-reuse.spec.ts)
+independently reconstructs v9 rows, strings and per-source citation layouts
+from the actual provider request and verifies their complete context and source
+fingerprints. It upgrades real v6 and v8 workspaces, rereads an accepted
+action and refuses an interrupted paid comparison before a new v9 refresh.
+It also builds a complete catalog through 100 real single-job refreshes in an
+owned synthetic workspace and verifies every posting and occurrence on the final call.
+The [background alternatives journey](../../../apps/web/e2e/journeys/requirements-background.spec.ts)
+retains an original v9 refusal across upgrade, checks an explicitly admitted
+new comparison against the same extraction, and follows the two independent
+model-selected demands through Fit. A later unresolved comparison preserves
+the first accepted snapshot. These controlled choices verify the model's
+authority and publication behavior.
+The [retained demand choice journeys](../../../apps/web/e2e/journeys/requirements-demand-choices.spec.ts)
+follow an explicit choice of a saved definition through its source bindings,
+reconciliation receipt and Fit score. They also verify that ambiguous, foreign
+and uncited choices preserve the accepted catalog, and that restarting a worker
+with an unsettled comparison keeps the original run and provider call.
+The [payload boundary case](../../../apps/web/e2e/journeys/requirements.spec.ts)
+sends a complete synthetic catalog whose original source documents exceed
+1 MiB and admits 100 distinct incoming definitions with their complete source
+notes. It also checks that additional original posting text can exceed the same
+gateway limit after packing. Its latest-attempt reads cover both preserved acceptance and a
+first-time refusal with no accepted snapshot. The accepted PDF stays readable. Offering an
+incoming ID as a retained capability fails the strict structured schema.
 
 Additional cases refuse missing or foreign normalization members, qualification
 rows and citations without partial authority; skip an unsupported-language job;
@@ -158,6 +202,16 @@ result for identical input. Explicit cancellation settled unpublished attempts,
 shared normalization refusal settled every affected attempt, and actual worker
 loss retained the original reservation until recovery. Accepted snapshots stayed
 intact.
+
+The [manual Fit receipt journey](../../../apps/web/e2e/journeys/fit-refresh-receipt.spec.ts)
+holds qualification while an unrelated unsupported-language job is accepted.
+It checks the original source conflict, exact paid-call counts and score
+publication under a new action, including a real predecessor. Changed source
+or effective effort requires a distinct provider input. Invalid achievement
+evidence and multiple exact gateway receipts preserve the prior score. An older
+low-effort receipt before an unpinned high-effort stale operation cannot supply
+a later low-effort refresh. A new operation with an unresolved transport effect
+also refuses duplicate dispatch.
 
 ### Bounded Fit impact scope and durable call recovery — 17 November 2026
 
@@ -400,16 +454,16 @@ ceiling in shard 1: 35 passed and 12 did not run. Shards 2 and 3 passed 41 and
 40 cases in 695.694 s and 567.385 s, respectively. This is **116 passed and 12
 unrun**, with no individual assertion failure; it is not a complete suite pass.
 
-The hosted matrix now uses four standard Playwright shards. Native JSON
+The hosted matrix then moved to four standard Playwright shards. Native JSON
 listings measured **34 / 33 / 37 / 24 cases** in **11 / 9 / 12 / 10 project-file
 groups**. Their disjoint union equals the complete 128-case, 42-group inventory,
 with no missing, duplicate or extra case. That configuration used one worker,
 zero retries, a 90-second ordinary case limit and a 720-second suite limit. The
-stable Browser aggregate requires all four jobs.
+stable Browser aggregate required all four jobs at that point.
 
 On `6f46b0ba5`, the four shards assigned 37 / 33 / 44 / 24 cases. Shards 1 and
 3 reached the unchanged suite deadline with 36 and 39 passes respectively;
-shards 2 and 4 passed. The hosted invocation now uses two Playwright workers per
+shards 2 and 4 passed. The hosted invocation moved to two Playwright workers per
 shard while retaining the four shards, zero retries, existing case deadlines and
 720-second suite limit. Each worker owns its Temporal service and each journey
 its application workspace. The ordinary local invocation still defaults to one
@@ -1044,7 +1098,8 @@ cannot qualify all 57, and earlier failures remain part of the evidence.
 | [Whole-product surfaces](../../../apps/web/e2e/journeys/redesign-surfaces.spec.ts) | Load 26 retained surfaces at 1440 × 1000, 1860 × 1227, 2943 × 1227 and 390 × 844: 104 settled captures within one journey. Check mounted navigation, headings, meaningful loaded/explicit-empty content and page overflow, plus real saved-material search/clear/state, control geometry and Plate/PDF access. This does not judge visual craft: earlier passing inventory checks still exposed inner Profile and Materials control defects during image inspection. |
 | [Requirement associations](../../../apps/web/e2e/journeys/requirement-associations.spec.ts) | Create/revise/remove/restore many-to-many user intent through the real library/Profile flow. Keep exact requirement/source/optional-wording pins, stale history, achievement-based grouping and selected/filter/return context. Manual links never create assessment, coverage, score or model work. |
 | [Search preferences](../../../apps/web/e2e/journeys/search-preferences.spec.ts) | Enter adds/focuses independent role inputs; save/reload canonical targets and source/limit settings; make no lookup while typing. Explicit controlled Photon results bind exact row/place identity, duplicate display labels remain independent, edits clear stale bindings, and invalid responses remain unverified. Deliberate search retains its saved Profile-version fence. |
-| [Search assessment and recovery](../../../apps/web/e2e/journeys/search-assessment.spec.ts) | Ordinary search continues from canonical acquisition into initial person fit with separate source/assessment outcomes. Explicit saved-ID assessment performs no new acquisition. Reject foreign evidence, preserve accepted scores/manual refresh, retain failed jobs across actual worker replacement, seal cancellation without inventing model usage, and assess jobs retained by failed sources. |
+| [Search assessment and recovery](../../../apps/web/e2e/journeys/search-assessment.spec.ts) | Ordinary search continues from canonical acquisition into initial person fit with separate source/assessment outcomes. The Jobs grid and Fit tab identify a waiting search or the exact failed check for the current posting, and link to its run. A revised posting drops an earlier failure. Explicit saved-ID assessment performs no new acquisition. Reject foreign evidence, preserve accepted scores/manual refresh, retain failed jobs across actual worker replacement, seal cancellation without inventing model usage, and assess jobs retained by failed sources. |
+| [100-job search and concurrent URL import](../../../apps/web/e2e/journeys/search-import-capacity.spec.ts) | Use the Jobs controls to start a 100-job search and import a separate URL while enrichment is occupied. Verify the visible wait, automatic import, all 100 Fit assessments and final Jobs, preparation, digest and health reads under sustained committed events. |
 | [Settings workspace](../../../apps/web/e2e/journeys/settings-workspace.spec.ts) | Save a budget before model setup, retain another pane's invalid draft, distinguish configured/unverified readiness and probe providers only on explicit request. Exercise real revision conflicts, uncertain acknowledgements and credential leave/discard protection without changing unrelated saved policy. |
 | [Maintained-assignment race](../../../apps/web/e2e/journeys/wording-assignment-integrity.spec.ts) | Hold the external grouped determination for a manual Fit refresh, change an unrelated maintained assignment through its public write, and require the admitted whole-Profile fingerprint to refuse stale publication. Preserve accepted score/assignment state and the original bounded operation rather than absorbing the concurrent change. |
 | [Composition freshness](../../../apps/web/e2e/journeys/wording-assignment-integrity.spec.ts) | Read job-relevant maintained-wording freshness, including missing-to-present changes; unrelated requirement assignments do not stale composition. Relevant changes preserve draft/accepted pointers and actual accepted PDF bytes. Baseline follows Profile freshness without borrowing Fit authority, and reads dispatch no model or preparation work. |
@@ -1677,6 +1732,39 @@ A controlled HTTP boundary cannot prove those outcomes. Record the exact
 commands, candidate, runner, timings and
 unverified gaps without inferring readiness from test deletion or a green build.
 
+### Saved role criteria at Discovery admission
+
+The [role scope journeys](../../../apps/web/e2e/journeys/discovery-role-scope.spec.ts)
+use fresh workspaces, the public search action and the current saved targets.
+The external model makes opposing choices for identical posting and role
+sources. A missing posting description, mismatch and unknown consume no new-job
+places. Source quotes, verdict counts, the accepted job, the underlying model
+receipt and the frozen target plan are checked together. Invalid output shape,
+unknown verdicts, extra fields, foreign citations, nonverbatim quotes and
+title-only evidence preserve the prior job and review. The historical review
+case updates a posting through the public capture route, checks the new revision
+with a different model decision and verifies the job remains saved.
+
+The existing Jobs Start search and Remote posting-age journeys exercise the
+same role policy through the browser. The Remote journey uses the installed
+Indeed SDK transport and the same saved-role receipt across two board orders.
+
+The [worker recovery journeys](../../../apps/web/e2e/journeys/discovery-role-recovery.spec.ts)
+kill a worker during an admitted role decision with an unlimited monetary
+budget, and separately hold the discovery lane with an API-process review.
+They check external call counts, visible wait/refusal state, canonical job
+counts and the result of repeating a historical review.
+
+The interrupted-call reproduction issued two external calls and saved a job.
+The occupied-lane reproduction failed its only source. On the repaired source
+candidate `ed940f87ed05c5ab2ceac53463b8501cd348eae32feda777af431fd7d9c13c9e`,
+both recovery cases and all three saved-role journeys passed. The pinned-SDK
+Remote journey and a separate local predecessor upgrade passed on the same
+candidate. That upgrade held the original worker's role call, changed the
+provider's response after restart, and verified one call, zero jobs and an
+explicit unresolved source. The isolated upgrade used local predecessor
+`42d5f4eebd04de15992ef8a261ea286ed8595d8c`.
+
 ### Native Discovery accounting setup
 
 `discovery-accounting.spec.ts` runs a fresh owned application with the ordinary
@@ -1784,6 +1872,9 @@ monetary completeness remains intact, while enabling a token-lane limit refuses
 further work. The actual worker-kill recovery journey independently asserts
 `costStatus=unresolved`, a retained unresolved call and null monetary total.
 No receipt, accepted artifact, monetary gate or token gate is bypassed.
+Health distinguishes all currently running calls from the subset admitted on
+the current UTC day. The accounting journey checks both counts while a call is
+held and after it settles.
 
 The focused accounting run on 12 November passed actual worker-kill recovery
 (33.2 seconds) and both accounting cases, with zero retries. Final UI barriers
@@ -1861,3 +1952,8 @@ final passing recovery case. All Python code bytes remained identical to the
 five-case recovery run; only Discovery's owning README changed the source-tree
 hash. The listed inventory is now 73 journeys in 29 spec files, without a new
 complete-suite claim.
+
+
+### JobStreaming-only discovery and concurrent URL import
+
+The [source upgrade journeys](../../../apps/web/e2e/journeys/discovery-sdk-upgrade.spec.ts) upgrade an owned workspace containing an active employer feed and saved jobs. They verify the SDK board catalog, existing job identity, disabled board state and source revision fences. An interrupted run with a retired source must end with its recorded reason before further acquisition. The [concurrent URL import journey](../../../apps/web/e2e/journeys/search-import-capacity.spec.ts) clicks **Start search** for 100 synthetic jobs and imports a separate posting URL while the model lane is occupied. It checks exactly one imported job and the search's own cohort.

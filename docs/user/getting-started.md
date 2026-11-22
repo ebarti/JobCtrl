@@ -71,6 +71,13 @@ cached release is first activated, the normal-user bootstrap checks Apple
 notarization before running the installer; the installer verifies the complete
 runtime before activation. No Homebrew sandbox patch is required.
 
+For a curl reinstall, use the original bin directory. JobCtrl remembers the
+PATH entry it added even when your new shell already has it on PATH.
+
+If the installer reports that it discarded a corrupt cached archive, rerun the
+same install command to download and verify it again. An interrupted partial
+download can still resume.
+
 ### Build and run from source
 
 Use the source option when you want to inspect, modify, or contribute to the
@@ -295,10 +302,11 @@ supporting sources. Keep the previous workspace for jobs, applications,
 generated materials and workflow history. The target database has application
 ID `1245926228` and user version `1`.
 
-The source transition uses the explicit `profile-transfer` command with a
-read-only source, a nonexistent new target, a complete browser Profile sources
-manifest and `--confirm-profile-only-reset`. Verify the completed receipt before
-selecting the new workspace.
+Stop JobCtrl v0.4.x with `jobctrl stop` before transferring. The
+`profile-transfer` command reads a private copy of the legacy database and its
+recovery files to preserve the source workspace. Use a nonexistent new target,
+a complete browser Profile sources manifest and `--confirm-profile-only-reset`.
+Verify the completed receipt before selecting the new workspace.
 
 An installed cutover also needs a **separate fresh native runtime home** with no
 active release selection. Preserve both the old workspace and its native runtime

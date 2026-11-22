@@ -65,7 +65,7 @@ export function SearchPreferencesWorkspace({ sourceTable, returnAction, connecti
       </div>
     </div>
     <section ref={sourcesRef} className="search-source-details" hidden={!sourcesOpen} aria-labelledby="search-source-heading">
-      <header><div><h2 id="search-source-heading">Search sources</h2><p>Manage source enablement, proposals, captured postings and review queues for this search.</p></div><Button type="button" variant="outline" size="sm" onClick={returnToSearch}><IconArrowLeft data-icon="inline-start" />Back to Search preferences</Button></header>
+      <header><div><h2 id="search-source-heading">Search sources</h2><p>Review JobStreaming board availability, saved postings, and search history.</p></div><Button type="button" variant="outline" size="sm" onClick={returnToSearch}><IconArrowLeft data-icon="inline-start" />Back to Search preferences</Button></header>
       {sourcesMounted ? <DiscoveryProductControls layout="tabs" {...(sourceTable ? { sourceTable } : {})} /> : null}
     </section>
     <details className="search-context-tools" onToggle={(event) => { if (event.currentTarget.open) setToolsMounted(true); }}>

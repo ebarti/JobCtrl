@@ -50,7 +50,11 @@ body `{"recipe":"assess","scope":"selected","job_ids":["JOB_ID"],"limit":100}`.
 It requires one to 1,000 exact saved IDs and performs enrichment, role analysis,
 Requirements and Fit without acquisition, wording or resume work. The receipt's
 run joins `GET /v1/preparation/runs/{run_id}` for the frozen cohort and stage
-outcomes. This initial-assessment recipe cannot bypass Fit's manual-refresh fence
+outcomes. A job step exposes `postingRevision` when it recorded the posting
+revision in its own input. The Jobs grid joins that revision or a preceding
+accepted posting checkpoint before showing a failure. For a job with no Fit
+score, the composed Jobs query also exposes the accepted Requirements status
+and revision when they are current for that posting. This initial-assessment recipe cannot bypass Fit's manual-refresh fence
 for previously accepted qualification. Failed work preserves accepted artifacts.
 The `requirements-v2` operation stamp includes the generation, frozen catalog
 and the selected jobs' direct Education/Languages demands. An operation from an

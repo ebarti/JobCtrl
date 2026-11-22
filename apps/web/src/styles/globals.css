@@ -506,10 +506,18 @@ small {
   min-inline-size: 0;
 }
 
+.connection-workspace,
 .connection-spend {
   color: var(--muted-foreground);
   font-size: var(--jh-type-body-size);
   white-space: nowrap;
+}
+
+.connection-workspace {
+  max-inline-size: 12rem;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .connection-spend[data-status="over_budget"] {

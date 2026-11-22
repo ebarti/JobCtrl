@@ -8,7 +8,9 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
-from .core.analysis import EvidenceError, validate_classification
+from jobctrl.app.errors import AppError
+
+from .core.analysis import EvidenceError, posted_from_judgment, validate_classification
 from .core.ports import Citation, Classification, Determination, Observation, PayJudgment, Source
 
 
@@ -120,8 +122,26 @@ class GatewayModel:
                           "multipliers. Never infer an annual period from magnitude or promote bonus/equity/OTE to base pay."),
             sources=[{"source_id": source.reference, "text": source.text}], response_schema=PostedOutput.model_json_schema())
 
-    async def posted_pay(self, source: Source) -> PayJudgment:
-        return self.rebuild_posted(source, await self.gateway.determine(**self.posted_request(source)))
+    async def posted_pay(self, source: Source, *, recover: bool = False, on_admitted=None) -> PayJudgment:
+        request = self.posted_request(source)
+        execution = self.gateway.freeze_execution()
+        fingerprint = self.gateway.fingerprint(**request, execution=execution)
+        for receipt in self.gateway.receipts_for(request["operation"], fingerprint):
+            if receipt["status"] in {"running", "uncertain"}:
+                raise AppError("compensation_posted_call_unsettled", "The earlier posted-pay call has no confirmed outcome.", 409)
+            if receipt["status"] != "succeeded":
+                continue
+            if not recover:
+                break  # An explicit refresh after completion requests a new determination.
+            try:
+                result = self.verified_result(source, receipt["receipt_id"], kind="posted", execution=execution)
+                judgment = self.rebuild_posted(source, result)
+                posted_from_judgment(source, judgment)
+            except (ValueError, TypeError, KeyError):
+                continue  # A settled model response can still fail source or citation validation.
+            return judgment
+        result = await self.gateway.determine(**request, execution=execution, on_admitted=on_admitted)
+        return self.rebuild_posted(source, result)
 
     @staticmethod
     def rebuild_posted(source: Source, result) -> PayJudgment:
@@ -217,11 +237,13 @@ class GatewayModel:
         provenance = {key: receipt[key] for key in ("receipt_id", "provider", "model", "lane", "prompt_version", "input_fingerprint", "created_at")}
         return receipt, SimpleNamespace(value=receipt["value"], provenance=provenance)
 
-    def verified_result(self, source: Source, receipt_id: str, *, kind: str, connection=None):
+    def verified_result(self, source: Source, receipt_id: str, *, kind: str, connection=None, execution=None):
         receipt, result = self.receipt_result(receipt_id, connection)
         request = (self.posted_request(source) if kind == "posted" else
                    self.company_identity_request(source) if kind == "company_identity" else self.classification_request(source))
-        fingerprint = self.gateway.fingerprint(**request, selection={"provider": receipt["provider"], "model": receipt["model"]})
-        if receipt["operation"] != request["operation"] or receipt["input_fingerprint"] != fingerprint:
+        fingerprint = self.gateway.fingerprint(**request, execution=execution,
+                                              selection={"provider": receipt["provider"], "model": receipt["model"]})
+        if (receipt["operation"] != request["operation"] or receipt["lane"] != request["lane"]
+                or receipt["prompt_version"] != request["prompt_version"] or receipt["input_fingerprint"] != fingerprint):
             raise EvidenceError("determination_binding_mismatch")
         return result

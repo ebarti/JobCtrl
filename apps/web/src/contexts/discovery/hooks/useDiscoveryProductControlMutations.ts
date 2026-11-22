@@ -18,35 +18,9 @@ import type {
   QuarantineDecisionResponse,
   RoleMatchFeedbackDecisionRequest,
   RoleMatchFeedbackDecisionResponse,
-  SourceLocatorDecisionRequest,
-  SourceLocatorDecisionResponse,
   SourceRegistryMutationResponse,
   SourceStatePatch,
-  SourceUpsertRequest,
 } from "@jobctrl/contracts";
-
-export function useUpsertDiscoverySourceMutation() {
-  const tenantId = useTenantId();
-  const { http } = usePorts();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async (body: SourceUpsertRequest) => {
-      const response = await http.json<SourceRegistryMutationResponse>("POST", "/v1/discovery/sources", { body: { ...body, createOnly: true } });
-      const source = response?.source as (SourceRegistryMutationResponse["source"] & { seedUrl?: string }) | undefined;
-      if (response?.ok !== true || source?.sourceId !== body.sourceId || source.displayName !== body.displayName
-          || source.kind !== body.kind || source.state !== body.state || source.priority !== body.priority
-          || (body.seedUrl !== undefined && source.seedUrl !== body.seedUrl)) {
-        throw createUnconfirmedWriteError("POST", "/v1/discovery/sources", new Error("The created source was not confirmed."));
-      }
-      return response;
-    },
-    onSettled: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceRegistry(tenantId) }),
-      ]);
-    },
-  });
-}
 
 export function usePatchDiscoverySourceStateMutation() {
   const tenantId = useTenantId();
@@ -68,56 +42,6 @@ export function usePatchDiscoverySourceStateMutation() {
       ]);
     },
   });
-}
-
-export function usePromoteSourceLocatorCandidateMutation() {
-  const tenantId = useTenantId();
-  const { http } = usePorts();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ candidateId, body }: { candidateId: string; body: SourceLocatorDecisionRequest & { expectedRevision: number } }) => {
-      const path = `/v1/discovery/locator-candidates/${encodeURIComponent(candidateId)}/promote`;
-      const result = await http.json<SourceLocatorDecisionResponse>("POST", path, { body });
-      if (result?.ok !== true || result.candidateId !== candidateId || result.decision !== "promote") throw createUnconfirmedWriteError("POST", path, new Error("The source decision was not confirmed."));
-      return result;
-    },
-    onSettled: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceLocator(tenantId) }),
-        queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceRegistry(tenantId) }),
-      ]);
-    },
-  });
-}
-
-export function useRejectSourceLocatorCandidateMutation() {
-  const tenantId = useTenantId();
-  const { http } = usePorts();
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ candidateId, body }: { candidateId: string; body: SourceLocatorDecisionRequest & { expectedRevision: number } }) => {
-      const path = `/v1/discovery/locator-candidates/${encodeURIComponent(candidateId)}/reject`;
-      const result = await http.json<SourceLocatorDecisionResponse>("POST", path, { body });
-      if (result?.ok !== true || result.candidateId !== candidateId || result.decision !== "reject") throw createUnconfirmedWriteError("POST", path, new Error("The source decision was not confirmed."));
-      return result;
-    },
-    onSettled: async () => {
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceLocator(tenantId) }),
-      ]);
-    },
-  });
-}
-
-export function useResetSourceLocatorCandidateMutation() {
-  const tenantId = useTenantId(); const { http } = usePorts(); const queryClient = useQueryClient();
-  return useMutation({ mutationFn: async ({ candidateId, expectedRevision }: { candidateId: string; expectedRevision: number }) => {
-    const path = `/v1/discovery/locator-candidates/${encodeURIComponent(candidateId)}/reset`;
-    const result = await http.json<{ ok: true; candidateId: string; decision: "reset" }>("POST", path, { body: { expectedRevision } });
-    if (result?.ok !== true || result.candidateId !== candidateId || result.decision !== "reset") throw createUnconfirmedWriteError("POST", path, new Error("The source decision was not confirmed."));
-    return result;
-  },
-    onSettled: () => { void queryClient.invalidateQueries({ queryKey: discoveryKeys.sourceLocator(tenantId) }); } });
 }
 
 export function useDiscoveryQuarantineDecisionMutation() {

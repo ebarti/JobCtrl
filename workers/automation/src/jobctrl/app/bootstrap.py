@@ -55,12 +55,9 @@ def create_application(workspace: Path | str, *, enabled_features: Collection[st
         from jobctrl.features.resumes.bootstrap import build_feature
         add(build_feature(runtime, profile=need("profile"), jobs=need("jobs"), requirements=need("requirements"), fit=need("fit")))
         services["profile"].renderer = services["resumes"].preview_profile
-    broker = None
     if "discovery" in selected:
-        from jobctrl.extension_transport import ExtensionBroker
         from jobctrl.features.discovery.bootstrap import build_feature
-        broker = ExtensionBroker(runtime)
-        add(build_feature(runtime, jobs=need("jobs"), profile=services.get("profile"), browser_port=broker))
+        add(build_feature(runtime, jobs=need("jobs"), profile=services.get("profile")))
     if "companies" in selected:
         from jobctrl.features.companies.bootstrap import build_feature
         add(build_feature(runtime, jobs=need("jobs"), discovery=services.get("discovery")))
@@ -138,7 +135,4 @@ def create_application(workspace: Path | str, *, enabled_features: Collection[st
         services["applications"].set_action_reader(application.list_runs)
         if "interviews" in services:
             services["applications"].feedback.set_interview_preparation(services["interviews"].get_generation)
-    application.extension_broker = broker
-    if broker is not None:
-        broker.bind(application)
     return application

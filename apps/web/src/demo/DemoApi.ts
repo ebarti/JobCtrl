@@ -86,7 +86,6 @@ import type {
   DiscoverySettingsUpdateRequest,
   DiscoveryFeedbackRequest,
   DiscoveryFeedbackResponse,
-  DiscoveryBrowserBridgeStatusResponse,
   DiscoveryPreviewResponse,
   ExtensionCapabilityTokenResponse,
   EvidenceMapResponse,
@@ -169,13 +168,9 @@ import type {
   ResetStaleScoresForRescoreRequest,
   ResetStaleScoresForRescoreResponse,
   RunPipelineStagesRequest,
-  SourceLocatorListResponse,
-  SourceLocatorDecisionRequest,
-  SourceLocatorDecisionResponse,
   SourceRegistryListResponse,
   SourceRegistryMutationResponse,
   SourceStatePatch,
-  SourceUpsertRequest,
   WorkflowRunDetail,
   WorkflowRunSummary,
   WorkflowRunsListQuery,
@@ -250,9 +245,6 @@ export interface DemoApiClientPort extends DemoUnavailableMethods {
     body: DiscoverySettingsUpdateRequest,
   ): Promise<DiscoverySettingsResponse>;
   discoverySources(): Promise<SourceRegistryListResponse>;
-  upsertDiscoverySource(
-    body: SourceUpsertRequest,
-  ): Promise<SourceRegistryMutationResponse>;
   patchDiscoverySourceState(
     sourceId: string,
     body: SourceStatePatch,
@@ -262,15 +254,6 @@ export interface DemoApiClientPort extends DemoUnavailableMethods {
   updateCompensationSourcePolicy(
     body: CompensationSourcePolicyUpdateRequest,
   ): Promise<CompensationSourceRegistryResponse>;
-  discoveryLocatorCandidates(): Promise<SourceLocatorListResponse>;
-  promoteSourceLocatorCandidate(
-    candidateId: string,
-    body?: SourceLocatorDecisionRequest,
-  ): Promise<SourceLocatorDecisionResponse>;
-  rejectSourceLocatorCandidate(
-    candidateId: string,
-    body?: SourceLocatorDecisionRequest,
-  ): Promise<SourceLocatorDecisionResponse>;
   discoveryQuarantine(): Promise<QuarantineListResponse>;
   decideDiscoveryQuarantine(
     jobKey: string,
@@ -479,7 +462,6 @@ export interface DemoApiClientPort extends DemoUnavailableMethods {
   importResume(body: ProfileImportRequest): Promise<ProfileImportResponse>;
 
   extensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse>;
-  discoveryBrowserBridgeStatus(): Promise<DiscoveryBrowserBridgeStatusResponse>;
   rotateExtensionCapabilityToken(): Promise<ExtensionCapabilityTokenResponse>;
   runPipelineStages(
     body: RunPipelineStagesRequest,

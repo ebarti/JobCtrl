@@ -1,4 +1,11 @@
-"""Additive authority extension; the original Requirements SCHEMA stays frozen."""
+"""Additive authority extensions; published schema strings stay frozen."""
+
+REFRESH_TRANSPORT_SCHEMA = """
+CREATE TABLE requirements_refresh_transport (
+    operation_id TEXT PRIMARY KEY,
+    prompt_version TEXT NOT NULL
+);
+"""
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS requirements_aliases (

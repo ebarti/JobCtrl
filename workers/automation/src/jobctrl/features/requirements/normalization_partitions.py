@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 from pydantic import Field, StrictInt, StrictStr, create_model
+from typing_extensions import TypeAliasType
 
 from .domain import QualifiedMeaning, RequirementError, Value, _nonblank, fingerprint
 from .normalization_citations import CitationSelection
@@ -60,6 +61,38 @@ def partition_selection_schema(context):
     return _partition_selection_schema(context, offered_citations=True)
 
 
+def refresh_partition_schema(context):
+    return _partition_selection_schema(context, offered_citations=True, retained_reuse_only=True)
+
+
+def table_partition_schema(context):
+    return _partition_selection_schema(context, offered_citations=True, retained_reuse_only=True, shared_slot_schema=True)
+
+
+def demand_choice_partition_schema(context, *, cited_occurrences=False):
+    return _partition_selection_schema(context, offered_citations=True, retained_reuse_only=True, shared_slot_schema=True,
+                                       demand_choices=True, cited_occurrences=cited_occurrences)
+
+
+def cited_occurrence_partition_schema(context):
+    return demand_choice_partition_schema(context, cited_occurrences=True)
+
+
+def _demand_choice_schema(context, citation):
+    citations = (list[citation], Field(min_length=1))
+    authored = create_model("AuthoredDemand", __base__=SlotValue, kind=(Literal["author"], ...),
+        definition=(StrictStr, Field(min_length=1, max_length=6000)), citations=citations)
+    references = tuple(row["source_id"] for row in context["accepted_demands"])
+    if not references:
+        return authored
+    if len(references) != len(set(references)):
+        raise RequirementError("catalog_snapshot_invalid")
+    keep = create_model("OccurrenceDemand", __base__=SlotValue, kind=(Literal["keep"], ...), citations=citations)
+    select = create_model("SelectedDemand", __base__=SlotValue, kind=(Literal["select"], ...),
+        prior_demand_source_id=(_id_type("PriorDemandSource", references), ...), citations=citations)
+    return authored | keep | select
+
+
 def cohort_partition_schema(context):
     return _partition_selection_schema(context, offered_citations=True, cohort=True)
 
@@ -69,7 +102,7 @@ def partition_selection_schema_v5(context):
     return _partition_selection_schema(context, offered_citations=False)
 
 
-def _partition_selection_schema(context, *, offered_citations, cohort=False):
+def _partition_selection_schema(context, *, offered_citations, cohort=False, retained_reuse_only=False, shared_slot_schema=False, demand_choices=False, cited_occurrences=False):
     member_ids = tuple(row["member_id"] for row in context["members"])
     occurrence_ids = tuple(row["occurrence_id"] for row in context["occurrences"])
     if len(set(member_ids)) != len(member_ids) or len(set(occurrence_ids)) != len(occurrence_ids):
@@ -79,18 +112,23 @@ def _partition_selection_schema(context, *, offered_citations, cohort=False):
     capability_id = _id_type("CapabilityGroupId", handles["capabilities"])
     demand_id = _id_type("DemandGroupId", handles["demands"])
     citation, demand, unresolved = CitationSelection, DemandGroup, UnresolvedSlot
-    capability_fields = {"reuse_requirement_id": (member_id | None, ...)}
+    if cohort or retained_reuse_only:
+        retained = tuple(row["requirement_id"] for row in context["members"] if row["requirement_id"] is not None)
+    reuse_id = member_id | None
+    if retained_reuse_only:
+        # Incoming IDs can be assigned, but do not identify an accepted meaning.
+        reuse_id = _id_type("RetainedCapabilityId", retained) | None if retained else type(None)
+    capability_fields = {"reuse_requirement_id": (reuse_id, ...)}
     if offered_citations:
         citation = _citation_type("Offered", tuple(context["citation_segments"]), context)
         demand_citation = _citation_type("DemandEvidence", _demand_evidence_sources(context), context)
         capability_fields["citations"] = (list[citation], Field(min_length=1))
-        demand = create_model("DemandGroup", __base__=(DemandGroup, SlotValue),
-                              citations=(list[demand_citation], Field(min_length=1)))
+        demand = (_demand_choice_schema(context, demand_citation) if demand_choices else
+                  create_model("DemandGroup", __base__=(DemandGroup, SlotValue), citations=(list[demand_citation], Field(min_length=1))))
         unresolved = create_model("UnresolvedSlot", __base__=(UnresolvedSlot, SlotValue),
                                   citations=(list[citation], Field(min_length=1)))
     capability = create_model("CapabilityGroup", __base__=(CapabilityGroup, SlotValue), **capability_fields)
     if cohort:
-        retained = tuple(row["requirement_id"] for row in context["members"] if row["requirement_id"] is not None)
         if retained:
             capability = capability | create_model("RetainedCapability", __base__=SlotValue,
                 kind=(Literal["reuse"], ...), reuse_requirement_id=(_id_type("RetainedCapabilityId", retained), ...),
@@ -102,16 +140,18 @@ def _partition_selection_schema(context, *, offered_citations, cohort=False):
                 citations=(list[demand_citation], Field(min_length=1)))
     member_assignment = create_model("MemberAssignment", __base__=SlotValue,
         kind=(Literal["assigned"], ...), capability_group_id=(capability_id, ...))
-    occurrence_assignment = create_model("OccurrenceAssignment", __base__=SlotValue,
-        kind=(Literal["assigned"], ...), demand_group_id=(demand_id, ...))
-    members = create_model("MemberSlots", __base__=SlotValue,
-        **{ident: (member_assignment | unresolved, ...) for ident in member_ids})
-    occurrences = create_model("OccurrenceSlots", __base__=SlotValue,
-        **{ident: (occurrence_assignment | unresolved, ...) for ident in occurrence_ids})
-    capabilities = create_model("CapabilityGroups", __base__=SlotValue,
-        **{ident: (capability | None, ...) for ident in handles["capabilities"]})
-    demands = create_model("DemandGroups", __base__=SlotValue,
-        **{ident: (demand | None, ...) for ident in handles["demands"]})
+    occurrence_assignment = (create_model("CitedOccurrence", __base__=SlotValue, kind=(Literal["cited"], ...))
+        if cited_occurrences else create_model("OccurrenceAssignment", __base__=SlotValue,
+            kind=(Literal["assigned"], ...), demand_group_id=(demand_id, ...)))
+    def slots(name, entries, definition):
+        if shared_slot_schema:
+            definition = TypeAliasType(name + "Value", definition)
+        return create_model(name, __base__=SlotValue, **{ident: (definition, ...) for ident in entries})
+
+    members = slots("MemberSlots", member_ids, member_assignment | unresolved)
+    occurrences = slots("OccurrenceSlots", occurrence_ids, occurrence_assignment | unresolved)
+    capabilities = slots("CapabilityGroups", handles["capabilities"], capability | None)
+    demands = slots("DemandGroups", handles["demands"], demand | None)
     correction = create_model("PartitionCorrection", __base__=SlotValue,
         member_id=(member_id, ...), represented_by_member_id=(member_id, ...),
         unsupported_claim=(StrictStr, Field(min_length=1, max_length=2500)),

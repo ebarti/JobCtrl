@@ -28,18 +28,23 @@ retries. The run reports build, journey and total elapsed time; the hosted job
 also measures dependency preparation. See the exact scenario and coverage
 ledger in [Python application journeys](developer/qa/python-journeys.md).
 
-Hosted Browser CI schedules that same inventory in four fixed, disjoint
-Playwright shards, `--shard=1/4` through `--shard=4/4`, on separate
+The workspace identity journey opens the same disposable database with a second
+API configured for a different workflow namespace. It verifies a write refusal,
+restarts the original worker and reads the saved job through the original API.
+The dispatch journey stops the owned Temporal server while the worker keeps
+heartbeating. It checks public status, refused admission and earlier receipts,
+then restores the same history and retries through the actions endpoint.
+
+Hosted Browser CI schedules that same inventory in six fixed, disjoint
+Playwright shards, `--shard=1/6` through `--shard=6/6`, on separate
 runners. Each hosted invocation uses two Playwright workers, zero retries, the
 existing case deadlines and the 720-second global deadline; the ordinary
 unsharded local command retains its one-worker default. Each shard builds once,
 each worker owns its Temporal service, and each journey owns its application
 workspace. Shards retain separately named evidence. Matrix fail-fast is disabled so a failed shard does
 not cancel its peers. The stable **Browser / UI checks** result passes only when
-all four shard jobs succeed; failure, cancellation or a skipped shard cannot
-qualify the complete inventory. A shard pass alone is partial proof. Record
-all four results and their exact candidate before claiming complete hosted
-coverage.
+all six shard jobs succeed. Record the result of every shard and the candidate
+revision to establish complete hosted coverage.
 
 Hosted Ubuntu transport recovery may prefer only the fixed Ubuntu-listed,
 operator-verified HTTPS candidate after all three completed original mirror
@@ -136,7 +141,8 @@ group decisions cannot overwrite newer maintained-head inputs.
 Reject missing/foreign members or occurrences, invalid reuse/citations, uncertainty,
 oversized/context refusal, stale posting/catalog/snapshot heads and cancellation
 without partial publication. Compare every predecessor schema entry byte-for-byte
-and allow only the declared additive normalization schema objects. Preserve old
+and allow only the declared additions for normalization, cohort operations,
+recovery and worker identity. Preserve old
 scores, approval history and accepted PDF bytes, while changed derivations become
 historical. No read/save starts repair or downstream work. Controlled boundary
 choices prove authority, not semantic accuracy; run the configured provider on

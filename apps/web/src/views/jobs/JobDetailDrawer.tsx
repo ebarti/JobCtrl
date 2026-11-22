@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
+import { jobFitPreparation, usePreparationRuns } from "../../contexts/pipeline/index.js";
 import { PersonFitPanel, useJobFit } from "../../contexts/fit/index.js";
 import { PostingAvailabilityPanel, RoleAnalysisPanel, useJob, useJobActions } from "../../contexts/jobs/index.js";
 import { useProfileQuery, useProfileSources, useWordingLibrary } from "../../contexts/profile/index.js";
@@ -53,6 +55,15 @@ export function JobDetailDrawer({ jobId, onClose, returnLabel = "Back to jobs", 
   const resumeDirty = useResumeDraftStatus(jobId);
   const { refresh } = useJobActions(jobId);
   const posting = job.data;
+  const runs = usePreparationRuns({ enabled: Boolean(preparationControls && posting && fit.data?.score === null) });
+  const currentRequirements = requirements.data && !requirements.data.stale && posting &&
+    requirements.data.posting_revision === posting.revision && requirements.data.posting_hash === posting.source_hash ? requirements.data : null;
+  const reason = useMemo(() => {
+    if (!posting || fit.data?.score !== null) return null;
+    return jobFitPreparation([{ job: posting, currentRequirements: currentRequirements?.status
+      ? { status: currentRequirements.status, revision: currentRequirements.revision } : null }],
+    preparationControls && !runs.isError ? runs.data ?? [] : []).get(posting.job_id);
+  }, [posting, fit.data, currentRequirements, preparationControls, runs.data, runs.isError]);
   const latestResume = resumes.data?.at(-1);
   const acceptedResumeAvailable = resumes.data?.some((resume) => resume.accepted_revision_id);
   const resumeState = latestResume
@@ -82,7 +93,7 @@ export function JobDetailDrawer({ jobId, onClose, returnLabel = "Back to jobs", 
         <h1 data-typography="page-title" tabIndex={-1} ref={headingRef}>{posting.title}</h1><p data-typography="body" className="job-workspace-header__company">{[posting.company, posting.location].filter(Boolean).join(" · ") || "Employer and location not recorded"}</p>
         <dl className="job-workspace-state">
           <div><dt data-typography="metadata">Availability</dt><dd data-typography="strong-body">{posting.active_state && posting.active_state !== "unknown" ? posting.active_state : "Unverified"}</dd></div>
-          <div><dt data-typography="metadata">Person fit</dt><dd data-typography="strong-body">{requirements.data?.status === "unsupported_language" ? "Skipped · non-English posting" : fit.data?.score ? fit.data.score.score === null ? "No score · no eligible demands" : `${fit.data.score.score}/10${fit.data.current ? "" : fit.data.stale_reasons.includes("contract_changed") ? " · historical" : " · stale"}${fit.error ? " · last saved" : ""}` : fit.error ? "Unavailable" : fit.isPending ? "Loading…" : "Not assessed"}</dd></div>
+          <div><dt data-typography="metadata">Person fit</dt><dd data-typography="strong-body">{currentRequirements?.status === "unsupported_language" ? "Skipped · non-English posting" : fit.data?.score ? fit.data.score.score === null ? "No score · no eligible demands" : `${fit.data.score.score}/10${fit.data.current ? "" : fit.data.stale_reasons.includes("contract_changed") ? " · historical" : " · stale"}${fit.error ? " · last saved" : ""}` : fit.error ? "Unavailable" : fit.isPending ? "Loading…" : reason?.label ?? "Not assessed"}</dd></div>
           <div><dt data-typography="metadata">Latest resume</dt><dd data-typography="strong-body">{resumeState}</dd></div>
         </dl>
         {preparationControls?.({ defaultMode: settings.data?.resumeMode ?? null, profileVersion: profile.error ? null : profile.data?.profileVersion ?? null, blockedByDraft: resumeDirty, onReviewReady: openResume })}
@@ -94,11 +105,15 @@ export function JobDetailDrawer({ jobId, onClose, returnLabel = "Back to jobs", 
       <Tabs value={tab} onValueChange={(value) => { const next = visibleTabs.find((item) => item.id === value); if (next) selectTab(next.id); }} className="job-workspace-tabs">
         <TabsList aria-label="Job workspace" className="job-workspace-tabs__list">{visibleTabs.map((item) => <TabsTrigger key={item.id} value={item.id}>{item.label}</TabsTrigger>)}</TabsList>
         <TabsContent value="fit" forceMount>
-          <PersonFitPanel jobId={jobId} sources={sources.data?.sources ?? []} achievements={wording.data?.roles.flatMap((role) => role.achievements) ?? []} defaultMode={settings.data?.resumeMode ?? null} managedPreparation={Boolean(preparationControls)} requirementsStatus={requirements.data?.status} />
+          <PersonFitPanel jobId={jobId} sources={sources.data?.sources ?? []} achievements={wording.data?.roles.flatMap((role) => role.achievements) ?? []} defaultMode={settings.data?.resumeMode ?? null} managedPreparation={Boolean(preparationControls)} requirementsStatus={currentRequirements?.status}
+            preparationNotice={reason && (currentRequirements?.status !== "unsupported_language" || reason.runId) ? <p role="status">
+              {currentRequirements?.status !== "unsupported_language" ? reason.detail + " " : null}
+              {reason.runId ? <Link to="/runs/$runId" params={{ runId: reason.runId }}>View preparation run</Link> : null}
+            </p> : null} />
           {overview.map(renderSection)}
+          <PostingAvailabilityPanel posting={posting} />
           <details className="job-workspace-inspection"><summary>Posting, availability and requirement details</summary>
             <JobDescription text={posting.description} />
-            <PostingAvailabilityPanel posting={posting} />
             <RoleAnalysisPanel jobId={jobId} postingRevision={posting.revision} />
             <RequirementsPanel jobId={jobId} postingRevision={posting.revision} />
             <p>Posting revision {posting.revision} · source {posting.source_id}, revision {posting.source_revision}</p>

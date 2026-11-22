@@ -7,7 +7,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 
@@ -32,11 +32,12 @@ class ModelCallBudget:
     maximum: int = 5
     used: int = 0
     reused: int = 0
-    reserve: Callable[[str], int] | None = None
+    reserve: Callable[[str, Any], int] | None = None
+    check_reservation: Callable[[str], object] | None = None
 
-    def consume(self, input_fingerprint: str) -> None:
+    def consume(self, input_fingerprint: str, connection: Any) -> None:
         if self.reserve is not None:
-            self.used = self.reserve(input_fingerprint)
+            self.used = self.reserve(input_fingerprint, connection)
             return
         if self.used >= self.maximum:
             raise RequirementError("requirements_catalog_unavailable", details={

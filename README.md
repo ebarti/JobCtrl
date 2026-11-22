@@ -111,12 +111,7 @@ worker rechecks due saved postings:
   outreach provider. Optional company briefings send only selected public source text and the reviewed company identity. Opt-in Required-bullet coaching sends the selected saved bullets and
   linked evidence to your configured provider. During a dry run, Claude also sees the application page, but never your
   profile or documents.
-- **Job boards and other sites:** Discover, Enrich, and Apply dry-run requests, plus
-  opt-in contact research, company briefings and bounded saved-posting availability checks. The
-  availability checks use public APIs or an anonymous browser. With the browser extension paired and connected,
-  Discover and Enrich use your Chrome session and its cookies for supported
-  provider-owned hosts. Other posting hosts use the worker’s address-pinned
-  public transport.
+- **Job boards and posting sites.** JobStreaming serves the selected boards for automatic discovery. Importing a known posting URL, enriching it and checking its availability use JobCtrl’s public posting transport. The extension saves the current posting when you click **Save job**. Apply dry runs, contact research and company briefings have their own explicit entry points.
 - **Salary data sources:** when a benchmark is missing or over a week old, a
   Discover run fetches public data from Euro Top Tech, plus ECB exchange rates
   and Eurostat price levels when needed; Levels.fyi or Glassdoor only if you

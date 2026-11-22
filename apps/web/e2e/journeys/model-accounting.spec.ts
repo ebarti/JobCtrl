@@ -5,7 +5,7 @@ type Spend = {
   costUsd: number | null; knownCostUsd: number; costStatus: string; tokenStatus: string;
   accountingComplete: boolean; costAuthority: string; unlimited: boolean;
   accountingBlocked: boolean; monetaryAccountingBlocked: boolean; tokenAccountingBlockedLanes: string[];
-  activeCalls: number; unresolvedCalls: number; unavailableCostCalls: number; unavailableTokenCalls: number;
+  activeCalls: number; dailyActiveCalls: number; unresolvedCalls: number; unavailableCostCalls: number; unavailableTokenCalls: number;
 };
 function plan(call: ExternalCall) {
   const source = (call.body["sources"] as { source_id: string; text: string }[]).find((row) => row.source_id === "target:functions")!;
@@ -33,7 +33,7 @@ test("unlimited money accepts repeated settled token receipts without inventing 
   for (let count = 1; count <= 2; count++) {
     const run = await action(api, "discovery.refresh_targets", { force: true, expectedProfileVersion: profile.profileVersion });
     const call = await modelCall(app, "discovery.query_plan");
-    expect(await spend(api)).toMatchObject({ costStatus: "pending", tokenStatus: "pending", activeCalls: 1, unresolvedCalls: 0, costUsd: null, unlimited: true });
+    expect(await spend(api)).toMatchObject({ costStatus: "pending", tokenStatus: "pending", activeCalls: 1, dailyActiveCalls: 1, unresolvedCalls: 0, costUsd: null, unlimited: true });
     await Promise.all([
       page.waitForResponse((response) => new URL(response.url()).pathname === "/v1/digest" && response.request().method() === "GET" && response.ok()),
       page.goto("/jobs"),
@@ -44,7 +44,7 @@ test("unlimited money accepts repeated settled token receipts without inventing 
     call.respond({ value: plan(call), usage: { input_tokens: 20, output_tokens: 10 } });
     await completed(api, run.runId);
     expect(await spend(api)).toMatchObject({ costStatus: "unavailable", tokenStatus: "complete", costUsd: null, knownCostUsd: 0,
-      accountingComplete: false, costAuthority: "incomplete", activeCalls: 0, unresolvedCalls: 0,
+      accountingComplete: false, costAuthority: "incomplete", activeCalls: 0, dailyActiveCalls: 0, unresolvedCalls: 0,
       unavailableCostCalls: count, unavailableTokenCalls: 0, unlimited: true });
     const saved = await json<{ accepted: { provenance: { receipt_id: string } } }>(api, "get", "/v1/discovery/target-search");
     expect(saved.accepted.provenance.receipt_id).toBeTruthy();

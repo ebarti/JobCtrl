@@ -18,7 +18,7 @@ const job = {
   title: "Platform systems lead",
   company: "Northwind Workshop",
   source: "bundled-capture",
-  discoverySource: "demo-source:northwind",
+  discoverySource: "jobstreaming:indeed",
   postingSource: "bundled-capture",
   postingSourceUrl: "/demo/source-preview.html",
   strategy: "demo_rehearsal",
@@ -514,7 +514,7 @@ export const DEMO_READ_MODEL = {
       ],
       sourceHealth: [
         {
-          sourceId: "demo-source:northwind",
+          sourceId: "jobstreaming:indeed",
           recommendedState: "active",
           runCount: 4,
           failedRunCount: 0,
@@ -573,7 +573,7 @@ export const DEMO_READ_MODEL = {
       since: at("2026-07-04T00:00:00.000Z"),
       highFitThreshold: 7,
       newMatches: { count: 2, highFitCount: 1 },
-      blockedSources: { count: 1, sources: [{ sourceId: "demo-source:review", recommendedState: "quarantined", consecutiveFailures: 1 }] },
+      blockedSources: { count: 1, sources: [{ sourceId: "jobstreaming:linkedin", recommendedState: "quarantined", consecutiveFailures: 1 }] },
       reviewNeededMaterials: { count: 1 },
       staleScores: { count: 1 },
       pendingApprovals: { count: 1 },
@@ -799,8 +799,8 @@ export const DEMO_READ_MODEL = {
         scheduleCron: { value: "0 9 * * 1", source: "persisted", activation: "restart", editable: true,
           locked: false,
         },
-        maxParallelFamilies: { value: 1, source: "default", activation: "next_run", editable: true,
-          locked: false,
+        maxParallelFamilies: { value: 1, source: "default", activation: "inactive", editable: false,
+          locked: true,
         },
         useBrowserHeaders: { value: false, source: "default", activation: "next_source_family", editable: true,
           locked: false,
@@ -817,9 +817,9 @@ export const DEMO_READ_MODEL = {
       ok: true,
       sources: [
         {
-          sourceId: "demo-source:northwind",
-          kind: "user_mediated_capture",
-          displayName: "Bundled synthetic source",
+          sourceId: "jobstreaming:indeed",
+          kind: "broad_board",
+          displayName: "Indeed",
           owner: "system",
           priority: "standard",
           state: "active",
@@ -845,9 +845,9 @@ export const DEMO_READ_MODEL = {
           qualityTrend: "flat",
         },
         {
-          sourceId: "demo-source:review",
-          kind: "user_mediated_capture",
-          displayName: "Bundled review source",
+          sourceId: "jobstreaming:linkedin",
+          kind: "broad_board",
+          displayName: "LinkedIn",
           owner: "system",
           priority: "fallback",
           state: "quarantined",
@@ -875,9 +875,9 @@ export const DEMO_READ_MODEL = {
       ],
     },
     sourcePreviews: {
-      "demo-source:northwind": {
+      "jobstreaming:indeed": {
         ok: true,
-        sourceId: "demo-source:northwind",
+        sourceId: "jobstreaming:indeed",
         leads: [
           {
             candidateUrl: "/demo/source-preview.html",
@@ -889,9 +889,9 @@ export const DEMO_READ_MODEL = {
         ],
         generatedAt: at("2026-07-11T08:30:00.000Z"),
       },
-      "demo-source:review": {
+      "jobstreaming:linkedin": {
         ok: true,
-        sourceId: "demo-source:review",
+        sourceId: "jobstreaming:linkedin",
         leads: [],
         generatedAt: at("2026-07-11T08:02:00.000Z"),
       },
@@ -919,21 +919,6 @@ export const DEMO_READ_MODEL = {
         },
       ],
     },
-    locatorCandidates: {
-      ok: true,
-      candidates: [
-        {
-          candidateId: "locator-demo-northwind",
-          candidateUrl: "/demo/source-preview.html",
-          sourceKind: "user_mediated_capture",
-          confidence: 1,
-          detectedAtsKind: "bundled_fixture",
-          employerDomainMatched: false,
-          manualActionReason: "browser_extension_capture",
-          discoveredAt: at("2026-07-11T08:10:00.000Z"),
-        },
-      ],
-    },
     quarantine: {
       ok: true,
       entries: [
@@ -942,7 +927,7 @@ export const DEMO_READ_MODEL = {
           jobKey: "job-quarantine-demo",
           title: "Uncertain synthetic opportunity",
           company: "Sample workshop",
-          sourceId: "demo-source:review",
+          sourceId: "jobstreaming:linkedin",
           postingUrl: "/demo/source-preview.html",
           reason: "user_review_requested",
           confidence: 0.5,
@@ -959,7 +944,7 @@ export const DEMO_READ_MODEL = {
           itemId: "capture-demo-browser",
           lifecycleId: "0".repeat(64),
           originatingUrl: "https://demo.invalid/source-preview.html",
-          sourceId: "demo-source:northwind",
+          sourceId: "jobstreaming:indeed",
           reason: "browser_extension_capture",
           retryContext: { simulated: true },
           requiredAt: at("2026-07-11T08:10:00.000Z"),
@@ -979,13 +964,13 @@ export const DEMO_READ_MODEL = {
           reasonCode: "role_mismatch_evidence",
           reason: "The bundled evidence demonstrates a reviewable mismatch decision.",
           sampleCount: 1,
-          sourceIds: ["demo-source:northwind"],
+          sourceIds: ["jobstreaming:indeed"],
           evidence: [
             {
               jobKey: job.jobKey,
               title: job.title,
               company: job.company,
-              sourceId: "demo-source:northwind",
+              sourceId: "jobstreaming:indeed",
               fitScore: job.fitScore,
               roleFit: job.scoreBreakdown.roleFit,
               reason: "Synthetic role-fit review.",

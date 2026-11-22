@@ -8,6 +8,21 @@ import hashlib
 import json
 
 
+BOARD_RATE_LIMIT_CODE = "discovery_provider_rate_limited"
+BOARD_RATE_LIMIT_MESSAGE = "The board rate-limited this search. Wait before running another search on this board."
+
+
+def public_board_failure(failure):
+    """Explain a typed rate limit in historical summaries without changing the saved receipt."""
+    if failure.get("code") == BOARD_RATE_LIMIT_CODE and failure.get("message") in (
+        None,
+        "A search provider could not complete its request.",
+        "The source could not complete its search; review its connection before retrying.",
+    ):
+        return {**failure, "message": BOARD_RATE_LIMIT_MESSAGE, "diagnostic": "rate_limited"}
+    return failure
+
+
 DEFAULT_SETTINGS = {
     "minFitScore": 7,
     "autoApply": False,

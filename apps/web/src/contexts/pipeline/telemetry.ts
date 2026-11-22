@@ -1,7 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { z } from "zod";
 
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
@@ -83,5 +82,5 @@ export function usePipelineTelemetry(runId?: string) {
 export const pipelineTelemetryEvents: FeatureEventHandler = {
   eventTypes: ["PreparationUpdated", "ActionQueued", "ActionStarted", "ActionCompleted", "ActionFailed",
     "ActionCancellationRequested", "DiscoveryRunUpdated", "SettingsUpdated"],
-  handle(event, client) { void invalidateQueriesWithOptimisticOwnership(client, telemetryKeys.all(event.tenantId)); },
+  handle(event, invalidate) { invalidate(telemetryKeys.all(event.tenantId)); },
 };

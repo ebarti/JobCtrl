@@ -156,22 +156,61 @@ class RefreshStorage:
             self._write_refresh(connection, state)
             return value
 
-    def reserve_refresh_call(self, operation_id, key, kind):
+    def unpublished_qualification_calls(self, state, key, expected):
+        # A completed historical call already has a gateway pin in its raw result.
+        # A started historical call has only an argument key and an operation lifetime.
+        call = '$.calls."' + key + '"'
+        pin = "COALESCE(json_extract(state_json,?),json_extract(state_json,?))"
+        with self._database.connect() as connection:
+            rows = connection.execute(
+                "SELECT created_at,updated_at,(status='stale' AND json_extract(state_json,'$.failure_code')='revision_conflict' "
+                "AND json_extract(state_json,'$.phase') IN ('qualification','publication')) eligible, "
+                + pin + " receipt_id," + pin + " gateway_input FROM fit_refresh_operations "
+                "WHERE profile_id=? AND status IN ('stale','failed','limited','cancelled') AND json_extract(state_json,'$.factual_published')=0 "
+                "AND json_extract(state_json,'$.job_ids')=? AND json_extract(state_json,'$.contract_version')=? "
+                "AND json_extract(state_json,'$.qualification_semantics_version')=? "
+                "AND json_extract(state_json,'$.qualification_prompt_version')=? "
+                "AND json_extract(state_json,?)='fit.qualification-batch' AND (gateway_input IS NULL OR gateway_input=?)",
+                (call + ".receipt_id", call + ".result.provenance.receipt_id", call + ".input_fingerprint",
+                 call + ".result.provenance.input_fingerprint", state["profile_id"], encoded(state["job_ids"]),
+                 state["contract_version"], state["qualification_semantics_version"], state["qualification_prompt_version"],
+                 call + ".kind", expected),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def adopt_refresh_qualification(self, operation_id, key, authority, lookup):
         with self._database.transaction() as connection:
             state = self._running_refresh(connection, operation_id)
-            prior = state["calls"].get(key)
-            if prior is not None:
-                if prior["status"] == "completed":
-                    return prior["result"]
-                # The external effect may have happened. A lost acknowledgement
-                # cannot authorize a second selector or reset a work counter.
-                raise AppError("fit_refresh_interrupted", "A previous model call has no retained result. Start a new manual refresh after reviewing this attempt.", 409)
-            if state["counters"]["model_calls"] >= state["limits"]["max_model_calls"]:
-                raise AppError("fit_refresh_model_limit", "The manual Fit refresh reached its model-call limit.", 409)
-            state["counters"]["model_calls"] += 1
-            state["calls"][key] = {"status": "started", "kind": kind}
+            self._assert_refresh_inputs(connection, state)
+            if key in state["calls"]:
+                raise ConflictError("Another worker already claimed this qualification.")
+            raw = lookup(connection)
+            if raw is None:
+                return None
+            state["calls"][key] = {**authority, "kind": "fit.qualification-batch", "status": "completed",
+                "receipt_id": raw["provenance"]["receipt_id"], "origin": "reused_settled_receipt", "result": raw}
+            state["counters"]["qualification_receipts_reused"] = 1
             self._write_refresh(connection, state)
-            return None
+            return raw
+
+    def reserve_refresh_call(self, operation_id, key, kind, *, authority=None, connection=None):
+        if connection is None:
+            with self._database.transaction() as owned:
+                return self.reserve_refresh_call(operation_id, key, kind, authority=authority, connection=owned)
+        state = self._running_refresh(connection, operation_id)
+        if authority is not None:
+            self._assert_refresh_inputs(connection, state)
+        prior = state["calls"].get(key)
+        if prior is not None:
+            if authority is None and prior["status"] == "completed":
+                return prior["result"]
+            raise AppError("fit_refresh_interrupted", "A previous model call already owns this determination.", 409)
+        if state["counters"]["model_calls"] >= state["limits"]["max_model_calls"]:
+            raise AppError("fit_refresh_model_limit", "The manual Fit refresh reached its model-call limit.", 409)
+        state["counters"]["model_calls"] += 1
+        state["calls"][key] = {"status": "started", "kind": kind, **(authority or {})}
+        self._write_refresh(connection, state)
+        return None
 
     def pin_refresh_qualification_transport(self, operation_id, version, expected_calls_fingerprint):
         with self._database.transaction() as connection:

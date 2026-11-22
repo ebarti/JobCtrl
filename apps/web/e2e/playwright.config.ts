@@ -9,6 +9,7 @@ const evidence =
   path.join(os.tmpdir(), "jobctrl-e2e-list");
 const consoleReporters = (process.env["JOBCTRL_E2E_CONSOLE_REPORTER"] ?? (process.env["CI"] ? "github" : "list"))
   .split(",").filter((name) => name !== "json" && name !== "junit");
+const installed = process.env["JOBCTRL_E2E_INSTALLED"] === "1";
 
 export default defineConfig({
   testDir: "./journeys",
@@ -16,10 +17,11 @@ export default defineConfig({
   fullyParallel: false,
   forbidOnly: true,
   retries: 0,
-  workers: 1,
+  workers: installed ? Math.min(4, Math.max(1, os.availableParallelism() - 1)) : 1,
   timeout: 90_000,
-  // Standard CI shards retain this ceiling and the individual case deadlines.
-  globalTimeout: 720_000,
+  // Hosted qualification partitions the installed suite across Mac runners.
+  // Every case keeps the same deadline in an individual or sharded run.
+  globalTimeout: installed ? 3_600_000 : 720_000,
   expect: { timeout: 10_000 },
   reporter: [
     ...consoleReporters.map((name): [string, Record<string, unknown>] => [name, name === "html" ? { outputFolder: path.join(evidence, "html"), open: "never" } : {}]),
@@ -35,6 +37,6 @@ export default defineConfig({
   },
   projects: [
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
-    ...(process.env["JOBCTRL_E2E_INSTALLED"] === "1" ? [] : [{ name: "demo-chromium", testDir: ".", testMatch: "demo-runtime.spec.ts", use: { ...devices["Desktop Chrome"] } }]),
+    ...(installed ? [] : [{ name: "demo-chromium", testDir: ".", testMatch: "demo-runtime.spec.ts", use: { ...devices["Desktop Chrome"] } }]),
   ],
 });

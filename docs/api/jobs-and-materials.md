@@ -159,6 +159,17 @@ preparation. Operation reads retain both frozen preparation flags. Previously
 frozen operations without the new flag retain enabled coverage and their existing
 request identity.
 
+When a manual Fit qualification was paid but a revision conflict prevented
+publication, a new explicitly admitted refresh can recover one settled exact
+qualification for the same Profile and selected jobs. It verifies the full
+gateway input and execution identity, then rechecks every returned requirement
+and its source evidence. A successful recovery exposes
+`counters.qualification_receipts_reused` and consumes no new provider call.
+Ambiguous and unsettled exact receipts produce
+`fit_refresh_qualification_receipt_ambiguous` or
+`fit_refresh_qualification_receipt_unsettled`. The previous action remains
+stale and its score cannot be published.
+
 Fresh refresh operations expose independent `impact_selection_scope_version` and
 `qualification_transport_version` pins. Complete frozen scope is preserved while
 exact current qualifications and mandatory reassessments are resolved before an
@@ -228,9 +239,41 @@ aliases. Exact historical revision reads preserve their original identity;
 current navigation may follow a recorded alias. Old typed job snapshots report
 `consolidation_required` staleness and cannot supply new assessment authority.
 
-Consolidation retains semantic policy `requirements-capability-demand-v2` and uses
-wire/prompt `requirements-capability-demand-partition-v6`. Its strict raw
-`CatalogNormalizationSlots` result requires a property for every supplied member
+The read-only `GET /v1/jobs/{job_id}/requirements/attempts/latest` returns the
+latest attempt for an existing job, or null before its first attempt. It also
+works before the first accepted snapshot. `failure_code` identifies a refusal.
+Where recorded, `failure_details` preserves the source-free counts, catalog
+revision, reason and model error from a complete-input refusal, or the gateway
+receipt ID for a dispatched provider failure. Historical attempts report only
+the fields that were recorded. The original Requirements read remains an
+optional accepted snapshot.
+
+Consolidation uses semantic policy `requirements-capability-demand-v2`. Explicit
+catalog repair and corrections use `requirements-capability-demand-partition-v6-background-v1`.
+New single-job refreshes and new searches on the per-job route use
+`requirements-capability-demand-partition-v11-cited-occurrences`. Every occurrence
+slot declares `cited` or `unresolved`. A demand group assigns an occurrence by
+citing an offered segment of its original source. The owner rejects an occurrence
+cited by zero or multiple groups. Every accepted group still belongs to one
+capability and supplies one complete demand per job and capability. Each demand group
+chooses `keep` for the sole accepted demand bound to its occurrences, `select`
+for a specific offered prior demand source, or `author` for a new full
+definition. A choice of `keep` can also bind newly assigned occurrences when
+the selected prior demand applies to them. Multiple distinct prior demands
+require an explicit source selection or an authored definition. The response
+retains the original evidence citations for every occurrence. Shared
+initial-search cohorts use `requirements-capability-demand-partition-v7-cohort-background-v1`.
+The instruction revision clarifies a single prerequisite that accepts any of
+several prior backgrounds. Existing action IDs retain their admitted instructions.
+Named columns identify the exact fields in each repeated row. References select whole source strings
+and each source explicitly lists its available segment IDs beside its citation
+path layout. The owner verifies the reconstructed context and original source
+documents before dispatch and when binding the response. Groups can select
+only a retained capability ID for `reuse_requirement_id`. With no retained
+capabilities this field requires null. Previously admitted work keeps its
+original v6, v7, v8 or v9 format through retry. The complete input must fit the existing
+1 MiB gateway bound and the selected provider's context.
+All three versions use `CatalogNormalizationSlots`, which requires a property for every supplied member
 in `member_slots` and every occurrence in `occurrence_slots`. Each slot is assigned
 to an independent pre-offered capability/demand group handle or explicitly
 unresolved. `capability_groups` and `demand_groups` require every offered handle:
@@ -337,8 +380,10 @@ the occurrence's freshness explicit. See the
 
 ## Saved Posting Availability
 
-Checks preserve source and timing provenance. Failure or inability to fetch is
-not a confirmed closed posting. See [jobs lifecycle](complete-contract.md#jobs-read-model-and-lifecycle).
+`GET /v1/jobs/{job_id}/availability` reads the last confirmed state and time
+(`last_confirmed`) and latest attempt (`last_attempt`) for the saved URL. Either
+can be null. `POST` requests a manual check. The UI warns at 24 hours. Failed
+and inconclusive attempts preserve the previous confirmation. See [jobs lifecycle](complete-contract.md#jobs-read-model-and-lifecycle).
 
 ## Artifacts and Resume Templates
 
@@ -402,6 +447,21 @@ accepted preparation and notes intact.
 Compensation owns posted and market evidence, source policy and normalization.
 Source availability and currency/time-base uncertainty must be represented
 honestly. Its neutral core does not depend on JobCtrl storage or workflow IDs.
+After a refresh verifies posted pay, `GET /v1/jobs/{id}/compensation/posted`
+returns the cited fact while market research continues. A failed market
+refresh leaves the latest accepted estimate available at
+`GET /v1/jobs/{id}/compensation/market` with its own source revision.
+For a title-sourced determination the posted fact's `sourceField` is `title`
+and its receipt binds the exact saved title, posting ID and revision. The
+structured amount, currency, period and component are the model's verified
+result. Each market comparison retains the posted source it used.
+
+For `GET /v1/jobs/query`, `posted_known=source_known` selects current
+employer-posted facts with at least one numeric bound in the source currency
+and period. `source_unknown` selects its complement, including stale and
+unassessed facts. Clients can discover these modes in
+`capabilities.posted_pay_filters`. Existing `known` and `unknown` values and
+the `posted_min_eur` and `posted_max_eur` filters use annual EUR bounds.
 
 ## Actual Offers
 

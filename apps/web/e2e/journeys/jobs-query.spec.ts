@@ -9,6 +9,7 @@ import {
   action,
   completed,
   modelCall,
+  terminal,
   type ApplicationStack,
 } from "../harness/fixtures.js";
 import { createBaseline, qualifyPosting, type Posting } from "./core-data.js";
@@ -137,6 +138,106 @@ async function recordCompensation(
   }
   await completed(api, run.runId);
 }
+
+test("Posted pay Known includes current employer amounts in their original currency and period", async ({ page, api, app }, testInfo) => {
+  const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
+  const amounts = [
+    { title: "Synthetic no-period role", salary: "Base salary EUR 85000 to EUR 95000.", currency: "EUR", period: "unknown", low: 85000, high: 95000, warnings: ["missing_period"] },
+    { title: "Synthetic foreign-currency role", salary: "Base salary up to USD 120000 per year.", currency: "USD", period: "year", low: null, high: 120000, warnings: ["one_sided_range"] },
+    { title: "Synthetic annual-EUR role", salary: "Base salary EUR 77000 to EUR 88000 per year.", currency: "EUR", period: "year", low: 77000, high: 88000, warnings: [] },
+  ];
+  const jobs: Job[] = [];
+  for (const [index, amount] of amounts.entries()) {
+    const job = await json<Job>(api, "post", "/v1/jobs/capture", {
+      url: `https://example.com/jobs/posted-pay-${index}`, title: amount.title, company: "Synthetic Employer",
+      location: targetLocation, description: "Manage the synthetic test operation.", salary: amount.salary,
+    });
+    jobs.push(job);
+    const run = await action(api, "compensation.refresh", { jobId: job.job_id, includeEuroTopTech: false });
+    const pay = await modelCall(app, "compensation.posted_pay");
+    const source = (pay.body["sources"] as { source_id: string; text: string }[])[0]!;
+    expect(source.text).toBe(amount.salary);
+    pay.reply({
+      parse_state: "parsed_range", currency: amount.currency, period: amount.period, component: "base_salary",
+      minimum_amount: amount.low, maximum_amount: amount.high, confidence: "high", warnings: amount.warnings,
+      citations: [{ source_id: source.source_id, quote: source.text }], rationale: "The cited employer text supplies the stated bounds.",
+    });
+    (await modelCall(app, "compensation.classification")).invalidJson();
+    expect((await terminal(api, run.runId)).status).toBe("failed");
+  }
+  await json(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/unassessed-pay", title: "Synthetic unassessed role", company: "Synthetic Employer",
+    location: targetLocation, description: "Operate the synthetic test.", salary: "Base salary EUR 75000 per year.",
+  });
+  const calls = app.external.calls.length;
+  await page.goto("/jobs");
+  const table = page.getByRole("table", { name: "Jobs table", exact: true });
+  const choose = async (label: string) => {
+    const dialog = await columnFilter(page, "posted_compensation", "Posted pay");
+    await dialog.getByRole("combobox", { name: "Posted pay", exact: true }).selectOption({ label });
+    await applyColumnFilter(page, dialog);
+  };
+  await choose("Known");
+  await expect(table.locator("tbody tr")).toHaveCount(3);
+  for (const amount of amounts) await expect(table.getByRole("link", { name: amount.title, exact: true })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("known-employer-posted-pay.png") });
+  await page.getByRole("button", { name: "Save as view", exact: true }).click();
+  const save = page.getByRole("dialog", { name: "Save view", exact: true });
+  await save.getByLabel("Name", { exact: true }).fill("Employer-stated amounts");
+  await save.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(save).toHaveCount(0);
+  await page.goto("/jobs");
+  await expect(table.locator("tbody tr")).toHaveCount(3);
+  await expect(page.getByRole("combobox", { name: "Saved table view", exact: true })).toContainText("Employer-stated amounts");
+  const query = (filter: string) => json<Query>(api, "get", `/v1/jobs/query?${filter}`);
+  const source = await query("posted_known=source_known");
+  for (const id of [jobs[0]!.job_id, jobs[1]!.job_id]) {
+    expect(source.rows.find((row) => row.job.job_id === id)?.scalars).toMatchObject({ compensation_min_eur: null, compensation_max_eur: null });
+  }
+  await choose("Known annual EUR");
+  await expect(table.locator("tbody tr")).toHaveCount(1);
+  await expect(table.getByRole("link", { name: amounts[2]!.title })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("posted_known")).toBe("known");
+  expect((await query("posted_known=source_known&posted_min_eur=1")).rows.map((row) => row.job.job_id)).toEqual([jobs[2]!.job_id]);
+  expect((await query("posted_known=unknown")).total).toBe(3);
+  await json(api, "patch", `/v1/jobs/${jobs[1]!.job_id}`, { expectedRevision: jobs[1]!.revision, description: "The employer revised this role." });
+  await choose("Unknown");
+  await expect(table.locator("tbody tr")).toHaveCount(2);
+  await expect(table.getByRole("link", { name: amounts[1]!.title })).toBeVisible();
+  await expect(table.getByRole("link", { name: "Synthetic unassessed role" })).toBeVisible();
+  expect(app.external.calls.length).toBe(calls);
+});
+
+test.describe("Posted pay on a server with annual EUR filters", () => {
+  test.use({ features: "jobs,compensation", sourceRevision: "17f9ce5be1de2f21735fb27d5dfe8f6d1b7c8118" });
+  test("Jobs offers supported Posted pay choices and preserves a legacy revision across upgrade", async ({ api, app, page }) => {
+    await capture(api, "legacy-pay-first", "Synthetic legacy pay first");
+    await capture(api, "legacy-pay-second", "Synthetic legacy pay second");
+    const annual = "/v1/jobs/query?posted_known=unknown&limit=1";
+    const before = await json<Query>(api, "get", annual);
+    expect(before.total).toBe(2);
+    const nextPage = `${annual}&offset=1&query_revision=${before.query_revision}`;
+    const next = await json<Query>(api, "get", nextPage);
+    await page.goto("/jobs?grid=v1&posted_known=unknown");
+    await expect(page.getByRole("table", { name: "Jobs table", exact: true }).locator("tbody tr")).toHaveCount(2);
+    let dialog = await columnFilter(page, "posted_compensation", "Posted pay");
+    const select = dialog.getByRole("combobox", { name: "Posted pay", exact: true });
+    await expect(select).toHaveValue("unknown");
+    await expect(select.locator("option")).toHaveText(["All", "Known annual EUR", "Unknown annual EUR"]);
+    await page.keyboard.press("Escape");
+    await app.upgradeSource();
+    const after = await json<Query>(api, "get", nextPage);
+    expect(after.query_revision).toBe(before.query_revision);
+    expect(after.rows.map((row) => row.job.job_id)).toEqual(next.rows.map((row) => row.job.job_id));
+    await page.reload();
+    await expect(page.getByRole("table", { name: "Jobs table", exact: true }).locator("tbody tr")).toHaveCount(2);
+    dialog = await columnFilter(page, "posted_compensation", "Posted pay");
+    await expect(dialog.getByRole("combobox", { name: "Posted pay", exact: true })).toHaveValue("unknown");
+    await expect(dialog.getByRole("option", { name: "Known", exact: true })).toHaveCount(1);
+    expect(app.external.calls.length).toBe(0);
+  });
+});
 
 test("Jobs sorts and facets the complete set, then restores a source-bound filtered saved view", async ({
   page,

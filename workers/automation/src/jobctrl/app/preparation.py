@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+from contextlib import nullcontext
 
 from jobctrl.app.contracts import ActionContext
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
+from jobctrl.app.model_capacity import wait_for_model_capacity
 from jobctrl.app.preparation_ports import PreparationCheckpoints, PreparationSettings, RunReader
 
 RECIPES = {"run", "discover", "search", "assess", "enrich", "analyze", "score", "tailor", "prepare"}
@@ -101,12 +103,18 @@ class PreparationService:
     def admit(self, run_id, raw, settings, connection):
         # Only initial acquisition owns a new-job cohort. Forced/selected
         # recipes retain their existing explicit single-job semantics.
-        if raw.get("recipe") != "search":
+        recipe = raw.get("recipe")
+        if recipe != "search":
+            if isinstance(recipe, str) and "requirements" in STAGES.get(recipe, ()):
+                self.requirements.admit_manual_catalog_prompt(run_id, connection)
             return
         request = _validate(raw)
         if request["scope"] != "pending" or request["force"]:
+            self.requirements.admit_manual_catalog_prompt(run_id, connection)
             return
         request.update(contract_version="requirements-v2",
+                       refresh_catalog_prompt_version=self.requirements.refresh_catalog_prompt_version,
+                       cohort_catalog_prompt_version=self.requirements.cohort_catalog_prompt_version,
                        resume_mode=request.get("resume_mode", settings.get("resumeMode", "tailored")),
                        min_fit_score=request["min_fit_score"] or settings.get("minFitScore", 7),
                        execution_policy={"version": COHORT_POLICY,
@@ -189,6 +197,16 @@ class PreparationService:
 
     def _work_cancelled(self, context):
         return context.cancelled() or self._user_cancelled(context)
+
+    def _capacity_wait(self, context, job_id, stage):
+        if stage not in {*STAGES["search"], "requirements_extract", "requirements_normalize", "fit_qualify"}:
+            return nullcontext()
+        def waiting(reason):
+            self.checkpoints.record_capacity_wait(context.run_id, job_id, stage, reason)
+        # Fit can delegate wording proposals to Profile, which has its own
+        # interruption/approval contract. Only Fit's scoring calls opt in here.
+        lane = "scoring" if stage in {"fit", "fit_qualify"} else None
+        return wait_for_model_capacity(context.cancelled, on_wait=waiting, lane=lane)
 
     def get_run(self, run_id):
         return self._describe_run(self.checkpoints.get_run(run_id))
@@ -394,6 +412,7 @@ class PreparationService:
             if cancelled():
                 raise asyncio.CancelledError()
             value = await self.requirements.refresh(job_id, **inputs, operation_id=op,
+                                                   catalog_prompt_version=request.get("refresh_catalog_prompt_version"),
                                                    cancelled=cancelled, heartbeat=context.heartbeat)
             if value.get("stale"):
                 raise ConflictError("The accepted requirement snapshot is stale.")
@@ -546,7 +565,8 @@ class PreparationService:
             inputs.setdefault("_operation_id", _operation(context.run_id, job_id, stage))
             inputs = self.checkpoints.start_step(context.run_id, job_id, stage, inputs)
             context.heartbeat({"jobId": job_id or None, "stage": stage})
-            result = await execute(inputs)
+            with self._capacity_wait(context, job_id, stage):
+                result = await execute(inputs)
             if self._work_cancelled(context):
                 raise asyncio.CancelledError()
             self.checkpoints.finish_step(context.run_id, job_id, stage, "succeeded", result=result)
@@ -632,7 +652,7 @@ class PreparationService:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _cohort_normalize(self, context, targets, claimed):
+    async def _cohort_normalize(self, context, targets, claimed, request):
         prepared = []
         for job_id in targets:
             accepted = self.checkpoints.step(context.run_id, job_id, "requirements")
@@ -649,7 +669,8 @@ class PreparationService:
             if not claimed.issuperset(expected):
                 raise AppError("preparation_job_busy", "Another preparation owns a job in the frozen request.", 409)
             result = await self.requirements.finalize_cohort(inputs["prepared"], operation_id=inputs["_operation_id"],
-                cancelled=lambda: self._work_cancelled(context), heartbeat=context.heartbeat)
+                cancelled=lambda: self._work_cancelled(context), heartbeat=context.heartbeat,
+                catalog_prompt_version=request.get("cohort_catalog_prompt_version"))
             jobs = result["jobs"]
             if (result["operation_id"] != inputs["_operation_id"] or len(jobs) != len(expected)
                     or {item["job_id"] for item in jobs} != set(expected)
@@ -731,7 +752,7 @@ class PreparationService:
         abandoned = False
         try:
             await self._cohort_producers(context, targets, request, claimed)
-            await self._cohort_normalize(context, targets, claimed)
+            await self._cohort_normalize(context, targets, claimed, request)
             self._prepare_search_fit(context, targets, request, shared=True)
             await self._cohort_qualify(context, targets, claimed)
             for job_id in targets:
@@ -793,7 +814,8 @@ class PreparationService:
                         inputs.setdefault("_operation_id", _operation(context.run_id, job_id, stage))
                         inputs = self.checkpoints.start_step(context.run_id, job_id, stage, inputs)
                         context.heartbeat({"jobId": job_id, "stage": stage})
-                        result = await self._execute_stage(context, job_id, stage, inputs, request)
+                        with self._capacity_wait(context, job_id, stage):
+                            result = await self._execute_stage(context, job_id, stage, inputs, request)
                         status = "warning" if stage == "review" and result.get("review_status") not in {None, "pass", "not_applicable"} else "succeeded"
                         self.checkpoints.finish_step(context.run_id, job_id, stage, status, result=result)
                     previous[stage] = self.checkpoints.step(context.run_id, job_id, stage)
@@ -842,11 +864,15 @@ class PreparationService:
                 if parent_request.get("contract_version") != request["contract_version"]:
                     raise AppError("action_contract_changed", "Start a new preparation run for the revised matching contract. The earlier run remains in history.", 409)
                 request["resume_mode"] = parent_request["resume_mode"]
+                catalog_prompt_version = parent_request.get("refresh_catalog_prompt_version")
             else:
                 # An explicit task choice is already part of the durable action
                 # payload admitted by Actions. Never replace it with a later
                 # global preference while a queued action starts or replays.
                 request["resume_mode"] = request.get("resume_mode", settings.get("resumeMode", "tailored"))
+                catalog_prompt_version = self.requirements.admitted_catalog_prompt(context.run_id)
+            if catalog_prompt_version is not None:
+                request["refresh_catalog_prompt_version"] = catalog_prompt_version
             request["min_fit_score"] = request["min_fit_score"] or settings.get("minFitScore", 7)
         policy = self._cohort_policy(request)
         self.checkpoints.open_run(context.run_id, request, parent)

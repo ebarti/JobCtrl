@@ -219,8 +219,13 @@ test("conflicting Profile saves and stale exact-wording approval retain the newe
     .getByRole("button", { name: "Discard changes", exact: true })
     .click();
   await expect(name).toHaveValue(editedName);
-  await name.fill("Synthetic explicitly discarded recovery");
+  const draftToDiscard = "Synthetic explicitly discarded recovery";
+  await name.fill(draftToDiscard);
+  await expect.poll(() => browserStorage(page)).toContain(draftToDiscard);
   await main.getByRole("link", { name: "Jobs", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Jobs", exact: true }),
+  ).toBeVisible();
   await openPersonal();
   await page
     .getByRole("button", { name: "Discard saved recovery copy", exact: true })

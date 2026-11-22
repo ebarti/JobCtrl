@@ -1,9 +1,9 @@
-import type { QueryClient } from "@tanstack/react-query";
+import type { QueryKey } from "@tanstack/react-query";
 
 import type { DomainEventEnvelope } from "./EventStreamPort.js";
 
-/** A feature declares its committed event names and owns their cache effects. */
+/** Each feature maps a committed event to its own affected query keys. */
 export interface FeatureEventHandler {
   readonly eventTypes: readonly string[];
-  handle(event: DomainEventEnvelope, queryClient: QueryClient): void;
+  handle(event: DomainEventEnvelope, invalidate: (queryKey: QueryKey) => void): void;
 }

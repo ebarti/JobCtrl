@@ -54,7 +54,7 @@ corepack pnpm dev:setup
 
 `corepack pnpm dev:setup` installs the Node workspace dependencies and runs
 `uv --project workers/automation sync --extra dev`, which installs the Python
-worker, the pinned JobStreaming source dependency, its locked transitive
+worker, the pinned JobStreaming wheel, its locked transitive
 dependencies, and the Python dev tools used by local checks. It does not install Temporal or
 Playwright browser binaries. Do not set `UV_EXCLUDE_NEWER` (or a global uv
 `exclude-newer` config): it makes uv treat `uv.lock` as needing re-resolution,
@@ -122,6 +122,10 @@ process ownership under `.dev/pids/` and logs under `.dev/logs/`. On macOS,
 the source fleet shares workspace ownership controls with a compatible installed
 application. An unverified process or an unexpected listener is not authority
 to stop or replace it.
+
+The launcher waits up to 30 seconds for Temporal's health check before starting
+the worker. If Temporal stays unavailable, startup fails visibly without
+launching the worker; inspect `.dev/logs/temporal.log` before trying again.
 
 The default workspace is `~/.jobctrl`, the API is loopback-only on
 `127.0.0.1:8766`, and Vite requests port `5173`. Use the printed URL if Vite

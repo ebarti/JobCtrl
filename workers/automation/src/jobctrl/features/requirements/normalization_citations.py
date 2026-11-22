@@ -48,7 +48,8 @@ def citation_source_context(context, sources):
             "inventory_source_id": context["catalog_inventory_source_id"],
             "snapshot_heads": deepcopy(context["source_snapshot_heads"]), "members": members,
             "occurrences": occurrences, "posting_sources": postings, "incoming": deepcopy(context["incoming"]),
-            "accepted_demands": [{**deepcopy(item), "occurrence_ids": demand_occurrences.get(item["demand_fingerprint"], [])}
+            "accepted_demands": [{**{key: deepcopy(value) for key, value in item.items() if key != "definition"},
+                                  "occurrence_ids": demand_occurrences.get(item["demand_fingerprint"], [])}
                                  for item in context["accepted_demands"]]}
 
 

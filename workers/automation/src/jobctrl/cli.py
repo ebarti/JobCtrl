@@ -734,7 +734,7 @@ def extension_token(rotate: bool = typer.Option(False, "--rotate")) -> None:
 
 @app.command("profile-transfer")
 def profile_transfer(
-    source: Path = typer.Option(..., "--source", help="Existing source workspace; read-only."),
+    source: Path = typer.Option(..., "--source", help="Stopped legacy workspace to read."),
     target: Path = typer.Option(..., "--target", help="Nonexistent path for the fresh application workspace."),
     confirm_profile_only_reset: bool = typer.Option(False, "--confirm-profile-only-reset", help="Explicitly transfer only Profile; other application data starts empty."),
     browser_sources: Path = typer.Option(..., "--browser-sources", help="Complete read-only browser Profile sources/attachment manifest."),
@@ -838,11 +838,9 @@ def gmail_auth(no_open: bool = typer.Option(False, "--no-open"), timeout: int = 
 
 
 from jobctrl.company_briefing_cli import app as company_briefing_app  # noqa: E402
-from jobctrl.source_proposals_cli import app as source_proposals_app  # noqa: E402
 from jobctrl.legacy_evidence_cli import app as legacy_evidence_app  # noqa: E402
 
 app.add_typer(company_briefing_app, name="company-briefing")
-app.add_typer(source_proposals_app, name="source-proposals")
 app.add_typer(legacy_evidence_app, name="legacy-evidence")
 
 

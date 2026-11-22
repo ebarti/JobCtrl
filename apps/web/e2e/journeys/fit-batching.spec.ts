@@ -3,7 +3,7 @@ import { test, expect, json, modelCall, action, terminal, completed } from "../h
 import { createBaseline, type Profile } from "./core-data.js";
 import { qualificationBatchDecision, qualificationKey, type QualificationBinding } from "./qualification-data.js";
 import { captureReusePosting, acceptReuseRequirements, type CapturedPosting, type RequirementSnapshot } from "./reuse-data.js";
-import { catalogMatching, legacyCatalogMatchingV5, typedExtraction, modelSources, type CatalogContext } from "./requirements-data.js";
+import { catalogMatching, legacyCatalogMatchingV5, typedExtraction, modelSources, EXTRACTION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
 import { createScoredFit, impactPartition, refreshPayload, startRefresh, type PendingRefresh, type RefreshOperation } from "./fit-data.js";
 
 const definitions = [
@@ -88,7 +88,10 @@ test("Fit batches cold requirements once, shares exact receipts and reuses only 
 
   const equivalent = Object.fromEntries(definitions.map((row, index) => [row.localId, { verdict: "equivalent" as const, requirementId: seed.snapshot.requirements[index]!.requirement_id }]));
   const second = await captureReusePosting(api, "batch-exact-peer", definitions.map((row) => row.text).join("\n"));
-  await acceptReuseRequirements(api, app, second, definitions, equivalent, { extract: false });
+  // The peer needs current extraction authority. Its exact canonical demands
+  // can still reuse the predecessor's accepted Fit qualifications.
+  const peerRequirements = await acceptReuseRequirements(api, app, second, definitions, equivalent);
+  expect(peerRequirements.extraction!.body["prompt_version"]).toBe(EXTRACTION_PROMPT_VERSION);
   const beforeExact = app.external.calls.length;
   const reused = await json<Fit>(api, "post", `${fitPath(second)}/assess`, assessBody);
   expect(reused.score!.assessments.map((row) => row.assessment_id).sort()).toEqual(first.score!.assessments.map((row) => row.assessment_id).sort());

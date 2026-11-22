@@ -326,10 +326,6 @@ export class DemoApiClientAdapter implements DemoApiClientPort {
     return this.read((model) => model.discovery.compensationSources);
   }
 
-  discoveryLocatorCandidates() {
-    return this.read((model) => model.discovery.locatorCandidates);
-  }
-
   discoveryQuarantine() {
     return this.read((model) => model.discovery.quarantine);
   }
@@ -843,11 +839,8 @@ export class DemoApiClientAdapter implements DemoApiClientPort {
 
   acknowledgeDigest = this.local("acknowledgeDigest");
   updateDiscoverySettings = this.local("updateDiscoverySettings");
-  upsertDiscoverySource = this.local("upsertDiscoverySource");
   patchDiscoverySourceState = this.local("patchDiscoverySourceState");
   updateCompensationSourcePolicy = this.local("updateCompensationSourcePolicy");
-  promoteSourceLocatorCandidate = this.local("promoteSourceLocatorCandidate");
-  rejectSourceLocatorCandidate = this.local("rejectSourceLocatorCandidate");
   decideDiscoveryQuarantine = this.local("decideDiscoveryQuarantine");
   importManualCapture = this.unsupported("importManualCapture");
   importJobUrl = this.unsupported("importJobUrl");
@@ -906,9 +899,6 @@ export class DemoApiClientAdapter implements DemoApiClientPort {
   updateProfile = this.local("updateProfile");
   importResume = this.unsupported("importResume");
   extensionCapabilityToken = this.unsupported("extensionCapabilityToken");
-  discoveryBrowserBridgeStatus = this.unsupported(
-    "discoveryBrowserBridgeStatus",
-  );
   rotateExtensionCapabilityToken = this.unsupported(
     "rotateExtensionCapabilityToken",
   );

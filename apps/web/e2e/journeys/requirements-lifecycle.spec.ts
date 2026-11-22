@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { test, expect, json, modelCall, completed } from "../harness/fixtures.js";
 import { acceptBaseline, type Profile } from "./core-data.js";
 import { createScoredFit, groupedCoverageDecision, qualificationBatchDecision, refreshPayload, startRefresh, type GroupedCoverageContext, type PendingRefresh } from "./fit-data.js";
-import { citeSources, modelSources } from "./requirements-data.js";
+import { catalogContext, citeSources, modelSources } from "./requirements-data.js";
 import { acceptReuseRequirements, captureReusePosting, type RequirementSnapshot } from "./reuse-data.js";
 
 type Meaning = { requirement_id: string; revision: number; name: string; definition: string };
@@ -113,7 +113,7 @@ test("Requirements library follows deleted and restored job roots while retainin
   const reused = await acceptReuseRequirements(api, app, later,
     [{ localId: "ownership", text: later.description }],
     { ownership: { verdict: "equivalent", requirementId: unique.requirement_id } });
-  const matching = reused.matching!.body["context"] as { candidates: { requirement_id: string }[] };
+  const matching = catalogContext(reused.matching!);
   expect(matching.candidates.map((row) => row.requirement_id).sort()).toEqual([shared.requirement_id, unique.requirement_id].sort());
   expect(reused.snapshot.requirements[0]!.requirement_id).toBe(unique.requirement_id);
   const epochAfterRediscovery = (await json<Catalog>(api, "get", "/v1/requirements")).catalog_revision;
@@ -290,7 +290,7 @@ test("permanent job deletion removes only orphaned canonical meanings and Fit li
     [{ localId: "recovery", text: "Implement and maintain durable workflow recovery." },
       { localId: "ownership", text: "Establish explicit review ownership for operational changes." }],
     { recovery: { verdict: "equivalent", requirementId: sharedId }, ownership: { verdict: "new" } }, { extract: false });
-  const matching = replacement.matching!.body["context"] as { candidates: { requirement_id: string }[] };
+  const matching = catalogContext(replacement.matching!);
   expect(matching.candidates.map((row) => row.requirement_id)).toEqual([sharedId]);
   const replacementId = replacement.snapshot.requirements.find((row) => row.requirement_id !== sharedId)!.requirement_id;
   expect(replacementId).not.toBe(uniqueId);

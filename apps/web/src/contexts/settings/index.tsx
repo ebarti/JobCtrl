@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { z } from "zod";
 
-import { invalidateQueriesWithOptimisticOwnership, retainLaterQueryPublication } from "../../shared/lib/createOptimisticMutation.js";
+import { retainLaterQueryPublication } from "../../shared/lib/createOptimisticMutation.js";
 import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import type { SessionPort } from "../../shared/ports/SessionPort.js";
@@ -100,8 +100,8 @@ export function useUpdateApplicationSettings() {
 
 export const applicationSettingsEvents: FeatureEventHandler = {
   eventTypes: ["SettingsUpdated"],
-  handle(event, client) {
-    void invalidateQueriesWithOptimisticOwnership(client, applicationSettingsKeys.all(event.tenantId));
+  handle(event, invalidate) {
+    invalidate(applicationSettingsKeys.all(event.tenantId));
   },
 };
 

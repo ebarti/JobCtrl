@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { useRuntimeHealth } from "../../contexts/runtime/index.js";
 import { useEventStreamStatus } from "../providers/EventStreamProvider.js";
 import { databaseStartupProblem } from "../lib/databaseStartupProblem.js";
+import { modelActivityBeforeToday } from "../lib/model-activity.js";
+import { Button } from "../ui/button.js";
 import type { EventStreamStatus } from "../ports/EventStreamPort.js";
 
 const STATUS_LABEL: Record<EventStreamStatus, string> = {
@@ -32,6 +34,7 @@ export function ConnectionStatusPill() {
   const costStatus = spend?.costStatus ?? (spend?.accountingComplete ? "complete" : "unresolved");
   const accountingBlocked = spend?.accountingBlocked ?? (costStatus === "unresolved" || (costStatus === "unavailable" && !spend?.unlimited));
   const active = (spend?.activeCalls ?? 0) > 0 || costStatus === "pending";
+  const spendDetails = [modelActivityBeforeToday(spend), costStatus === "unresolved" ? "Some past model usage is unknown. Inspect usage details in Settings → Budgets." : null].filter(Boolean).join(" ");
   const spendLabel = !spend ? null
     : active ? `LLM running${spend.unlimited ? " · No daily limit" : ""}`
       : accountingBlocked ? spend.monetaryAccountingBlocked === false ? "Token limit needs usage tracking" : "Daily limit needs cost tracking"
@@ -40,13 +43,17 @@ export function ConnectionStatusPill() {
             : `LLM $${spend.costUsd.toFixed(2)}${spend.costAuthority === "includes_estimates" ? " (includes estimates)" : ""}`;
   return <div className="connection-pill-group">
     <span className="connection-pill" data-status={databaseProblem || workspaceChanged || healthUnavailable || workerUnhealthy || lostForLong ? "lost" : status} aria-live="polite" data-typography="status">{label}</span>
-    {spend ? <span className="connection-spend" title={costStatus === "unresolved" ? "Some past model usage is unknown. Inspect usage details in Settings → Budgets." : undefined} data-status={active ? "pending" : accountingBlocked ? "incomplete" : "ok"} aria-live="polite" data-typography="metadata">
+    {health.data?.runtimeIdentity ? <span className="connection-workspace" data-typography="metadata" title={health.data.runtimeIdentity.workspace}>Workspace {health.data.runtimeIdentity.workspace.split("/").filter(Boolean).at(-1)}</span> : null}
+    {spend ? <span className="connection-spend" title={spendDetails || undefined} data-status={active ? "pending" : accountingBlocked ? "incomplete" : "ok"} aria-live="polite" data-typography="metadata">
       {spendLabel}
     </span> : null}
     {databaseProblem ? <div className="connection-banner" data-state="error" role="alert">{databaseProblem.message}</div>
       : workspaceChanged ? <div className="connection-banner" data-state="error" role="alert">The workspace database changed. Stop JobCtrl, inspect the workspace, restart JobCtrl, and reload this page.</div>
         : healthUnavailable ? <div className="connection-banner" data-state="warning" role="status">Application health is unavailable; retrying.</div>
-          : workerUnhealthy ? <div className="connection-banner" data-state="error" role="alert">The automation worker is unavailable. Running work may be delayed until it reconnects.</div>
+          : workerUnhealthy ? <div className="connection-banner" data-state="error" role="alert">
+            {health.data?.worker.message ?? "Start the automation worker, then retry."}{" "}
+            <Button type="button" variant="outline" size="sm" disabled={health.isFetching} onClick={() => void health.refetch()}>Check again</Button>
+          </div>
             : lostForLong ? <div className="connection-banner" data-state="warning" role="status">Connection lost — events paused; data will refresh when reconnected.</div> : null}
   </div>;
 }

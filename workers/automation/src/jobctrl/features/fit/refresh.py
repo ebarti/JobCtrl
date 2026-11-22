@@ -16,6 +16,7 @@ from .domain import FORMULA_VERSION, calculate_score
 from .models import (CATALOG_IMPACT_INSTRUCTIONS, CatalogImpactDecision,
                      QUALIFICATION_INSTRUCTIONS, QUALIFICATION_PROMPT_VERSION, QUALIFICATION_SEMANTICS_VERSION)
 from .qualification import decide, now
+from . import refresh_qualification
 from .refresh_pending import pending_wording_failures, valid_requirement_bindings
 from .serialization import encoded
 from .sources import (
@@ -50,7 +51,7 @@ def public_operation(state):
          "wording_failures": state.get("wording_failures", []),
          "selected_qualification_bindings": state.get("selected_qualification_bindings"),
          "retry_wording_proposal_ids": state.get("retry_wording_proposal_ids", [])} | {
-             key: state[key] for key in ("impact_selection_scope_version", "qualification_transport_version") if key in state}
+             key: state[key] for key in ("impact_selection_scope_version", "qualification_transport_version", "qualification_receipt_policy") if key in state}
 
 
 def frozen_requirements(snapshot):
@@ -177,6 +178,13 @@ class BoundedModel:
 
     async def determine(self, **arguments):
         key = "model:" + fingerprint(arguments)
+        if arguments["operation"] == refresh_qualification.OPERATION:
+            policy = self.operation.state().get("qualification_receipt_policy")
+            if policy == refresh_qualification.RECEIPT_POLICY:
+                return await refresh_qualification.determine(self.operation, self._model, arguments, key)
+            if policy is not None:
+                raise AppError("fit_refresh_interrupted", "The qualification receipt policy cannot be verified.", 409)
+
         async def invoke():
             response = await self._model.determine(**arguments)
             return {"value": response.value, "provenance": dto(response.provenance) if not isinstance(response.provenance, dict) else response.provenance}
@@ -410,6 +418,7 @@ class ManualRefresh:
             "qualification_prompt_version": QUALIFICATION_PROMPT_VERSION,
             "impact_selection_scope_version": IMPACT_SCOPE_VERSION,
             "qualification_transport_version": CONTEXT_TRANSPORT_VERSION,
+            "qualification_receipt_policy": refresh_qualification.RECEIPT_POLICY,
             "operation_id": operation_id, "input_fingerprint": input_hash, "profile_id": request["profile_id"],
             "status": "running", "phase": "selection", "job_ids": request["job_ids"],
             "catalog_revision": snapshot["catalog"]["catalog_revision"],

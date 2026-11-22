@@ -87,6 +87,10 @@ earlier first-party-only choice, so existing visitors are asked again once.
 The data controller for the public demo is Eloi Barti, acting as an individual.
 For privacy questions, contact me[at]eloibarti.com (replace [at] with @).
 
+Returning visitors with valid consent and an active visitor cookie receive a new
+session when their browser discards its session cookie. The existing consent
+expiry still applies.
+
 After acceptance, Cloudflare sets a versioned consent cookie plus random
 HttpOnly visitor and session identifiers. JobCtrl's persistent cookies expire
 within six months, the session cookie at the end of the browser session, and raw
@@ -638,14 +642,6 @@ preserves them and reports their retained `career_learning_records` count.
 They are not sent in general SSE events or converted into Profile skills,
 readiness, fit scores, application approvals or submission authority.
 
-## Retained Source Proposal History
+## Historical Discovery records
 
-The opt-in `source-proposals from-history` command checks source hostnames through
-DNS; it sends no saved posting content to a model and fetches no remote page.
-Its local source-control receipts retain original posting/Job/run identifiers,
-input URLs, extraction hashes and bounded saved-content samples. These receipts
-and rejection/reset decisions survive job deletion and job-data purge, alongside
-the source registry and locator queue. `source-proposals list` reads that history
-without network access or mutations. See
-[Discovery](discovery.md#propose-sources-from-saved-posting-history) for review and
-explicit suppression reset.
+Upgrading keeps saved jobs, posting snapshots and earlier run receipts in the local workspace. JobStreaming supplies the board catalog for subsequent searches. A user-initiated posting URL import belongs to Jobs and retains its own receipt. [Discovery](discovery.md#capture-a-known-posting).

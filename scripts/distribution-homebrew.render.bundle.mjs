@@ -9137,6 +9137,81 @@ async function assertSymlinksPreserved(root, expectedEntries) {
   }
 }
 
+// scripts/installed-journey-evidence.mjs
+import { createHash as createCaseHash } from "node:crypto";
+import { readFile as readShardFile, readdir as listShardDirectories } from "node:fs/promises";
+import { join } from "node:path";
+var INSTALLED_JOURNEY_SHARDS = 4;
+function requireEvidence(condition, message) {
+  if (!condition) throw new Error(`installed journey qualification: ${message}`);
+}
+function caseSet(ids) {
+  requireEvidence(Array.isArray(ids) && ids.length > 0 && ids.every((id) => typeof id === "string" && id.length > 0), "missing case IDs");
+  const cases = new Set(ids);
+  requireEvidence(cases.size === ids.length, "duplicate case IDs");
+  return cases;
+}
+function caseDigest(ids) {
+  return createCaseHash("sha256").update(JSON.stringify([...ids].sort())).digest("hex");
+}
+function chromiumCaseIds(report, shard = null) {
+  const projects = report.config.projects;
+  requireEvidence(projects.length === 1 && projects[0].name === "chromium" && projects[0].repeatEach === 1 && projects[0].retries === 0, "expected Chromium with one attempt per case");
+  requireEvidence(shard === null ? report.config.shard === null : report.config.shard?.current === shard && report.config.shard.total === INSTALLED_JOURNEY_SHARDS, "unexpected shard selection");
+  requireEvidence(report.errors.length === 0, "browser runner reported errors");
+  const ids = [];
+  function visit(suites) {
+    for (const suite of suites) {
+      for (const spec of suite.specs) {
+        const [test] = spec.tests;
+        requireEvidence(spec.tests.length === 1 && test.projectName === "chromium" && test.expectedStatus === "passed", `case is not required to pass: ${spec.title}`);
+        if (shard !== null) {
+          requireEvidence(test.status === "expected" && test.results.length === 1 && test.results[0].status === "passed", `case did not pass: ${spec.title}`);
+        }
+        ids.push(spec.id);
+      }
+      visit(suite.suites ?? []);
+    }
+  }
+  visit(report.suites);
+  caseSet(ids);
+  if (shard !== null) requireEvidence(report.stats.expected === ids.length && report.stats.skipped === 0 && report.stats.unexpected === 0 && report.stats.flaky === 0, "case totals do not match the passing results");
+  return ids.sort();
+}
+function installedJourneyPlan(build) {
+  const plan = build.smoke?.applicationJourneys;
+  requireEvidence(build.mode === "real" && build.smoke?.status === "pending-installed-journeys" && build.smoke.postSmokePayloadTree === "exact-manifest-match" && plan?.status === "pending", "missing deferred qualification plan");
+  const { buildId, archiveSha256, manifestSha256 } = build;
+  requireEvidence(typeof buildId === "string" && /^[a-f0-9]{64}$/.test(archiveSha256) && /^[a-f0-9]{64}$/.test(manifestSha256) && /^[a-f0-9]{40}$/.test(plan.sourceCommit), "invalid candidate identity");
+  return { identity: { buildId, archiveSha256, manifestSha256, sourceCommit: plan.sourceCommit }, expected: caseSet(plan.caseIds) };
+}
+async function verifyInstalledJourneyClosure(build, directory) {
+  const { identity, expected } = installedJourneyPlan(build);
+  const selected = /* @__PURE__ */ new Map();
+  for (const entry of await listShardDirectories(directory, { withFileTypes: true })) {
+    const match = /^jobctrl-installed-journeys-([1-9][0-9]*)-([1-9][0-9]*)$/.exec(entry.name);
+    requireEvidence(entry.isDirectory() && match, `unexpected shard report directory ${entry.name}`);
+    const shard = Number(match[1]);
+    const attempt = Number(match[2]);
+    requireEvidence(shard <= INSTALLED_JOURNEY_SHARDS && Number.isSafeInteger(attempt), `invalid shard or attempt in ${entry.name}`);
+    if (!selected.has(shard) || attempt > selected.get(shard).attempt) selected.set(shard, { name: entry.name, attempt });
+  }
+  requireEvidence(selected.size === INSTALLED_JOURNEY_SHARDS, `expected ${INSTALLED_JOURNEY_SHARDS} passing shards, found ${selected.size}`);
+  const results = [];
+  for (const [shard, { name }] of [...selected].sort(([left], [right]) => left - right)) {
+    const result = JSON.parse(await readShardFile(join(directory, name, "qualification.json"), "utf8"));
+    requireEvidence(result.status === "pass" && result.shard === shard && Object.entries(identity).every(([key, value]) => result[key] === value), `shard ${shard} does not bind the qualified candidate`);
+    requireEvidence(Number.isSafeInteger(result.journeysMs) && result.journeysMs > 0, `shard ${shard} has no measured duration`);
+    for (const id of caseSet(result.caseIds)) {
+      requireEvidence(expected.delete(id), `shard ${shard} contains an unknown or repeated case ${id}`);
+    }
+    results.push({ shard, caseCount: result.caseIds.length, caseIdsSha256: caseDigest(result.caseIds), journeysMs: result.journeysMs });
+  }
+  requireEvidence(expected.size === 0, `missing ${expected.size} planned Chromium cases`);
+  const { caseIds } = build.smoke.applicationJourneys;
+  return { status: "pass", ...identity, caseCount: caseIds.length, caseIdsSha256: caseDigest(caseIds), shards: results };
+}
+
 // scripts/distribution-build.mjs
 var SCRIPT_DIR2 = path3.dirname(fileURLToPath2(import.meta.url));
 var DISTRIBUTION_DIR = path3.join(REPO_ROOT, "packaging", "distribution");
@@ -11100,7 +11175,8 @@ async function prepareExtractedSmokeLayout({ archivePath, outputRoot }) {
   };
 }
 async function smokeExtractedPayload(archivePath, outputRoot, contracts, {
-  nativeLauncherReleaseChannel = "local"
+  nativeLauncherReleaseChannel = "local",
+  deferApplicationJourneys = false
 } = {}) {
   const {
     canonicalExtractedRoot,
@@ -11184,12 +11260,12 @@ finally:
     "-c",
     "import tls_client\nfrom tls_client.cffi import library\nassert library is not None"
   ], { cwd: payloadRoot, env: stockEnvironment });
-  const applicationJourneys = await runInstalledApplicationJourneys({ payloadRoot, contracts });
+  const applicationJourneys = deferApplicationJourneys ? await planInstalledApplicationJourneys() : await runInstalledApplicationJourneys({ payloadRoot, contracts });
   const nativeLauncherLifecycleRequirement = nativeLauncherLifecycleSmokeRequirement(nativeLauncherReleaseChannel);
   const nativeLauncherLifecycle = nativeLauncherLifecycleRequirement.status === "required" ? await smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot: canonicalExtractedRoot, stockEnvironment }) : nativeLauncherLifecycleRequirement;
   await verifyExactPayloadTree(payloadRoot, manifest);
   return {
-    status: "pass",
+    status: deferApplicationJourneys ? "pending-installed-journeys" : "pass",
     nodeVersion,
     playwrightMcp: mcpProtocol,
     tlsClientNative: "darwin-arm64-load-pass",
@@ -11202,8 +11278,31 @@ finally:
     extractionForbiddenAudit
   };
 }
-async function runInstalledApplicationJourneys({ payloadRoot, contracts }) {
-  const result = await run(process2.execPath, [path3.join(REPO_ROOT, "scripts", "run-e2e.mjs"), "--installed", "--project=chromium"], {
+async function checkedOutCommit() {
+  const { stdout } = await run("git", ["rev-parse", "HEAD"]);
+  return stdout.trim();
+}
+async function planInstalledApplicationJourneys() {
+  const { stdout } = await run("corepack", [
+    "pnpm",
+    "--filter",
+    "@jobctrl/web",
+    "exec",
+    "playwright",
+    "test",
+    "--config=e2e/playwright.config.ts",
+    "--project=chromium",
+    "--list",
+    "--reporter=json"
+  ], {
+    env: { ...process2.env, JOBCTRL_E2E_INSTALLED: "1" }
+  });
+  return { status: "pending", sourceCommit: await checkedOutCommit(), caseIds: chromiumCaseIds(JSON.parse(stdout)) };
+}
+async function runInstalledApplicationJourneys({ payloadRoot, contracts, shard }) {
+  const args = [path3.join(REPO_ROOT, "scripts", "run-e2e.mjs"), "--installed", "--project=chromium"];
+  if (shard !== void 0) args.push(`--shard=${shard}/${INSTALLED_JOURNEY_SHARDS}`);
+  const result = await run(process2.execPath, args, {
     cwd: REPO_ROOT,
     env: {
       ...process2.env,
@@ -11218,7 +11317,7 @@ async function runInstalledApplicationJourneys({ payloadRoot, contracts }) {
   invariant3(line, "installed application journeys did not publish their owned evidence summary");
   const evidence = JSON.parse(line.slice("E2E timing: ".length));
   invariant3(
-    evidence.mode === "installed" && evidence.exitCode === 0 && evidence.lockfileUnchanged === true,
+    evidence.mode === "installed" && evidence.exitCode === 0 && evidence.lockfileUnchanged === true && evidence.webBuildUnchanged === true && evidence.payloadRoot === payloadRoot,
     "installed application journeys did not complete against the exact extracted candidate"
   );
   return {
@@ -11228,6 +11327,36 @@ async function runInstalledApplicationJourneys({ payloadRoot, contracts }) {
     controlledExternalBoundaries: true,
     ...evidence
   };
+}
+async function qualifyInstalledJourneyShard({ candidateDirectory, output, shard }) {
+  invariant3(Number.isInteger(shard) && shard >= 1 && shard <= INSTALLED_JOURNEY_SHARDS, "invalid installed journey shard");
+  const build = JSON.parse(await readFile3(path3.join(candidateDirectory, "build-result.json"), "utf8"));
+  const { identity, expected } = installedJourneyPlan(build);
+  invariant3(await checkedOutCommit() === identity.sourceCommit, "installed journey checkout does not match the plan");
+  const contracts = await loadBuildContracts(REPO_ROOT);
+  const archivePath = path3.join(candidateDirectory, `jobctrl-${contracts.versions["jobctrl-launcher"]}-${contracts.platform.id}.zip`);
+  invariant3(await sha256File2(archivePath) === identity.archiveSha256, "installed journey archive does not match the plan");
+  const extraction = await mkdtemp(path3.join(os.tmpdir(), "jobctrl-installed-journeys-"));
+  try {
+    const { payloadRoot } = await prepareExtractedSmokeLayout({ archivePath, outputRoot: extraction });
+    const manifestPath = path3.join(payloadRoot, "manifest.json");
+    invariant3(await sha256File2(manifestPath) === identity.manifestSha256, "installed journey manifest does not match the plan");
+    const manifest = JSON.parse(await readFile3(manifestPath, "utf8"));
+    validateDistributionManifest(manifest, contracts);
+    invariant3(manifest.buildId === identity.buildId, "installed journey manifest build ID does not match the plan");
+    await verifyExactPayloadTree(payloadRoot, manifest);
+    const evidence = await runInstalledApplicationJourneys({ payloadRoot, contracts, shard });
+    await verifyExactPayloadTree(payloadRoot, manifest);
+    invariant3(await sha256File2(manifestPath) === identity.manifestSha256, "installed journey changed the candidate manifest");
+    const report = JSON.parse(await readFile3(path3.join(evidence.evidence, "results.json"), "utf8"));
+    const caseIds = chromiumCaseIds(report, shard);
+    invariant3(caseIds.every((id) => expected.has(id)), "installed journey shard executed a case outside the plan");
+    const result = { status: "pass", ...identity, shard, journeysMs: evidence.journeysMs, caseIds };
+    await writeJson(output, result);
+    return { shard, caseCount: caseIds.length, journeysMs: evidence.journeysMs };
+  } finally {
+    await rm2(extraction, { recursive: true, force: true });
+  }
 }
 function filesMatchingSizeSpec(files, spec) {
   if (!spec) return [];
@@ -12054,6 +12183,7 @@ async function buildRealPayload({
   baselineSizeReportPath = null,
   releaseChannel = "local",
   releaseTrustKeyBase64 = "",
+  deferApplicationJourneys = false,
   root = REPO_ROOT
 } = {}) {
   invariant3(outputDirectory, "real build requires outputDirectory");
@@ -12153,7 +12283,8 @@ async function buildRealPayload({
     const archivePath = path3.join(outputRoot, `jobctrl-${contracts.versions["jobctrl-launcher"]}-${contracts.platform.id}.zip`);
     const compressed = await createDeterministicZip(payloadRoot, archivePath, sourceDateEpoch);
     const smoke = await smokeExtractedPayload(archivePath, outputRoot, contracts, {
-      nativeLauncherReleaseChannel: releaseChannel
+      nativeLauncherReleaseChannel: releaseChannel,
+      deferApplicationJourneys
     });
     await rm2(path3.join(outputRoot, "clean-extraction"), { recursive: true, force: true });
     const installedBytes = (await buildFileInventory(payloadRoot)).reduce((sum, file) => sum + file.sizeBytes, 0);
@@ -12278,6 +12409,7 @@ async function main2(argv = process2.argv.slice(2)) {
     return;
   }
   if (command === "real") {
+    invariant3(options["installed-journeys"] === void 0 || options["installed-journeys"] === "deferred", "unsupported installed-journeys mode");
     const result = await buildRealPayload({
       outputDirectory: path3.resolve(options.output ?? path3.join(REPO_ROOT, "dist", "distribution-real")),
       cacheDirectory: options.cache ? path3.resolve(options.cache) : void 0,
@@ -12285,7 +12417,8 @@ async function main2(argv = process2.argv.slice(2)) {
       sourceDateEpoch: Number.parseInt(options["source-date-epoch"] ?? process2.env.SOURCE_DATE_EPOCH ?? "0", 10),
       baselineSizeReportPath: options["baseline-size-report"] ?? null,
       releaseChannel: options["release-channel"] ?? "local",
-      releaseTrustKeyBase64: options["release-trust-key"] ?? ""
+      releaseTrustKeyBase64: options["release-trust-key"] ?? "",
+      deferApplicationJourneys: options["installed-journeys"] === "deferred"
     });
     process2.stdout.write(canonicalJson({
       mode: result.mode,
@@ -12297,6 +12430,15 @@ async function main2(argv = process2.argv.slice(2)) {
       compressedBytes: result.compressedBytes,
       smoke: result.smoke
     }));
+    return;
+  }
+  if (command === "qualify-installed-journey-shard") {
+    const result = await qualifyInstalledJourneyShard({
+      candidateDirectory: path3.resolve(options.candidate),
+      output: path3.resolve(options.output),
+      shard: Number(options.shard)
+    });
+    process2.stdout.write(canonicalJson(result));
     return;
   }
   throw new Error(`unknown distribution build mode: ${command}`);
@@ -12921,6 +13063,21 @@ async function verifyPreparedCandidate({ preparedDirectory, channel, publicKeyBa
   const archiveSha256 = await sha256File3(paths.archivePath);
   invariant4(prepared.archiveSha256 === archiveSha256, "prepared archive SHA-256 does not match the checkout-rooted archive");
   invariant4(prepared.compressedBytes === archiveEntry.size, "prepared archive byte count does not match the checkout-rooted archive");
+  const inlineJourneys = prepared.smoke?.applicationJourneys;
+  let installedJourneys;
+  if (inlineJourneys?.status === "pending") {
+    installedJourneys = await verifyInstalledJourneyClosure(prepared, path4.join(paths.preparedDirectory, "installed-journeys"));
+    invariant4(
+      manifest.buildId === `${manifest.appVersion}-${installedJourneys.sourceCommit}-${contracts.platform.id}`,
+      "installed journey checkout does not match the release build ID"
+    );
+  } else {
+    invariant4(
+      prepared.smoke?.status === "pass" && prepared.smoke.postSmokePayloadTree === "exact-manifest-match" && inlineJourneys?.status === "pass" && inlineJourneys.mode === "installed" && inlineJourneys.exitCode === 0 && inlineJourneys.lockfileUnchanged === true && inlineJourneys.webBuildUnchanged === true,
+      "complete installed journey evidence is required before signing"
+    );
+    installedJourneys = { status: "pass", journeysMs: inlineJourneys.journeysMs };
+  }
   const nativeBinding = await verifyPreparedNativeBinding({ preparedDirectory: paths.preparedDirectory, channel, publicKeyBase64, runner });
   return {
     schemaVersion: 1,
@@ -12934,6 +13091,7 @@ async function verifyPreparedCandidate({ preparedDirectory, channel, publicKeyBa
     installedBytes,
     nativeLauncherReleaseChannel: channel,
     nativeLauncherReleaseTrustKeySha256: prepared.nativeLauncherReleaseTrustKeySha256,
+    installedJourneys,
     nativeBinding
   };
 }
@@ -12968,6 +13126,10 @@ function assertPreSignVerificationMatches(prepared, verification) {
     "nativeLauncherReleaseTrustKeySha256"
   ];
   for (const field of fields) invariant4(verification[field] === prepared[field], `pre-sign verification does not bind prepared ${field}`);
+  invariant4(
+    canonicalJson2(verification.installedJourneys) === canonicalJson2(prepared.installedJourneys),
+    "pre-sign verification does not bind the installed journeys"
+  );
   return true;
 }
 function networkDescriptor({ channel, sequence, minimumSafeSequence, revokedBuildIds = [], buildId, appVersion, sourceCommit, archiveUrl, archiveSha256, archiveSizeBytes, manifestSha256 }) {
@@ -13194,6 +13356,10 @@ async function finalizeNetworkRelease({
   const prepared = JSON.parse(await readFile4(path4.join(preparedDirectory, "build-result.json"), "utf8"));
   invariant4(prepared.releaseChannel === "local" && prepared.nativeLauncherReleaseChannel === channel, "prepared build is not a matching unsigned pre-sign network build");
   assertPreSignVerificationMatches(verifiedPrepared, preSignVerification);
+  invariant4(
+    !verifiedPrepared.installedJourneys.sourceCommit || verifiedPrepared.installedJourneys.sourceCommit === sourceCommit,
+    "final source commit does not match the installed journey checkout"
+  );
   const nativeBinding = verifiedPrepared.nativeBinding;
   const payloadRoot = path4.join(preparedDirectory, "payload");
   const preparedManifest = JSON.parse(await readFile4(path4.join(payloadRoot, "manifest.json"), "utf8"));
@@ -13582,7 +13748,8 @@ async function main3(argv = process3.argv.slice(2)) {
   }
   const options = parseOptions(rest);
   if (command === "prepare") {
-    requireOptions(options, ["output", "channel", "build-id", "source-date-epoch"], command);
+    requireOptions(options, ["output", "channel", "build-id", "source-date-epoch"], command, ["installed-journeys"]);
+    invariant4(options["installed-journeys"] === void 0 || options["installed-journeys"] === "deferred", "unsupported installed-journeys mode");
     const configuredPublicKey = process3.env.JOBCTRL_RELEASE_PUBLIC_KEY;
     const publicKey = configuredPublicKey ?? releasePublicKeyBase64(privateKeyFromBase64(process3.env.JOBCTRL_RELEASE_SIGNING_KEY ?? ""));
     invariant4(Buffer.from(publicKey, "base64").length === 32 && Buffer.from(publicKey, "base64").toString("base64") === publicKey, "prepared release requires a canonical raw Ed25519 public key");
@@ -13591,9 +13758,10 @@ async function main3(argv = process3.argv.slice(2)) {
       buildId: options["build-id"],
       sourceDateEpoch: parseCanonicalIntegerOption(options["source-date-epoch"], "source-date-epoch"),
       releaseChannel: options.channel,
-      releaseTrustKeyBase64: publicKey
+      releaseTrustKeyBase64: publicKey,
+      deferApplicationJourneys: options["installed-journeys"] === "deferred"
     });
-    process3.stdout.write(canonicalJson2({ status: "prepared", buildId: result.buildId, archiveSha256: result.archiveSha256, manifestSha256: result.manifestSha256, nativeLauncherReleaseChannel: result.nativeLauncherReleaseChannel, nativeLauncherReleaseTrustKeySha256: result.nativeLauncherReleaseTrustKeySha256 }));
+    process3.stdout.write(canonicalJson2({ status: result.smoke.status === "pass" ? "prepared" : result.smoke.status, buildId: result.buildId, archiveSha256: result.archiveSha256, manifestSha256: result.manifestSha256, nativeLauncherReleaseChannel: result.nativeLauncherReleaseChannel, nativeLauncherReleaseTrustKeySha256: result.nativeLauncherReleaseTrustKeySha256 }));
     return;
   }
   if (command === "verify-prepared") {

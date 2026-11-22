@@ -3,7 +3,6 @@ import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { z } from "zod";
 
-import { invalidateQueriesWithOptimisticOwnership } from "../../shared/lib/createOptimisticMutation.js";
 import type { HttpLoaderReadContext, HttpReadContext } from "../../shared/lib/loaderReadContext.js";
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
@@ -39,9 +38,9 @@ export function ensureActivityEvent(context: HttpLoaderReadContext, eventId: str
 }
 export const activityEvents: FeatureEventHandler = {
   eventTypes: ["*"],
-  handle(event, client) {
-    void invalidateQueriesWithOptimisticOwnership(client, activityKeys.pages(event.tenantId));
-    void invalidateQueriesWithOptimisticOwnership(client, activityKeys.recent(event.tenantId));
+  handle(event, invalidate) {
+    invalidate(activityKeys.pages(event.tenantId));
+    invalidate(activityKeys.recent(event.tenantId));
   },
 };
 
