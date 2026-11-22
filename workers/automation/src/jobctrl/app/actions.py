@@ -165,7 +165,7 @@ class Application:
             "result": json.loads(row["result_json"]) if row["result_json"] else None,
             "errorCode": row["error_code"], "createdAt": row["created_at"], "updatedAt": row["updated_at"],
             "cancellationRequested": bool(stop),
-            "cancellationDelivery": delivery,
+            **({"cancellationDelivery": delivery} if delivery is not None else {}),
         }
 
     def action_run(self, run_id: str, connection=None) -> dict:
@@ -394,7 +394,7 @@ class Application:
     async def cancel(self, run_id: str) -> dict:
         with self.runtime.database.transaction() as connection:
             run = self.action_run(run_id, connection)
-            if run["status"] in TERMINAL_STATUSES or run["cancellationDelivery"] == "acknowledged":
+            if run["status"] in TERMINAL_STATUSES or run.get("cancellationDelivery") == "acknowledged":
                 return run
             action = run["action"]
             event = {"runId": run_id, "action": action}
@@ -421,7 +421,7 @@ class Application:
                     current = self.action_run(run_id, connection)
                     # Withdraw an unconfirmed start after Temporal reports it absent.
                     # The recorded Stop prevents even a late start from executing.
-                    if current["status"] in {"pending", "start_failed"} and current["cancellationDelivery"] == "pending" and not current["temporalRunId"]:
+                    if current["status"] in {"pending", "start_failed"} and current.get("cancellationDelivery") == "pending" and not current["temporalRunId"]:
                         self._cancel_before_execution(action, run_id, None, connection)
                     return self.action_run(run_id, connection)
             return self.action_run(run_id)

@@ -199,7 +199,7 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
         if value:
             raise AppError("invalid_cancel_request", "Cancellation accepts an empty object.")
         run = await application.cancel(request.path_params["run_id"])
-        return JSONResponse(run, status_code=202 if run["cancellationDelivery"] == "pending" else 200)
+        return JSONResponse(run, status_code=202 if run.get("cancellationDelivery") == "pending" else 200)
 
     async def stream(request):
         cursor = request.headers.get("last-event-id", request.query_params.get("after", "0"))

@@ -28,12 +28,12 @@ there is no Fastify business authority or TypeScript/Python JSON-RPC hop.
 | `GET /v1/activity/{eventId}` | One committed event envelope or 404. |
 
 An action run's `cancellationRequested` records the saved Stop. Its
-`cancellationDelivery` is `pending` while delivery remains unconfirmed,
-`acknowledged` once Temporal accepts the request, or `null` when neither state
-applies. Retry pending delivery with the same run ID. An acknowledgement
-leaves `status` active until the worker or Temporal history confirms the
-outcome. A Stop can also withdraw a locally recorded start that Temporal
-reports absent, if the run never reached execution and has no bound history.
+`cancellationDelivery` is `pending` while delivery remains unconfirmed and
+`acknowledged` once Temporal accepts the request. Receipts omit the field
+when neither state applies. Retry pending delivery with the same run ID.
+An acknowledgement leaves `status` active until the worker or Temporal
+history confirms the outcome. A Stop can also withdraw a locally recorded
+start if Temporal reports it absent and the run has no execution or bound history.
 Terminal receipts from earlier versions may lack delivery evidence.
 
 The health `llmSpend` read model separates `costStatus` and `tokenStatus`, each

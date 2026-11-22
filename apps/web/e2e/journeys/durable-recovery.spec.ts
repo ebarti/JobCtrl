@@ -59,10 +59,11 @@ test("a queued Stop survives a Temporal outage and a delayed repeat leaves the n
   const cancelPath = `${runPath}/cancel`;
   const current = () => json<{
     status: string; workflowId: string; temporalRunId: string;
-    cancellationRequested: boolean; cancellationDelivery: string | null;
+    cancellationRequested: boolean; cancellationDelivery?: "pending" | "acknowledged";
   }>(api, "get", runPath);
   const queued = await current();
   expect(queued).toMatchObject({ status: "queued", cancellationRequested: false });
+  expect(queued).not.toHaveProperty("cancellationDelivery");
   expect(queued.temporalRunId).toBeTruthy();
   await page.goto(`/runs/${first.runId}`);
 
