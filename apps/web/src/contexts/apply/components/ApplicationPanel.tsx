@@ -3,6 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { useId, useState } from "react";
 import { z } from "zod";
 
+import { canRequestStop } from "../../../shared/lib/actionStop.js";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { Button } from "../../../shared/ui/button.js";
 import { Input } from "../../../shared/ui/input.js";
@@ -594,8 +595,8 @@ function ApplicationExecution({ session }: { session: ApplyReviewSession }) {
         <p role="status">
           Action {session.actionRun.data.action} ·{" "}
           {session.actionRun.data.status} · {session.actionRun.data.runId}
-          {session.actionRun.data.cancellationRequested
-            ? " · cancellation requested"
+          {session.active && session.actionRun.data.cancellationRequested
+            ? session.actionRun.data.cancellationDelivery === "pending" ? " · Stop requested, awaiting delivery" : " · Stop requested"
             : ""}
         </p>
       ) : null}
@@ -625,13 +626,13 @@ function ApplicationExecution({ session }: { session: ApplyReviewSession }) {
         >
           Stop application
         </Button>
-        {session.active ? (
+        {session.active && canRequestStop(session.actionRun.data) ? (
           <Button
             variant="outline"
             disabled={writeBlocked}
             onClick={session.cancelRun}
           >
-            Request action cancellation
+            {session.actionRun.data?.cancellationDelivery === "pending" ? "Retry stop" : "Request action cancellation"}
           </Button>
         ) : null}
         {application.stopped ? (

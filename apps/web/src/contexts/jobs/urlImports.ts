@@ -1,6 +1,7 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
+import { cancellationDeliverySchema } from "../../shared/lib/actionStop.js";
 
 import { useRuntimeHealth } from "../runtime/index.js";
 import { lookupSessionAction, requestWorkspace, requireRequestWorkspace, useSessionRequestIdentity } from "../../shared/lib/useSessionRequestIdentity.js";
@@ -12,7 +13,7 @@ const operation = "jobs.capture_url";
 const statuses = z.enum(["pending", "start_failed", "queued", "running", "waiting_for_capacity", "succeeded", "failed", "cancelled"]);
 const listSchema = z.object({ imports: z.array(z.object({
   runId: z.string(), url: z.string(), status: statuses, cancellationRequested: z.boolean(),
-  errorCode: z.string().nullable(), jobId: z.string().nullable(),
+  cancellationDelivery: cancellationDeliverySchema, errorCode: z.string().nullable(), jobId: z.string().nullable(),
 })) });
 
 export function useUrlImports(enabled: boolean) {

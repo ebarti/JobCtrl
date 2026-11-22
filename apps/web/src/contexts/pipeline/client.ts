@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { useRuntimeHealth } from "../runtime/index.js";
 
+import { cancellationDeliverySchema } from "../../shared/lib/actionStop.js";
 import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
@@ -33,6 +34,8 @@ const runSchema = z.object({
   cohortFrozen: z.boolean().optional(), targetRoute: z.string().optional(),
   jobIds: z.array(z.string()), createdAt: z.string(), updatedAt: z.string(), steps: z.array(stepSchema),
 });
+const executionSchema = z.object({ runId: z.string(), status: z.string(), errorCode: z.string().nullable().optional(),
+  cancellationRequested: z.boolean(), cancellationDelivery: cancellationDeliverySchema }).passthrough();
 const listSchema = z.object({ runs: z.array(runSchema) });
 const receiptSchema = z.object({ runId: z.string().min(1), workflowId: z.string().min(1),
   status: z.enum(["queued", "running", "succeeded", "failed", "cancelled"]) });
@@ -114,12 +117,11 @@ export function usePreparationExecution(runId: string | null) {
   const tenantId = useTenantId();
   const { http } = usePorts();
   const client = useQueryClient();
-  const schema = z.object({ runId: z.string(), status: z.string(), errorCode: z.string().nullable().optional(), cancellationRequested: z.boolean() }).passthrough();
   return useQuery({
     queryKey: [...preparationKeys.all(tenantId), "execution", runId] as const,
     enabled: Boolean(runId),
     queryFn: async () => {
-      const value = schema.parse(await http.json<unknown>("GET", `/v1/action-runs/${encodeURIComponent(runId ?? "")}`));
+      const value = executionSchema.parse(await http.json<unknown>("GET", `/v1/action-runs/${encodeURIComponent(runId ?? "")}`));
       void client.invalidateQueries({ queryKey: preparationKeys.runs(tenantId) });
       return value;
     },
@@ -189,7 +191,7 @@ export function usePreparationCommands() {
     mutationFn: async (runId: string) => {
       const path = `/v1/action-runs/${encodeURIComponent(runId)}/cancel`;
       const response = await http.json<unknown>("POST", path, { body: {} });
-      const parsed = z.object({ runId: z.literal(runId), cancellationRequested: z.literal(true) }).passthrough().safeParse(response);
+      const parsed = executionSchema.extend({ runId: z.literal(runId) }).safeParse(response);
       if (!parsed.success) throw createUnconfirmedWriteError("POST", path, parsed.error);
       return parsed.data;
     },

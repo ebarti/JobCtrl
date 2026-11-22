@@ -22,10 +22,19 @@ there is no Fastify business authority or TypeScript/Python JSON-RPC hop.
 | `GET /v1/action-runs/{runId}` | Current admission/execution result and cancellation state. |
 | `GET /v1/action-runs/summary` | Recorded status counts, total, active and pending cancellation counts. |
 | `GET /v1/action-runs/by-idempotency-key?action=...` | Exact `Idempotency-Key` header lookup without returning its request payload; a missing row is only an observation at read time. |
-| `POST /v1/action-runs/{runId}/cancel` | Empty object; records cancellation before requesting Temporal cancellation. |
+| `POST /v1/action-runs/{runId}/cancel` | Empty object. Records Stop for the selected run and returns its current receipt. A 202 means delivery is pending. A 200 returns an acknowledged request or a terminal receipt. |
 | `GET /v1/events/stream` | Committed SSE, replay cursors and optional ordinary-message envelopes. |
 | `GET /v1/activity` or `/v1/events` | Newest-first `{events,nextCursor,hasMore}`; optional `before` event ID and bounded `limit`. |
 | `GET /v1/activity/{eventId}` | One committed event envelope or 404. |
+
+An action run's `cancellationRequested` records the saved Stop. Its
+`cancellationDelivery` is `pending` while delivery remains unconfirmed,
+`acknowledged` once Temporal accepts the request, or `null` when neither state
+applies. Retry pending delivery with the same run ID. An acknowledgement
+leaves `status` active until the worker or Temporal history confirms the
+outcome. A Stop can also withdraw a locally recorded start that Temporal
+reports absent, if the run never reached execution and has no bound history.
+Terminal receipts from earlier versions may lack delivery evidence.
 
 The health `llmSpend` read model separates `costStatus` and `tokenStatus`, each
 `complete`, `unavailable`, `pending` or `unresolved`. A settled native call can
@@ -57,7 +66,8 @@ explicit 404, including when static frontend assets are served.
 The Jobs URL form submits `POST /v1/actions/jobs.capture_url` with `{ "url": "…" }`,
 an `Idempotency-Key` and `Expected-Database-Instance-Id`. The 202 response
 identifies the durable run. `GET /v1/jobs/url-imports` returns its source URL,
-run ID, current status, cancellation state, failure code and captured job ID.
+run ID, current status, cancellation request and delivery state, failure code
+and captured job ID.
 The mounted Jobs feature advertises `jobs.url_import_queue` in the health
 response’s `capabilities` array when it supports this projection. For older
 servers the form uses the same action receipt and links to the filtered native

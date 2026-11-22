@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 import { create } from "zustand";
 
+import { canRequestStop, cancellationDeliverySchema } from "../../../shared/lib/actionStop.js";
 import { createUnconfirmedWriteError } from "../../../shared/lib/unconfirmed-write.js";
 import { requestWorkspace } from "../../../shared/lib/useSessionRequestIdentity.js";
 import type { HttpPort, SessionPort } from "../../../shared/ports/index.js";
@@ -17,6 +18,7 @@ const TERMINAL = ["succeeded", "failed", "cancelled"] as const;
 const SearchActionSchema = z.object({
   runId: z.string().min(1), action: z.literal("discovery.search"),
   status: z.enum([...ACTIVE, ...TERMINAL]), cancellationRequested: z.boolean(),
+  cancellationDelivery: cancellationDeliverySchema,
   errorCode: z.string().nullable().optional(), result: z.unknown().optional(),
   createdAt: z.string().optional(), updatedAt: z.string().optional(),
 }).passthrough();
@@ -181,8 +183,7 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
     const current = await requestWorkspace(http);
     if (!sameWorkspace(current, actions.data.workspace)) throw new Error("The search belongs to a different workspace. Return there before requesting a stop.");
     const result = SearchActionSchema.parse(await http.json<unknown>("POST", `/v1/action-runs/${encodeURIComponent(runId)}/cancel`, { body: {}, expectedDatabaseInstanceId: current.databaseInstanceId }));
-    if (result.runId !== runId || !result.cancellationRequested) throw new Error("The stop request could not be confirmed.");
-    client.setQueryData(discoveryKeys.searchAction(tenant, current.databaseInstanceId, runId), result);
+    if (result.runId !== runId || (!result.cancellationRequested && !terminal(result.status))) throw new Error("The stop request could not be confirmed.");
     return result;
   }, onSettled: () => { recoveryRef.current.refresh(); void client.invalidateQueries({ queryKey: discoveryKeys.searchActions(tenant) }); void client.invalidateQueries({ queryKey: discoveryKeys.runs(tenant) }); } });
 
@@ -224,7 +225,7 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
     hasUnconfirmedRequest: Boolean(recovery.record && !ownAction && (pending?.uncertain || recovery.statusError)),
     startError: attemptRequest.current && attemptRequest.current === confirmedRequest.current ? null : start.error,
     startMessage, stopError: stop.error, isStopping: stop.isPending,
-    canStop: Boolean(action && active(action.status) && !action.cancellationRequested && !statusUnavailable),
+    canStop: Boolean(action && active(action.status) && canRequestStop(action) && !statusUnavailable),
     history: runs.data?.runs ?? [], historyLoading: runs.isPending, historyError: runs.error,
     launch(overrides: Pick<DiscoverySearchPayload, "queries" | "locations"> = {}) {
       if (blockedReason || start.isPending) return;

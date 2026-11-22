@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { cancellationDeliverySchema } from "../../shared/lib/actionStop.js";
+
 const metadata = z.record(z.string(), z.unknown());
 const identity = z.string().min(1);
 const nullableIdentity = identity.nullable();
@@ -239,6 +241,7 @@ export const actionRunSchema = actionReceiptSchema
     createdAt: z.string(),
     updatedAt: z.string(),
     cancellationRequested: z.boolean(),
+    cancellationDelivery: cancellationDeliverySchema,
     temporalRunId: z.string().nullable(),
   })
   .passthrough();

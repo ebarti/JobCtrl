@@ -59,7 +59,8 @@ class UrlImports:
                 waiting = run["status"] == "running" and row["wait_reason"]
                 result.append({"runId": run["runId"], "url": row["url"],
                                "status": "waiting_for_capacity" if waiting else run["status"],
-                               "cancellationRequested": run["cancellationRequested"], "errorCode": run["errorCode"],
+                               "cancellationRequested": run["cancellationRequested"], "cancellationDelivery": run["cancellationDelivery"],
+                               "errorCode": run["errorCode"],
                                "jobId": row["job_id"] if run["status"] == "succeeded" else None})
             return result
 

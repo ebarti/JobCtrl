@@ -34,6 +34,10 @@ restarts the original worker and reads the saved job through the original API.
 The dispatch journey stops the owned Temporal server while the worker keeps
 heartbeating. It checks public status, refused admission and earlier receipts,
 then restores the same history and retries through the actions endpoint.
+The Stop recovery journey queues a run behind a held activity, records Stop
+during a real Temporal outage, reloads Run detail, and retries after recovery.
+It checks the receipt against Temporal's cancellation history and verifies a
+late Stop for that run leaves its successor and accepted artifacts intact.
 
 Hosted Browser CI schedules that same inventory in six fixed, disjoint
 Playwright shards, `--shard=1/6` through `--shard=6/6`, on separate

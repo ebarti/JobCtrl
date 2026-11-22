@@ -135,9 +135,10 @@ generate resumes or prepare Profile wording. Existing saved jobs can be selected
 for the explicit `assess` preparation recipe without acquiring more jobs.
 
 Progress, results, partial failures, stop requests and same-request recovery
-stay beside the Jobs table and survive navigation or reload. Queued is not completed; a stop request is not settled
-cancellation. When an acknowledgement is uncertain, reconcile the retained
-request instead of starting a different search.
+stay beside the Jobs table and survive navigation or reload. **Stop requested**
+appears while that search is settling. If delivery is still pending, use
+**Retry stop** for the same search after the workflow service returns.
+**Search cancelled** appears once the run has stopped.
 
 Use **Import job** for one public URL, or the paired extension's **Save job**
 action for user-mediated capture. If an inaccessible posting needs supplied

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
+import { canRequestStop, cancellationDeliverySchema } from "../../shared/lib/actionStop.js";
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
 import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
 import { lookupSessionAction, requestWorkspace, requireRequestWorkspace, useSessionRequestIdentity } from "../../shared/lib/useSessionRequestIdentity.js";
@@ -17,7 +18,7 @@ const active = (status: string | undefined) => status === "pending" || status ==
 const terminal = (status: string | undefined) => status === "succeeded" || status === "failed" || status === "cancelled";
 const receiptSchema = z.object({ runId: z.string().min(1), workflowId: z.string().min(1), status: z.string().min(1) });
 const runSchema = z.object({ runId: z.string().min(1), action: z.literal(ACTION), status: z.string().min(1),
-  cancellationRequested: z.boolean(), errorCode: z.string().nullable() }).passthrough();
+  cancellationRequested: z.boolean(), cancellationDelivery: cancellationDeliverySchema, errorCode: z.string().nullable() }).passthrough();
 const busySchema = z.object({ runId: z.string().min(1), workspaceId: z.string().min(1), databaseInstanceId: z.string().min(1) }).strict();
 const scopeBusySchema = z.object({ error: z.object({ code: z.literal("action_scope_busy"),
   details: z.object({ runId: z.string().min(1), action: z.literal(ACTION) }).passthrough() }).passthrough() }).passthrough();
@@ -80,7 +81,7 @@ export function RequirementConsolidationPanel({ normalization, catalogUnavailabl
   });
   const notRecorded = status.error instanceof JobCtrlApiError && status.error.status === 404;
   const exactInputs = Boolean(identity.record && currentFingerprint.data === identity.record.fingerprint);
-  const canRetry = Boolean(identity.record && exactInputs && !status.isFetching
+  const canRetry = Boolean(identity.record && exactInputs && !status.isFetching && !status.data?.cancellationRequested
     && (notRecorded || ["pending", "start_failed"].includes(status.data?.status ?? "")));
 
   const refresh = () => {
@@ -201,7 +202,7 @@ export function RequirementConsolidationPanel({ normalization, catalogUnavailabl
       : "Checking the earlier consolidation request…"}</p>
       {run ? <Link to="/runs/$runId" params={{ runId: run.runId }}>View run details</Link> : null}
       {status.error && !notRecorded ? <p role="alert">The earlier request status is unavailable: {status.error.message}</p> : null}
-      {currentRun && active(run?.status) && !run?.cancellationRequested ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(currentRun)}>Request cancellation</Button> : null}
+      {currentRun && active(run?.status) && canRequestStop(run) ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(currentRun)}>{run?.cancellationDelivery === "pending" ? "Retry stop" : "Request cancellation"}</Button> : null}
       {terminal(run?.status) ? <Button type="button" variant="outline" disabled={status.isFetching} onClick={() => void reconcile()}>Acknowledge result</Button>
         : <Button type="button" variant="outline" disabled={status.isFetching} onClick={() => void status.refetch()}>Check previous request</Button>}
       {!exactInputs && notRecorded && currentFingerprint.isSuccess ? <p>The saved catalog changed, so the earlier request cannot be retried with different inputs.</p> : null}
@@ -209,7 +210,7 @@ export function RequirementConsolidationPanel({ normalization, catalogUnavailabl
     {busy ? <div role="status"><p>{otherRun.data ? `Another consolidation: ${otherRun.data.status.replaceAll("_", " ")}${otherRun.data.cancellationRequested ? " · cancellation requested" : ""}.` : "Checking another consolidation…"}</p>
       {otherRun.error ? <p role="alert">{otherRun.error.message}</p> : null}
       {otherRun.data ? <Link to="/runs/$runId" params={{ runId: otherRun.data.runId }}>View other run</Link> : null}
-      {otherRun.data && active(otherRun.data.status) && !otherRun.data.cancellationRequested ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(busy)}>Request cancellation of other consolidation</Button> : null}
+      {otherRun.data && active(otherRun.data.status) && canRequestStop(otherRun.data) ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(busy)}>{otherRun.data.cancellationDelivery === "pending" ? "Retry stop for other consolidation" : "Request cancellation of other consolidation"}</Button> : null}
       {terminal(otherRun.data?.status) ? <Button type="button" variant="outline" onClick={() => void dismissOther()}>Acknowledge other result</Button> : <Button type="button" variant="outline" disabled={otherRun.isFetching} onClick={() => void otherRun.refetch()}>Check other consolidation</Button>}
     </div> : null}
     {cancel.error ? <p role="alert">Cancellation could not be confirmed: {cancel.error.message} Check the run before retrying.</p> : null}

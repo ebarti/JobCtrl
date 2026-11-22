@@ -12,5 +12,5 @@ function RunRoute() {
   const { runId } = Route.useParams();
   return <ActionRunDetail runId={runId} renderFeatureDetail={(run) =>
     run.action.startsWith("preparation.") && !["pending", "queued", "start_failed"].includes(run.status)
-      ? <PreparationRunDetail runId={runId} /> : null} />;
+      ? <PreparationRunDetail runId={runId} showStop={false} /> : null} />;
 }
