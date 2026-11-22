@@ -70,10 +70,10 @@ expression gap. See [scoring](../scoring.md) for evidence and arithmetic.
 Resumes retains all baseline sections, roles and achievements, including
 Language / Proficiency, and selects exactly one approved wording per achievement.
 Each eligible canonical requirement receives one policy point, followed by
-complementary depth and stable ties. Profile owns wording
-and approval; Fit owns coverage relations. One advisory coherence review of the
-assembled document is separate from mechanical validity and user acceptance.
-Baseline-copy/off mode makes zero resume model calls. The
+complementary depth and stable ties. Profile owns wording and approval.
+Fit owns coverage relations. Preparation renders from those current inputs.
+The user can separately request one advisory coherence review of a tailored
+document. Baseline-copy/off mode makes zero resume model calls. The
 [tailoring contract](../tailoring.md) records the detailed boundaries.
 
 ## Rendering and export

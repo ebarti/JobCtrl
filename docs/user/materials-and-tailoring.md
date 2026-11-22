@@ -63,11 +63,13 @@ specifies a full-baseline resume: retain every approved role and achievement,
 retain the other baseline sections including Language / Proficiency, select one
 approved wording per achievement, and report layout conflicts rather
 than silently dropping content. Person fit remains separate from document
-coverage. The plan specifies mechanical source and approval checks and one
-advisory coherence review, with explicit acceptance available for a mechanically
-valid document despite a review finding or timeout. Baseline-copy mode makes no
-resume model calls. These are accepted target behaviors; implementation and
-integration verification are in progress.
+coverage. Every document goes through mechanical source and approval checks.
+You can ask for one advisory coherence review of a tailored resume. If that
+review has findings, fails or times out, you can inspect the result and
+explicitly accept a mechanically valid PDF with a review override.
+Baseline-copy mode makes no resume model calls.
+This guide describes the source workflow. Installed-release qualification
+and integration verification are in progress.
 :::
 
 The `requirements-v2` contract uses reusable Skills/Professional Experience for
@@ -86,12 +88,13 @@ Provider and model availability depends on the configured provider and the
 current account. See [model configuration](configuration.md#llm-providers) for
 the available choices.
 
-The Original redesign source candidate offers one job-level **Prepare resume**
-action with **Tailored resume** and **Full baseline** choices. It sequences the
-existing requirement, person-fit, composition, advisory review and rendering
-owners under the saved limits. A result is ready for your review, not silently
-accepted. **Request stop**, unfinished-work recovery and task-local progress keep
-the same job and durable request identity. The
+The job-level **Prepare resume** action offers **Tailored resume** and **Full
+baseline**. With current requirements, Fit and approved wording, it assembles
+and renders the PDF locally. Assessment work needed to refresh those inputs
+uses your saved model and spending limits. You review and accept the rendered
+result. Choose **Review coherence** in the document tools to request model
+feedback. **Request stop**, unfinished-work recovery and task-local progress
+keep the same job and durable request identity. The
 [redesign ledger](../plans/2026-11-11-original-app-redesign.md) records integrated
 verification separately from source implementation and release availability.
 

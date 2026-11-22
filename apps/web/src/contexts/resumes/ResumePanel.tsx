@@ -16,7 +16,7 @@ import { resumeEditorDraftKey, useResumeEditorDraftStore } from "./editorDrafts.
 import "../../styles/resume-workspace.css";
 
 function reviewStatusLabel(status: string) {
-  return status === "not_applicable" ? "not applicable" : status;
+  return status === "pending" ? "not requested" : status.replaceAll("_", " ");
 }
 
 // Renderer IDs are stable source identities. Never infer a field from text.
@@ -159,7 +159,7 @@ function ResumeWorkspace({ latest, onDirtyChange, onProfileChanged, managedPrepa
       <Button type="button" variant="outline" disabled={busy || dirty || latestChanged || revision.mechanical.status !== "valid"} onClick={() => run("render", {})}>Render resume</Button>
     </details>
     <div className="toolbar">
-      <Button type="button" disabled={busy || dirty || latestChanged || !readyToAccept || !["pass", "not_applicable"].includes(revision.review.status)} onClick={() => run("accept", { override_review: false })}>Accept resume</Button>
+      <Button type="button" disabled={busy || dirty || latestChanged || !readyToAccept || !["pending", "pass", "not_applicable"].includes(revision.review.status)} onClick={() => run("accept", { override_review: false })}>Accept resume</Button>
       {["findings", "timeout", "failed"].includes(revision.review.status) ? <Button type="button" variant="outline" disabled={busy || dirty || latestChanged || !readyToAccept} onClick={() => run("accept", { override_review: true })}>Accept with review override</Button> : null}
       <Button type="button" variant="outline" disabled={busy || !session.accepted_revision_id} onClick={() => { if (session.accepted_revision_id) exportFile.mutate({ resumeId: session.resume_id, revisionId: session.accepted_revision_id, format: "pdf" }); }}>Export accepted PDF</Button>
       <Button type="button" variant="outline" disabled={!docx.available || busy || !session.accepted_revision_id} onClick={() => { if (session.accepted_revision_id) exportFile.mutate({ resumeId: session.resume_id, revisionId: session.accepted_revision_id, format: "docx" }); }}>Export accepted DOCX</Button>

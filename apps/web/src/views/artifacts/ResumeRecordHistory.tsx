@@ -36,7 +36,7 @@ export function ResumeRecordHistory({
         >
           <summary>
             Revision {revision.number} · {revision.mode} · review{" "}
-            {revision.review.status} · {revision.renders.length} recorded PDFs
+            {revision.review.status === "pending" ? "review not requested" : revision.review.status.replaceAll("_", " ")} · {revision.renders.length} recorded PDFs
           </summary>
           <p>
             Saved {revision.created_at} · Profile revision{" "}
@@ -137,7 +137,7 @@ export function ResumeRecordHistory({
               revision {acceptance.revision_id}
             </p>
             <p>
-              Assembly review: {acceptance.review_status}
+              Assembly review: {acceptance.review_status.replaceAll("_", " ")}
               {acceptance.review_override ? " · explicit user override" : ""}
             </p>
             <Link

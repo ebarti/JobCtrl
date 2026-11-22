@@ -81,13 +81,14 @@ justify rewriting already covered content.
 ## Review and acceptance
 
 Exact approved wording, source identity, revision and structural checks are
-mechanical and mandatory. One simple model coherence review of the assembled
-resume is advisory; it does not rescore the person or start recursive
-repair/polish loops. The user may explicitly accept a mechanically valid,
-source-bound document despite a review finding or timeout. Review status,
-findings and acceptance are distinct records, so an override never claims that
-review passed. A failed or canceled refresh, model call, render or export
-preserves the last accepted artifact and its bytes.
+mechanical and mandatory. When the inputs are current, preparation assembles
+the approved wording and renders the PDF without a model call. The user can
+accept a mechanically valid, source-bound PDF directly. They can also request
+one advisory coherence review of the assembled document. Its findings leave
+the document unchanged. If a requested review has findings, fails or times
+out, the user can explicitly override its result. Review status, findings
+and acceptance are distinct records. A failed or canceled refresh, model call,
+render or export preserves the last accepted artifact and its bytes.
 Legacy-generation requirement or Fit records cannot establish current
 composition readiness. Historical accepted artifacts retain their original
 bindings and bytes while a successful explicit refresh establishes current
@@ -108,7 +109,7 @@ Fastify business writer or JSON-RPC forwarding bridge remains at cutover.
 <a id="bounded-persona-diagnostics"></a>
 <a id="validation-layers"></a>
 The earlier mandatory attempt loop, persona diagnostics and multi-stage judge
-are superseded by deterministic composition, mechanical fences and the single
+are superseded by deterministic composition, mechanical fences and the optional
 advisory review described above.
 
 ## Outreach Draft Gates (Reused Materials Stack)

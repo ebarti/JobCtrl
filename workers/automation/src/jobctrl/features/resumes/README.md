@@ -62,19 +62,20 @@ achievement text through Profile in the same transaction and keeps the editor
 content. Non-achievement fact edits go through Profile. Staged unapproved claims
 cannot be accepted by overriding an advisory review.
 
-One coherence determination reviews an assembled document. Its claim is committed
-before model admission, with input fingerprint and source/version provenance.
+An explicit review request runs one advisory coherence determination on the
+assembled document. Its claim is committed before model admission, with input
+fingerprint and source/version provenance.
 Repeated requests do not call the model again. A durable retry can recover an
 exact settled gateway receipt or report an interrupted/uncertain review honestly.
 Review findings/failure/timeout and explicit user acceptance are separate records.
 No automatic rewrite, qualification rescore or recursive repair is performed.
 
-Acceptance requires a complete, exact approved/source-bound document, verified
-rendered bytes, no explicit layout conflict, and a completed review attempt
-(or baseline review marked not applicable). An explicit review override accepts a
-mechanically valid document despite an advisory finding or unavailable review;
-the original review status remains visible. Accepted PDF identity and bytes are
-pinned independently of later draft edits, renders and failures.
+Acceptance requires a complete, exact approved/source-bound document and
+verified rendered bytes with no layout conflicts. Acceptance before an advisory
+review records that the review was not requested. An explicit review override
+accepts a mechanically valid document despite an advisory finding or unavailable
+review. Accepted PDF identity and bytes are pinned independently of later draft
+edits, renders and failures.
 
 After acceptance, freshness follows only the selected wording approvals and
 selected factual/source authority. Unrelated new approved wording/achievements,
