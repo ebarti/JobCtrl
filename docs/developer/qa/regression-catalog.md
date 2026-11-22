@@ -142,10 +142,12 @@ SSE must match canonical data and expose no private Profile/document/mail conten
 
 A complete baseline composition retains all roles/achievements in authored order,
 uses one exact approved wording per achievement and reports layout conflicts.
-An unchanged input is deterministic. Baseline-copy and its review endpoint use
-zero resume model calls. Advisory coherence is one review; explicit user override
-records failed/findings/timeout honestly without bypassing mechanical approval,
-source or PDF integrity. Inspect the exact selected variant IDs, requirement
+An unchanged input is deterministic. Current-input preparation renders the PDF
+and permits explicit acceptance with zero model calls. Check that acceptance
+records an unrequested review. Baseline-copy and its review endpoint also use
+zero resume model calls. An explicitly requested advisory review can be
+overridden for failed/findings/timeout while enforcing mechanical approval,
+source and PDF integrity. Inspect the exact selected variant IDs, requirement
 coverage manifest, rendered text and accepted file digest together.
 Exercise Language / Proficiency editing through Profile and Plate and inspect
 text/PDF/DOCX/locale export retention with both current and older four-section

@@ -68,12 +68,12 @@ test("approved wording composes the full baseline and failed model or render ref
     .poll(
       async () =>
         (
-          await json<{ revision: number }>(
+          await json<{ revision: number } | null>(
             api,
             "get",
             `/v1/jobs/${posting.job_id}/requirements`,
           )
-        ).revision,
+        )?.revision,
     )
     .toBe(1);
 
@@ -244,6 +244,8 @@ test("approved wording composes the full baseline and failed model or render ref
       new URL(response.url()).pathname === "/v1/actions/preparation.run" &&
       response.request().method() === "POST",
   );
+  const beforePrepare = app.external.calls.length;
+  const prepareStartedAt = performance.now();
   await page
     .getByRole("button", { name: "Prepare resume", exact: true })
     .click();
@@ -256,8 +258,6 @@ test("approved wording composes the full baseline and failed model or render ref
     resume_mode: "tailored",
   });
   const preparation = (await preparationResponse.json()) as { runId: string };
-  const review = await modelCall(app, "resumes.coherence");
-  review.reply({ verdict: "pass", findings: [] });
   await completed(api, preparation.runId);
   let resume: Resume = (
     await json<{ resumes: Resume[] }>(
@@ -266,10 +266,28 @@ test("approved wording composes the full baseline and failed model or render ref
       `/v1/resumes?jobId=${posting.job_id}`,
     )
   ).resumes[0]!;
+  const composed = current(resume);
+  expect(composed.review.status).toBe("pending");
+  expect(composed.renders).toHaveLength(1);
+  expect(composed.renders[0]!.layout_conflicts).toEqual([]);
+  const draftPdfResponse = await api.get(
+    `/v1/resumes/${resume.resume_id}/export?format=pdf&artifact_id=${composed.renders[0]!.artifact_id}`,
+  );
+  expect(draftPdfResponse.status()).toBe(200);
+  const draftPdf = await draftPdfResponse.body();
+  const prepareElapsedMs = Math.round(performance.now() - prepareStartedAt);
+  expect(draftPdf.subarray(0, 5).toString()).toBe("%PDF-");
+  const modelCallsDuringPreparation = app.external.calls
+    .slice(beforePrepare)
+    .filter((call) => call.path === "/model");
+  expect(modelCallsDuringPreparation).toHaveLength(0);
+  await testInfo.attach("ready-resume-pdf-timing", {
+    body: JSON.stringify({ elapsedMs: prepareElapsedMs, modelCalls: modelCallsDuringPreparation.length }),
+    contentType: "application/json",
+  });
   await expect(
     page.getByRole("tab", { name: "Resume", exact: true }),
   ).toHaveAttribute("aria-selected", "true");
-  const composed = current(resume);
   expect(composed.document.experience.map((role) => role.id)).toEqual(
     baseline.resume.experience_entries.map((role) => role.id),
   );
@@ -289,18 +307,6 @@ test("approved wording composes the full baseline and failed model or render ref
   expect(current(repeat).selected_variants).toEqual(composed.selected_variants);
   expect(current(repeat).coverage_manifest).toEqual(composed.coverage_manifest);
 
-  await expect
-    .poll(
-      async () => current(await getResume(api, resume.resume_id)).review.status,
-    )
-    .toBe("pass");
-  await expect
-    .poll(
-      async () =>
-        current(await getResume(api, resume.resume_id)).renders.length,
-      { timeout: 30_000 },
-    )
-    .toBe(1);
   await page
     .getByRole("button", { name: "Accept resume", exact: true })
     .click();
@@ -309,11 +315,16 @@ test("approved wording composes the full baseline and failed model or render ref
       async () => (await getResume(api, resume.resume_id)).accepted_revision_id,
     )
     .toBe(composed.revision_id);
+  expect((await getResume(api, resume.resume_id)).acceptances.at(-1)).toMatchObject({
+    review_status: "not_requested",
+    review_override: false,
+  });
   const acceptedPdf = await (
     await api.get(
       `/v1/resumes/${resume.resume_id}/export?format=pdf&accepted=true`,
     )
   ).body();
+  expect(acceptedPdf).toEqual(draftPdf);
   const acceptedDigest = createHash("sha256").update(acceptedPdf).digest("hex");
 
   // Refresh the same aggregate. The accepted pointer remains independently

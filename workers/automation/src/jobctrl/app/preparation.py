@@ -381,19 +381,19 @@ class PreparationService:
         previous = composed.get("result") or {}
         if not previous.get("resume_id"):
             return {"skip": "no_new_resume"}
-        if stage == "review" and previous.get("mode") == "baseline_copy":
-            return {"skip": "baseline_copy"}
+        if stage == "review":
+            # Frozen inputs still let a previously started review settle on recovery.
+            return {"skip": "baseline_copy" if previous.get("mode") == "baseline_copy" else "review_not_requested"}
         state = self.resumes.get(previous["resume_id"])
         if state["current_revision"] != previous.get("revision_id"):
             raise ConflictError("The resume changed before the next preparation step.")
         reviewed = prior.get("review", {}).get("result") or {}
-        expected_version = reviewed.get("version", previous.get("version")) if stage == "render" else previous.get("version")
+        expected_version = reviewed.get("version", previous.get("version"))
         if state["version"] != expected_version:
             raise ConflictError("The resume version changed before the next preparation step.")
-        if stage == "render":
-            revision = next(item for item in state["revisions"] if item["revision_id"] == state["current_revision"])
-            if revision.get("renders"):
-                return {"skip": "resume_already_rendered", "resume_id": state["resume_id"]}
+        revision = next(item for item in state["revisions"] if item["revision_id"] == state["current_revision"])
+        if revision.get("renders"):
+            return {"skip": "resume_already_rendered", "resume_id": state["resume_id"]}
         return {"resume_id": state["resume_id"], "expected_version": state["version"]}
 
 

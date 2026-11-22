@@ -576,13 +576,14 @@ class ResumesService:
                 raise ResumeError("resume_layout_conflict")
             self.renderer.read_pdf(artifact)
             status = revision["review"]["status"]
-            if status not in {"pass", "not_applicable"} and not override_review:
+            if status == "running":
+                raise ResumeError("resume_review_running")
+            needs_override = status not in {"pending", "pass", "not_applicable"}
+            if needs_override and not override_review:
                 raise ResumeError("explicit_review_override_required")
-            if status in {"pending", "running"}:
-                raise ResumeError("resume_review_required")
             acceptance = {"acceptance_id": str(uuid4()), "revision_id": revision["revision_id"],
-                          "accepted_at": now(), "review_status": status,
-                          "review_override": override_review and status not in {"pass", "not_applicable"},
+                          "accepted_at": now(), "review_status": "not_requested" if status == "pending" else status,
+                          "review_override": needs_override,
                           "document_sha256": digest(revision["document"]), "pdf": deepcopy(artifact),
                           "profile_revision": snapshot["profile_revision"],
                           "mechanical": check}
@@ -746,7 +747,7 @@ class ResumesService:
     def digest_summary(self):
         return {"reviewNeededMaterials": sum(
             1 for state in self.list() if current(state)["mechanical"]["status"] != "valid" or
-            current(state)["review"]["status"] not in {"pass", "not_applicable"} or
+            current(state)["review"]["status"] not in {"pending", "pass", "not_applicable"} or
             state["accepted_revision_id"] != state["current_revision"]
         )}
 
