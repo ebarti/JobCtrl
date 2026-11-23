@@ -96,6 +96,34 @@ test("board queries share new-job slots without retrying a rate-limited source f
   expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(3);
 });
 
+test("a LinkedIn rate limit skips the remaining locations while another board continues", async ({ api, app }) => {
+  const query = "Synthetic reliability engineer";
+  const started = await action(api, "discovery.search", {
+    queries: [query], locations: ["Madrid", "Barcelona"], boards: ["linkedin", "indeed"], newJobLimit: 4, hoursOld: 0,
+  });
+
+  // Explicit permission to retry immediately lets the SDK exercise its configured
+  // bounded retry policy before returning a terminal rate limit to JobCtrl.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const call = await app.external.next({ timeout: 20_000 });
+    const url = new URL(call.path, "http://localhost");
+    expect(url.pathname).toBe("/jobstreaming/linkedin/jobs-guest/jobs/api/seeMoreJobPostings/search");
+    expect(url.searchParams.get("location")).toBe("Madrid");
+    call.raw("Too many requests", { status: 429, headers: { "Retry-After": "0" } });
+  }
+  for (const location of ["Madrid", "Barcelona"]) {
+    const call = await requestFor(app, query);
+    expect(call.body["query"]).toContain(`where: "${location}"`);
+    call.respond(searchPage([]));
+  }
+
+  expect((await completed(api, started.runId)).result).toMatchObject({
+    status: "partial",
+    failures: [{ boards: ["linkedin"], code: "discovery_provider_rate_limited" }],
+  });
+  expect(app.external.calls.filter((call) => call.path.startsWith("/jobstreaming/linkedin/"))).toHaveLength(3);
+});
+
 test.describe("paged JobStreaming listings", () => {
 
   test("board queries share new-job slots across location rows and resume the exact partial page", async ({ api, app }) => {

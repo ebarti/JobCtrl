@@ -384,8 +384,9 @@ class DiscoveryService:
             raise AppError("discovery_role_policy_unsupported", "This search has an unsupported frozen role policy.", 409)
         if request.get("roleTargetPolicy") and not role_target_sources(request["settings"].get("targetPlan")):
             raise AppError("discovery_role_targets_missing", "The search lost its frozen role targets.", 409)
+        isolate_boards = request.get("boardUnitsVersion") == 1
         units = search_units(
-            request["settings"], isolate_boards=request.get("boardUnitsVersion") == 1,
+            request["settings"], isolate_boards=isolate_boards,
             source_fetch_policy=request.get("sourceFetchPolicy"),
         )
         execution_settings = {**request["settings"], "_criteriaAsOf": request.get("criteriaAsOf"),
@@ -459,7 +460,7 @@ class DiscoveryService:
                 if context.cancelled():
                     raise AppError("action_cancelled", "Discovery was cancelled.", 409)
                 previous = prior_units.get(unit["unit_id"])
-                if fair and rate_limited.intersection(unit["sites"]):
+                if isolate_boards and rate_limited.intersection(unit["sites"]):
                     if previous:
                         self.repository.save_unit(lease, unit, status="deferred", cursor=previous["data"].get("cursor"),
                                                   result={**(previous.get("result") or {}), "termination": "rate_limited"})
