@@ -4,6 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { IconChevronDown } from "@tabler/icons-react";
 import { z } from "zod";
 
+import { canRequestStop } from "../../../shared/lib/actionStop.js";
 import { Button } from "../../../shared/ui/button.js";
 import { StatusBadge } from "../../../shared/ui/status-badge.js";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../shared/ui/tabs.js";
@@ -69,8 +70,10 @@ function PreparationRecoveryNotice({ recovery }: { readonly recovery: Preparatio
   </>;
 }
 
-export function PreparationRunDetail({ runId }: { readonly runId: string }) {
+export function PreparationRunDetail({ runId, showStop = true }: { readonly runId: string; readonly showStop?: boolean }) {
   const run = usePreparationRun(runId);
+  const active = showStop && ["running", "queued", "pending"].includes(run.data?.status ?? "");
+  const execution = usePreparationExecution(active ? runId : null);
   const { submit, cancel, recovery } = usePreparationCommands();
   if (run.isLoading && !run.data) return <p>Loading preparation outcomes…</p>;
   if (!run.data) return run.isError
@@ -81,7 +84,10 @@ export function PreparationRunDetail({ runId }: { readonly runId: string }) {
     {run.isError ? <p role="alert">{run.error.message} Showing the last recorded outcomes. <Button type="button" variant="outline" onClick={() => void run.refetch()}>Check again</Button></p> : null}
     <div className="preparation-run-detail__heading"><h3>{runLabels[run.data.recipe]}</h3><PreparationStatus status={run.data.status} /></div>
     <PreparationRunOutcomes run={run.data} />
-    {["running", "queued", "pending"].includes(run.data.status) ? <Button type="button" variant="outline" disabled={cancel.isPending || run.isError} onClick={() => cancel.mutate(runId)}>Cancel run</Button> : null}
+    {active && execution.data?.cancellationRequested ? <p role="status">Stop requested. {execution.data.cancellationDelivery === "pending"
+      ? "The workflow service has not confirmed receipt." : "Waiting for this run to settle."}</p> : null}
+    {active && (!execution.data || canRequestStop(execution.data)) ? <Button type="button" variant="outline" disabled={cancel.isPending || run.isError}
+      onClick={() => cancel.mutate(runId)}>{execution.data?.cancellationDelivery === "pending" ? "Retry stop" : "Cancel run"}</Button> : null}
     {["failed", "partial", "cancelled"].includes(run.data.status) ? <Button type="button" variant="outline" disabled={submit.isPending || run.isError || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: runId } })}>Retry all unfinished jobs</Button> : null}
     {submit.isError ? <p role="alert">{submit.error.message} Retry unchanged to reconcile an uncertain acknowledgement.</p> : null}
     {submit.isSuccess ? <p role="status">Retry queued. Follow its progress in preparation history.</p> : null}
@@ -103,6 +109,7 @@ function PreparationRunListContent({ jobIds, commands }: { readonly jobIds?: rea
     <div className="preparation-run-list__rows">{visible.map((run, index) => {
       const expanded = expandedRunId === run.runId;
       const outcomesId = `${id}-outcomes-${index}`;
+      const stop = cancel.data?.runId === run.runId ? cancel.data : undefined;
       return <article key={run.runId} className="preparation-run-row">
         <div className="preparation-run-row__summary">
           <Button type="button" variant="ghost" className="preparation-run-row__toggle" aria-expanded={expanded} aria-controls={expanded ? outcomesId : undefined}
@@ -113,10 +120,11 @@ function PreparationRunListContent({ jobIds, commands }: { readonly jobIds?: rea
             <IconChevronDown aria-hidden="true" data-icon="inline-end" />
           </Button>
           <PreparationStatus status={run.status} />
-          {["running", "queued", "pending"].includes(run.status) ? <Button type="button" variant="outline" size="sm" disabled={cancel.isPending} onClick={() => cancel.mutate(run.runId)}>Cancel run</Button> : null}
+          {["running", "queued", "pending"].includes(run.status) && (!stop || canRequestStop(stop))
+            ? <Button type="button" variant="outline" size="sm" disabled={cancel.isPending} onClick={() => cancel.mutate(run.runId)}>{stop?.cancellationDelivery === "pending" ? "Retry stop" : "Cancel run"}</Button> : null}
           {["failed", "partial", "cancelled"].includes(run.status) ? <Button type="button" variant="outline" size="sm" disabled={submit.isPending || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: run.runId } })}>Retry unfinished</Button> : null}
         </div>
-        {expanded ? <div id={outcomesId} className="preparation-run-row__outcomes"><PreparationRunOutcomes run={run} /></div> : null}
+        {expanded ? <div id={outcomesId} className="preparation-run-row__outcomes"><PreparationRunOutcomes run={run} /><Link to="/runs/$runId" params={{ runId: run.runId }}>View run details</Link></div> : null}
       </article>;
     })}</div>
     {submit.isError ? <p role="alert">{submit.error.message} Retry the same action to reconcile an uncertain acknowledgement.</p> : null}
@@ -185,7 +193,6 @@ export function JobPreparationActions({ jobId, defaultMode = null, initialMode =
   useEffect(() => { setChoice(initialMode); }, [initialMode]);
   const [allowBelow, setAllowBelow] = useState(false);
   const [startedRunId, setStartedRunId] = useState<string | null>(null);
-  const execution = usePreparationExecution(startedRunId);
   const revealed = useRef<string | null>(null);
   const mode = choice ?? defaultMode;
   const localBaseline = mode === "baseline" && baselineCapability.isDemo && baselineCapability.available;
@@ -193,8 +200,12 @@ export function JobPreparationActions({ jobId, defaultMode = null, initialMode =
   const jobRuns = (runs.data ?? []).filter((run) => run.jobIds.includes(jobId));
   const active = jobRuns.find((run) => ["running", "queued", "pending"].includes(run.status));
   const current = startedRunId ? jobRuns.find((run) => run.runId === startedRunId) : active ?? jobRuns[0];
-  const waiting = Boolean(startedRunId && !jobRuns.some((run) => run.runId === startedRunId)
+  const missing = Boolean(startedRunId && !current);
+  const execution = usePreparationExecution(missing ? startedRunId : active?.runId ?? startedRunId);
+  const waiting = Boolean(missing
     && !["succeeded", "failed", "cancelled"].includes(execution.data?.status ?? ""));
+  const stopRunId = active?.runId ?? (waiting ? startedRunId : null);
+  const stop = execution.data?.runId === stopRunId ? execution.data : cancel.data?.runId === stopRunId ? cancel.data : undefined;
   const busy = submit.isPending || Boolean(active) || waiting;
   useEffect(() => {
     if (current && current.runId === startedRunId && ["succeeded", "partial", "failed"].includes(current.status)
@@ -233,7 +244,7 @@ export function JobPreparationActions({ jobId, defaultMode = null, initialMode =
           onSuccess: (receipt) => { setStartedRunId(receipt.runId); cancel.reset(); },
         });
       }}>{activeAssessment ? jobAssessmentComplete ? "Fit assessed for this job" : "Assessing fit…" : submit.isPending ? "Starting preparation…" : busy ? "Preparing resume…" : recovery.record?.operation === "preparation.run" ? "Retry same preparation" : localBaseline ? "Prepare resume locally" : "Prepare resume"}</Button>
-      {active || waiting ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => { const runId = active?.runId ?? startedRunId; if (runId) cancel.mutate(runId); }}>{active && active.jobIds.length > 1 ? `Stop ${activeAssessment ? "fit assessment" : "preparation"} for ${active.jobIds.length} jobs` : "Request stop"}</Button> : null}
+      {stopRunId && (!stop || canRequestStop(stop)) ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(stopRunId)}>{stop?.cancellationDelivery === "pending" ? "Retry stop" : active && active.jobIds.length > 1 ? `Stop ${activeAssessment ? "fit assessment" : "preparation"} for ${active.jobIds.length} jobs` : "Request stop"}</Button> : null}
       {current && retryable && ["failed", "partial", "cancelled"].includes(current.status) ? <Button type="button" variant="outline" disabled={busy || blockedByDraft || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: current.runId, job_ids: [jobId] } }, { onSuccess: (receipt) => { setStartedRunId(receipt.runId); cancel.reset(); } })}>{currentAssessment ? "Continue unfinished fit assessment" : "Continue unfinished preparation"}</Button> : null}
     </div>
     {profileVersion === null ? <p role="status">Save your profile before preparing a resume. {renderProfileSetup?.(mode) ?? <Link to="/profile">Open My profile</Link>}</p> : null}
@@ -244,7 +255,8 @@ export function JobPreparationActions({ jobId, defaultMode = null, initialMode =
     <p className="job-preparation-task__scope" data-typography="metadata">{activeAssessment ? "Assess requirements and fit using your saved model and spending limits. No resume is generated by this task." : <>{mode === "baseline" ? "Copy the complete saved profile and render it for review. No model calls are needed." : "Compose and render approved wording. If requirements or Fit need assessment, JobCtrl uses your saved model and spending limits."} You review and accept the result.</>}</p>
     {busy ? <p role="status">{jobAssessmentComplete ? "This job’s fit assessment is complete. Other jobs in this run are still being assessed." : waiting ? `${statusTask} ${execution.error ? "status unavailable" : execution.data?.status ?? "queued"}.` : statusRun ? `${statusTask} ${statusRun.status}${statusSteps.find((step) => step.status === "running") ? ` · ${statusSteps.find((step) => step.status === "running")?.stage.replaceAll("_", " ")}` : ""}.` : "Starting preparation."}</p> : current ? <p role="status">{statusTask} {current.status === "succeeded" ? hasResume ? "ready for review" : "complete" : current.status}.{incomplete ? ` ${incomplete.errorCode?.replaceAll("_", " ") ?? "A step needs attention"}.` : ""}</p> : execution.data ? <p role="status">Preparation {execution.data.status}{execution.data.errorCode ? ` · ${execution.data.errorCode.replaceAll("_", " ")}` : ""}.</p> : null}
     {belowThreshold ? <p role="status">This job is below your saved fit threshold. Choose the explicit exception below to prepare it.</p> : null}
-    {(cancel.isSuccess || execution.data?.cancellationRequested) && busy ? <p role="status">Stop requested. {activeAssessment ? "Fit assessment" : "Preparation"} remains active until it settles.</p> : null}
+    {stop?.cancellationRequested && ["pending", "queued", "running"].includes(stop.status) ? <p role="status">Stop requested. {stop.cancellationDelivery === "pending"
+      ? "The workflow service has not confirmed receipt." : "Waiting for this run to settle."}</p> : null}
     {submit.error || cancel.error ? <p role="alert">{(submit.error ?? cancel.error)?.message} Previously accepted resumes remain available.</p> : null}
     <PreparationRecoveryNotice recovery={recovery} />
     <details className="job-preparation-inspection"><summary>Preparation options and history</summary>

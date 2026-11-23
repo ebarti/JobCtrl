@@ -103,7 +103,7 @@ export function useJobBulkActions() {
   return { bulk, previewDelete, permanentDelete };
 }
 export const jobsInvalidation: FeatureEventHandler = {
-  eventTypes: ["JobCaptured", "JobSourceObserved", "JobUpdated", "JobCaptureAttempted", "PostingQuarantined", "JobAnalysisUpdated", "ActionQueued", "ActionStarted", "ActionCompleted", "ActionFailed", "ActionCancellationRequested"] as const,
+  eventTypes: ["JobCaptured", "JobSourceObserved", "JobUpdated", "JobCaptureAttempted", "PostingQuarantined", "JobAnalysisUpdated", "ActionQueued", "ActionStarted", "ActionCompleted", "ActionFailed", "ActionCancellationRequested", "ActionCancellationAcknowledged"] as const,
   handle(event, invalidate) {
     if (event.eventType.startsWith("Action")) {
       if (event.payload && typeof event.payload === "object" && "action" in event.payload && event.payload.action === "jobs.capture_url")

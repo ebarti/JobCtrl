@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
+import { cancellationDeliverySchema } from "./actionStop.js";
 
 import type { HttpPort, SessionStoragePort } from "../ports/index.js";
 import { usePorts } from "../providers/PortsProvider.js";
@@ -55,6 +56,7 @@ const ActionStatusSchema = z.object({
   runId: z.string().min(1), action: z.string().min(1),
   status: z.enum(["pending", "queued", "running", "succeeded", "failed", "cancelled", "start_failed"]),
   errorCode: z.string().nullable().optional(), cancellationRequested: z.boolean(),
+  cancellationDelivery: cancellationDeliverySchema,
 }).passthrough();
 
 /** Resolve an exact durable-action identity without storing or returning its input. */

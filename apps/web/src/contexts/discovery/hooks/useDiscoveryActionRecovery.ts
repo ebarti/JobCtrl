@@ -21,7 +21,8 @@ export function useDiscoveryActionRecovery(operation: "discovery.search" | "disc
     }, retry: false, refetchInterval: (query) => !paused && (["pending", "queued", "running"].includes(query.state.data?.status ?? "") || (query.state.error instanceof JobCtrlApiError && query.state.error.status === 404)) ? 3000 : false,
     meta: { suppressGlobalErrorToast: true } });
   const notRecorded = status.error instanceof JobCtrlApiError && status.error.status === 404;
-  const canRetry = Boolean(identity.record && !status.isFetching && (notRecorded || ["pending", "start_failed"].includes(status.data?.status ?? "")));
+  const canRetry = Boolean(identity.record && !status.isFetching && !status.data?.cancellationRequested
+    && (notRecorded || ["pending", "start_failed"].includes(status.data?.status ?? "")));
   return {
     ready: identity.ready, error: identity.error, record: identity.record, status: status.data, statusError: status.error,
     checking: paused || status.isFetching, canRetry, message,

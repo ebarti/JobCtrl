@@ -32,7 +32,8 @@ export function usePreparationRecovery() {
     meta: { suppressGlobalErrorToast: true },
   });
   const notRecorded = status.error instanceof JobCtrlApiError && status.error.status === 404;
-  const canRetry = Boolean(record && !status.isFetching && (notRecorded || ["pending", "start_failed"].includes(status.data?.status ?? "")));
+  const canRetry = Boolean(record && !status.isFetching && !status.data?.cancellationRequested
+    && (notRecorded || ["pending", "start_failed"].includes(status.data?.status ?? "")));
 
   function current(): SessionRequestIdentity | null {
     const a = run.current();

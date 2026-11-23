@@ -13,6 +13,7 @@ export const applicationsEvents: FeatureEventHandler = {
     "ActionCompleted",
     "ActionFailed",
     "ActionCancellationRequested",
+    "ActionCancellationAcknowledged",
     "ProfileUpdated",
     "ProfileWordingUpdated",
     "ProfileSourceUpdated",

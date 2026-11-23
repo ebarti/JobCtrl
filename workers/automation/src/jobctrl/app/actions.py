@@ -11,9 +11,10 @@ from collections.abc import Collection
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from temporalio.api.common.v1 import WorkflowExecution
 from temporalio.api.enums.v1 import TaskQueueType
 from temporalio.api.taskqueue.v1 import TaskQueue
-from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest, DescribeTaskQueueRequest
+from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest, DescribeTaskQueueRequest, RequestCancelWorkflowExecutionRequest
 from temporalio.client import Client, WorkflowExecutionStatus
 from temporalio.common import WorkflowIDReusePolicy
 from temporalio.exceptions import WorkflowAlreadyStartedError
@@ -24,6 +25,12 @@ from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 from jobctrl.app.events import now
 from jobctrl.app.execution import ExecutionCustody
 from jobctrl.app.worker_identity import SCHEMA as WORKER_IDENTITY_SCHEMA, process_identity
+
+
+TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
+# Existing true values record a request with no separate delivery evidence.
+STOP_REQUESTED = 1
+STOP_ACKNOWLEDGED = 2
 
 
 def encode(value) -> str:
@@ -148,12 +155,17 @@ class Application:
 
     @staticmethod
     def _run_payload(row) -> dict:
+        stop = row["cancellation_requested"]
+        delivery = "acknowledged" if stop == STOP_ACKNOWLEDGED else None
+        if stop == STOP_REQUESTED and row["status"] not in TERMINAL_STATUSES:
+            delivery = "pending"
         return {
             "runId": row["run_id"], "action": row["action"], "status": row["status"],
             "workflowId": row["workflow_id"], "temporalRunId": row["temporal_run_id"],
             "result": json.loads(row["result_json"]) if row["result_json"] else None,
             "errorCode": row["error_code"], "createdAt": row["created_at"], "updatedAt": row["updated_at"],
-            "cancellationRequested": bool(row["cancellation_requested"]),
+            "cancellationRequested": bool(stop),
+            **({"cancellationDelivery": delivery} if delivery is not None else {}),
         }
 
     def action_run(self, run_id: str, connection=None) -> dict:
@@ -210,7 +222,7 @@ class Application:
     def run_summary(self) -> dict:
         with self.runtime.database.connect() as connection:
             counts = dict(connection.execute("SELECT status,COUNT(*) FROM app_action_runs GROUP BY status"))
-            cancellations = connection.execute("SELECT COUNT(*) FROM app_action_runs WHERE cancellation_requested=1 AND status NOT IN ('succeeded','failed','cancelled')").fetchone()[0]
+            cancellations = connection.execute("SELECT COUNT(*) FROM app_action_runs WHERE cancellation_requested<>0 AND status NOT IN ('succeeded','failed','cancelled')").fetchone()[0]
         return {"counts": counts, "total": sum(counts.values()), "active": sum(counts.get(status, 0) for status in ("queued", "running")),
                 "pendingCancellation": cancellations}
 
@@ -288,6 +300,9 @@ class Application:
         run = self._create_run(action, payload, idempotency_key=idempotency_key, request_id=request_id)
         if run["status"] not in {"pending", "start_failed"}:
             return {key: run[key] for key in ("runId", "workflowId", "status")}
+        if run["cancellationRequested"]:
+            raise AppError("action_stop_requested", "A Stop is already recorded for this run. Check it in Runs.", 409,
+                           {"runId": run["runId"]})
         try:
             client = await self.temporal()
             handle = await client.start_workflow(
@@ -344,10 +359,9 @@ class Application:
         with self.runtime.database.transaction() as connection:
             current = connection.execute("SELECT cancellation_requested,status FROM app_action_runs WHERE run_id=?", (run_id,)).fetchone()
             refused = bool(current[0]) or current[1] == "cancelled"
-            if refused:
-                connection.execute("UPDATE app_action_runs SET status='cancelled',error_code='action_cancelled',updated_at=? WHERE run_id=?", (now(), run_id))
-                self._finalize_feature(action, run_id, "cancelled", "action_cancelled", connection)
-            else:
+            if refused and current["status"] != "cancelled":
+                self._cancel_before_execution(action, run_id, temporal_run_id, connection)
+            elif not refused:
                 connection.execute("UPDATE app_action_runs SET status='running',temporal_run_id=COALESCE(?,temporal_run_id),updated_at=? WHERE run_id=?", (temporal_run_id, now(), run_id))
                 self.runtime.events.append(connection, "ActionStarted", {"runId": run_id, "action": action}, feature=action.split(".")[0])
         if refused:
@@ -378,26 +392,56 @@ class Application:
         return result
 
     async def cancel(self, run_id: str) -> dict:
-        run = self.action_run(run_id)
-        if run["status"] in {"succeeded", "failed", "cancelled"}:
-            return run
+        with self.runtime.database.transaction() as connection:
+            run = self.action_run(run_id, connection)
+            if run["status"] in TERMINAL_STATUSES or run.get("cancellationDelivery") == "acknowledged":
+                return run
+            action = run["action"]
+            event = {"runId": run_id, "action": action}
+            feature = action.split(".")[0]
+            if not run["cancellationRequested"]:
+                connection.execute("UPDATE app_action_runs SET cancellation_requested=?,updated_at=? WHERE run_id=?",
+                                   (STOP_REQUESTED, now(), run_id))
+                self.runtime.events.append(connection, "ActionCancellationRequested", event, feature=feature, aggregate_id=run_id)
+        try:
+            async with asyncio.timeout(2):
+                client = await self.temporal()
+                await client.workflow_service.request_cancel_workflow_execution(
+                    RequestCancelWorkflowExecutionRequest(
+                        namespace=client.namespace, identity=client.identity, request_id=run_id,
+                        workflow_execution=WorkflowExecution(
+                            workflow_id=run["workflowId"], run_id=run["temporalRunId"] or "",
+                        ),
+                    ),
+                    retry=True,
+                )
+        except RPCError as error:
+            if error.status == RPCStatusCode.NOT_FOUND:
+                with self.runtime.database.transaction() as connection:
+                    current = self.action_run(run_id, connection)
+                    # Withdraw an unconfirmed start after Temporal reports it absent.
+                    # The recorded Stop prevents even a late start from executing.
+                    if current["status"] in {"pending", "start_failed"} and current.get("cancellationDelivery") == "pending" and not current["temporalRunId"]:
+                        self._cancel_before_execution(action, run_id, None, connection)
+                    return self.action_run(run_id, connection)
+            return self.action_run(run_id)
+        except (TimeoutError, OSError, RuntimeError):
+            return self.action_run(run_id)
         with self.runtime.database.transaction() as connection:
             changed = connection.execute(
-                "UPDATE app_action_runs SET cancellation_requested=1,updated_at=?,"
-                "status=CASE WHEN status IN ('pending','start_failed','queued') THEN 'cancelled' ELSE status END "
-                "WHERE run_id=? AND status NOT IN ('succeeded','failed','cancelled')", (now(), run_id),
+                "UPDATE app_action_runs SET cancellation_requested=?,updated_at=? WHERE run_id=? AND cancellation_requested=?",
+                (STOP_ACKNOWLEDGED, now(), run_id, STOP_REQUESTED),
             ).rowcount
-            if not changed:
-                return self.action_run(run_id, connection)
-            self._finalize_feature(run["action"], run_id, "cancelled", "action_cancelled", connection)
-            self.runtime.events.append(connection, "ActionCancellationRequested", {"runId": run_id}, feature=run["action"].split(".")[0])
-        try:
-            client = await self.temporal()
-            await client.get_workflow_handle(run["workflowId"]).cancel()
-        except Exception:
-            raise AppError("cancellation_pending", "Cancellation is recorded locally; the worker will observe it on recovery.", 503,
-                           {"runId": run_id}) from None
-        return self.action_run(run_id)
+            if changed:
+                self.runtime.events.append(connection, "ActionCancellationAcknowledged", event, feature=feature, aggregate_id=run_id)
+            return self.action_run(run_id, connection)
+
+    def _cancel_before_execution(self, action, run_id, temporal_run_id, connection):
+        connection.execute("UPDATE app_action_runs SET status='cancelled',error_code='action_cancelled',updated_at=?,"
+                           "temporal_run_id=COALESCE(temporal_run_id,?) WHERE run_id=?", (now(), temporal_run_id, run_id))
+        self._finalize_feature(action, run_id, "cancelled", "action_cancelled", connection)
+        self.runtime.events.append(connection, "ActionFailed", {"runId": run_id, "action": action, "code": "action_cancelled"},
+                                   feature=action.split(".")[0], level="warn")
 
     def worker_status(self, action: str | None = None) -> dict:
         queue = self.identity["taskQueue"]

@@ -95,7 +95,9 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
     {unknownSources ? <p>Current source selection could not be verified. Recorded failures remain in Search details.</p> : null}
     {accountingFailure ? <div><p>Search query preparation stopped because the selected model had no configured monetary cost tracking. Job sources were not searched. Review the exact model pricing quote in Budgets, then start again. Your saved preferences and spending cap are unchanged.</p>{spendingAction}</div> : status === "failed" ? <p>The search did not complete. Any jobs already saved remain available.</p> : null}
     </> : null}
-    {status === "cancel-requested" ? <p>The stop request was received. The search remains active until it settles.</p> : null}
+    {status === "cancel-requested" ? <p>{action?.cancellationDelivery === "pending"
+      ? "The workflow service has not confirmed receipt. Retry stop when it is available."
+      : "Waiting for this search to settle."}</p> : null}
     {status === "status-unavailable" ? <p role="alert">Current search status could not be checked. Any counts shown are the last recorded values; another search remains blocked.</p> : null}
     {controller.historyError && !controller.statusUnavailable ? <p role="alert">Search history could not be refreshed.{counts ? " The last recorded counts remain visible." : " Job counts are unavailable."}</p> : null}
     {!active && controller.blockedReason && status !== "status-unavailable" ? <p>{controller.blockedReason}</p> : null}
@@ -105,7 +107,7 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
     {controller.startMessage ? <p role="status">{controller.startMessage}</p> : null}
     <div className="discovery-search-actions">
       {feedback.canDismiss ? <Button type="button" size="sm" variant="ghost" aria-label={feedback.dismissed ? "Show last search result" : "Dismiss last search result"} onClick={feedback.dismissed ? feedback.show : feedback.dismiss}>{feedback.dismissed ? "Show last search result" : "Dismiss result"}</Button> : null}
-      {controller.canStop ? <Button type="button" size="sm" variant="outline" disabled={controller.isStopping} onClick={() => controller.requestStop()}>{controller.isStopping ? "Requesting stop…" : "Request stop"}</Button> : null}
+      {controller.canStop ? <Button type="button" size="sm" variant="outline" disabled={controller.isStopping} onClick={() => controller.requestStop()}>{controller.isStopping ? "Requesting stop…" : action?.cancellationDelivery === "pending" ? "Retry stop" : "Request stop"}</Button> : null}
       {controller.statusUnavailable || controller.historyError ? <Button type="button" size="sm" variant="outline" onClick={controller.refresh}>Check search status</Button> : null}
       {action || controller.sourceFailures.length ? <details className="discovery-search-details"><summary>Search details</summary>
         {action ? <p>Run {action.runId}{action.errorCode ? ` · ${action.errorCode}` : ""}</p> : null}

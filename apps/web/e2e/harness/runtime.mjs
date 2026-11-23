@@ -301,6 +301,14 @@ export async function temporalStack() {
   let retainState = false;
   return {
     address,
+    async history(workflowId, runId) {
+      const { stdout } = await execFile(
+        temporal,
+        ["workflow", "show", "--address", address, "--workflow-id", workflowId, "--run-id", runId, "--output", "json"],
+        { timeout: 5_000, env: environment(home) },
+      );
+      return JSON.parse(stdout).events;
+    },
     async pause() {
       await service.stop();
       service = null;

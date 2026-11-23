@@ -25,6 +25,108 @@ function extracted(call: ExternalCall) {
   return typedExtraction(call, { requirements: [{ localId: "recovery", text: source.text, definition: "Implement durable workflow recovery" }] });
 }
 
+test("a queued Stop survives a Temporal outage and a delayed repeat leaves the next run alone", async ({
+  api,
+  app,
+  page,
+  temporal,
+}) => {
+  const { library } = await createBaseline(api);
+  const posting = await createPosting(api, "stop-selected-run");
+  const blockerPosting = await json<typeof posting>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/stop-queue-blocker", title: "Synthetic Data Engineer",
+    company: "Synthetic Queue Company", description: "Build scheduled data imports.", location: "Remote",
+  });
+  expect(blockerPosting.job_id).not.toBe(posting.job_id);
+  const accepted = await acceptBaseline(api, posting.job_id, library.profileVersion);
+  const exportAccepted = async () => {
+    const response = await api.get(`/v1/resumes/${accepted.resume_id}/export?format=pdf&accepted=true`);
+    expect(response.ok()).toBe(true);
+    return createHash("sha256").update(await response.body()).digest("hex");
+  };
+  const acceptedSha = await exportAccepted();
+  const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, workerActivitySlots: 1 });
+  await app.restartWorker();
+
+  const refresh = (job: typeof posting) => action(api, "requirements.refresh", {
+    job_id: job.job_id, expected_posting_revision: job.revision, expected_revision: 0, force: true,
+  });
+  const blocker = await refresh(blockerPosting);
+  const held = await modelCall(app, "requirements.extract");
+  const first = await refresh(posting);
+  const runPath = `/v1/action-runs/${first.runId}`;
+  const cancelPath = `${runPath}/cancel`;
+  const current = () => json<{
+    status: string; workflowId: string; temporalRunId: string;
+    cancellationRequested: boolean; cancellationDelivery?: "pending" | "acknowledged";
+  }>(api, "get", runPath);
+  const queued = await current();
+  expect(queued).toMatchObject({ status: "queued", cancellationRequested: false });
+  expect(queued).not.toHaveProperty("cancellationDelivery");
+  expect(queued.temporalRunId).toBeTruthy();
+  await page.goto(`/runs/${first.runId}`);
+
+  await temporal.pause();
+  try {
+    const response = page.waitForResponse((value) => new URL(value.url()).pathname === cancelPath && value.request().method() === "POST");
+    await page.getByRole("button", { name: "Request stop", exact: true }).click();
+    await expect.poll(async () => (await current()).cancellationRequested).toBe(true);
+    expect(await current()).toMatchObject({ status: "queued", cancellationDelivery: "pending", temporalRunId: queued.temporalRunId });
+    const recorded = await response;
+    expect(recorded.status()).toBe(202);
+    expect(await recorded.json()).toMatchObject({ runId: first.runId, status: "queued", cancellationRequested: true, cancellationDelivery: "pending" });
+    await expect(page.getByText("Stop requested", { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Retry stop", exact: true })).toBeVisible();
+  } finally {
+    await temporal.resume();
+  }
+
+  const worker = async () => (await json<{ worker: { healthy: boolean; reason?: string } }>(api, "get", "/v1/health")).worker;
+  // With the only activity slot held, Temporal might have no activity poller
+  // after restart. Stop only needs the same reachable workflow history.
+  await expect.poll(async () => {
+    const readiness = await worker();
+    return readiness.healthy || readiness.reason === "worker_not_polling";
+  }, { timeout: 20_000 }).toBe(true);
+  const historyTypes = async () => (await temporal.history(queued.workflowId, queued.temporalRunId)).map((event) => event.eventType);
+  expect(await historyTypes()).not.toContain("EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED");
+  expect(await current()).toMatchObject({ status: "queued", cancellationDelivery: "pending" });
+  const response = page.waitForResponse((value) => new URL(value.url()).pathname === cancelPath && value.request().method() === "POST");
+  await page.getByRole("button", { name: "Retry stop", exact: true }).click();
+  const delivered = await response;
+  expect(delivered.status()).toBe(200);
+  expect(await delivered.json()).toMatchObject({ runId: first.runId, cancellationDelivery: "acknowledged" });
+  const stopped = await terminal(api, first.runId);
+  expect(stopped).toMatchObject({ status: "cancelled", temporalRunId: queued.temporalRunId, result: null });
+  await expect(page.getByText("Status: Cancelled", { exact: true })).toBeVisible();
+  const history = await historyTypes();
+  expect(history).toContain("EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED");
+  expect(history.at(-1)).toBe("EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED");
+  expect(history).not.toContain("EVENT_TYPE_ACTIVITY_TASK_STARTED");
+  expect(app.external.calls).toHaveLength(1);
+
+  held.reply(typedExtraction(held, {}));
+  await completed(api, blocker.runId);
+  await expect.poll(async () => (await worker()).healthy).toBe(true);
+  const successor = await refresh(posting);
+  expect(successor.runId).not.toBe(first.runId);
+  const extraction = await modelCall(app, "requirements.extract");
+  expect(extraction.body["context"]).toMatchObject({ refresh_binding: { operation_id: successor.runId } });
+  expect(await json(api, "post", cancelPath, {})).toEqual(stopped);
+  expect(await json(api, "get", `/v1/action-runs/${successor.runId}`)).toMatchObject({
+    runId: successor.runId, status: "running", cancellationRequested: false,
+  });
+  extraction.reply(extracted(extraction));
+  const matching = await modelCall(app, "requirements.match_catalog");
+  matching.reply(catalogMatching(matching, { recovery: { verdict: "new" } }));
+  const succeeded = await completed(api, successor.runId);
+  expect(succeeded.runId).toBe(successor.runId);
+  expect(await json(api, "get", `/v1/jobs/${posting.job_id}/requirements`)).toMatchObject(succeeded.result as Requirements);
+  expect(await exportAccepted()).toBe(acceptedSha);
+});
+
 test("cancellation survives an actual worker kill and its replacement resumes durable work without losing accepted artifacts", async ({
   api,
   app,

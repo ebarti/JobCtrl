@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type ReactNode } from "react";
 import { z } from "zod";
 
+import { canRequestStop, cancellationDeliverySchema } from "../../shared/lib/actionStop.js";
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
 import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
 import { lookupSessionAction, requestWorkspace, useSessionRequestIdentity, type SessionRequestIdentity } from "../../shared/lib/useSessionRequestIdentity.js";
@@ -49,7 +50,7 @@ const receiptSchema = z.object({ runId: z.string().min(1), workflowId: z.string(
 const scopeBusySchema = z.object({ error: z.object({ code: z.literal("action_scope_busy"),
   details: z.object({ runId: z.string().min(1), action: z.literal(ACTION) }).passthrough() }).passthrough() }).passthrough();
 const actionRunSchema = z.object({ runId: z.string().min(1), action: z.literal(ACTION), status: z.string(),
-  cancellationRequested: z.boolean(), errorCode: z.string().nullable() }).passthrough();
+  cancellationRequested: z.boolean(), cancellationDelivery: cancellationDeliverySchema, errorCode: z.string().nullable() }).passthrough();
 const archivedIdentitySchema = z.object({ version: z.literal(1), requestId: z.string().min(1).max(200), operation: z.literal(ACTION),
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/), workspaceId: z.string().min(1), databaseInstanceId: z.string().min(1) }).strict();
 const busyIdentitySchema = z.object({ runId: z.string().min(1), workspaceId: z.string().min(1), databaseInstanceId: z.string().min(1) }).strict();
@@ -233,7 +234,8 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
     ? "matches" : fingerprintQuery.data?.wording === identity.record.fingerprint ? "wording" : null;
   const exactInputs = exactKind !== null;
   const compatibleRequest = notRecorded || operationQuery.isSuccess && operationQuery.data?.current !== false;
-  const mayRetry = Boolean(identity.record && exactInputs && compatibleRequest && !requestStatus.isFetching && (notRecorded || ["pending", "start_failed"].includes(requestStatus.data?.status ?? "")));
+  const mayRetry = Boolean(identity.record && exactInputs && compatibleRequest && !requestStatus.isFetching
+    && !requestStatus.data?.cancellationRequested && (notRecorded || ["pending", "start_failed"].includes(requestStatus.data?.status ?? "")));
 
   const start = useMutation({
     mutationFn: async ({ kind, proposalIds }: { kind: StartKind; proposalIds: readonly string[] }) => {
@@ -343,10 +345,9 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
   const canRetryWording = availability.available && identity.ready && archive.isSuccess && busyIdentity.isSuccess && Boolean(pendingReady) && !pending.isPending
     && !pending.isError && !start.isPending && !scopeBlocked && !otherActive && !identity.record && (!operation?.current || operation.status !== "running")
     && retryIds.length > 0 && retryIds.length <= 100;
-  const cancellableRun = identity.record && activeAction(status) && !requestStatus.data?.cancellationRequested
-    ? requestStatus.data?.runId ? { runId: requestStatus.data.runId, origin: identity.record } : undefined
-    : !identity.record && activeAction(visibleRun.data?.status) && !visibleRun.data?.cancellationRequested && visibleRun.data && pending.data?.workspace
-      ? { runId: visibleRun.data.runId, origin: pending.data.workspace } : undefined;
+  const selectedRun = identity.record ? requestStatus.data : visibleRun.data;
+  const cancellableRun = selectedRun && operationWorkspace && activeAction(selectedRun.status) && canRequestStop(selectedRun)
+    ? { runId: selectedRun.runId, origin: operationWorkspace } : undefined;
 
   return <section className="card grid gap-1 p-4" aria-label="Affected matches">
     <h2>Affected matches</h2>
@@ -380,7 +381,7 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
         <p>{prior ? `Earlier update: ${prior.status.replaceAll("_", " ")}${prior.cancellationRequested ? " · cancellation requested" : ""}.`
           : error instanceof JobCtrlApiError && error.status === 404 ? "An earlier request has not been found yet." : "An earlier request's status is unavailable."}</p>
         {prior ? <Link to="/runs/$runId" params={{ runId: prior.runId }}>View run details</Link> : null}
-        {prior && activeAction(prior.status) && !prior.cancellationRequested ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate({ runId: prior.runId, origin: record })}>Request cancellation of earlier update</Button> : null}
+        {prior && activeAction(prior.status) && canRequestStop(prior) ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate({ runId: prior.runId, origin: record })}>{prior.cancellationDelivery === "pending" ? "Retry stop for earlier update" : "Request cancellation of earlier update"}</Button> : null}
         {prior && terminalAction(prior.status) ? <Button type="button" variant="outline" onClick={() => {
           const next = (archive.data ?? []).filter((item) => item.requestId !== record.requestId);
           sessionStorage.set(archiveStorageKey, JSON.stringify(next)); client.setQueryData(archiveQueryKey, next);
@@ -392,7 +393,7 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
       {busyRun.data ? <Link to="/runs/$runId" params={{ runId: busyRun.data.runId }}>View other update</Link> : null}
       {busyRun.error ? <p role="alert">The other update could not be checked: {busyRun.error.message}</p> : null}
       <Button type="button" variant="outline" disabled={busyRun.isFetching} onClick={() => void busyRun.refetch()}>Check other update</Button>
-      {busyRun.data && activeAction(busyRun.data.status) && !busyRun.data.cancellationRequested ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate({ runId: busyRun.data.runId, origin: busy })}>Request cancellation of other update</Button> : null}
+      {busyRun.data && activeAction(busyRun.data.status) && canRequestStop(busyRun.data) ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate({ runId: busy.runId, origin: busy })}>{busyRun.data.cancellationDelivery === "pending" ? "Retry stop for other update" : "Request cancellation of other update"}</Button> : null}
       {busyRun.data && terminalAction(busyRun.data.status) ? <Button type="button" variant="outline" onClick={() => {
         try {
           const raw = sessionStorage.get(busyStorageKey);
@@ -404,7 +405,7 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
     </div> : null}
     {otherActive && identity.record && !busy && visibleRun.data && pending.data?.workspace ? <div role="status"><p>Another update is {visibleRun.data.status.replaceAll("_", " ")}{visibleRun.data.cancellationRequested ? " · cancellation requested" : ""}.</p>
       <Link to="/runs/$runId" params={{ runId: visibleRun.data.runId }}>View other update</Link>
-      {activeAction(visibleRun.data.status) && !visibleRun.data.cancellationRequested ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate({ runId: visibleRun.data.runId, origin: pending.data!.workspace })}>Request cancellation of other update</Button> : null}
+      {activeAction(visibleRun.data.status) && canRequestStop(visibleRun.data) ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate({ runId: visibleRun.data.runId, origin: pending.data!.workspace })}>{visibleRun.data.cancellationDelivery === "pending" ? "Retry stop for other update" : "Request cancellation of other update"}</Button> : null}
     </div> : null}
     {operation ? <div role="status">{identity.record && notRecorded ? <p>Most recent recorded update:</p> : null}<p>{operationMessage(operation)}</p>
       {operation.partial ? <p>Partial result: the qualification stage finished{publishedScores ? ` and ${publishedScores} ${publishedScores === 1 ? "job score was" : "job scores were"} saved` : ""}, but the remaining work stopped. Review the pending changes before updating again.</p> : null}
@@ -438,14 +439,15 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
       {identity.record && notRecorded && !exactInputs && fingerprintQuery.data && retryIds.length ? <Button type="button" variant="outline" disabled={!availability.available || !pendingReady || pending.isError || start.isPending || !archive.isSuccess || !busyIdentity.isSuccess || otherActive || scopeBlocked || retryIds.length > 100} onClick={() => void startCurrentAfterUnconfirmed("wording", retryIds)}>Retry failed wording for current saved changes</Button> : null}
     </div> : null}
     {operationQuery.error ? <p role="alert">Update progress could not be refreshed: {operationQuery.error.message}{operation ? " The last recorded state remains above." : ""} <Button type="button" variant="outline" onClick={() => void operationQuery.refetch()}>Check update progress</Button></p> : null}
-    {requestStatus.data?.cancellationRequested || visibleRun.data?.cancellationRequested ? <p role="status">Cancellation requested; waiting for the recorded outcome.</p> : null}
+    {selectedRun?.cancellationRequested && activeAction(selectedRun.status) ? <p role="status">{selectedRun.cancellationDelivery === "pending"
+      ? "Stop requested. The workflow service has not confirmed receipt." : "Stop requested. Waiting for this update to settle."}</p> : null}
     {visibleRun.error ? <p role="alert">Update status could not be refreshed: {visibleRun.error.message}</p> : null}
     <div className="flex flex-wrap gap-2">
       {identity.record && terminalAction(status) ? <Button type="button" variant="outline" disabled={!operationQuery.isSuccess || operationQuery.isFetching} onClick={() => {
         const current = identity.current();
         if (current && terminalAction(status)) { identity.clear(current.requestId); setMessage("Previous update reviewed. The recorded result remains available below."); void pending.refetch(); }
       }}>Dismiss completed update</Button> : <Button type="button" disabled={!canStart} onClick={() => void startUpdate(exactKind ?? "matches", exactKind === "wording" ? recoveryRetryIds : [])}>{start.isPending ? "Starting update…" : identity.record && mayRetry ? "Retry previous update" : "Update affected matches"}</Button>}
-      {cancellableRun ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(cancellableRun)}>Request cancellation</Button> : null}
+      {cancellableRun ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(cancellableRun)}>{selectedRun?.cancellationDelivery === "pending" ? "Retry stop" : "Request cancellation"}</Button> : null}
     </div>
     {!availability.available ? <p>{availability.reason}</p> : null}
     {otherActive ? <p role="status">Another update is already in progress. Wait for its recorded outcome.</p> : null}

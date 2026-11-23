@@ -84,6 +84,7 @@ export type ApplicationStack = {
 type WorkerFixtures = {
   temporal: {
     address: string;
+    history(workflowId: string, runId: string): Promise<{ eventType: string }[]>;
     pause(): Promise<void>;
     resume(): Promise<void>;
     retainForDiagnosis(): void;

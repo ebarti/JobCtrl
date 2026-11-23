@@ -1,10 +1,12 @@
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { discoveryKeys } from "./queryKeys.js";
 
+const actionEvents = ["ActionQueued", "ActionStarted", "ActionCompleted", "ActionFailed", "ActionCancellationRequested", "ActionCancellationAcknowledged"];
+
 export const discoveryEvents: FeatureEventHandler = {
-  eventTypes: ["DiscoverySettingsUpdated", "SettingsUpdated", "DiscoverySourceUpdated", "DiscoveryCaptureUpdated", "DiscoveryFeedbackUpdated", "DiscoveryRunUpdated", "DiscoveryTargetsUpdated", "ProfileUpdated", "ProfileSourceUpdated", "PostingQuarantined", "PostingQuarantineReviewed", "ActionQueued", "ActionStarted", "ActionCompleted", "ActionFailed", "ActionCancellationRequested"],
+  eventTypes: ["DiscoverySettingsUpdated", "SettingsUpdated", "DiscoverySourceUpdated", "DiscoveryCaptureUpdated", "DiscoveryFeedbackUpdated", "DiscoveryRunUpdated", "DiscoveryTargetsUpdated", "ProfileUpdated", "ProfileSourceUpdated", "PostingQuarantined", "PostingQuarantineReviewed", ...actionEvents],
   handle(event, invalidate) {
-    if (["ActionQueued", "ActionStarted", "ActionCompleted", "ActionFailed", "ActionCancellationRequested"].includes(event.eventType)) {
+    if (actionEvents.includes(event.eventType)) {
       const payload = event.payload;
       const searchAction = payload && typeof payload === "object" && "action" in payload && payload.action === "discovery.search";
       if (event.feature === "discovery" || searchAction) {

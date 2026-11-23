@@ -5,6 +5,7 @@ import type { SavedTableView } from "@jobctrl/contracts";
 import { z } from "zod";
 
 import { useJobActions, useJobBulkActions, useComposedJobs, useJobs, useJobGridNavigationStore, useJobGridSelectionStore, useUrlImports, type JobGridQuery, type PostingSnapshot } from "../../contexts/jobs/index.js";
+import { canRequestStop } from "../../shared/lib/actionStop.js";
 import { getApiCapabilityAvailability } from "../../shared/lib/apiCapabilityAvailability.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
@@ -88,11 +89,11 @@ function CaptureJob() {
     {imports.list.error ? <p role="alert">URL import status is unavailable. <Button type="button" onClick={() => void imports.list.refetch()}>Check imports</Button></p> : null}
     {imports.list.data?.imports.length ? <section aria-label="Recent URL imports"><h3>Recent URL imports</h3><ul>
       {imports.list.data.imports.map((item) => <li key={item.runId}>
-        <span>{item.url}</span>{" · "}<span>{item.cancellationRequested && openImportStates.has(item.status) ? "Cancellation requested" : importLabels[item.status]}</span>{" "}
+        <span>{item.url}</span>{" · "}<span>{item.cancellationRequested && openImportStates.has(item.status) ? "Stop requested" : importLabels[item.status]}</span>{" "}
         {item.status === "failed" && item.errorCode ? <span>({item.errorCode}) </span> : null}
         {item.jobId ? <Link to="/jobs/$jobId" params={{ jobId: item.jobId }} search={(previous) => previous}>Open job</Link> : null}
-        {openImportStates.has(item.status) && !item.cancellationRequested
-          ? <Button type="button" disabled={imports.cancel.isPending} onClick={() => imports.cancel.mutate(item.runId)}>Cancel import</Button> : null}
+        {openImportStates.has(item.status) && canRequestStop(item)
+          ? <Button type="button" disabled={imports.cancel.isPending} onClick={() => imports.cancel.mutate(item.runId)}>{item.cancellationDelivery === "pending" ? "Retry stop" : "Cancel import"}</Button> : null}
       </li>)}</ul>{imports.cancel.error ? <p role="alert">{imports.cancel.error.message}</p> : null}</section> : null}
   </section>;
 }
