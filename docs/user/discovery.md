@@ -117,6 +117,8 @@ the progress strip. Repeated failures with the same source identity, error code
 and recorded message appear once with the number of affected query/location
 combinations.
 
+New workspaces start with LinkedIn selected. To use Indeed or ZipRecruiter,
+select them under **Search preferences → Job boards**.
 Indeed uses the worker environment variable `JOBSTREAMING_INDEED_API_KEY`.
 ZipRecruiter uses `JOBSTREAMING_ZIPRECRUITER_AUTHORIZATION`. If Search reports
 a missing credential, configure that variable and restart the worker. An HTTP
@@ -124,7 +126,9 @@ a missing credential, configure that variable and restart the worker. An HTTP
 credential has access to its search API. A TLS or proxy diagnostic points to
 the worker’s connection settings. Older runs may show a general access error.
 A board that rate-limits a search appears by name in the progress strip and
-Search details. Wait before starting another search on that board. Older runs
+Search details. JobCtrl skips that board's remaining queries and locations in
+the run and continues the other selected boards. Wait before starting another
+search on the rate-limited board. Older runs
 show this explanation when they recorded the board’s rate-limit code.
 
 **Search details** retains every recorded failure and its query-unit identity;

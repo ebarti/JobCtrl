@@ -143,6 +143,10 @@ Profile revision and the database incarnation used to read its preferences.
 
 `GET /v1/discovery/sources` returns boards from the installed JobStreaming registry and their local state. Change an existing board with `PATCH /v1/discovery/sources/{source_id}/state` and its `expectedRevision`. A preview reads saved observations. Automatic searches run exclusively through JobStreaming. Jobs independently owns the durable `jobs.capture_url` action for a supplied posting URL.
 
+`GET /v1/discovery/settings` defaults to `boards: ["linkedin"]` when a workspace
+has no saved board selection. Saved selections and explicit per-run overrides
+can include Indeed and ZipRecruiter.
+
 `GET /v1/discovery/runs` includes the canonical run's `failures` list alongside
 its counts and status. Board failures identify `sourceFamily`, `unitId`, `boards`, `code` and a safe actionable `message`. Historical records retain their original source identifiers. The action result carries the same recorded failures.
 New SDK board access failures keep the code `discovery_provider_authentication_configuration`.
@@ -152,8 +156,10 @@ An identified HTTP denial includes `httpStatus` (401 or 403). A committed
 `DiscoveryRunUpdated` warning at stage `board_search` includes the same
 failure in `payload.sourceFailure` before the SDK acknowledges the event.
 SDK board rate limits use `discovery_provider_rate_limited` and set
-`diagnostic` to `rate_limited` in the warning and run result. The run list also explains rate
-limits from historical records that stored this code with a generic message.
+`diagnostic` to `rate_limited` in the warning and run result. A terminal board
+rate limit stops that board's remaining query and location units for the run.
+The run list also explains rate limits from historical records that stored this
+code with a generic message.
 Historical action receipts and already-published events retain their original fields.
 `partial` means at least one source unit completed or reached the new-job limit
 while another failed. A completed source may return no jobs. Reaching the limit

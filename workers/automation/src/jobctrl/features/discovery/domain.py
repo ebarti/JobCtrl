@@ -27,7 +27,7 @@ DEFAULT_SETTINGS = {
     "minFitScore": 7,
     "autoApply": False,
     "applyApprovalRequired": True,
-    "boards": ["indeed", "linkedin", "zip_recruiter"],
+    "boards": ["linkedin"],
     "resultsPerSite": 50,
     "hoursOld": 72,
     "schedulingEnabled": False,

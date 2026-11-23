@@ -78,6 +78,10 @@ test.describe("historical board failures", () => {
     const code = "discovery_provider_rate_limited";
     const message = "The board rate-limited this search. Wait before running another search on this board.";
     const legacyMessage = "The source could not complete its search; review its connection before retrying.";
+    const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+    await json(api, "patch", "/v1/discovery/settings", {
+      expectedRevision: settings.revision, boards: ["indeed", "linkedin"],
+    });
     const legacy = await action(api, "discovery.search", { ...search, queries: ["Completed query", "Limited query"], boards: ["indeed"] });
     const empty = await app.external.next();
     expect(empty.path).toBe("/jobstreaming/indeed");
