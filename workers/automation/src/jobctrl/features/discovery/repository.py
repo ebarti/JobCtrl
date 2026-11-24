@@ -701,6 +701,14 @@ class DiscoveryRepository:
                 ),
             )
 
+    def record_rate_limit_response(self, lease, observation):
+        with self.database.transaction() as conn:
+            self.guard_run(conn, lease)
+            self.events.append(
+                conn, "DiscoverySourceRateLimited", observation, feature="discovery",
+                aggregate_id=lease["run_id"], level="warn", stage="board_search",
+            )
+
     def record_board_failure(self, lease, unit, error, *, board=None):
         """Persist the safe unit and source outcome together, before SDK acknowledgement."""
         with self.database.transaction() as conn:
@@ -875,6 +883,17 @@ class DiscoveryRepository:
         with self.database.connect() as conn:
             return conn.execute("SELECT 1 FROM discovery_intake_receipts WHERE run_id=? AND job_id=? LIMIT 1",
                                 (run_id, job_id)).fetchone() is not None
+
+    def acquired_posting_revision(self, run_id, job_id, revision, source_id):
+        with self.database.connect() as conn:
+            return conn.execute(
+                """SELECT 1 FROM discovery_intake_receipts
+                   WHERE run_id=? AND job_id=? AND outcome='accepted'
+                   AND json_extract(data_json,'$.isNew')=1
+                   AND json_extract(data_json,'$.postingRevision')=?
+                   AND json_extract(data_json,'$.sourceId')=? LIMIT 1""",
+                (run_id, job_id, revision, source_id),
+            ).fetchone() is not None
 
     def source_result(self, lease, source_id, status, *, new_jobs=0, observed_jobs=0, error_code=None, connection=None):
         with nullcontext(connection) if connection is not None else self.database.transaction() as conn:

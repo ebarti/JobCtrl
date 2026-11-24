@@ -203,6 +203,21 @@ class JobStreamingGateway:
     """Build and consume the pinned JobStreaming event contract."""
 
     @staticmethod
+    def observe_linkedin_responses(registry, observer):
+        source = registry or default_registry()
+        observed = source.copy()
+
+        def factory(**kwargs):
+            adapter = source.create(Site.LINKEDIN, **kwargs)
+            adapter.session.hooks["response"].append(observer)
+            return adapter
+
+        cursor_version = source.cursor_schema_version(Site.LINKEDIN)
+        options = {"cursor_schema_version": cursor_version} if cursor_version != 1 else {}
+        observed.register(Site.LINKEDIN, factory, replace=True, **options)
+        return observed
+
+    @staticmethod
     def build_request(spec: JobStreamingSearchSpec) -> SearchRequest:
         if spec.results_per_site is None:
             try:

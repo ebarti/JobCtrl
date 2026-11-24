@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import sqlite3
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from functools import partial
+from math import ceil
 from pathlib import Path
 import threading
+from time import monotonic
+from urllib.parse import urlsplit
 
 from jobctrl.app.errors import AppError
 from jobctrl.features.discovery.adapters.board_diagnostics import board_access_error, board_rate_limit_error
@@ -12,12 +20,67 @@ from jobctrl.features.discovery.domain import fingerprint
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY
 from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
 
+logger = logging.getLogger(__name__)
+
+
+def _retry_after_seconds(value, received_at):
+    if not value or len(value) > 128:
+        return None
+    value = value.strip()
+    if value.isascii() and value.isdecimal():
+        return int(value)
+    try:
+        retry_at = parsedate_to_datetime(value)
+        if retry_at.tzinfo is not None:
+            return max(0, ceil((retry_at - received_at).total_seconds()))
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return None
+
+
+class _LinkedInResponses:
+    def __init__(self, repository, lease):
+        self.repository = repository
+        self.lease = lease
+        self.started = monotonic()
+        self.lock = threading.Lock()
+        self.counts = {"listing": 0, "detail": 0, "other": 0}
+
+    def observe(self, unit_id, response, **_):
+        # Requests calls this for each response, including attempts the SDK
+        # later recovers. Only the endpoint category leaves the transport.
+        path = urlsplit(response.url).path
+        if path.endswith("/jobs-guest/jobs/api/seeMoreJobPostings/search"):
+            phase = "listing"
+        elif "/jobs/view/" in path:
+            phase = "detail"
+        else:
+            phase = "other"
+        received = datetime.now(timezone.utc) if response.status_code == 429 else None
+        with self.lock:
+            self.counts[phase] += 1
+            if received is None:
+                return
+            counts = dict(self.counts)
+            elapsed_ms = round((monotonic() - self.started) * 1000)
+        try:
+            self.repository.record_rate_limit_response(self.lease, {
+                "board": "linkedin", "unitId": unit_id, "phase": phase, "httpStatus": 429,
+                "leaseEpoch": self.lease["epoch"], "responses": counts, "elapsedMs": elapsed_ms,
+                "receivedAt": received.isoformat(timespec="milliseconds"),
+                "retryAfterSeconds": _retry_after_seconds(response.headers.get("Retry-After"), received),
+            })
+        except (AppError, sqlite3.Error):
+            # Observability must not replace the provider's response or retry policy.
+            logger.warning("Could not record a LinkedIn rate-limit response")
+
 
 class DiscoveryExecutionAdapter:
     def __init__(self, repository, *, jobs, workspace):
         self.repository, self.jobs = repository, jobs
         self.workspace = Path(workspace)
         self._signals = {}
+        self._linkedin_responses = {}
         self._admit = None
 
     def bind_admission(self, admission):
@@ -29,6 +92,7 @@ class DiscoveryExecutionAdapter:
 
     def stop(self, lease):
         key = (lease["run_id"], lease["epoch"])
+        self._linkedin_responses.pop(key, None)
         signal = self._signals.pop(key, None)
         if signal is not None:
             signal.set()
@@ -48,7 +112,8 @@ class DiscoveryExecutionAdapter:
         # Validate unsupported scope per board before touching its provider.
         for site in unit["sites"]:
             provider_scope(site, location=unit["location"], remote_only=unit["remote_only"], hours_old=unit["hours_old"])
-        stop = self._signals[(lease["run_id"], lease["epoch"])]
+        key = (lease["run_id"], lease["epoch"])
+        stop = self._signals[key]
         from jobstreaming import ErrorEvent, JobEvent, SearchCompleteEvent, SiteCompleteEvent
         from jobstreaming.checkpoint import SqliteCheckpointStore
         from jobctrl.features.discovery.adapters.jobstreaming import JobStreamingGateway, JobStreamingSearchSpec
@@ -91,12 +156,19 @@ class DiscoveryExecutionAdapter:
                     raise AppError("discovery_provider_" + reason, "The source stopped before confirmed exhaustion; start a new search to retry.", 502)
         self.repository.save_unit(lease, unit, status="running", result=recorded)
         loop = asyncio.get_running_loop()
+        responses = None
+        if "linkedin" in spec.sites:
+            if key not in self._linkedin_responses:
+                self._linkedin_responses[key] = _LinkedInResponses(self.repository, lease)
+            responses = self._linkedin_responses[key]
 
         def consume():
             from jobctrl.features.discovery.adapters.synthetic_jobstreaming import controlled_registry
 
             gateway = JobStreamingGateway()
             registry = controlled_registry(self.workspace)
+            if responses is not None:
+                registry = gateway.observe_linkedin_responses(registry, partial(responses.observe, unit["unit_id"]))
             terminations = dict(recorded.get("sourceTerminations", {}))
             with gateway.open_stream(spec, checkpoint_store=store, cancel_event=stop, registry=registry) as stream:
                 completed = False

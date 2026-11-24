@@ -138,6 +138,13 @@ that already saved jobs. Preparation assesses only those recorded new IDs and
 does not repeat acquisition to recover them. Source failure with no new jobs
 remains failed. Its action finalizer seals interrupted preparation, and worker
 replay preserves failed job stages until an explicit retry.
+The initial assessment can reuse a complete targeted LinkedIn detail from that
+acquisition when its accepted intake receipt matches the current posting
+revision. Following a terminal LinkedIn rate limit, the initial check for
+remaining LinkedIn listings records `posting_check_deferred_source_rate_limited`.
+An explicit retry or selected-job assessment can check those postings later.
+The LinkedIn transport records each observed HTTP 429 as a
+`DiscoverySourceRateLimited` activity event without affecting SDK retry policy.
 Standalone Discovery remains acquisition-only and reports
 `preparationAvailable: false`. The separate explicit `assess` preparation recipe
 recovers selected saved jobs without another acquisition.

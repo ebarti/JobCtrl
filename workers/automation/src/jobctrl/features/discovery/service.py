@@ -304,6 +304,21 @@ class DiscoveryService:
         """Read this exact acquisition's committed outcome, including failure."""
         return self.repository.run_outcome(run_id)
 
+    def has_acquired_linkedin_detail(self, run_id, posting):
+        """Check whether the current description came from this search's targeted fetch."""
+        provenance = posting["provenance"]
+        return bool(
+            posting["source_id"] == "jobstreaming:linkedin"
+            and posting["content_state"] == "provider_detail"
+            and posting["description"] and posting["description"] == posting["full_description"]
+            and provenance.get("authority") == "provider"
+            and provenance.get("provider") == "jobstreaming"
+            and provenance.get("sourceKind") == "provider_detail"
+            and provenance.get("detailMethod") == "jobstreaming.fetch_job_detail"
+            and provenance.get("sourceUrl") == posting["url"]
+            and self.repository.acquired_posting_revision(run_id, posting["job_id"], posting["revision"], posting["source_id"])
+        )
+
     async def review_role_target(self, run_id, job_id, *, expected_revision=None, read_only=False):
         request = self.repository.run_request(run_id)
         if request is None or not self.repository.observed_job(run_id, job_id):

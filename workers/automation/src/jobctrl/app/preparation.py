@@ -305,6 +305,11 @@ class PreparationService:
             posting = self.jobs.snapshot(job_id)
             if request["recipe"] in {"run", "discover", "search", "assess"} and not posting.get("needs_enrichment", True):
                 return {"skip": "accepted_detail_current", "revision": posting["revision"]}
+            if request.get("_acquisition_run_id") and posting["source_id"] == "jobstreaming:linkedin":
+                if self.discovery.has_acquired_linkedin_detail(request["_acquisition_run_id"], posting):
+                    return {"skip": "saved_provider_detail", "revision": posting["revision"]}
+                if request["_defer_linkedin_enrichment"]:
+                    return {"expected_revision": posting["revision"], "_defer_source_rate_limit": True}
             return {"expected_revision": posting["revision"]}
         if stage == "role_analysis":
             posting = self.jobs.snapshot(job_id)
@@ -403,6 +408,9 @@ class PreparationService:
         def cancelled():
             return self._work_cancelled(context)
         if stage == "enrich":
+            if inputs.pop("_defer_source_rate_limit", False) and request.get("_defer_linkedin_enrichment"):
+                raise AppError("posting_check_deferred_source_rate_limited",
+                               "LinkedIn throttled this search. Check the saved posting manually later.", 409)
             value = await self.jobs.refresh(job_id, **inputs, receipt_key=op, cancelled=cancelled)
             return {"revision": value["revision"]}
         if stage == "role_analysis":
@@ -930,6 +938,18 @@ class PreparationService:
                             self.checkpoints.finish_step(context.run_id, "", "discover", "failed", error_code=_error_code(error))
                             raise
             targets, route = self._target_ids(context.run_id, request, discovered)
+            if request["recipe"] == "search" and discovered:
+                # Use the settled acquisition on replay. A user-started retry
+                # can perform a fresh posting check after the board recovers.
+                linkedin_limited = any(
+                    failure["code"] in {"discovery_provider_rate_limited", "rate_limited"}
+                    and ("linkedin" in failure.get("boards", ()) or failure.get("sourceId") == "jobstreaming:linkedin")
+                    for failure in discovered.get("failures", ())
+                )
+                request = {
+                    **request, "_acquisition_run_id": discovered.get("runId"),
+                    "_defer_linkedin_enrichment": linkedin_limited and parent is None,
+                }
             if policy and route == "cohort":
                 failed = await self._run_cohort(context, targets, request, failed)
             else:

@@ -161,6 +161,14 @@ rate limit stops that board's remaining query and location units for the run.
 The run list also explains rate limits from historical records that stored this
 code with a generic message.
 Historical action receipts and already-published events retain their original fields.
+`GET /v1/events?aggregateId={run_id}&type=DiscoverySourceRateLimited` lists
+individual LinkedIn HTTP 429 responses, including attempts that the SDK recovered
+from. Each event includes `receivedAt` (UTC), `unitId`, `phase` (`listing`,
+`detail`, or `other`), `leaseEpoch`, `elapsedMs` since that lease began querying
+LinkedIn, and `responses` by phase through the reported 429. `retryAfterSeconds`
+is the provider's requested delay or `null` when the header is absent or
+unusable. Counts restart with each lease. The source's `politeness.rateLimitedCount`
+continues to describe recent runs that settled with a rate-limit failure.
 `partial` means at least one source unit completed or reached the new-job limit
 while another failed. A completed source may return no jobs. Reaching the limit
 records `budget_exhausted`, without asserting upstream provider completion.

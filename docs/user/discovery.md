@@ -196,7 +196,7 @@ Opening a disclosure preserves its draft and starts no search or model work.
 The task invokes the existing `discovery.search` action with a retained
 idempotency key and database identity. Queued means Temporal accepted the request,
 not that acquisition or person-fit assessment completed. The complete application
-keeps that one action active while the preparation owner enriches each newly
+keeps that one action active while the preparation owner checks each newly
 saved job, records role context and extracts its requirements. It completes this
 work for all newly saved jobs before assessing person fit, so a later posting's
 capability consolidation cannot invalidate an earlier score from the same search.
@@ -237,6 +237,10 @@ unavailable rather than implying that saved jobs were assessed.
 If every source eventually fails after saving jobs, those retained new jobs
 still receive initial assessment. The overall search reports a partial outcome,
 while its acquisition status and source failures remain failed and inspectable.
+When the same search saved a full LinkedIn description through its targeted
+detail request, assessment uses that exact posting revision. If LinkedIn
+throttles the search, saved listings that still need detail can be checked
+manually after the source is available again.
 
 Assessment reuses exact accepted results before making another model request.
 Requirements keeps content-based result reuse separate from each job's actual
@@ -394,6 +398,11 @@ owns how the accepted analysis supplies qualified requirements and person fit.
 ## Crawl Politeness
 
 JobStreaming performs board searches and retrieves supported posting details. Each board has its own access requirements, supported search filters, native page sizes and safety limits. JobCtrl records board-specific authentication failures and rate limits alongside accepted jobs. A terminal rate limit defers the board's remaining queries in that run.
+
+The activity log records each LinkedIn HTTP 429 seen during search. The event
+shows when it occurred, whether a listing or posting-detail request was
+throttled, how many responses the worker had received and how long LinkedIn
+asked it to wait when a valid `Retry-After` was supplied.
 
 JobCtrl freezes the selected boards and search criteria at launch. Its worker checkpoints the provider cursor, saves an admission or exclusion receipt, and acknowledges the provider. Only a newly created job uses one place in the requested limit. Cancellation and worker recovery keep the same run identity.
 
