@@ -43,6 +43,8 @@ focus to it. Choose career tracks and levels explicitly. Each location row keeps
 its own work-arrangement selections. These are current search choices, not
 preferences inferred from past employment or a suggestion accepted silently.
 Target-role coaching uses your selected sources and requires an explicit request.
+Open **Search preference suggestions** to review proposed roles and locations.
+Edit your saved roles, locations and other criteria in the main preferences form.
 
 **Search map** sends only that location query to Photon and shows real results.
 Select a result to bind its place identity, display name, coordinates, selection

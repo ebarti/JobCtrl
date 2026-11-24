@@ -221,6 +221,8 @@ test("search preferences insert and focus on Enter, autosave canonical targets, 
     const suggestions = tools.locator(".target-search-settings");
     const suggestionsToggle = suggestions.getByRole("button", { name: /Search preference suggestions/ });
     await suggestionsToggle.click();
+    await expect(suggestions.getByRole("textbox", { name: "Target roles 1", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("textbox", { name: "Target roles 1", exact: true })).toHaveCount(1);
     for (const width of [1643, 1440, 390]) {
       await page.setViewportSize({ width, height: 1000 });
       const action = suggestions.getByRole("button", { name: "Get suggestions for target roles", exact: true });

@@ -8,6 +8,32 @@ type Settings = {
   providerModels: Record<string, string>;
 };
 
+test("Codex sign-in verification is separate from the connection check", async ({ page, app }) => {
+  app.external.setCatalog({
+    providers: [
+      { provider: "codex", configured: true, ready: true, models: [] },
+      { provider: "claude", configured: false, ready: false, models: [] },
+      { provider: "google", configured: false, ready: false, models: [] },
+    ],
+  });
+  const readinessReads: string[] = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/v1/providers/status") readinessReads.push(request.method());
+  });
+
+  await page.goto("/settings");
+  const codex = page.locator("article[data-provider='codex']");
+  await codex.getByRole("button", { name: "Configure Codex", exact: true }).click();
+  await codex.getByRole("button", { name: "Reuse existing login or verify", exact: true }).click();
+  await expect(codex.getByText("Codex sign-in verified.", { exact: true })).toBeVisible();
+  await expect(codex.getByText("Connection not checked", { exact: true })).toBeVisible();
+  expect(readinessReads).toEqual([]);
+
+  await page.getByRole("button", { name: "Check connections", exact: true }).click();
+  await expect(codex.getByText("Ready", { exact: true })).toBeVisible();
+  expect(readinessReads).toEqual(["GET"]);
+});
+
 test("Settings saves a budget before model setup, retains another pane's invalid draft, and checks connection readiness only on request", async ({
   api,
   app,
@@ -101,7 +127,7 @@ test("Settings saves a budget before model setup, retains another pane's invalid
       { exact: true },
     ),
   ).toBeVisible();
-  await expect(page.getByText("Not checked", { exact: true })).toHaveCount(3);
+  await expect(page.getByText("Connection not checked", { exact: true })).toHaveCount(3);
   expect(providerCalls()).toHaveLength(initialCalls);
   // External provider metadata explicitly distinguishes configuration from
   // successful runtime access. The real provider service validates this data.

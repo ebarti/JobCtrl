@@ -2262,73 +2262,74 @@ function TenantProfileForm({
                         />
                       )}
                     </form.Subscribe>
-                  ) : null}
-                  <StructuredProfileEditor
-                    mode={section}
-                    activeSection={activeSection}
-                    {...(roleId ? { roleId } : {})}
-                    {...(achievementId ? { achievementId } : {})}
-                    {...(achievementContent ? { achievementContent } : {})}
-                    {...(achievementWordings ? { achievementWordings } : {})}
-                    showSectionHeading={showSectionHeading}
-                    profile={profileField.state.value}
-                    onSkillSaveTrackerChange={bindSkillSaveTracker}
-                    draftResetToken={resetToken}
-                    style={styleField.state.value}
-                    onProfileSaveRequest={() => autosaveControllerRef.current?.requestSave()}
-                    onProfileChange={(value) => {
-                      clearTransientStatus();
-                      const conflict = requiredPinConflictRef.current;
-                      if (!conflict || !value) {
-                        profileField.handleChange(value);
-                        return;
-                      }
-                      if (
-                        explicitlyRemovedRequiredPin(
-                          profileField.state.value,
-                          value,
-                          conflict,
-                        )
-                      ) {
-                        requiredPinConflictRef.current = null;
-                        profileField.handleChange(value);
-                        return;
-                      }
-                      const correctedProfile = structuredClone(value);
-                      const pinStatus = reconcilePendingRequiredPin(
-                        correctedProfile,
-                        conflict,
-                      );
-                      if (pinStatus === "updated") {
-                        const bullet = getPathValue(
-                          correctedProfile,
-                          `resume.experience_entries.${conflict.entryIndex}.bullets.${conflict.bulletIndex}`,
-                        );
-                        if (typeof bullet === "string") {
-                          requiredPinConflictRef.current = {
-                            ...conflict,
-                            previousText: bullet,
-                          };
+                  ) : (
+                    <StructuredProfileEditor
+                      mode={section}
+                      activeSection={activeSection}
+                      {...(roleId ? { roleId } : {})}
+                      {...(achievementId ? { achievementId } : {})}
+                      {...(achievementContent ? { achievementContent } : {})}
+                      {...(achievementWordings ? { achievementWordings } : {})}
+                      showSectionHeading={showSectionHeading}
+                      profile={profileField.state.value}
+                      onSkillSaveTrackerChange={bindSkillSaveTracker}
+                      draftResetToken={resetToken}
+                      style={styleField.state.value}
+                      onProfileSaveRequest={() => autosaveControllerRef.current?.requestSave()}
+                      onProfileChange={(value) => {
+                        clearTransientStatus();
+                        const conflict = requiredPinConflictRef.current;
+                        if (!conflict || !value) {
+                          profileField.handleChange(value);
+                          return;
                         }
-                        profileField.handleChange(correctedProfile);
-                      } else {
-                        profileField.handleChange(value);
                         if (
-                          pinStatus === "blocked" &&
-                          ProfileSchema.safeParse(value).success
+                          explicitlyRemovedRequiredPin(
+                            profileField.state.value,
+                            value,
+                            conflict,
+                          )
                         ) {
-                          setStatusTone("warning");
-                          setStatusMessage(
-                            "The edited Required bullet has an ambiguous pin. Make its text unique or discard the draft before saving.",
-                          );
+                          requiredPinConflictRef.current = null;
+                          profileField.handleChange(value);
+                          return;
                         }
-                      }
-                    }}
-                    onStyleChange={(value) => {
-                      clearTransientStatus();
-                      styleField.handleChange(value);
-                    }}
-                  />
+                        const correctedProfile = structuredClone(value);
+                        const pinStatus = reconcilePendingRequiredPin(
+                          correctedProfile,
+                          conflict,
+                        );
+                        if (pinStatus === "updated") {
+                          const bullet = getPathValue(
+                            correctedProfile,
+                            `resume.experience_entries.${conflict.entryIndex}.bullets.${conflict.bulletIndex}`,
+                          );
+                          if (typeof bullet === "string") {
+                            requiredPinConflictRef.current = {
+                              ...conflict,
+                              previousText: bullet,
+                            };
+                          }
+                          profileField.handleChange(correctedProfile);
+                        } else {
+                          profileField.handleChange(value);
+                          if (
+                            pinStatus === "blocked" &&
+                            ProfileSchema.safeParse(value).success
+                          ) {
+                            setStatusTone("warning");
+                            setStatusMessage(
+                              "The edited Required bullet has an ambiguous pin. Make its text unique or discard the draft before saving.",
+                            );
+                          }
+                        }
+                      }}
+                      onStyleChange={(value) => {
+                        clearTransientStatus();
+                        styleField.handleChange(value);
+                      }}
+                    />
+                  )}
                 </>
               )}
             </form.Field>
