@@ -47,6 +47,8 @@ excluded from this iteration; structured certification support is tracked in
 
 A subject mentioned in an interview agenda enters scoring only when the employer
 independently states it as a job responsibility or a candidate qualification.
+The app extracts separately stated responsibilities as separate capabilities
+when they can be demonstrated independently.
 
 When a posting accepts prior work in any of several fields, one Professional
 Experience requirement can preserve the full choice. Fit can assess it once

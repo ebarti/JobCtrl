@@ -9,7 +9,8 @@ from .domain import EXTRACTION_INSTRUCTION, ExtractionSelection, RequirementErro
 
 LEGACY_EXTRACTION_VERSION = "requirements-v2-extract-v5-content-bound"
 V6_EXTRACTION_VERSION = "requirements-v2-extract-v6-inference-rationale"
-EXTRACTION_VERSION = "requirements-v2-extract-v7-role-demands"
+V7_EXTRACTION_VERSION = "requirements-v2-extract-v7-role-demands"
+EXTRACTION_VERSION = "requirements-v2-extract-v8-independent-demands"
 Rationale = Annotated[StrictStr, Field(min_length=1, max_length=2000, pattern=r"\S")]
 
 
@@ -35,9 +36,15 @@ ROLE_DEMAND_INSTRUCTION = INFERENCE_INSTRUCTION + """
 
 Treat interview agendas, screening exercises and prompts to discuss past work as hiring-process context. A topic mentioned only as something an interviewer will ask about does not establish a separate role demand or an unresolved item. Extract an independently stated responsibility or candidate qualification wherever it appears, and cite that substantive evidence directly."""
 
+INDEPENDENT_DEMAND_INSTRUCTION = ROLE_DEMAND_INSTRUCTION + """
+
+Keep independently demonstrable responsibilities separate, even when the same person or team performs them. For example, when the posting separately asks for directing an organisation and developing other leaders, return separate capabilities with their own definitions and direct evidence. Include ordinary supervision within organisation leadership when the posting does not establish an independent demand for developing leaders. Preserve any separately stated track record as professional experience without combining the corresponding skills."""
+
 
 def extraction_wire(version):
     if version == EXTRACTION_VERSION:
+        return InferenceBoundSelection, INDEPENDENT_DEMAND_INSTRUCTION
+    if version == V7_EXTRACTION_VERSION:
         return InferenceBoundSelection, ROLE_DEMAND_INSTRUCTION
     if version == V6_EXTRACTION_VERSION:
         return InferenceBoundSelection, INFERENCE_INSTRUCTION

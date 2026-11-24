@@ -221,6 +221,7 @@ test("quote selections derive canonical Unicode ranges and reuse the exact raw e
   expect(extractionCall.body["prompt_version"]).toBe(EXTRACTION_PROMPT_VERSION);
   expect(extractionCall.body["instructions"]).toContain("A topic mentioned only as something an interviewer will ask about does not establish a separate role demand");
   expect(extractionCall.body["instructions"]).toContain("Extract an independently stated responsibility or candidate qualification wherever it appears");
+  expect(extractionCall.body["instructions"]).toContain("return separate capabilities with their own definitions and direct evidence");
   const schema = extractionCall.body["response_schema"] as { properties: Record<string, unknown> };
   expect(schema.properties).toHaveProperty("quotes");
   expect(schema.properties).toHaveProperty("language");
