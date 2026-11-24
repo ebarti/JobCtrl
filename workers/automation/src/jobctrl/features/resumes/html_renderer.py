@@ -32,12 +32,12 @@ RESUME_PAGE_VIEWPORT = {"width": 794, "height": 1123}
 RESUME_SECTIONS = ("summary", "experience", "education", "skills", "languages")
 GEIST_FONT_RESOURCES = (
     (
-        "geist-latin-ext-wght-normal.woff2",
+        "latin-ext",
         "U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,"
         "U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF",
     ),
     (
-        "geist-latin-wght-normal.woff2",
+        "latin",
         "U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,"
         "U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD",
     ),
@@ -46,22 +46,24 @@ GEIST_FONT_RESOURCES = (
 
 @lru_cache(maxsize=1)
 def geist_font_face_css() -> str:
-    """Return self-contained Geist faces for offline HTML and PDF rendering."""
+    """Embed fixed Geist weights so PDFKit preserves selectable word spaces."""
 
     font_root = files("jobctrl").joinpath("assets", "fonts")
     faces: list[str] = []
-    for filename, unicode_range in GEIST_FONT_RESOURCES:
-        encoded = base64.b64encode(font_root.joinpath(filename).read_bytes()).decode("ascii")
-        faces.append(
-            "@font-face {\n"
-            '  font-family: "Geist Variable";\n'
-            "  font-style: normal;\n"
-            "  font-display: block;\n"
-            "  font-weight: 100 900;\n"
-            f"  src: url(data:font/woff2;base64,{encoded}) format('woff2-variations');\n"
-            f"  unicode-range: {unicode_range};\n"
-            "}\n"
-        )
+    for subset, unicode_range in GEIST_FONT_RESOURCES:
+        for weight in (400, 700, 800):
+            filename = f"geist-{subset}-{weight}.woff2"
+            encoded = base64.b64encode(font_root.joinpath(filename).read_bytes()).decode("ascii")
+            faces.append(
+                "@font-face {\n"
+                '  font-family: "JobCtrl Geist";\n'
+                "  font-style: normal;\n"
+                "  font-display: block;\n"
+                f"  font-weight: {weight};\n"
+                f"  src: url(data:font/woff2;base64,{encoded}) format('woff2');\n"
+                f"  unicode-range: {unicode_range};\n"
+                "}\n"
+            )
     return "".join(faces)
 
 
@@ -88,7 +90,7 @@ body {
 body {
   background: #ffffff;
   color: #111111;
-  font-family: "Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: "JobCtrl Geist", "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 10.35pt;
   line-height: 1.32;
   -webkit-print-color-adjust: exact;
@@ -317,7 +319,7 @@ FONT_STACKS = {
     "georgia": 'Georgia, "Times New Roman", Times, serif',
     "helvetica": '"Helvetica Neue", Helvetica, Arial, sans-serif',
     "inter": '"Inter", "Aptos", Arial, sans-serif',
-    "sans": '"Geist Variable", "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    "sans": '"JobCtrl Geist", "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
     "serif": 'Georgia, "Times New Roman", Times, serif',
     "source_sans": '"Source Sans 3", "Source Sans Pro", "Aptos", Arial, sans-serif',
     "source_serif": '"Source Serif 4", "Source Serif Pro", Georgia, serif',

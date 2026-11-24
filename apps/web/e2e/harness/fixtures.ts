@@ -75,7 +75,8 @@ export type ApplicationStack = {
   ): Promise<{ stdout: string; stderr: string; exitCode: number }>;
   inspectPdf(
     bytes: Buffer,
-  ): Promise<{ pages: number; text: string; images: Buffer[] }>;
+    options?: { selectWithPdfKit?: boolean },
+  ): Promise<{ pages: number; text: string; images: Buffer[]; pdfKitSelection?: string }>;
   inspectDocx(bytes: Buffer): Promise<string>;
   file(relative: string): Promise<Buffer>;
   close(options?: { retainState?: boolean }): Promise<void>;
