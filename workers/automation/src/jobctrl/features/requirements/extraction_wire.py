@@ -8,7 +8,8 @@ from .domain import EXTRACTION_INSTRUCTION, ExtractionSelection, RequirementErro
 
 
 LEGACY_EXTRACTION_VERSION = "requirements-v2-extract-v5-content-bound"
-EXTRACTION_VERSION = "requirements-v2-extract-v6-inference-rationale"
+V6_EXTRACTION_VERSION = "requirements-v2-extract-v6-inference-rationale"
+EXTRACTION_VERSION = "requirements-v2-extract-v7-role-demands"
 Rationale = Annotated[StrictStr, Field(min_length=1, max_length=2000, pattern=r"\S")]
 
 
@@ -30,9 +31,15 @@ INFERENCE_INSTRUCTION = EXTRACTION_INSTRUCTION + """
 
 For each requirement choose its basis from its cited posting evidence. Use explicit when the posting states the whole demand directly. An explicit demand may have a null rationale or a short explanation of a non-obvious boundary. Use inferred when the cited work establishes a capability indirectly. Use explicit_and_inferred when the statement establishes part of the demand directly and part by inference. For both inferred and explicit_and_inferred, always write a nonblank rationale explaining what the cited work implies and which part of the demand follows from it. Keep this explanation grounded in the cited source, including when the inference is straightforward."""
 
+ROLE_DEMAND_INSTRUCTION = INFERENCE_INSTRUCTION + """
+
+Treat interview agendas, screening exercises and prompts to discuss past work as hiring-process context. A topic mentioned only as something an interviewer will ask about does not establish a separate role demand or an unresolved item. Extract an independently stated responsibility or candidate qualification wherever it appears, and cite that substantive evidence directly."""
+
 
 def extraction_wire(version):
     if version == EXTRACTION_VERSION:
+        return InferenceBoundSelection, ROLE_DEMAND_INSTRUCTION
+    if version == V6_EXTRACTION_VERSION:
         return InferenceBoundSelection, INFERENCE_INSTRUCTION
     if version == LEGACY_EXTRACTION_VERSION:
         return ExtractionSelection, EXTRACTION_INSTRUCTION

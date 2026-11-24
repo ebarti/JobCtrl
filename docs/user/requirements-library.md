@@ -45,6 +45,9 @@ certifications and licenses, job conditions and detailed tenure analysis are
 excluded from this iteration; structured certification support is tracked in
 [#1476](https://github.com/ebarti/JobCtrl/issues/1476).
 
+A subject mentioned in an interview agenda enters scoring only when the employer
+independently states it as a job responsibility or a candidate qualification.
+
 When a posting accepts prior work in any of several fields, one Professional
 Experience requirement can preserve the full choice. Fit can assess it once
 using factual role or achievement evidence for an accepted field. A posting
