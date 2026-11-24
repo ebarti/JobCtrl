@@ -13,6 +13,6 @@
     "@jobctrl/tsconfig": "workspace:*",
     "@types/node": "^25.6.0",
     "typescript": "^6.0.3",
-    "wrangler": "4.152.0"
+    "wrangler": "4.162.0"
   }
 }

@@ -84,8 +84,8 @@
   },
   "homepage": "https://github.com/ebarti/JobCtrl#readme",
   "devDependencies": {
-    "@iconify-json/tabler": "^1.2.42",
-    "@tabler/icons-vue": "^3.49.0",
+    "@iconify-json/tabler": "^1.2.46",
+    "@tabler/icons-vue": "^3.52.0",
     "ajv": "8.20.0",
     "esbuild": "0.28.2",
     "mermaid": "^11.16.1",
