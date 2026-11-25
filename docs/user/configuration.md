@@ -499,16 +499,16 @@ Existing admitted work retains its own captured input and allowance.
 
 ### Worker activity slots {#runtime-setting-worker-activity-slots}
 
-**Worker activity slots** (`workerActivitySlots`, default `4`) is the desired
-total durable task capacity for the Python worker. A saved change requires
-a worker restart. The saved value is desired capacity; use the loaded worker's
-readiness/diagnostic evidence to establish active capacity. Saving alone cannot
-prove that a running worker adopted it.
+**Worker activity slots** (`workerActivitySlots`, default `4`) sets how many
+ordinary actions and per-posting search assessments can execute at the same
+time. Restart the worker to load a changed value.
 
-This capacity is distinct from **Pipeline internal concurrency**:
-activity slots bound how many activities can execute at once, while internal
-concurrency bounds parallel work inside an activity or batch. DBOS queues
-work above the active slot count.
+Search assessments use a separate DBOS queue. With the default four slots, up
+to three assessments can run at once, leaving one slot available for actions
+such as a manual URL import. Ordinary actions can use all four slots when
+capacity is available. With a single slot, an import waits for the current
+action to release it. The worker queues excess work. Per-host access rules,
+model lane capacity and spend limits continue to apply inside each action.
 
 ## Compensation Sources
 

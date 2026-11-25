@@ -67,6 +67,9 @@ function explain(input: FitPreparationInput, candidates: RunForJob[]): FitPrepar
   if (fit) return fit.status === "running"
     ? { label: "Assessing fit", detail: "The search is assessing fit for this job.", runId: run.runId }
     : { label: "Fit queued", detail: "This search has queued the job’s Fit assessment.", runId: run.runId };
+  if (run.executionPolicy?.version === "search-jobs-v1") {
+    return { label: "Waiting for job checks", detail: "Fit can start once this job’s posting and requirements checks finish.", runId: run.runId };
+  }
   return { label: "Waiting for search checks", detail: "This job is in the active search. Fit scoring waits for posting and requirements checks across the search.", runId: run.runId };
 }
 

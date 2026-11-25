@@ -52,6 +52,16 @@ binds to the exact action and input; a changed input is rejected. Worker
 replacement resumes durable work without creating a new external intent.
 Feature owners retain stage and receipt bindings for previously accepted work.
 
+Each workspace has four DBOS queues. Public actions such as URL import use the
+general queue. Search orchestration runs on `-search`, individual
+`preparation.assess_discovered` actions run on `-assessments`, and schedule
+ticks and worker readiness probes run on `-schedules`. General actions and
+assessments share the worker's configured activity slots. When the worker has
+at least two slots, assessments may occupy all but one. A manual import can
+therefore reach its own posting fetch and model-capacity checks during a search
+backlog. With one configured slot, these actions run one at a time. Every
+assessment retains its original workflow ID through cancellation and restart.
+
 Cancellation is persisted. A running external operation still reports its
 truthful settlement or ambiguity. Approval, final source validation, external
 intent and send/submit receipts remain with Applications and Outreach; recovery
