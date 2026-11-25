@@ -1,5 +1,63 @@
-import { test, expect, json } from "../harness/fixtures.js";
+import { test, expect, json, action, modelCall, terminal } from "../harness/fixtures.js";
 import { createBaseline, createPosting, type Posting } from "./core-data.js";
+
+test("preparation history stays readable in the Jobs split pane and mobile Application Resume", async ({
+  page,
+  api,
+  app,
+}, testInfo) => {
+  await createBaseline(api);
+  const posting = await createPosting(api, "preparation-history-layout");
+  const run = await action(api, "preparation.run", {
+    recipe: "assess", job_ids: [posting.job_id], scope: "selected",
+  });
+  const held = await modelCall(app, "jobs.role_analysis");
+  await json(api, "post", `/v1/action-runs/${run.runId}/cancel`, {});
+  expect(await terminal(api, run.runId)).toMatchObject({ status: "cancelled" });
+  await expect.poll(() => held.closed).toBe(true);
+
+  for (const [route, width] of [
+    [`/jobs/${posting.job_id}`, 1479],
+    [`/apply-review?jobKey=${posting.job_id}`, 390],
+  ] as const) {
+    await page.setViewportSize({ width, height: 1108 });
+    await page.goto(route);
+    const inspection = page.locator(".job-preparation-inspection:visible");
+    await inspection.getByText("Preparation options and history", { exact: true }).click();
+    const history = inspection.getByRole("region", { name: "Preparation runs", exact: true });
+    const toggle = history.getByRole("button", { name: /^Assess selected jobs/ });
+    await expect(history.getByText("Cancelled", { exact: true })).toBeVisible();
+    await expect(history.getByRole("button", { name: "Retry unfinished", exact: true })).toBeVisible();
+    await toggle.click();
+    await expect(history.getByRole("link", { name: "View run details" })).toBeVisible();
+
+    const geometry = await inspection.evaluate((element) => {
+      const bounds = (selector: string) => {
+        const { top, right, bottom } = element.querySelector(selector)!.getBoundingClientRect();
+        return { top, right, bottom };
+      };
+      return {
+        history: bounds(".preparation-run-list"),
+        heading: bounds(".preparation-run-list > h3"),
+        row: bounds(".preparation-run-row"),
+        toggle: bounds(".preparation-run-row__toggle"),
+        name: bounds(".preparation-run-row__name"),
+        retry: bounds(".preparation-run-row__summary > button:last-child"),
+        tools: bounds(":scope > details > summary"),
+      };
+    });
+    expect(geometry.heading.bottom).toBeLessThan(geometry.row.top);
+    expect(geometry.name.top).toBeGreaterThan(geometry.toggle.top);
+    expect(geometry.name.bottom).toBeLessThan(geometry.toggle.bottom);
+    expect(geometry.toggle.bottom).toBeLessThan(geometry.retry.top);
+    expect(geometry.retry.right).toBeLessThanOrEqual(geometry.history.right + 1);
+    expect(geometry.row.bottom).toBeLessThan(geometry.tools.top);
+    await testInfo.attach(`preparation-history-${width}`, {
+      contentType: "image/png",
+      body: await inspection.screenshot(),
+    });
+  }
+});
 
 test("application tasks retain edits and selection across desktop and mobile navigation", async ({
   page,

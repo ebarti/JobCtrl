@@ -97,6 +97,10 @@
   margin: 0;
 }
 
+.preparation-run-list {
+  container: preparation-history / inline-size;
+}
+
 .preparation-run-list__rows {
   min-inline-size: 0;
 }
@@ -233,7 +237,9 @@
     max-block-size: calc(100dvh - 32px);
     padding: 20px;
   }
+}
 
+@container preparation-history (max-width: 440px) {
   .preparation-run-row__summary {
     flex-wrap: wrap;
     gap: 8px 12px;

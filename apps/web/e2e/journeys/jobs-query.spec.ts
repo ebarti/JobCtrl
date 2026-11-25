@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { link, lstat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { APIRequestContext, Locator, Page, Response } from "@playwright/test";
 
@@ -12,7 +12,7 @@ import {
   terminal,
   type ApplicationStack,
 } from "../harness/fixtures.js";
-import { createBaseline, qualifyPosting, type Posting } from "./core-data.js";
+import { acceptBaseline, createBaseline, current, qualifyPosting, type Posting } from "./core-data.js";
 
 type Job = Posting & {
   title: string;
@@ -862,6 +862,58 @@ test("Jobs keeps selected actions compact while secondary workflows preserve the
   await expect(actions).toHaveCount(0);
   for (const job of [first, second]) await expect(table.getByRole("checkbox", { name: `Select ${job.title}`, exact: true })).not.toBeChecked();
   expect(app.external.calls).toHaveLength(0);
+});
+
+test("permanent job deletion reports and retries pending file cleanup", async ({ page, api, app }) => {
+  const { profile } = await createBaseline(api);
+  const posting = await capture(api, "cleanup-target", "Synthetic Cleanup Target");
+  const resume = await acceptBaseline(api, posting.job_id, profile.profileVersion);
+  const artifact = current(resume).renders[0]!;
+  expect(artifact.artifact_id).toMatch(/^[a-f0-9-]{36}$/);
+  const pdf = path.join(app.workspace, "resumes-artifacts", `${artifact.artifact_id}.pdf`);
+  const extraLink = path.join(app.workspace, "synthetic-pdf-hard-link");
+  const { databaseInstanceId } = await json<{ databaseInstanceId: string }>(api, "get", "/v1/health");
+  await json(api, "post", `/v1/jobs/${posting.job_id}/delete`, {});
+  await page.goto("/jobs?grid=v1&job_state=deleted");
+  const table = page.getByRole("table", { name: "Jobs table", exact: true });
+  await table.getByRole("checkbox", { name: `Select ${posting.title}`, exact: true }).check();
+  await page.getByRole("button", { name: "Review permanent deletion", exact: true }).click();
+  const review = page.getByRole("region", { name: "Review permanent deletion", exact: true });
+  const confirm = review.getByRole("button", { name: "Permanently delete reviewed jobs", exact: true });
+  await expect(confirm).toBeDisabled();
+  await review.getByLabel("Type DELETE to confirm", { exact: true }).fill("DELETE");
+  const nextDeletion = () => page.waitForResponse((response) => new URL(response.url()).pathname === "/v1/jobs/bulk-delete-permanent");
+  const pending = page.getByRole("region", { name: "Pending file cleanup", exact: true });
+  const response = nextDeletion();
+  // The production retire operation must refuse a file with a second hard link.
+  await link(pdf, extraLink);
+  try {
+    await confirm.click();
+    const committed = await response;
+    expect(committed.status()).toBe(200);
+    expect(committed.request().headers()["expected-database-instance-id"]).toBe(databaseInstanceId);
+    expect(await committed.json()).toMatchObject({ affected: 1, deletionCommitted: true, cleanupPending: true, replayed: false });
+    expect((await lstat(pdf)).nlink).toBe(2);
+    expect((await api.get(`/v1/jobs/${posting.job_id}`)).status()).toBe(404);
+    await expect(review).toHaveCount(0);
+    await expect(pending.getByText("The job records were deleted.", { exact: false })).toBeVisible();
+  } finally {
+    await unlink(extraLink);
+  }
+
+  await page.getByRole("link", { name: "My profile", exact: true }).click();
+  await expect(page).toHaveURL(/\/profile/);
+  await page.getByRole("link", { name: "Jobs", exact: true }).click();
+  const replay = nextDeletion();
+  await pending.getByRole("button", { name: "Retry file cleanup", exact: true }).click();
+  const cleaned = await replay;
+  expect(cleaned.status()).toBe(200);
+  expect(cleaned.request().postDataJSON()).toEqual((await response).request().postDataJSON());
+  expect(cleaned.request().headers()["expected-database-instance-id"]).toBe(databaseInstanceId);
+  expect(await cleaned.json()).toMatchObject({ affected: 1, deletionCommitted: true, cleanupPending: false, replayed: true });
+  await expect(pending).toHaveCount(0);
+  await expect(page.getByText("File cleanup completed.", { exact: true })).toBeVisible();
+  await expect(lstat(pdf)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
 test.describe("Jobs without optional read owners", () => {

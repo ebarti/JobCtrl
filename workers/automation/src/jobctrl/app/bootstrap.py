@@ -132,7 +132,7 @@ def create_application(workspace: Path | str, *, enabled_features: Collection[st
     if "preparation" in services:
         services["preparation"].bind_run_reader(application.action_run)
     if "applications" in services:
-        services["applications"].set_action_reader(application.list_runs)
+        services["applications"].set_action_reader(application.list_runs, job_action_run_id=application.job_action_run_id)
         if "interviews" in services:
             services["applications"].feedback.set_interview_preparation(services["interviews"].get_generation)
     return application

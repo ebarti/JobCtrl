@@ -2,8 +2,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
+import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
+import { requestWorkspace } from "../../shared/lib/useSessionRequestIdentity.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
+import { useJobGridSelectionStore } from "./gridSelection.js";
 
 const jobSchema = z.object({
   job_id: z.string(), revision: z.number(), source_id: z.string(), source_revision: z.number(), source_hash: z.string(),
@@ -83,8 +86,17 @@ const deletionSelectionSchema = z.object({ selectionId: z.string(), jobIds: z.ar
   retentionNotice: z.string(), retainedIndependentData: z.array(z.string()),
   jobs: z.array(z.object({ job_id: z.string(), title: z.string(), company: z.string().nullable() }).passthrough()),
 }).passthrough();
+const deletionReceiptSchema = z.object({
+  ok: z.literal(true), jobIds: z.array(z.string()), affected: z.number().int().nonnegative(),
+  deletionCommitted: z.literal(true), cleanupPending: z.boolean(), replayed: z.boolean(),
+});
+export type PermanentDeletionRequest = {
+  readonly selectionId: string;
+  readonly jobIds: readonly string[];
+  readonly databaseInstanceId: string;
+};
 export function useJobBulkActions() {
-  const tenantId = useTenantId(); const { http } = usePorts(); const client = useQueryClient();
+  const tenantId = useTenantId(); const { http, session } = usePorts(); const client = useQueryClient();
   const bulk = useMutation({ mutationFn: (input: { action: "hide" | "unhide" | "delete" | "restore"; selected: readonly PostingSnapshot[] }) =>
     http.json<unknown>("POST", `/v1/jobs/bulk-${input.action}`, { body: { jobIds: input.selected.map((job) => job.job_id),
       expectedRevisions: Object.fromEntries(input.selected.map((job) => [job.job_id, job.revision])),
@@ -92,13 +104,30 @@ export function useJobBulkActions() {
     onSuccess: () => client.invalidateQueries({ queryKey: jobsKeys.all(tenantId) }),
   });
   const previewDelete = useMutation({ mutationFn: async (ids: readonly string[]) => {
-    const result = deletionSelectionSchema.safeParse(await http.json<unknown>("POST", "/v1/jobs/permanent-delete-selection", { body: { jobIds: ids } }));
+    const { databaseInstanceId } = await requestWorkspace(http);
+    const result = deletionSelectionSchema.safeParse(await http.json<unknown>("POST", "/v1/jobs/permanent-delete-selection", {
+      body: { jobIds: ids }, expectedDatabaseInstanceId: databaseInstanceId,
+    }));
     if (!result.success) throw new Error("The deletion selection could not be verified.");
-    return result.data;
+    return { ...result.data, databaseInstanceId };
   } });
-  const permanentDelete = useMutation({ mutationFn: (input: { selectionId: string; jobIds: string[] }) =>
-    http.json<unknown>("POST", "/v1/jobs/bulk-delete-permanent", { body: input }),
-    onSuccess: () => client.invalidateQueries({ queryKey: jobsKeys.all(tenantId) }),
+  const permanentDelete = useMutation({
+    mutationFn: async ({ selectionId, jobIds, databaseInstanceId }: PermanentDeletionRequest) => {
+      const path = "/v1/jobs/bulk-delete-permanent";
+      const result = deletionReceiptSchema.safeParse(await http.json<unknown>("POST", path, {
+        body: { selectionId, jobIds }, expectedDatabaseInstanceId: databaseInstanceId,
+      }));
+      if (!result.success || result.data.affected !== jobIds.length || result.data.jobIds.length !== jobIds.length ||
+          !jobIds.every((id) => result.data.jobIds.includes(id))) {
+        throw createUnconfirmedWriteError("POST", path, new Error("The permanent deletion receipt is invalid."));
+      }
+      return result.data;
+    },
+    onSuccess: (receipt, request) => {
+      useJobGridSelectionStore.getState().recordCleanup(session, tenantId, request, receipt.cleanupPending);
+      return client.invalidateQueries({ queryKey: jobsKeys.all(tenantId) });
+    },
+    meta: { suppressGlobalErrorToast: true },
   });
   return { bulk, previewDelete, permanentDelete };
 }

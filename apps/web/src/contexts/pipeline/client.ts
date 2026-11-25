@@ -7,10 +7,11 @@ import { useRuntimeHealth } from "../runtime/index.js";
 
 import { cancellationDeliverySchema } from "../../shared/lib/actionStop.js";
 import { createUnconfirmedWriteError } from "../../shared/lib/unconfirmed-write.js";
+import type { SessionRequestIdentity } from "../../shared/lib/useSessionRequestIdentity.js";
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
-import { usePreparationRecovery } from "./recovery.js";
+import { preparationRequestInput, type PreparationRetryRequest, usePreparationRecovery } from "./recovery.js";
 
 export const recipeSchema = z.enum(["run", "discover", "enrich", "analyze", "score", "tailor", "prepare"]);
 export type PreparationRecipe = z.infer<typeof recipeSchema>;
@@ -32,6 +33,7 @@ const stepSchema = z.object({
 const runSchema = z.object({
   runId: z.string(), status: z.string(), recipe: z.enum([...recipeSchema.options, "search", "assess"]), parentRunId: z.string().nullable(),
   cohortFrozen: z.boolean().optional(), targetRoute: z.string().optional(),
+  executionPolicy: z.object({ version: z.literal("search-cohort-v1") }).optional(),
   jobIds: z.array(z.string()), createdAt: z.string(), updatedAt: z.string(), steps: z.array(stepSchema),
 });
 const executionSchema = z.object({ runId: z.string(), status: z.string(), errorCode: z.string().nullable().optional(),
@@ -39,6 +41,11 @@ const executionSchema = z.object({ runId: z.string(), status: z.string(), errorC
 const listSchema = z.object({ runs: z.array(runSchema) });
 const receiptSchema = z.object({ runId: z.string().min(1), workflowId: z.string().min(1),
   status: z.enum(["queued", "running", "succeeded", "failed", "cancelled"]) });
+const retryAdmissionRefusals = new Map([
+  ["preparation_cohort_retry_scope_required", "The earlier retry did not start. Continue the original search to finish assessing its jobs."],
+  ["preparation_retry_superseded", "This run already has a retry. Follow it in preparation history."],
+  ["nothing_to_retry", "All jobs from this search have already finished assessment."],
+]);
 export type PreparationRun = z.infer<typeof runSchema>;
 
 export const preparationKeys = {
@@ -65,6 +72,26 @@ export function usePreparationRuns({ enabled = true, databaseInstanceId, active 
     },
     meta: { suppressGlobalErrorToast: true },
     refetchInterval: (query) => active || query.state.data?.some((run) => ["pending", "queued", "running"].includes(run.status)) ? 3000 : false,
+  });
+}
+
+/** Recover older whole-run and job-level retry buttons from their exact saved fingerprint. */
+export function usePreviousPreparationRetry(record: SessionRequestIdentity, jobId?: string) {
+  const tenantId = useTenantId();
+  const { requestIdentity } = usePorts();
+  const runs = usePreparationRuns({ databaseInstanceId: record.databaseInstanceId });
+  return useQuery({
+    queryKey: [...preparationKeys.all(tenantId), "previous-retry", record.requestId, jobId ?? "", runs.dataUpdatedAt],
+    enabled: Boolean(runs.data),
+    queryFn: async () => {
+      const candidates: PreparationRetryRequest[] = (runs.data ?? []).flatMap((run) => {
+        const body = { run_id: run.runId };
+        return jobId && run.jobIds.includes(jobId) ? [body, { ...body, job_ids: [jobId] }] : [body];
+      });
+      const fingerprints = await Promise.all(candidates.map((body) => requestIdentity.fingerprint(preparationRequestInput("preparation.retry", body))));
+      return candidates[fingerprints.indexOf(record.fingerprint)] ?? null;
+    },
+    meta: { suppressGlobalErrorToast: true },
   });
 }
 
@@ -157,7 +184,7 @@ export function usePreparationCommands() {
   const { http } = usePorts();
   const recovery = usePreparationRecovery();
   const submit = useMutation({
-    mutationFn: async (input: { action: "preparation.run" | "preparation.retry"; body: PreparationRequest | { run_id: string; job_ids?: readonly string[] } }) => {
+    mutationFn: async (input: { action: "preparation.run"; body: PreparationRequest } | { action: "preparation.retry"; body: PreparationRetryRequest }) => {
       const { identity, previous } = await recovery.begin(input.action, input.body);
       const path = `/v1/actions/${input.action}`;
       try {
@@ -169,23 +196,27 @@ export function usePreparationCommands() {
         catch (error) { throw createUnconfirmedWriteError("POST", path, error); }
         return parsed.data;
       } catch (error) {
-        // A definite client rejection before admission can be corrected. An
-        // older uncertain identity, conflict, throttling or 5xx is retained.
         const errorBody = error instanceof JobCtrlApiError ? error.responseBody : null;
         const errorCode = errorBody && typeof errorBody === "object" && "error" in errorBody
           && errorBody.error && typeof errorBody.error === "object" && "code" in errorBody.error
           ? errorBody.error.code : null;
+        // These exact retry refusals roll back the admission transaction,
+        // including when the client resends an earlier request with the same key.
+        const retryRefusal = input.action === "preparation.retry" && typeof errorCode === "string"
+          ? retryAdmissionRefusals.get(errorCode) : undefined;
         const rejectedBeforeAdmission = error instanceof JobCtrlApiError && (
           (error.status >= 400 && error.status < 500 && ![408, 409, 429].includes(error.status))
           || errorCode === "worker_unavailable" || errorCode === "workspace_changed"
         );
-        if (!previous && rejectedBeforeAdmission) {
+        if (retryRefusal || (!previous && rejectedBeforeAdmission)) {
           try { recovery.clear(identity); } catch { /* Retain for explicit reconciliation. */ }
         }
+        if (retryRefusal) throw new Error(retryRefusal);
         throw error;
       }
     },
     onSettled: () => { recovery.refresh(); void client.invalidateQueries({ queryKey: preparationKeys.all(tenantId) }); },
+    meta: { suppressGlobalErrorToast: true },
   });
   const cancel = useMutation({
     mutationFn: async (runId: string) => {

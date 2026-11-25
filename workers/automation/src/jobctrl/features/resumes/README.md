@@ -65,9 +65,13 @@ cannot be accepted by overriding an advisory review.
 An explicit review request runs one advisory coherence determination on the
 assembled document. Its claim is committed before model admission, with input
 fingerprint and source/version provenance.
-Repeated requests do not call the model again. A durable retry can recover an
-exact settled gateway receipt or report an interrupted/uncertain review honestly.
-Review findings/failure/timeout and explicit user acceptance are separate records.
+Repeated requests do not call the model again. **Check coherence review** and
+a durable retry can reconcile the claimed review from its exact gateway receipt.
+An interrupted review stays unresolved while its owner can still complete it.
+A review and PDF render can finish on the same current revision from different
+tabs. Settlement checks the exact review attempt and current Profile,
+Requirements and Fit sources before recording findings or a passing result.
+Review findings, failures, timeouts and user acceptance are separate records.
 No automatic rewrite, qualification rescore or recursive repair is performed.
 
 Acceptance requires a complete, exact approved/source-bound document and

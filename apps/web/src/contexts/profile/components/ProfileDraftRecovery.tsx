@@ -4,7 +4,7 @@ import type { ProfileConfigResponse } from "@jobctrl/contracts";
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import { Button } from "../../../shared/ui/button.js";
-import { readProfile } from "../client.js";
+import { readProfile, type ProfileSnapshot } from "../client.js";
 import { sameJson } from "../lib/json-record.js";
 import type { ProfileFormValues } from "../forms/profile-form.js";
 import {
@@ -44,8 +44,8 @@ const legacySchema = z.object({
   }),
 });
 interface ProfileDraftRecoveryProps {
-  readonly base: ProfileConfigResponse;
-  readonly canonical: ProfileConfigResponse;
+  readonly base: ProfileSnapshot;
+  readonly canonical: ProfileSnapshot;
   readonly values: ProfileFormValues;
   readonly isDirty: boolean;
   readonly isSubmitting: boolean;
@@ -54,6 +54,7 @@ interface ProfileDraftRecoveryProps {
     record: ProfileSafeRecovery,
     sessionDraft: ProfileSessionDraft | undefined,
     force: boolean,
+    saved: ProfileSnapshot,
   ) => boolean;
   readonly onDirtyChange?: (dirty: boolean) => void;
   readonly onRecoveryPendingChange: (pending: boolean) => void;
@@ -176,9 +177,12 @@ function TenantProfileDraftRecovery({
       ) =>
         snapshot.profileVersion !== null &&
         snapshot.profileVersion > (baseVersion ?? 0);
+      const sameWorkspace = (baseDatabaseInstanceId: string | undefined) =>
+        baseDatabaseInstanceId === undefined || baseDatabaseInstanceId === suppliedCanonical.databaseInstanceId;
       const currentMemory = getProfileSessionDraft(session, tenant, section);
       const possibleSavedRecord =
         record &&
+        sameWorkspace(record.data.baseDatabaseInstanceId) &&
         isNewer(suppliedCanonical, record.data.baseProfileVersion) &&
         profileRecoveryMatchesSaved(
           record.data,
@@ -186,6 +190,7 @@ function TenantProfileDraftRecovery({
         );
       const possibleSavedMemory =
         currentMemory &&
+        sameWorkspace(currentMemory.base.databaseInstanceId) &&
         isNewer(suppliedCanonical, currentMemory.base.profileVersion) &&
         sameJson(
           currentMemory.values,
@@ -193,12 +198,13 @@ function TenantProfileDraftRecovery({
         );
       const confirmedCanonical =
         possibleSavedRecord || possibleSavedMemory
-          ? await readProfile(http)
+          ? await readProfile(http, suppliedCanonical.databaseInstanceId)
           : null;
       if (!active()) return;
       if (
         record &&
         confirmedCanonical &&
+        sameWorkspace(record.data.baseDatabaseInstanceId) &&
         isNewer(confirmedCanonical, record.data.baseProfileVersion) &&
         profileRecoveryMatchesSaved(
           record.data,
@@ -220,6 +226,7 @@ function TenantProfileDraftRecovery({
       if (
         memory &&
         confirmedCanonical &&
+        sameWorkspace(memory.base.databaseInstanceId) &&
         isNewer(confirmedCanonical, memory.base.profileVersion) &&
         sameJson(memory.values, profileSnapshotValues(confirmedCanonical))
       ) {
@@ -282,6 +289,7 @@ function TenantProfileDraftRecovery({
       ? {
           version: 2 as const,
           baseProfileVersion: base.profileVersion,
+          baseDatabaseInstanceId: base.databaseInstanceId,
           changes: safeProfileChanges(profileSnapshotValues(base), values),
         }
       : null;
@@ -307,7 +315,7 @@ function TenantProfileDraftRecovery({
           token.current = null;
           const memory = getProfileSessionDraft(session, tenant, section);
           if (!live.current.isDirty && memory) {
-            const confirmed = await readProfile(http);
+            const confirmed = await readProfile(http, memory.base.databaseInstanceId);
             const unchanged =
               getProfileSessionDraft(session, tenant, section) === memory;
             if (
@@ -377,6 +385,7 @@ function TenantProfileDraftRecovery({
     ? {
         version: 2 as const,
         baseProfileVersion: memoryAtMount.current.base.profileVersion,
+        baseDatabaseInstanceId: memoryAtMount.current.base.databaseInstanceId,
         changes: safeProfileChanges(
           profileSnapshotValues(memoryAtMount.current.base),
           memoryAtMount.current.values,
@@ -384,22 +393,27 @@ function TenantProfileDraftRecovery({
       }
     : null;
   const retainData = memoryData ?? state.record?.data ?? null;
+  const otherWorkspace = Boolean(retainData?.baseDatabaseInstanceId && retainData.baseDatabaseInstanceId !== canonical.databaseInstanceId);
   const restore = async (force: boolean) => {
-    if (!retainData) return;
+    if (!retainData || otherWorkspace) return;
     const memory = memoryAtMount.current;
     const foreignRecord =
       state.record !== null && state.record.ownerId !== ownerId;
-    if (foreignRecord && memory) {
-      if (!onRestore(retainData, memory, force)) {
-        setRestoreConflict(true);
+    try {
+      // A query update or route preload can still be in flight when Restore
+      // is clicked. Use the pinned, freshly read base before applying the patch.
+      const saved = await readProfile(http, retainData.baseDatabaseInstanceId ?? live.current.canonical.databaseInstanceId);
+      if (!active()) return;
+      if (foreignRecord && memory) {
+        if (!onRestore(retainData, memory, force, saved)) {
+          setRestoreConflict(true);
+          return;
+        }
+        setMessage(
+          "This tab's retained changes are restored in this app session. The other tab's recovery copy remains intact; retry ownership or explicitly discard that copy before editing.",
+        );
         return;
       }
-      setMessage(
-        "This tab's retained changes are restored in this app session. The other tab's recovery copy remains intact; retry ownership or explicitly discard that copy before editing.",
-      );
-      return;
-    }
-    try {
       const result = await writeDraftSlot(
         storage,
         key,
@@ -420,8 +434,9 @@ function TenantProfileDraftRecovery({
         );
         return;
       }
+      if (!active()) return;
       token.current = result.record;
-      if (!onRestore(retainData, memory, force)) {
+      if (!onRestore(retainData, memory, force, saved)) {
         setState({
           ready: true,
           unresolved: true,
@@ -472,7 +487,12 @@ function TenantProfileDraftRecovery({
       const discardingForeign =
         state.record !== null && state.record.ownerId !== ownerId;
       if (discardingForeign && ownMemory && memoryData) {
-        const restored = onRestore(memoryData, ownMemory, false);
+        // This discard already succeeded; preserve our draft if its current
+        // source cannot be loaded before applying it.
+        setState({ ready: true, unresolved: true, record: null, error: null });
+        const saved = await readProfile(http, memoryData.baseDatabaseInstanceId ?? live.current.canonical.databaseInstanceId);
+        if (!active()) return;
+        const restored = onRestore(memoryData, ownMemory, false, saved);
         setState({
           ready: true,
           unresolved: !restored,
@@ -509,12 +529,16 @@ function TenantProfileDraftRecovery({
       {!state.ready ? <p>Checking retained Profile changes…</p> : null}
       {state.unresolved ? (
         <>
-          <p>
-            Unfinished changes are retained for this workspace. Restore them or
-            explicitly discard that copy before editing. Another tab's recovery
-            copy is never overwritten automatically.
-          </p>
-          {retainData &&
+          {otherWorkspace ? (
+            <p>Unfinished Profile changes belong to an earlier workspace. Return to that workspace to restore them.</p>
+          ) : (
+            <p>
+              Unfinished changes are retained for this workspace. Restore them or
+              explicitly discard that copy before editing. Another tab's recovery
+              copy is never overwritten automatically.
+            </p>
+          )}
+          {!otherWorkspace && retainData &&
           (!isDirty ||
             state.record?.ownerId === ownerId ||
             memoryAtMount.current !== undefined) ? (
@@ -527,7 +551,7 @@ function TenantProfileDraftRecovery({
               Restore unfinished Profile changes
             </Button>
           ) : null}
-          {restoreConflict ? (
+          {restoreConflict && !otherWorkspace ? (
             <>
               <p>
                 Saved fields changed after this draft. Review the listed

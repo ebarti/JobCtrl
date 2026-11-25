@@ -9,6 +9,8 @@ from uuid import uuid4
 import os
 from types import SimpleNamespace
 
+from jobctrl.app.errors import ConflictError, NotFoundError
+
 from .domain import (
     ResumeError, assemble, baseline_document, canonical, compose, coverage_manifest, digest, document_lines, dto,
     mechanical_check,
@@ -386,7 +388,7 @@ class ResumesService:
             raise ResumeError("resume_requires_approved_wording")
         if revision["review_attempts"]:
             if revision["review"]["status"] == "running":
-                return self._recover_review(state, revision, operation)
+                return self._recover_review(state, revision)
             return state  # One advisory review for this immutable document, never a repair/polish loop.
         snapshot = revision["profile_snapshot"]
         attempt_id = str(uuid4())
@@ -435,21 +437,30 @@ class ResumesService:
         except Exception as exc:
             review = {"status": "timeout" if isinstance(exc, TimeoutError) else "failed", "findings": [],
                       "failure_code": exc.code if isinstance(exc, ResumeError) else "coherence_review_unavailable"}
-        review.update(reviewed_at=now(), document_sha256=digest(revision["document"]), advisory=True)
-
-        def mutate(latest, conn):
-            self._fence(snapshot, revision["requirements_snapshot"], revision["fit_snapshot"], conn)
-            target = current(latest)
-            if target["revision_id"] != revision["revision_id"]:
-                raise ResumeError("resume_version_conflict")
-            target["review"] = deepcopy(review)
-            target["review_attempts"][-1] = {**deepcopy(review), "attempt_id": attempt_id}
-        result = self.repository.change(resume_id, settlement_version, mutate, event="ResumeReviewed", operation=operation)
+        result = self._settle_review(resume_id, settlement_version, revision, attempt_id, review, operation)
         if cancelled:
             raise asyncio.CancelledError()
         return result
 
-    def _recover_review(self, state, revision, operation):
+    def _settle_review(self, resume_id, version, revision, attempt_id, review, operation):
+        def mutate(latest, conn):
+            target = current(latest)
+            if target["review"].get("attempt_id") != attempt_id:
+                raise ResumeError("resume_version_conflict")
+            if target["review"]["status"] != "running":
+                return False
+            settled = {**review, "reviewed_at": now(), "document_sha256": digest(revision["document"]),
+                       "advisory": True, "attempt_id": attempt_id}
+            try:
+                self._fence(revision["profile_snapshot"], revision["requirements_snapshot"], revision["fit_snapshot"], conn)
+            except (ConflictError, NotFoundError, ResumeError):
+                settled.update(status="failed", findings=[], failure_code="coherence_review_sources_changed")
+            target["review"] = deepcopy(settled)
+            target["review_attempts"][-1] = deepcopy(settled)
+        return self.repository.change(resume_id, version, mutate, event="ResumeReviewed", operation=operation,
+                                      revision_id=revision["revision_id"])
+
+    def _recover_review(self, state, revision):
         """Read the gateway receipt after interruption; never repeat the model call."""
         claim = revision["review"]
         receipts = self.model.receipts_for("resumes.coherence", claim["input_fingerprint"]) if (
@@ -480,17 +491,8 @@ class ResumesService:
             review = {"status": "failed", "findings": [], "failure_code": "coherence_review_interrupted",
                       "receipt_id": receipts[0]["receipt_id"] if receipts else None,
                       "provider_outcome": receipts[0]["status"] if receipts else "not_recorded"}
-        review.update(reviewed_at=now(), document_sha256=digest(revision["document"]), advisory=True,
-                      recovered=True, attempt_id=claim["attempt_id"])
-
-        def mutate(latest, conn):
-            target = current(latest)
-            if target["revision_id"] != revision["revision_id"] or target["review"]["status"] != "running":
-                raise ResumeError("resume_version_conflict")
-            target["review"] = deepcopy(review)
-            target["review_attempts"][-1] = deepcopy(review)
-        return self.repository.change(state["resume_id"], state["version"], mutate,
-                                      event="ResumeReviewed", operation=operation)
+        return self._settle_review(state["resume_id"], state["version"], revision, claim["attempt_id"],
+                                   {**review, "recovered": True}, claim.get("operation"))
 
     def render(self, resume_id, *, expected_version, operation_id=None, cancelled=lambda: False):
         operation = self._operation(operation_id, {"action": "render", "resume_id": resume_id,
@@ -523,13 +525,12 @@ class ResumesService:
                 raise ResumeError("resume_action_cancelled")
             self._fence(snapshot, revision["requirements_snapshot"], revision["fit_snapshot"], conn)
             target = current(latest)
-            if target["revision_id"] != revision["revision_id"]:
-                raise ResumeError("resume_version_conflict")
             target["render_attempts"].append(attempt)
             if artifact:
                 target["renders"].append(artifact)
         try:
-            return self.repository.change(resume_id, expected_version, mutate, event="ResumeRendered", operation=operation)
+            return self.repository.change(resume_id, expected_version, mutate, event="ResumeRendered", operation=operation,
+                                          revision_id=revision["revision_id"])
         except Exception:
             if artifact is not None:
                 self.repository.abandon_file_intent(artifact["artifact_id"])

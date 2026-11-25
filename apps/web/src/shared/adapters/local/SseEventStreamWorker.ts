@@ -1,13 +1,15 @@
 import type { EventStreamStatus } from "../../ports/EventStreamPort.js";
+import { cursorDatabase, isStreamCursor } from "./sseCursor.js";
 
 export type SharedStreamCommand =
-  | { readonly type: "subscribe"; readonly url: string }
+  | { readonly type: "subscribe"; readonly url: string; readonly cursor: string | null }
   | { readonly type: "ping" }
   | { readonly type: "unsubscribe" };
 
 export type SharedStreamMessage =
   | { readonly type: "status"; readonly status: EventStreamStatus }
-  | { readonly type: "frame"; readonly data: string }
+  | { readonly type: "cursor"; readonly cursor: string }
+  | { readonly type: "frame"; readonly data: string; readonly cursor: string }
   | { readonly type: "heartbeat" }
   | { readonly type: "expired" }
   | { readonly type: "unsupported" }
@@ -75,34 +77,53 @@ function open(): void {
   }
   source = next;
   setStatus("connecting");
-  next.addEventListener("open", () => { if (source === next && !workspaceChanged) setStatus("open"); });
-  next.addEventListener("error", (event) => {
+  next.addEventListener("error", () => {
     if (source !== next || workspaceChanged) return;
-    const data: unknown = (event as MessageEvent<unknown>).data;
-    if (typeof data === "string") {
-      try {
-        const value: unknown = JSON.parse(data);
-        if (value && typeof value === "object" && "code" in value && value.code === "event_stream_workspace_changed") {
-          changedWorkspace(); return;
-        }
-      } catch { /* A normal network error has no domain payload. */ }
-    }
-    // Keep this EventSource: its own reconnect retains Last-Event-ID.
     setStatus("closed");
+    // A fatal HTTP response closes EventSource permanently. The page retries
+    // the shared transport; an ordinary disconnect keeps native cursor replay.
+    if (next.readyState === EventSource.CLOSED) {
+      source = null;
+      broadcast({ type: "transport_error" });
+    }
   });
   next.addEventListener("workspace_changed", () => { if (source === next) changedWorkspace(); });
+  next.addEventListener("stream_cursor", (event: MessageEvent<unknown>) => {
+    if (source !== next || workspaceChanged) return;
+    if (rememberCursor(event.lastEventId)) {
+      broadcast({ type: "cursor", cursor: event.lastEventId });
+      setStatus("open");
+    }
+  });
   next.addEventListener("message", (event: MessageEvent<unknown>) => {
     if (source !== next || workspaceChanged) return;
-    if (event.lastEventId && /^\d+$/.test(event.lastEventId)) lastEventId = event.lastEventId;
     // Domain schema validation remains in every page's adapter subscription.
-    if (typeof event.data === "string") broadcast({ type: "frame", data: event.data });
-    else broadcast({ type: "transport_error" });
+    if (rememberCursor(event.lastEventId) && typeof event.data === "string") {
+      broadcast({ type: "frame", data: event.data, cursor: event.lastEventId });
+      setStatus("open");
+    }
   });
 }
 
-function subscribe(port: MessagePort, url: string): void {
+function rememberCursor(cursor: string): boolean {
+  if (!isStreamCursor(cursor)) { broadcast({ type: "transport_error" }); return false; }
+  const expectedDatabase = lastEventId === null ? undefined : cursorDatabase(lastEventId);
+  if (expectedDatabase && expectedDatabase !== cursorDatabase(cursor)) {
+    changedWorkspace();
+    return false;
+  }
+  lastEventId = cursor;
+  return true;
+}
+
+function subscribe(port: MessagePort, url: string, cursor: string | null): void {
   if (target !== null && target !== url) { post(port, { type: "transport_error" }); disconnect(port); return; }
+  const expectedDatabase = cursor === null ? undefined : cursorDatabase(cursor);
+  if (expectedDatabase && lastEventId !== null && expectedDatabase !== cursorDatabase(lastEventId)) {
+    post(port, { type: "status", status: "workspace_changed" }); disconnect(port); return;
+  }
   target = url;
+  lastEventId ??= cursor;
   subscribers.set(port, Date.now());
   if (sweep === undefined) sweep = setInterval(() => {
     const oldest = Date.now() - LEASE_TIMEOUT_MS;
@@ -111,6 +132,7 @@ function subscribe(port: MessagePort, url: string): void {
     }
   }, LEASE_CHECK_MS);
   open();
+  if (lastEventId !== null) post(port, { type: "cursor", cursor: lastEventId });
   post(port, { type: "status", status });
 }
 
@@ -123,7 +145,9 @@ scope.onconnect = (event) => {
     if (!command || typeof command !== "object" || !("type" in command)) {
       post(port, { type: "transport_error" }); disconnect(port); return;
     }
-    if (command.type === "subscribe" && "url" in command && typeof command.url === "string") subscribe(port, command.url);
+    if (command.type === "subscribe" && "url" in command && typeof command.url === "string"
+      && "cursor" in command && (command.cursor === null || (typeof command.cursor === "string" && isStreamCursor(command.cursor))))
+      subscribe(port, command.url, command.cursor);
     else if (command.type === "unsubscribe") disconnect(port);
     else if (command.type === "ping" && subscribers.has(port)) {
       subscribers.set(port, Date.now());

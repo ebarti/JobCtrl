@@ -94,7 +94,7 @@ test("search assesses the exact saved LinkedIn detail after a later posting is t
   } }));
 });
 
-test("saved search sends literal roles and stops buffered details after a listing 429", async ({ api, app, page }) => {
+test("saved search checks each LinkedIn page before requesting the next with literal roles", async ({ api, app, page }) => {
   const { profile, library } = await createBaseline(api, { ...baseline, experience: {
     target_role: "Synthetic systems engineer", target_functions: "Synthetic workflow reliability",
     target_locations: "Madrid", target_work_models: "remote",
@@ -119,23 +119,27 @@ test("saved search sends literal roles and stops buffered details after a listin
   expect(detail.path).toBe("/jobstreaming/linkedin/jobs/view/1237");
   expect(detailStart - listingStart).toBeGreaterThan(3500);
   detail.raw('<div class="show-more-less-html__markup"><p>Maintain durable workflow recovery.</p></div>');
-  const role = await modelCall(app, "discovery.role_target_match");
+  await serveRoleTarget(app, "match");
+  const secondDetail = await app.external.next();
+  expect(secondDetail.path).toBe("/jobstreaming/linkedin/jobs/view/1238");
+  secondDetail.raw('<div class="show-more-less-html__markup"><p>Review supplier contracts.</p></div>');
+  await serveRoleTarget(app, "mismatch");
   const continuation = await app.external.next();
   expect(new URL(continuation.path, "http://localhost").searchParams.get("start")).toBe("10");
   expect(performance.now() - detailStart).toBeGreaterThan(3500);
   continuation.raw("Too many requests", { status: 429 });
   const throttles = () => json<{ events: { payload: unknown }[] }>(api, "get", `/v1/events?aggregateId=${started.runId}&type=DiscoverySourceRateLimited`);
   await expect.poll(async () => (await throttles()).events.map((event) => event.payload)).toEqual([expect.objectContaining({
-    phase: "listing", responses: { listing: 2, detail: 1, other: 0 }, retryAfterSeconds: null,
+    phase: "listing", responses: { listing: 2, detail: 2, other: 0 }, retryAfterSeconds: null,
   })]);
-  role.reply({ verdict: "match", citations: citeSources(role, ["target:roles", "posting:description"]), rationale: "The cited posting matches the authored role." });
   await serveSavedAssessment(app, library);
   expect((await completed(api, started.runId)).result).toMatchObject({ status: "partial", newJobs: 1,
+    roleTargetObservations: { match: 1, mismatch: 1 },
     failures: [{ code: "discovery_provider_rate_limited" }], preparation: { assessedJobs: 1 } });
   const plan = await json<{ accepted: { queries: unknown[]; provenance: unknown } }>(api, "get", "/v1/discovery/target-search");
   expect(plan.accepted).toMatchObject({ profileRevision: profile.profileVersion, provenance: null,
     queries: [{ query: "Synthetic systems engineer", authority: "literal_authored_target" }] });
-  expect(app.external.calls.filter((call) => call.path.startsWith("/jobstreaming/linkedin"))).toHaveLength(3);
+  expect(app.external.calls.filter((call) => call.path.startsWith("/jobstreaming/linkedin"))).toHaveLength(4);
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "discovery.query_plan")).toHaveLength(0);
 });
 

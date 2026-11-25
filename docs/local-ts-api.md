@@ -23,7 +23,7 @@ there is no Fastify business authority or TypeScript/Python JSON-RPC hop.
 | `GET /v1/action-runs/summary` | Recorded status counts, total, active and pending cancellation counts. |
 | `GET /v1/action-runs/by-idempotency-key?action=...` | Exact `Idempotency-Key` header lookup without returning its request payload; a missing row is only an observation at read time. |
 | `POST /v1/action-runs/{runId}/cancel` | Empty object. Records Stop for the selected run and returns its current receipt. A 202 means delivery is pending. A 200 returns an acknowledged request or a terminal receipt. |
-| `GET /v1/events/stream` | Committed SSE, replay cursors and optional ordinary-message envelopes. |
+| `GET /v1/events/stream` | Committed SSE, replay cursors, optional database-scoped resume IDs and ordinary-message envelopes. |
 | `GET /v1/activity` or `/v1/events` | Newest-first `{events,nextCursor,hasMore}`; optional `before` event ID and bounded `limit`. |
 | `GET /v1/activity/{eventId}` | One committed event envelope or 404. |
 

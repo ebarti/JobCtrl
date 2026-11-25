@@ -345,6 +345,10 @@ class DiscoveryService:
             return {**binding, "decision": None, "reason": "posting_description_missing"}
         return {**binding, "decision": reviewed}
 
+    def check_search_admission(self, run_id, payload, connection):
+        if "resumeFromRunId" in payload:
+            self.repository.continuation_request(payload, connection)
+
     async def search(self, context, payload, *, durable=True):
         run_id = context.run_id
         saved = self.repository.run_request(run_id)
@@ -352,6 +356,10 @@ class DiscoveryService:
             if saved.get("command_hash") != fingerprint(payload):
                 raise ConflictError("A restarted Discovery action must retain its original command.")
             request = saved
+        elif "resumeFromRunId" in payload:
+            if not durable:
+                raise AppError("invalid_discovery_resume", "Continue the paused search through the search action.")
+            request = self.repository.continuation_request(payload)
         else:
             settings = self.get_settings()["settings"]
             # Explicit action-scoped controls are frozen with the run, never saved
@@ -414,6 +422,9 @@ class DiscoveryService:
             unit["sites"] = [board for board in unit["sites"] if board in self.repository.boards
                              and board_states.get("jobstreaming:" + board, "active") in {"active", "experimental"}]
         units = [unit for unit in units if unit["sites"]]
+        if "resumeUnits" in request:
+            units = [unit for unit in units if unit["unit_id"] in request["resumeUnits"]]
+            execution_settings["_resumeUnits"] = request["resumeUnits"]
         lease = self.repository.claim_run(run_id, request)
         if lease["completed"]:
             return lease["result"]

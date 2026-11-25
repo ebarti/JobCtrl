@@ -155,7 +155,11 @@ function ResumeWorkspace({ latest, onDirtyChange, onProfileChanged, managedPrepa
     {revision.review.findings.length ? <ul>{revision.review.findings.map((finding, index) => <li key={index}>{finding.detail}</li>)}</ul> : null}
     {managedPreparation && revision.mechanical.status === "valid" && !rendered ? <p role="status">Select Prepare resume above to carry this saved revision through its checks and rendering.</p> : null}
     <details open={!managedPreparation}><summary>Document validation and recovery tools</summary>
-      {revision.mode !== "baseline_copy" ? <><Button type="button" variant="outline" disabled={!tailoring.available || busy || dirty || latestChanged || revision.mechanical.status !== "valid" || revision.review.status !== "pending"} onClick={() => run("review", {})}>Review coherence</Button>{!tailoring.available ? <p>{tailoring.reason}</p> : null}</> : null}
+      {revision.mode !== "baseline_copy" && revision.review.status === "running" ? (
+        <Button type="button" variant="outline" disabled={busy || dirty || latestChanged} onClick={() => run("review", {})}>Check coherence review</Button>
+      ) : revision.mode !== "baseline_copy" ? (
+        <><Button type="button" variant="outline" disabled={!tailoring.available || busy || dirty || latestChanged || revision.mechanical.status !== "valid" || revision.review.status !== "pending"} onClick={() => run("review", {})}>Review coherence</Button>{!tailoring.available ? <p>{tailoring.reason}</p> : null}</>
+      ) : null}
       <Button type="button" variant="outline" disabled={busy || dirty || latestChanged || revision.mechanical.status !== "valid"} onClick={() => run("render", {})}>Render resume</Button>
     </details>
     <div className="toolbar">

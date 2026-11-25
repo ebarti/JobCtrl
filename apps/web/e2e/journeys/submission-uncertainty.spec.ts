@@ -28,6 +28,55 @@ type Application = {
   runs: { runId: string; status: string }[];
 };
 
+test("Apply restores the exact failed rehearsal after a browser reload", async ({ api, app, page }) => {
+  const { profile } = await createBaseline(api);
+  const posting = await createPosting(api, "rehearsal-reload");
+  const peer = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
+    url: "https://example.com/jobs/rehearsal-reload-peer",
+    title: "Synthetic Unrelated Engineer",
+    company: "Synthetic Peer Company",
+    description: "Maintain an independent application queue.",
+  });
+  await acceptBaseline(api, posting.job_id, profile.profileVersion);
+  await json(api, "post", `/v1/jobs/${posting.job_id}/application/preparation`, {
+    expectedVersion: 0,
+    idempotencyKey: "prepare-email-for-rehearsal-reload",
+    mode: "email",
+    recipient: "hiring@example.com",
+    subject: "Synthetic rehearsal subject",
+    body: "Synthetic rehearsal email.",
+  });
+  const route = (id: string) => `/apply-review?jobKey=${encodeURIComponent(id)}&tab=application`;
+  await page.goto(route(posting.job_id));
+  const controls = page.getByRole("region", { name: "Application execution controls", exact: true });
+  const rehearse = page.getByRole("button", { name: "Run application rehearsal", exact: true });
+  await expect(rehearse).toBeEnabled();
+
+  // The preserved payload binds the old Profile revision. A rehearsal of it
+  // must fail without submission after a legitimate change to that source.
+  await json(api, "patch", "/v1/profile", {
+    expectedProfileVersion: profile.profileVersion,
+    profile: { ...profile.profile, personal: { ...profile.profile.personal, city: "Synthetic Updated City" } },
+  });
+  const receipt = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/v1/actions/applications.rehearse" && response.request().method() === "POST");
+  await rehearse.click();
+  const admitted = await receipt;
+  expect(admitted.status()).toBe(202);
+  const { runId } = await admitted.json() as { runId: string };
+  expect(await terminal(api, runId)).toMatchObject({ status: "failed", errorCode: "application_resume_sources_changed" });
+  await expect(controls).toContainText(runId);
+  await expect(controls).toContainText("Action failed: application_resume_sources_changed");
+  await page.reload();
+  await expect(controls).toContainText(runId);
+  await expect(controls).toContainText("Action failed: application_resume_sources_changed");
+  expect(app.external.sends).toHaveLength(0);
+
+  await page.goto(route(peer.job_id));
+  await expect(controls).toBeVisible();
+  await expect(controls).not.toContainText(runId);
+});
+
 test("uncertain submission keeps one durable intent and never sends twice after a real worker restart", async ({
   api,
   app,

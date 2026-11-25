@@ -39,8 +39,10 @@ export function useDiscoveryActionRecovery(operation: "discovery.search" | "disc
         throw new Error("This request belongs to a different workspace or database. Return there to reconcile it.");
       }
       const requestId = previous?.requestId ?? requestIdentity.create();
+      const resumeFromRunId = operation === "discovery.search" && "resumeFromRunId" in body && typeof body.resumeFromRunId === "string"
+        ? body.resumeFromRunId : undefined;
       const saved = previous ?? { version: 1 as const, requestId, operation, fingerprint, ...workspace,
-        ...(sourceRevision !== undefined ? { sourceRevision } : {}) };
+        ...(sourceRevision !== undefined ? { sourceRevision } : {}), ...(resumeFromRunId ? { resumeFromRunId } : {}) };
       identity.save(saved);
       setMessage(null);
       return { ...saved, reused: Boolean(previous) };

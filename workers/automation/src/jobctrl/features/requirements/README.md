@@ -459,6 +459,12 @@ writes admit no Fit followup.
 | `POST /v1/requirements/{requirement_id}/revisions` | Versioned source-bound canonical correction. Proposed shape is the extracted requirement plus exact spans. |
 | `requirements.consolidate`, `requirements.refresh`, `requirements.correct_binding`, `requirements.correct_occurrences`, `requirements.revise` | The same actions through the durable dispatcher, each versioned `requirements-v2:requirements-capability-demand-v2:requirements-capability-demand-partition-v6`. Durable consolidation uses the run identity and accepts `expected_catalog_revision`. |
 
+Only one durable consolidation can be pending or active per workspace. The
+admission transaction refuses a mismatched catalog revision with
+`requirements_consolidation_catalog_changed` and the current revision. A
+previously admitted request keeps its exact identity and still checks the
+catalog before inference and publication.
+
 Public owner methods also include nullable `find_job_requirements`, required
 `get_job_requirements`, exact/historical `get_requirement`, full
 `catalog_snapshot`, `assert_current_catalog`, `demand_catalog_snapshot`,

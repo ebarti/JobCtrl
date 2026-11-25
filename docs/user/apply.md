@@ -67,6 +67,9 @@ The target workflow is:
    approved email may be sent through JobCtrl's owned Gmail path, subject to
    current safety, eligibility and repeat-application checks.
 
+Reopening Application review restores the saved action status for the job and
+the current payload, including a failed rehearsal and its recorded error.
+
 Targeted work, bounded approved batches and an explicitly enabled standing
 schedule use the same application authority. A score alone does not authorize a
 submission. A user-started dry run does not itself approve a live submission.

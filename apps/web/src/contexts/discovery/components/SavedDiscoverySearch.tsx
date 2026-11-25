@@ -16,7 +16,7 @@ export function SavedDiscoverySearch({ profileVersion, workspaceIdentity, disabl
   const controller = useDiscoverySearchController({ profileVersion, workspaceIdentity, disabledReason, savedPreferences: true });
   const feedback: Parameters<DiscoverySearchFeedbackRenderer>[1] = (progress) => <DiscoverySearchFeedback controller={controller} spendingAction={spendingAction} assessmentProgress={progress} />;
   return children({
-    action: <Button type="button" disabled={!controller.canStart} onClick={() => controller.launch()}>{controller.isPending ? "Queueing search…" : controller.recovery.record && controller.recovery.canRetry ? "Retry the same request" : "Start search"}</Button>,
+    action: <Button type="button" disabled={!controller.canStart} onClick={() => controller.launch()}>{controller.isPending ? "Queueing search…" : controller.recovery.record && controller.recovery.canRetry && !controller.recoveringContinuation ? "Retry the same request" : "Start search"}</Button>,
     feedback: renderFeedback ? renderFeedback(controller, feedback) : feedback(),
   });
 }

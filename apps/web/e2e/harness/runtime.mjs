@@ -402,6 +402,7 @@ export async function applicationStack(
   let worker;
   let server;
   let serverGeneration = 0;
+  let replacementWorkspace;
   let upgraded = false;
   let workerGeneration = 0;
   let recoveryDebuggerEnabled = fitRecoveryDebugger;
@@ -409,7 +410,7 @@ export async function applicationStack(
   const recoveryPaused = path.join(directory, "fit-recovery-paused.json");
   const cohortArm = path.join(directory, "cohort-boundary-arm");
   const cohortPaused = path.join(directory, "cohort-boundary-paused.json");
-  async function startWorker(workerFeatures) {
+  async function startWorker(workerFeatures, selected = workspace, selectedEnv = env) {
     worker = await launch(
       `worker-${++workerGeneration}`,
       pythonExecutable,
@@ -418,28 +419,42 @@ export async function applicationStack(
           : cohortBoundaryDebugger ? [path.join(repo, "apps/web/e2e/harness/cohort-boundary-debugger.py"), cohortArm, cohortPaused]
           : ["-m", "jobctrl.app.worker"]),
         "--workspace",
-        workspace,
+        selected,
         "--temporal-address",
         temporalAddress,
       ],
-      { directory, env: workerFeatures === undefined ? env : { ...env, JOBCTRL_FEATURES: workerFeatures } },
+      { directory, env: workerFeatures === undefined ? selectedEnv : { ...selectedEnv, JOBCTRL_FEATURES: workerFeatures } },
     );
     services.push(worker);
     return worker.pid;
   }
-  async function startServer() {
+  async function startServer(selected = workspace, selectedEnv = env) {
     server = await launch(
       ++serverGeneration === 1 ? "api" : `api-${serverGeneration}`,
       pythonExecutable,
       ["-m", "jobctrl.app.server", "--host", "127.0.0.1", "--port", env.JOBCTRL_API_PORT,
-        "--workspace", workspace, ...(preflight ? [] : ["--static-dir", staticDir])],
-      { directory, env },
+        "--workspace", selected, ...(preflight ? [] : ["--static-dir", staticDir])],
+      { directory, env: selectedEnv },
     );
     services.push(server);
     await waitFor(async () => {
       server.assertRunning();
       return (await fetch(`${baseURL}/v1/health`, { signal: AbortSignal.timeout(2_000) })).ok;
     }, "Python HTTP health");
+  }
+  async function disableCompensationAutomation() {
+    // Isolate unrelated background work through the ordinary Settings boundary.
+    const settings = await (await fetch(`${baseURL}/v1/settings`)).json();
+    const configured = await fetch(`${baseURL}/v1/settings`, {
+      method: "PATCH",
+      headers: { Origin: baseURL, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        expectedRevision: settings.revision,
+        compensationAutomationEnabled: false,
+      }),
+    });
+    if (!configured.ok)
+      throw new Error(`Could not isolate compensation automation through Settings (${configured.status})`);
   }
   try {
     if (sourceRevision) {
@@ -520,23 +535,7 @@ export async function applicationStack(
         });
         return (await health.json()).worker?.healthy === true;
       }, "live Python worker registration");
-      // The ordinary user setting keeps unrelated background compensation work
-      // from consuming another journey's explicit external-model request queue.
-      // Automation itself has a separate journey which enables the setting.
-      const settingsResponse = await fetch(`${baseURL}/v1/settings`);
-      const settings = await settingsResponse.json();
-      const configured = await fetch(`${baseURL}/v1/settings`, {
-        method: "PATCH",
-        headers: { Origin: baseURL, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          expectedRevision: settings.revision,
-          compensationAutomationEnabled: false,
-        }),
-      });
-      if (!configured.ok)
-        throw new Error(
-          `Could not isolate compensation automation through Settings (${configured.status})`,
-        );
+      await disableCompensationAutomation();
     }
     return {
       baseURL,
@@ -559,6 +558,38 @@ export async function applicationStack(
           return (await fetch(`${url}/v1/health`)).ok;
         }, "alternate workspace API health");
         return url;
+      },
+      async restartApi({ freshWorkspace = false } = {}) {
+        if (replacementWorkspace || preflight || sourceRevision)
+          throw new Error("Only the original ordinary synthetic workspace can restart its API.");
+        let selected = workspace;
+        let selectedEnv = env;
+        if (freshWorkspace) {
+          selected = await mkdtemp(path.join(directory, "workspace-replacement-"));
+          replacementWorkspace = { path: selected, identity: await lstat(selected, { bigint: true }) };
+          await writeFile(path.join(selected, ".jobctrl-e2e-owned.json"),
+            JSON.stringify({ version: 1, workspace: selected, token }), { flag: "wx", mode: 0o600 });
+          selectedEnv = { ...env, JOBCTRL_DIR: selected, JOBCTRL_TEMPORAL_TASK_QUEUE: `e2e-${randomUUID()}` };
+          if (env.JOBCTRL_E2E_CREDENTIAL_HELPER) {
+            const helper = path.join(selected, "credential-helper");
+            await writeFile(helper, await readFile(env.JOBCTRL_E2E_CREDENTIAL_HELPER), { flag: "wx", mode: 0o700 });
+            selectedEnv.JOBCTRL_E2E_CREDENTIAL_HELPER = helper;
+          }
+        }
+        const previous = server;
+        previous.crash();
+        await previous.stop();
+        services.splice(services.indexOf(previous), 1);
+        await startServer(selected, selectedEnv);
+        if (freshWorkspace) {
+          await startWorker(undefined, selected, selectedEnv);
+          await waitFor(async () => {
+            worker.assertRunning();
+            const health = await fetch(`${baseURL}/v1/health`, { signal: AbortSignal.timeout(2_000) });
+            return (await health.json()).worker?.healthy === true;
+          }, "replacement workspace worker registration");
+          await disableCompensationAutomation();
+        }
       },
       async armCohortBoundaryPause() {
         if (!cohortBoundaryDebugger) throw new Error("The cohort guard debugger is not enabled.");
@@ -896,6 +927,7 @@ print(json.dumps({"adapters": adapters, "receipts": receipts, "receiptKeys": rec
         // excluded from artifact upload, including its private native HOME.
         if (!retainState) {
           await removeAllocated(workspace, workspaceIdentity);
+          if (replacementWorkspace) await removeAllocated(replacementWorkspace.path, replacementWorkspace.identity);
           await removeAllocated(home, homeIdentity);
         }
         if (problems.length)

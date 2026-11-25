@@ -122,6 +122,8 @@ class PreparationService:
         self.checkpoints.admit_run(run_id, request, connection)
 
     def admit_search(self, run_id, payload, settings, connection):
+        if self.discovery is not None:
+            self.discovery.check_search_admission(run_id, payload, connection)
         self.admit(run_id, {"recipe": "search", "scope": "pending", "discovery": payload, "limit": SEARCH_JOB_LIMIT},
                    settings, connection)
 

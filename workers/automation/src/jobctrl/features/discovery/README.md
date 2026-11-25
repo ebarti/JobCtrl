@@ -57,7 +57,7 @@ escape hatch.
   Only a committed new Jobs identity spends a slot. On restart, intake receipts
   restore each query's count and the provider checkpoint restores its position.
   Backfill can revisit a partial page, preserving its acknowledged receipts.
-  A terminal SDK rate limit defers that board's remaining units for the run.
+  An exhausted SDK retry defers that board's remaining units for the run.
   A streamed error and a directly raised detail error use the same safe
   rate-limit diagnostic. The run list explains older generic messages from
   their recorded board rate-limit code, including after an upgrade.
@@ -169,4 +169,15 @@ Saved searches freeze literal role titles and location/work-arrangement filters.
 Model admission and accounting apply to source-bound role matching and Fit.
 LinkedIn listings and targeted posting details share four-second pacing per run.
 A missing or over-cap retry delay on HTTP 429 stops pending details before
-the stream delivers its terminal error.
+the stream delivers its error. For saved-role searches the adapter waits for
+the durable page acknowledgement before requesting another listing page.
+Targeted detail reads use the shared pacing deadline and allow two retries
+for an explicit in-window server delay.
+
+An explicit `discovery.search` with only `resumeFromRunId` continues unfinished
+LinkedIn units after a rate limit. Admission verifies the prior outcome, source
+state and server-supplied cooldown. The new run freezes the original criteria
+and remaining budget. Each interrupted unit seeds its own SDK checkpoint with
+the acknowledged cursor and seen keys, including excluded postings. A transactional
+parent-to-child link prevents two successors from spending the same remaining
+budget. Completed jobs retain their original assessment history.

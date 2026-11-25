@@ -44,7 +44,10 @@ over `after`; `after=latest` starts after the current latest event when no
 header is supplied. A future cursor is rejected. `envelope=1` uses `message`
 as the SSE event name while retaining the typed DTO. The stream sends
 connection and heartbeat comments and emits `workspace_changed` before closing
-if its workspace changes. Check the implementation for exact error codes.
+if its workspace changes. The browser opts into database-scoped resume IDs
+with `cursor=workspace`. This mode sends a `stream_cursor` control frame on
+open and emits `workspace_changed` before replay if the database identity or
+cursor is unavailable. The JSON envelope's numeric event position is unchanged.
 
 The shell owns one connection; feature handlers invalidate or refresh their own
 queries. SSE carries bounded invalidations, not source truth or permission to

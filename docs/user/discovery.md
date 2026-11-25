@@ -83,13 +83,14 @@ The run's `newJobs` counts newly created job identities. `observedJobs` includes
 accepted observations of previously saved jobs. `roleTargetObservations` shows
 the number of role checks by verdict and the count missing a posting description.
 Filtered listings are recorded separately from observations admitted to Jobs.
+During a saved-role search, JobCtrl finishes checking each page of LinkedIn
+keyword matches before requesting the next page.
 During a saved-role LinkedIn search, an exact match to a saved posting is
 recorded as a listing observation. The search keeps the saved revision and
 skips the detail request and role check. Use the job's manual checks to refresh it.
 
-Search may make model-backed query preparation only after the explicit launch
-admits that work. Preference saves, reads, navigation and connection remedies
-start no query preparation, match refresh, scoring or resume generation.
+Saved role titles are sent to the board as written. Model-backed role checks
+begin when the search receives candidate postings.
 Remote and posting age remain valid search preferences. Each board runs with
 its own supported request and checkpoint. Indeed Remote requests retain Remote
 and apply the age cutoff locally using the provider's reported publication date;
@@ -392,6 +393,12 @@ The activity log records each LinkedIn HTTP 429 seen during search. The event
 shows when it occurred, whether a listing or posting-detail request was
 throttled, how many responses the worker had received and how long LinkedIn
 asked it to wait when a valid `Retry-After` was supplied.
+
+If LinkedIn pauses a search, JobCtrl can still assess the matches already saved.
+**Continue LinkedIn search** resumes with the original roles, locations and
+remaining new-job allowance. It resumes the saved page position, skips postings
+already checked on that page and honors any outstanding wait supplied by LinkedIn.
+Short waits within the worker's retry window are also supported for posting details.
 
 JobCtrl freezes the selected boards and search criteria at launch. Its worker checkpoints the provider cursor, saves an admission or exclusion receipt, and acknowledges the provider. Only a newly created job uses one place in the requested limit. Cancellation and worker recovery keep the same run identity.
 

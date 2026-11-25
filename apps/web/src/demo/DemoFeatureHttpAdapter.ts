@@ -1347,7 +1347,9 @@ export class DemoFeatureHttpAdapter {
           }
         },
       );
-      return handled({ ok: true, jobIds: ids, affected: ids.length });
+      return handled({ ok: true, jobIds: ids, affected: ids.length,
+        ...(operation === "permanentlyDeleteJobs" ? { deletionCommitted: true, cleanupPending: false, replayed: false } : {}),
+      });
     }
     if (owner === "fit" && id === "summaries" && method === "POST") {
       const ids = jobIds(body.job_ids, true);

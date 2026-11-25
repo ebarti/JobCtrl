@@ -43,7 +43,7 @@ export function DiscoveryRunsPanel({ compact = false, disabledReason, readiness,
         <form.Field name="remoteOnly">{(field) => <Field orientation="horizontal" className="search-tool-choice"><Checkbox id={compact ? "search-previous-remote" : "discovery-run-remote"} checked={field.state.value} disabled={controller.uncertain} onCheckedChange={field.handleChange} /><FieldLabel htmlFor={compact ? "search-previous-remote" : "discovery-run-remote"}>Remote only for this run</FieldLabel></Field>}</form.Field>
       </div>
       <form.Subscribe selector={(state) => state.errors}>{(errors) => errors.length ? <p role="alert">{errors.join(" ")}</p> : null}</form.Subscribe>
-      <div className="search-launch-action"><Button type="submit" disabled={!controller.canStart}>{controller.isPending ? "Queueing search…" : recovery.record && recovery.canRetry ? "Retry the same request" : compact ? "Start search" : "Run discovery"}</Button>{compact ? readiness : null}</div>
+      <div className="search-launch-action"><Button type="submit" disabled={!controller.canStart}>{controller.isPending ? "Queueing search…" : recovery.record && recovery.canRetry && !controller.recoveringContinuation ? "Retry the same request" : compact ? "Start search" : "Run discovery"}</Button>{compact ? readiness : null}</div>
     </form>
     {renderFeedback ? renderFeedback(controller, (progress) => <DiscoverySearchFeedback controller={controller} spendingAction={spendingAction} assessmentProgress={progress} />) : <DiscoverySearchFeedback controller={controller} spendingAction={spendingAction} />}
     <details className="search-run-history"><summary>Recent searches{controller.history.length ? ` (${controller.history.length})` : ""}</summary>

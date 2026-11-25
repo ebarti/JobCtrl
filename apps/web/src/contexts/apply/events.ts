@@ -9,6 +9,7 @@ export const applicationsEvents: FeatureEventHandler = {
     "ApplicationOutcomeRecorded",
     "OutcomeSuggestionDecided",
     "ScreeningAnswerUpdated",
+    "ActionQueued",
     "ActionStarted",
     "ActionCompleted",
     "ActionFailed",
@@ -29,6 +30,11 @@ export const applicationsEvents: FeatureEventHandler = {
     "SettingsUpdated",
   ],
   handle(event, invalidate) {
+    if (event.eventType === "ActionQueued") {
+      const payload = event.payload;
+      if (!payload || typeof payload !== "object" || !("action" in payload) ||
+          typeof payload.action !== "string" || !payload.action.startsWith("applications.")) return;
+    }
     invalidate(applyKeys.all(event.tenantId));
   },
 };

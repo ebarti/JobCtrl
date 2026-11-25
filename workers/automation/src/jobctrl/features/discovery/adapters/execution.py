@@ -53,6 +53,18 @@ class _LinkedInRequests:
         self.deferred = threading.Event()
         self.counts = {"listing": 0, "detail": 0, "other": 0}
 
+    def fetch_detail(self, fetch):
+        from jobstreaming.exception import RateLimitError
+
+        # The SDK retries listing pages. Its separate targeted detail operation
+        # returns the first typed error. Replay that read under the same limiter.
+        for attempt in range(3):
+            try:
+                return fetch()
+            except RateLimitError as error:
+                if attempt == 2 or error.retry_after is None or error.retry_after > self.pacing.max_retry_after_seconds:
+                    raise
+
     def send(self, unit_id, send_request, request, *args, **kwargs):
         from jobstreaming.exception import RateLimitError, StreamCancelledError, parse_retry_after
 
@@ -136,13 +148,21 @@ class DiscoveryExecutionAdapter:
             result={**((recorded or {}).get("result") or {}), "termination": "budget_exhaustion"},
         )
 
+    def _checkpoint_path(self, run_id, unit_id):
+        base = self.workspace / "discovery-checkpoints"
+        directory = base / fingerprint(run_id)
+        path = directory / (unit_id + ".sqlite3")
+        if base.is_symlink() or directory.is_symlink() or path.is_symlink() or not path.resolve().is_relative_to(self.workspace.resolve()):
+            raise AppError("discovery_checkpoint_path_unsafe", "The provider checkpoint is outside this workspace.", 409)
+        return path
+
     async def run_board_unit(self, context, lease, unit, settings, previous, turn=None):
         # Validate unsupported scope per board before touching its provider.
         for site in unit["sites"]:
             provider_scope(site, location=unit["location"], remote_only=unit["remote_only"], hours_old=unit["hours_old"])
         key = (lease["run_id"], lease["epoch"])
         stop = self._signals[key]
-        from jobstreaming import ErrorEvent, JobEvent, SearchCompleteEvent, SiteCompleteEvent
+        from jobstreaming import ErrorEvent, JobEvent, ProgressEvent, SearchCompleteEvent, SiteCompleteEvent
         from jobstreaming.checkpoint import SqliteCheckpointStore
         from jobctrl.features.discovery.adapters.jobstreaming import JobStreamingGateway, JobStreamingSearchSpec
 
@@ -161,22 +181,18 @@ class DiscoveryExecutionAdapter:
             for site in spec.sites
         ):
             raise AppError("discovery_criteria_reference_missing", "Restart this older search to bind its posting-age reference.", 409)
-        directory = self.workspace / "discovery-checkpoints" / fingerprint(lease["run_id"])
-        if (
-            (self.workspace / "discovery-checkpoints").is_symlink()
-            or directory.is_symlink()
-            or not directory.resolve().is_relative_to(self.workspace.resolve())
-        ):
-            raise AppError(
-                "discovery_checkpoint_path_unsafe", "The provider checkpoint path is not owned by this workspace.", 409
-            )
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        checkpoint_path = directory / (unit["unit_id"] + ".sqlite3")
-        if checkpoint_path.is_symlink():
-            raise AppError(
-                "discovery_checkpoint_path_unsafe", "The provider checkpoint file is not owned by this workspace.", 409
-            )
+        checkpoint_path = self._checkpoint_path(lease["run_id"], unit["unit_id"])
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         store = SqliteCheckpointStore(checkpoint_path)
+        parent = settings.get("_resumeUnits", {}).get(unit["unit_id"])
+        if parent and store.load() is None:
+            source = self._checkpoint_path(parent, unit["unit_id"])
+            last = SqliteCheckpointStore(source).load() if source.is_file() else None
+            if last is None:
+                raise AppError("discovery_resume_checkpoint_missing", "The saved LinkedIn search position is unavailable.", 409)
+            # Each continuation owns a fresh store. Keep its parent's exact
+            # provider cursor and all acknowledged job keys, including exclusions.
+            store.save(last.model_copy(update={"revision": 0}))
         recorded = (previous or {}).get("result") or {}
         if spec.results_per_site is None:
             for reason in recorded.get("sourceTerminations", {}).values():
@@ -195,10 +211,16 @@ class DiscoveryExecutionAdapter:
 
             gateway = JobStreamingGateway()
             registry = controlled_registry(self.workspace)
+            page_accepted = None
             if linkedin is not None:
                 registry = gateway.configure_linkedin_transport(registry, partial(linkedin.send, unit["unit_id"]))
+                if settings.get("_roleTargetPolicy") == ROLE_TARGET_POLICY:
+                    page_accepted = threading.Event()
             terminations = dict(recorded.get("sourceTerminations", {}))
-            with gateway.open_stream(spec, checkpoint_store=store, cancel_event=stop, registry=registry) as stream:
+            with gateway.open_stream(
+                spec, checkpoint_store=store, cancel_event=stop, registry=registry,
+                linkedin_page_accepted=page_accepted,
+            ) as stream:
                 completed = False
                 for event in stream:
                     self.repository.heartbeat(lease)
@@ -249,13 +271,16 @@ class DiscoveryExecutionAdapter:
                         # Saved-role admission obtains detail only after the
                         # receipt, exclusion and existing-posting checks.
                         needs_role_detail = event.site.value == "linkedin" and settings.get("_roleTargetPolicy") == ROLE_TARGET_POLICY
+                        targeted_detail = partial(gateway.fetch_detail_for_job_event, event, registry=registry)
+                        if event.site.value == "linkedin" and linkedin is not None:
+                            targeted_detail = partial(linkedin.fetch_detail, targeted_detail)
                         if not needs_role_detail and (age is None or age["accepted"]) and not posting["description"] and self._needs_detail(posting):
-                            detail = gateway.fetch_detail_for_job_event(event, registry=registry)
+                            detail = targeted_detail()
                             if detail is not None:
                                 detail_row = gateway.frame_for_job_event(event, spec, job=detail).iloc[0].to_dict()
                                 posting["description"] = str(detail_row.get("description") or "")
                         async def fetch_role_detail():
-                            detail = await asyncio.to_thread(gateway.fetch_detail_for_job_event, event, registry=registry)
+                            detail = await asyncio.to_thread(targeted_detail)
                             if detail is not None and detail.job_url == event.job.job_url:
                                 return detail.description
                             return None
@@ -326,6 +351,8 @@ class DiscoveryExecutionAdapter:
                         completed = event.completed
                     # Jobs/filtered receipts committed before provider ack.
                     stream.ack(event)
+                    if page_accepted is not None and isinstance(event, ProgressEvent) and event.site.value == "linkedin":
+                        page_accepted.set()
                 if not completed:
                     raise AppError("discovery_provider_incomplete", "The provider search has not completed.", 502)
                 if spec.results_per_site is None and any(terminations.get(site) != "source_exhausted" for site in spec.sites):

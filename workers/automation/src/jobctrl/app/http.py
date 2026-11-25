@@ -202,21 +202,48 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
         return JSONResponse(run, status_code=202 if run.get("cancellationDelivery") == "pending" else 200)
 
     async def stream(request):
+        scoped = request.query_params.get("cursor") == "workspace"
+        database_id = runtime.database.instance_id
         cursor = request.headers.get("last-event-id", request.query_params.get("after", "0"))
-        if cursor == "latest" and "last-event-id" not in request.headers:
-            cursor = str(runtime.events.latest_id())
-        if not cursor.isdecimal() or len(cursor) > 19:
+        expected_database = None
+        if scoped and ":" in cursor:
+            expected_database, cursor = cursor.split(":", 1)
+            if len(expected_database) != 64 or any(char not in "0123456789abcdef" for char in expected_database):
+                raise AppError("invalid_event_cursor", "The event cursor has an invalid database identity.")
+        latest = cursor == "latest" and expected_database is None and "last-event-id" not in request.headers
+        if not latest and (not cursor.isdecimal() or len(cursor) > 19):
             raise AppError("invalid_event_cursor", "The event cursor must be a nonnegative event ID.")
-        after = int(cursor)
-        if after > runtime.events.latest_id():
-            raise AppError("event_cursor_unavailable", "The event cursor belongs to another workspace state.", 409)
+        changed = expected_database is not None and expected_database != database_id
+        after = 0
+        if not changed:
+            try:
+                latest_id = runtime.events.latest_id()
+            except AppError as error:
+                if not scoped or error.code != "workspace_changed":
+                    raise
+                changed = True
+            else:
+                after = latest_id if latest else int(cursor)
+                if after > latest_id:
+                    if not scoped:
+                        raise AppError("event_cursor_unavailable", "The event cursor belongs to another workspace state.", 409)
+                    changed = True
         envelope = request.query_params.get("envelope") == "1"
         if getattr(request.state, "original_method", None) == "HEAD":
             return Response(media_type="text/event-stream", headers={"Cache-Control": "no-store"})
 
+        workspace_changed = 'event: workspace_changed\ndata: {"code":"workspace_changed"}\n\n'
+        cursor_prefix = f"{database_id}:" if scoped else ""
+
         async def frames():
             nonlocal after
+            if changed:
+                yield workspace_changed
+                return
             yield ": connected\n\n"
+            if scoped:
+                # Establish the native resume cursor even if this workspace is idle.
+                yield f"id: {cursor_prefix}{after}\nevent: stream_cursor\ndata: {{}}\n\n"
             heartbeat_at = time.monotonic()
             while not await request.is_disconnected():
                 try:
@@ -224,12 +251,12 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
                 except AppError as error:
                     if error.code != "workspace_changed":
                         raise
-                    yield "event: workspace_changed\ndata: {\"code\":\"workspace_changed\"}\n\n"
+                    yield workspace_changed
                     return
                 for event in rows:
                     after = int(event["eventId"])
                     kind = "message" if envelope else event["type"]
-                    yield f"id: {after}\nevent: {kind}\ndata: {json.dumps(event, separators=(',', ':'))}\n\n"
+                    yield f"id: {cursor_prefix}{after}\nevent: {kind}\ndata: {json.dumps(event, separators=(',', ':'))}\n\n"
                 if time.monotonic() - heartbeat_at >= 15:
                     yield ": heartbeat\n\n"
                     heartbeat_at = time.monotonic()

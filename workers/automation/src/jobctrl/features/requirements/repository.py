@@ -175,6 +175,12 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
             "created_at": row["created_at"],
         }
 
+    def catalog_revision(self, connection):
+        row = connection.execute("SELECT revision FROM requirements_catalog WHERE singleton=1").fetchone()
+        if row is None:
+            raise RequirementError("catalog_snapshot_invalid")
+        return int(row[0])
+
     def catalog_snapshot(self, connection=None):
         if connection is None:
             with self.read_session() as connection:
@@ -183,16 +189,16 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
         # A caller's existing transaction can bind this inventory to its other
         # public source reads and eventual publication guard.
         # A repairable FTS index is never the semantic source inventory.
-        meta = connection.execute("SELECT revision FROM requirements_catalog WHERE singleton=1").fetchone()
+        revision = self.catalog_revision(connection)
         rows = connection.execute(
             "SELECT h.requirement_id,h.revision,m.meaning_json,m.provenance_json,m.created_at "
             "FROM requirements_heads h LEFT JOIN requirements_meanings m "
             "ON m.requirement_id=h.requirement_id AND m.revision=h.revision "
             "WHERE NOT EXISTS(SELECT 1 FROM requirements_aliases a WHERE a.requirement_id=h.requirement_id) ORDER BY h.requirement_id"
         ).fetchall()
-        if meta is None or any(row["meaning_json"] is None for row in rows):
+        if any(row["meaning_json"] is None for row in rows):
             raise RequirementError("catalog_snapshot_invalid")
-        return int(meta[0]), [meaning for row in rows if current_contract(meaning := self._meaning(row))]
+        return revision, [meaning for row in rows if current_contract(meaning := self._meaning(row))]
 
     def model_call(self, input_fingerprint):
         with self.database.connect() as connection:

@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Page, Request } from "@playwright/test";
 
 import { test, expect, json } from "../harness/fixtures.js";
 import { sharedEventStreamTargets, sharedWorkerEventSources } from "../harness/shared-event-stream.js";
@@ -24,7 +24,7 @@ test("more than six Jobs tabs share one upstream and recover peer updates after 
     await expect.poll(async () => (await targets()).length, { message: "eight pages use one shared browser worker" }).toBe(1);
     const original = (await targets())[0]!;
     await expect.poll(async () => sharedWorkerEventSources(browser, original.targetId), { message: "one real open native EventSource" })
-      .toEqual([{ url: `${app.baseURL}/v1/events/stream?tenantId=local&envelope=1&after=latest`, readyState: 1 }]);
+      .toEqual([{ url: `${app.baseURL}/v1/events/stream?tenantId=local&envelope=1&after=latest&cursor=workspace`, readyState: 1 }]);
 
     const writer = pages[7]!;
     await writer.locator("summary").filter({ hasText: /^Add a job by URL or text$/ }).click();
@@ -79,5 +79,92 @@ test("more than six Jobs tabs share one upstream and recover peer updates after 
     }, { message: "the last page unsubscribe closes the native upstream" }).toBe(0);
   } finally {
     await Promise.all(pages.filter((tab) => !tab.isClosed()).map((tab) => tab.close()));
+  }
+});
+
+test("Jobs tabs reconnect to the same database and require reload when the workspace changes at the same URL", async ({
+  page, context, api, app,
+}) => {
+  const peer = await context.newPage();
+  const health = () => json<{ databaseInstanceId: string }>(api, "get", "/v1/health");
+  const jobs = () => json<{ total: number }>(api, "get", "/v1/jobs");
+  const job = (tab: Page, title: string) => tab.getByRole("table", { name: "Jobs table", exact: true })
+    .getByRole("link", { name: title, exact: true });
+  const capture = (suffix: string, title: string) => json(api, "post", "/v1/jobs/capture", {
+    url: `https://example.com/jobs/${suffix}`, title, company: "Synthetic Stream Restart Company",
+    description: "Verify canonical jobs follow the selected workspace.",
+  });
+  // Hold unrelated page reads through the intentional listener gap. The real
+  // EventSource is left free to disconnect from and reconnect to the real API.
+  const jobsReads = new Set(["/v1/health", "/v1/preparation/runs", "/v1/jobs/query", "/v1/jobs",
+    "/v1/jobs/url-imports", "/v1/digest"]);
+  const inFlightReads = new Set<Request>();
+  let releaseReads: () => void;
+  let readGate: Promise<void> | undefined;
+  const finishRead = (request: Request) => inFlightReads.delete(request);
+  context.on("requestfinished", finishRead);
+  context.on("requestfailed", finishRead);
+  await context.route((url) => url.origin === app.baseURL && jobsReads.has(url.pathname), async (route) => {
+    if (route.request().method() === "GET") {
+      if (readGate) await readGate;
+      inFlightReads.add(route.request());
+    }
+    await route.continue();
+  });
+  const restart = async (freshWorkspace = false) => {
+    readGate = new Promise<void>((resolve) => { releaseReads = resolve; });
+    try {
+      await expect.poll(() => inFlightReads.size).toBe(0);
+      await app.restartApi({ freshWorkspace });
+    } finally {
+      readGate = undefined;
+      releaseReads();
+    }
+  };
+  try {
+    await Promise.all([page.goto("/jobs"), peer.goto("/jobs")]);
+    for (const tab of [page, peer]) await expect(tab.locator(".connection-pill")).toHaveText("Live");
+    const before = await health();
+    await capture("before-restart", "Synthetic Before Restart Engineer");
+    for (const tab of [page, peer]) await expect(job(tab, "Synthetic Before Restart Engineer")).toBeVisible();
+
+    await restart();
+    expect((await health()).databaseInstanceId).toBe(before.databaseInstanceId);
+    await capture("after-restart", "Synthetic After Restart Engineer");
+    for (const tab of [page, peer]) {
+      await expect(job(tab, "Synthetic After Restart Engineer")).toBeVisible({ timeout: 15_000 });
+      await expect(tab.locator(".connection-pill")).toHaveText("Live");
+    }
+
+    await restart(true);
+    const after = await health();
+    expect(after.databaseInstanceId).not.toBe(before.databaseInstanceId);
+    expect((await jobs()).total).toBe(0);
+    for (const tab of [page, peer]) {
+      await expect(tab.locator(".connection-pill")).toHaveText("Workspace changed", { timeout: 15_000 });
+      await expect(tab.getByRole("alert").filter({ hasText: "The workspace database changed." })).toBeVisible();
+    }
+
+    await capture("after-switch", "Synthetic Other Workspace Engineer");
+    // Position zero is valid in both databases. Identity alone must refuse replay.
+    const refused = await api.get("/v1/events/stream?after=latest&cursor=workspace", {
+      headers: { "Last-Event-ID": `${before.databaseInstanceId}:0` }, timeout: 5_000,
+    });
+    expect(refused.status()).toBe(200);
+    expect(await refused.text()).toBe('event: workspace_changed\ndata: {"code":"workspace_changed"}\n\n');
+    const malformed = await api.get("/v1/events/stream?after=invalid&cursor=workspace");
+    expect(malformed.status()).toBe(400);
+    expect((await malformed.json()).error.code).toBe("invalid_event_cursor");
+    const unavailable = await api.get("/v1/events/stream?after=9999999");
+    expect(unavailable.status()).toBe(409);
+    expect((await unavailable.json()).error.code).toBe("event_cursor_unavailable");
+
+    await page.reload();
+    await expect(page.locator(".connection-pill")).toHaveText("Live");
+    await expect(job(page, "Synthetic Other Workspace Engineer")).toBeVisible();
+    await expect(job(page, "Synthetic Before Restart Engineer")).toHaveCount(0);
+    await expect(peer.locator(".connection-pill")).toHaveText("Workspace changed");
+  } finally {
+    await peer.close();
   }
 });
