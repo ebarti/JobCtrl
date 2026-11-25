@@ -107,10 +107,9 @@ class DiscoveryExecutionAdapter:
         spec = JobStreamingSearchSpec(**{k: tuple(v) if k == "sites" else v for k, v in unit.items()
                                          if k not in {"unit_id", "cursor", "source_family", "source_id"}})
         validate_remote_search_scope(spec.sites, location=spec.location, remote_only=spec.remote_only, hours_old=spec.hours_old)
-        if not settings.get("_criteriaAsOf") and any(
-            provider_scope(site, location=spec.location, remote_only=spec.remote_only, hours_old=spec.hours_old)["localAgeCheck"]
-            for site in spec.sites
-        ):
+        scopes = [provider_scope(site, location=spec.location, remote_only=spec.remote_only, hours_old=spec.hours_old)
+                  for site in spec.sites]
+        if not settings.get("_criteriaAsOf") and any(scope["localAgeCheck"] for scope in scopes):
             raise AppError("discovery_criteria_reference_missing", "Restart this search to bind its posting-age reference.", 409)
         key = lease["run_id"], lease["epoch"]
         stop = self._signals[key]

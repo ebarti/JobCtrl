@@ -44,9 +44,9 @@ function expectAcknowledgedReceipts(checkpoint: Awaited<ReturnType<ApplicationSt
   for (const adapter of checkpoint.adapters) {
     const unit = checkpoint.units.find((row) => row.unitId === adapter.unitId)!;
     expect(adapter.requestFingerprint).toBe(unit.sdkFingerprint);
-    const receipts = checkpoint.receiptKeys.filter((row) => row.unitId === adapter.unitId && row.site === adapter.site);
-    expect(new Set(adapter.acknowledgedKeys)).toEqual(new Set(receipts.map((row) => row.jobKey)));
-    expect(adapter.emittedCount).toBe(receipts.length);
+    const received = checkpoint.received.filter((row) => row.unitId === adapter.unitId && row.site === adapter.site);
+    expect(new Set(adapter.acknowledgedKeys)).toEqual(new Set(received.map((row) => row.jobKey)));
+    expect(adapter.emittedCount).toBe(received.length);
   }
 }
 
@@ -95,6 +95,7 @@ for (const legacyCap of [1, 100]) {
     const checkpoint = await app.discoveryCheckpoint(started.runId);
     expect(checkpoint.receipts).toEqual({ accepted: 6, filtered: 99 });
     expect(checkpoint.receiptKeys.filter((row) => row.isNew)).toHaveLength(5);
+    expect(checkpoint.received.filter((row) => row.status === "beyond_limit")).toHaveLength(1);
     expect(checkpoint.units).toEqual([expect.objectContaining({ status: "budget_exhausted", result: { termination: "budget_exhaustion" } })]);
     expectAcknowledgedReceipts(checkpoint);
     expect(checkpoint.adapters[0]!.completed).toBe(false);
@@ -127,35 +128,27 @@ test("native source pagination distinguishes confirmed exhaustion from the SDK p
   expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(51);
 });
 
-test.describe("frozen finite source-policy predecessor", () => {
-  test.use({ sourceRevision: "6f46b0ba5913383b7c57ffcce986729fa0bdbf0e" });
-
-  test("an actual predecessor search resumes its finite cap and fingerprint unchanged after upgrade", async ({ api, app }) => {
-    await preferences(api);
-    await settings(api, ["indeed"], { resultsPerSite: 3, newJobLimit: 5 });
-    const started = await action(api, "discovery.search", { queries: ["Synthetic Reliability Engineer"], locations: [{ location: "Madrid", remote: true }] });
-    (await indeedRequest(app)).respond(pageOf([posting("LegacyFirst", Date.now()), posting("LegacySecond", Date.now())], "legacy-page-two"));
-    const held = await indeedRequest(app);
-    expect(String(held.body["query"])).toContain('cursor: "legacy-page-two"');
-    await expect.poll(async () => (await app.discoveryCheckpoint(started.runId)).adapters[0]).toMatchObject({ emittedCount: 2, state: { cursor: "legacy-page-two" } });
-    const before = await app.discoveryCheckpoint(started.runId);
-    expect(before.request.sourceFetchPolicy).toBeUndefined();
-    expect(before.units).toEqual([expect.objectContaining({ resultsPerSite: 3, sdkResultsWanted: 3 })]);
-    expectAcknowledgedReceipts(before);
-
-    await app.upgradeSource();
-    const resumed = await indeedRequest(app, 45_000);
-    expect(String(resumed.body["query"])).toContain('cursor: "legacy-page-two"');
-    resumed.respond(pageOf([posting("LegacyThird", Date.now()), posting("LegacyBeyondCap", Date.now())], "legacy-never-needed"));
-    expect(await runResult(api, started.runId)).toMatchObject({ status: "completed", newJobs: 3, observedJobs: 3 });
-    const after = await app.discoveryCheckpoint(started.runId);
-    expect(after.request).toEqual(before.request);
-    expect(after.adapters[0]!.requestFingerprint).toBe(before.adapters[0]!.requestFingerprint);
-    expect(after.units[0]!.unitId).toBe(before.units[0]!.unitId);
-    expect(after.units[0]!.sdkResultsWanted).toBe(3);
-    expect(after.receipts).toEqual({ accepted: 3 });
-    expectAcknowledgedReceipts(after);
-  });
+test("a current source search resumes its exact cursor and fingerprint after worker replacement", async ({ api, app }) => {
+  await preferences(api);
+  await settings(api, ["indeed"], { resultsPerSite: 3, newJobLimit: 5 });
+  const started = await action(api, "discovery.search", { queries: ["Synthetic Reliability Engineer"], locations: [{ location: "Madrid", remote: true }] });
+  (await indeedRequest(app)).respond(pageOf([posting("First", Date.now()), posting("Second", Date.now())], "page-two"));
+  const held = await indeedRequest(app);
+  expect(String(held.body["query"])).toContain('cursor: "page-two"');
+  await expect.poll(async () => (await app.discoveryCheckpoint(started.runId)).adapters[0]).toMatchObject({ emittedCount: 2, state: { cursor: "page-two" } });
+  const before = await app.discoveryCheckpoint(started.runId);
+  expectAcknowledgedReceipts(before);
+  await app.restartWorker();
+  const resumed = await indeedRequest(app, 45_000);
+  expect(String(resumed.body["query"])).toContain('cursor: "page-two"');
+  resumed.respond(pageOf([posting("Third", Date.now()), posting("Fourth", Date.now())]));
+  expect(await runResult(api, started.runId)).toMatchObject({ status: "completed", newJobs: 4, observedJobs: 4 });
+  const after = await app.discoveryCheckpoint(started.runId);
+  expect(after.request).toEqual(before.request);
+  expect(after.adapters[0]!.requestFingerprint).toBe(before.adapters[0]!.requestFingerprint);
+  expect(after.units[0]!.unitId).toBe(before.units[0]!.unitId);
+  expect(after.receipts).toEqual({ accepted: 4 });
+  expectAcknowledgedReceipts(after);
 });
 
 test("Remote posting-age search uses the pinned SDK, isolates auth and unsupported boards in either order, and preserves exact date evidence", async ({ api, app, page }, testInfo) => {

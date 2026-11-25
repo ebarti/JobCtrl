@@ -234,6 +234,8 @@ class JobStreamingGateway:
     def configure_transport(registry, site, requests):
         """Preserve SDK-owned sessions and observe unmodified response deadlines."""
         source = registry or default_registry()
+        if site not in {adapter.value for adapter in source.sites}:
+            return source
         observed = source.copy()
 
         def factory(**kwargs):

@@ -96,7 +96,7 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
     })}</ul> : null}
     {disabledFailures ? <p>Recorded failures from sources no longer enabled are retained in Search details.</p> : null}
     {unknownSources ? <p>Current source selection could not be verified. Recorded failures remain in Search details.</p> : null}
-    {accountingFailure ? <div><p>Search query preparation stopped because the selected model had no configured monetary cost tracking. Job sources were not searched. Review the exact model pricing quote in Budgets, then start again. Your saved preferences and spending cap are unchanged.</p>{spendingAction}</div> : status === "failed" ? <p>The search did not complete. Any jobs already saved remain available.</p> : null}
+    {accountingFailure ? <div><p>Search stopped because the selected model needs monetary cost tracking to check postings against your saved roles. Job sources were not searched. Review the exact model pricing quote in Budgets, then start again. Your saved preferences and spending cap are unchanged.</p>{spendingAction}</div> : status === "failed" ? <p>The search did not complete. Any jobs already saved remain available.</p> : null}
     </> : null}
     {status === "cancel-requested" ? <p>{action?.cancellationDelivery === "pending"
       ? "The workflow service has not confirmed receipt. Retry stop when it is available."

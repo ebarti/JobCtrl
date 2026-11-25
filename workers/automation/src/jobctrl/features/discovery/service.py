@@ -419,6 +419,7 @@ class DiscoveryService:
                         "locations": settings["locations"] or target_plan["accepted"]["locations"],
                         "targetPlan": target_plan["accepted"],
                     }
+            needs_role_match = bool(role_target_sources(settings.get("targetPlan")))
             request = {
                 "settings": settings,
                 "sources": self.list_sources()["sources"],
@@ -429,7 +430,7 @@ class DiscoveryService:
                 "boardQueryScheduling": FAIR_QUERY_SCHEDULING,
                 "criteriaAsOf": now(),
                 **({"roleTargetPolicy": ROLE_TARGET_POLICY, "roleCallCustody": ROLE_CALL_CUSTODY}
-                   if role_target_sources(settings.get("targetPlan")) else {}),
+                   if needs_role_match else {}),
             }
         if request.get("roleTargetPolicy") not in {None, ROLE_TARGET_POLICY} or request.get("roleCallCustody") not in {None, ROLE_CALL_CUSTODY}:
             raise AppError("discovery_role_policy_unsupported", "This search has an unsupported frozen role policy.", 409)
@@ -453,6 +454,10 @@ class DiscoveryService:
         if "resumeUnits" in request:
             units = [unit for unit in units if unit["unit_id"] in request["resumeUnits"]]
             execution_settings["_resumeUnits"] = request["resumeUnits"]
+        if units and not saved and "resumeFromRunId" not in request and request.get("roleTargetPolicy"):
+            # Saved-role queries are literal. Admission of new postings can
+            # require a role decision, so check its accounting before reading a board.
+            self.model.preflight_cost_accounting()
         lease = self.repository.claim_run(run_id, request)
         if lease["completed"]:
             return {"done": True, "result": lease["result"]}

@@ -123,6 +123,21 @@ class ModelGateway:
                 "costSource": source,
                 "pricingQuote": quote}
 
+    def preflight_cost_accounting(self) -> None:
+        """Check monetary capability before a feature begins work that requires the current model."""
+        settings = self.settings.snapshot()
+        self._accounting_quote(settings, **self._selection(settings))
+
+    def _accounting_quote(self, settings: dict, *, provider: str, model: str, require_accounting: bool = False):
+        quote = settings["modelPricingQuotes"].get(f"{provider}:{model}")
+        if (settings["dailyBudgetUsd"] or require_accounting) and not self.synthetic and provider != "claude" and quote is None:
+            raise AppError(
+                "cost_accounting_unavailable",
+                "This provider does not report monetary cost. Save an exact model pricing quote or explicitly disable the monetary cap before starting.",
+                409, {"provider": provider, "model": model, "setting": "modelPricingQuotes"},
+            )
+        return quote
+
     def _payload(self, *, operation: str, instructions: str, sources, response_schema: dict,
                  context: dict | None, prompt_version: str, lane: str, execution: ModelExecution) -> dict:
         if (not isinstance(operation, str) or not operation or len(operation) > 160
@@ -305,13 +320,9 @@ class ModelGateway:
             lane = payload["lane"]
             budget = settings["dailyBudgetUsd"]
             limit = settings["laneTokenLimits"].get(lane, 0)
-            quote = settings["modelPricingQuotes"].get(f"{payload['provider']}:{payload['model']}")
-            if (budget or require_accounting) and not self.synthetic and payload["provider"] != "claude" and quote is None:
-                raise AppError(
-                    "cost_accounting_unavailable",
-                    "This provider does not report monetary cost. Save an exact model pricing quote or explicitly disable the monetary cap before starting.",
-                    409, {"provider": payload["provider"], "model": payload["model"], "setting": "modelPricingQuotes"},
-                )
+            quote = self._accounting_quote(
+                settings, provider=payload["provider"], model=payload["model"], require_accounting=require_accounting,
+            )
             uncertain = connection.execute(
                 "SELECT 1 FROM app_model_calls WHERE created_at>=? AND status!='running' AND "
                 "provider_started IS DISTINCT FROM 0 AND "
