@@ -523,9 +523,6 @@ test("a delayed save keeps an equal-version Profile draft with its original work
     await expect(name).toHaveValue(original.profile.personal.full_name);
     await name.fill(draft);
     await expect.poll(() => browserStorage(page)).toContain(draft);
-    const response = page.waitForResponse((value) =>
-      profilePath(new URL(value.url())) && value.request().method() === "PATCH"
-    );
     await page.getByRole("button", { name: "Save changes", exact: true }).click();
     await expect.poll(() => heldSave?.request().postDataJSON()?.expectedProfileVersion).toBe(original.profileVersion);
 
@@ -537,6 +534,8 @@ test("a delayed save keeps an equal-version Profile draft with its original work
       ...baseline, personal: { ...baseline.personal, full_name: "Synthetic replacement Profile" },
     });
     expect(replacement.profileVersion).toBe(original.profileVersion);
+    const delayedSave = heldSave!.request();
+    const response = page.waitForResponse((value) => value.request() === delayedSave);
     swapping = false;
     release();
     const refused = await response;
