@@ -47,6 +47,8 @@ class ModelResult(Protocol):
 
 
 class ModelPort(Protocol):
+    def coordinate_work(self, keys, cancelled): ...
+    def share_receipt(self, keys): ...
     async def determine(self, *, operation: str, instructions: str, sources: list[dict] | dict,
                         response_schema: dict, context: dict | None = None, prompt_version: str = "1",
                         lane: str = "interactive", model: str | None = None, execution: Any = None,

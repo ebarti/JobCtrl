@@ -19,6 +19,7 @@ from jobctrl.app.errors import AppError, NotFoundError
 from jobctrl.app.events import now
 from jobctrl.app.model_capacity import ModelCapacityBusy, admit_model_call
 from jobctrl.app.model_custody import SCHEMA as CUSTODY_SCHEMA, current_owner
+from jobctrl.app.model_shared_work import SCHEMA as SHARED_WORK_SCHEMA, active_shared_receipt, coordinate_work, share_receipt
 from jobctrl.app.settings import PROVIDER_CONFIGURATION_KEYS, Settings
 from jobctrl.app.synthetic import synthetic_boundary
 
@@ -71,7 +72,14 @@ class ModelGateway:
         self.database = database
         self.settings = settings
         database.initialize_feature("model_operation_receipts_v1", CUSTODY_SCHEMA)
+        database.initialize_feature("shared_model_work_v1", SHARED_WORK_SCHEMA)
         self.synthetic = synthetic_boundary(workspace, os.environ.get("JOBCTRL_E2E_PROVIDER_URL"))
+
+    def coordinate_work(self, keys, cancelled):
+        return coordinate_work(self.database, keys, cancelled)
+
+    def share_receipt(self, keys):
+        return share_receipt(self.database, keys)
 
     @staticmethod
     def _selection(settings: dict, model: str | None = None) -> dict:
@@ -294,16 +302,25 @@ class ModelGateway:
         receipt_id = str(uuid.uuid4())
         with self.database.transaction() as connection:
             owner = current_owner()
+            shared = active_shared_receipt()
             digest = hashlib.sha256(_canonical(payload).encode()).hexdigest()
             if owner is not None:
                 prior = connection.execute(
                     "SELECT input_fingerprint,receipt_id FROM app_model_operation_receipts WHERE owner_key=? AND operation=?",
                     (owner, payload["operation"])).fetchone()
+                if shared:
+                    peer = shared.prior(connection, payload["operation"], digest)
+                    if peer is not None and prior is not None and peer["receipt_id"] != prior["receipt_id"]:
+                        raise AppError("model_shared_publication_pending", "The shared requirement is awaiting an earlier publication.",
+                                       409, {"receiptId": peer["receipt_id"]})
+                    prior = prior or peer
                 if prior:
                     identity = {"receiptId": prior["receipt_id"]}
                     if prior["input_fingerprint"] != digest:
                         raise AppError("model_operation_changed", "The inputs or selected model for this operation changed.", 409, identity)
                     recorded = self.receipt(prior["receipt_id"], connection)
+                    if shared:
+                        shared.bind(connection, prior["receipt_id"])
                     if recorded["status"] == "succeeded":
                         return self._recorded_result(recorded)
                     if recorded["status"] in {"running","uncertain"}:
@@ -355,6 +372,8 @@ class ModelGateway:
             if owner is not None:
                 connection.execute("INSERT INTO app_model_operation_receipts VALUES(?,?,?,?)",
                                    (owner, payload["operation"], digest, receipt_id))
+            if shared:
+                shared.bind(connection, receipt_id)
             if on_admitted is not None:
                 # The caller's durable phase must own this receipt before external execution can begin.
                 on_admitted(connection, receipt_id)

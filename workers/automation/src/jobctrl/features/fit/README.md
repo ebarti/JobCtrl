@@ -149,7 +149,14 @@ publication fences score revision zero and both current and historical heads.
 A previously scored job with changed inputs requires manual refresh. Force never
 bypasses accepted authority or refresh admission.
 
-## Initial Search cohort
+## Initial Search
+
+New searches enqueue a separate assessment for each eligible posting. Fit
+uses `resolve_many` for that job's normalized demands and its permitted Profile
+evidence. The score retains the original Requirements and qualification IDs.
+A failed job can be retried independently from Jobs.
+
+### Retained cohort operations
 
 Durable Fit assessment and Preparation wait for model capacity. Initial
 qualification records its attempt together with the gateway receipt in the

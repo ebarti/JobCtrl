@@ -18,6 +18,12 @@ class RequirementModelAdapter:
     def receipt(self, receipt_id):
         return self.gateway.receipt(receipt_id)
 
+    def coordinate_work(self, keys, cancelled):
+        return self.gateway.coordinate_work(keys, cancelled)
+
+    def share_receipt(self, keys):
+        return self.gateway.share_receipt(keys)
+
     async def determine(
         self, *, kind, schema, prompt_version, instruction, sources, context,
         entity_id, validate, budget=None, publication_posting=None, source_binding=None, catalog_guard=None,

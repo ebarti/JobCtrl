@@ -59,35 +59,47 @@ class Qualification:
                            initial_assessment=False, cancelled=lambda: False):
         profile = dto(profile_snapshot)
         facts = fact_sources(profile)
-        current = {}
-        missing = []
-        prior_heads = {}
-        with self.store.read_snapshot() as read:
-            read.validate_sources(profile_snapshot, requirements_snapshot)
-            for requirement in requirements:
-                require_demand(requirement)
-                ident = qualification_key(requirement)
-                source_hash = qualification_fingerprint(profile, requirement, facts)
-                accepted = read.latest_assessment(profile["profile_id"], requirement["requirement_id"], requirement["requirement_revision"],
-                                                  source_fingerprint=source_hash)
-                if current_qualification(accepted) and not force:
-                    current[ident] = accepted
-                    continue
-                previous = read.latest_requirement_assessment(profile["profile_id"], requirement["requirement_id"],
-                                                               demand_fingerprint=requirement.get("demand_fingerprint"))
-                if previous is not None and (not initial_assessment or force):
-                    raise AppError("fit_refresh_required", "Saved inputs changed. Start a manual Fit refresh to update existing assessments.", 409)
-                prior_heads[ident] = previous["assessment_id"] if previous else None
-                missing.append(requirement)
-        reused = len(current)
-        if missing:
-            if cancelled():
-                raise asyncio.CancelledError()
-            candidates = await self.candidates(profile_snapshot, missing)
-            published = self.store.publish_assessments(candidates, facts, profile_snapshot, requirements_snapshot,
-                {qualification_key(row): None for row in missing}, expected_prior_assessment_ids=prior_heads,
-                initial_job_id=requirements_snapshot["job_id"] if initial_assessment else None, cancelled=cancelled)
-            current.update({qualification_key(row): row for row in published})
+        hashes = {}
+        for requirement in requirements:
+            require_demand(requirement)
+            hashes[qualification_key(requirement)] = qualification_fingerprint(profile, requirement, facts)
+
+        def pending():
+            current, missing, heads = {}, [], {}
+            with self.store.read_snapshot() as read:
+                read.validate_sources(profile_snapshot, requirements_snapshot)
+                for requirement in requirements:
+                    ident = qualification_key(requirement)
+                    accepted = read.latest_assessment(profile["profile_id"], requirement["requirement_id"], requirement["requirement_revision"],
+                                                      source_fingerprint=hashes[ident])
+                    if current_qualification(accepted) and not force:
+                        current[ident] = accepted
+                        continue
+                    previous = read.latest_requirement_assessment(profile["profile_id"], requirement["requirement_id"],
+                                                                   demand_fingerprint=requirement.get("demand_fingerprint"))
+                    if previous is not None and (not initial_assessment or force):
+                        raise AppError("fit_refresh_required", "Saved inputs changed. Start a manual Fit refresh to update existing assessments.", 409)
+                    heads[ident] = previous["assessment_id"] if previous else None
+                    missing.append(requirement)
+            return current, missing, heads
+
+        def keys(missing):
+            return [f"fit:{profile['profile_id']}:{hashes[qualification_key(row)]}" for row in missing]
+
+        current, missing, prior_heads = pending()
+        async with self.model.coordinate_work(keys(missing), cancelled) as locked:
+            if locked:
+                current, missing, prior_heads = pending()
+            reused = len(current)
+            if missing:
+                if cancelled():
+                    raise asyncio.CancelledError()
+                with self.model.share_receipt(keys(missing)):
+                    candidates = await self.candidates(profile_snapshot, missing)
+                    published = self.store.publish_assessments(candidates, facts, profile_snapshot, requirements_snapshot,
+                        {qualification_key(row): None for row in missing}, expected_prior_assessment_ids=prior_heads,
+                        initial_job_id=requirements_snapshot["job_id"] if initial_assessment else None, cancelled=cancelled)
+                current.update({qualification_key(row): row for row in published})
         return [current[qualification_key(row)] for row in requirements], reused
 
     async def candidates(self, profile_snapshot, requirements: list[dict], *, model=None, request_policy=None,
