@@ -196,13 +196,15 @@ func runSourceInsideScope(ctx launchContext, script string, targets []string, st
 	arguments := append([]string{script, "run"}, targets...)
 	child := payloadCommand(ctx.Environment, "/bin/bash", arguments...)
 	child.Dir = filepath.Dir(filepath.Dir(script))
-	child.Env = make([]string, 0, len(ctx.Environment)+2)
+	child.Env = make([]string, 0, len(ctx.Environment)+3)
 	for _, pair := range ctx.Environment {
-		if !strings.HasPrefix(pair, "JOBCTRL_DEV_INNER=") && !strings.HasPrefix(pair, "JOBCTRL_DIR=") {
+		if !strings.HasPrefix(pair, "JOBCTRL_DEV_INNER=") && !strings.HasPrefix(pair, "JOBCTRL_DIR=") && !strings.HasPrefix(pair, "JOBCTRL_SOURCE_LAUNCHER=") {
 			child.Env = append(child.Env, pair)
 		}
 	}
-	child.Env = append(child.Env, "JOBCTRL_DEV_INNER=1", "JOBCTRL_DIR="+ctx.Instance.StateDir)
+	// The service owner must retain the process that forwards TERM to the
+	// postmaster. A go-run wrapper can exit before its compiled child drains.
+	child.Env = append(child.Env, "JOBCTRL_DEV_INNER=1", "JOBCTRL_DIR="+ctx.Instance.StateDir, "JOBCTRL_SOURCE_LAUNCHER="+ctx.Executable)
 	readyRead, readyWrite, err := os.Pipe()
 	if err != nil {
 		return err

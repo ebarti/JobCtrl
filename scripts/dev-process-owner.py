@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import json
 import os
+import platform
 from pathlib import Path
 import secrets
 import signal
@@ -167,6 +168,38 @@ def retire(directory: Path, name: str, value: dict) -> None:
         file.unlink()
 
 
+def bind_source_coalition(child: subprocess.Popen) -> None:
+    """Fence a census with the child's kernel birth coalition, never signal authority."""
+    if platform.system() != "Darwin":
+        return
+    import ctypes
+
+    try:
+        library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        library.proc_pidinfo.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+        library.proc_pidinfo.restype = ctypes.c_int
+
+        def ids(pid: int) -> tuple[int, int] | None:
+            values = (ctypes.c_uint64 * 5)()
+            size = library.proc_pidinfo(pid, 20, 0, ctypes.byref(values), ctypes.sizeof(values))
+            if size != ctypes.sizeof(values) or not values[0] or not values[1]:
+                return None
+            return int(values[0]), int(values[1])
+
+        # Popen owns this still-unreaped child, so its PID cannot be reused.
+        # Equality of kernel readings binds this specific birth to our scope;
+        # an unavailable or changing reading retains the strict global census.
+        if _waitid_nowait(child.pid) is not None:
+            return
+        before = ids(os.getpid())
+        born = ids(child.pid)
+        after = ids(os.getpid())
+        if before is not None and before == born == after and _waitid_nowait(child.pid) is None:
+            child._jobctrl_birth_source_coalitions = before
+    except (AttributeError, ChildProcessError, OSError):
+        return
+
+
 def launch(directory: Path, name: str, secret: str, command: str, log: str | None) -> int:
     if len(secret) != 64 or any(c not in "0123456789abcdef" for c in secret):
         raise Unverified()
@@ -201,6 +234,7 @@ def launch(directory: Path, name: str, secret: str, command: str, log: str | Non
                              stdout=subprocess.PIPE if log is not None else None,
                              stderr=subprocess.STDOUT if log is not None else None)
     child_pid = child.pid
+    bind_source_coalition(child)
     output = None
     if log is not None:
         def forward_output():

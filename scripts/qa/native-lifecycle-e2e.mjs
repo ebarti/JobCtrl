@@ -68,9 +68,6 @@ async function childPids(){try{return (await readFile(path.join(workspace,'qa-or
 const observer=String.raw`import os,pathlib,signal,sys
 args=sys.orig_argv
 root=pathlib.Path(os.environ['JOBCTRL_DIR'])
-if 'jobctrl.app.server' in args or 'jobctrl.app.worker' in args:
-    import faulthandler
-    faulthandler.dump_traceback_later(75, repeat=False)
 if 'jobctrl.app.server' in args and (root/'.qa-block-api').exists():
     os._exit(73)
 if 'jobctrl.app.worker' in args and (root/'.qa-custody').is_file():
