@@ -1,8 +1,8 @@
 import { indeedPage } from "./indeed-data.js";
 import type { Request, Response } from "@playwright/test";
-import { completed, expect, json, modelCall, test } from "../harness/fixtures.js";
+import { completed, expect, json, test, type ExternalCall } from "../harness/fixtures.js";
 import { baseline, createBaseline } from "./core-data.js";
-import { serveRoleTarget } from "./discovery-role-scope-data.js";
+import { replyRoleTarget } from "./discovery-role-scope-data.js";
 import { respondProducer } from "./preparation-cohort-data.js";
 import { qualificationBatchDecision } from "./qualification-data.js";
 import { modelSources, typedExtraction } from "./requirements-data.js";
@@ -75,22 +75,33 @@ test("Start search for 100 keeps Jobs current while a URL import waits for enric
   const board = await app.external.next();
   expect(board.path).toBe("/jobstreaming/indeed");
   board.respond(indeedPage({ jobs: positions, cursor: null, complete: true }));
-  for (let index = 0; index < positions.length; index++) await serveRoleTarget(app, "match");
-  const firstPage = await app.external.next();
-  expect(firstPage.path).toBe("/posting-page");
-  expect(firstPage.body["url"]).toBe(positions[0]!.url);
-  respondProducer(firstPage, postings);
-  const searchLane = await modelCall(app, "page_interpretation");
+  let roleCount = 0;
+  let searchLane: ExternalCall | undefined;
+  while (roleCount < positions.length || !searchLane) {
+    const call = await app.external.next();
+    if (call.path === "/posting-page") {
+      respondProducer(call, positions);
+    } else if (call.body["operation"] === "discovery.role_target_match") {
+      replyRoleTarget(call, "match");
+      roleCount++;
+    } else {
+      expect(call.path).toBe("/model");
+      expect(call.body["operation"]).toBe("page_interpretation");
+      expect(searchLane).toBeUndefined();
+      searchLane = call;
+    }
+  }
   expect(searchLane.body["lane"]).toBe("enrichment");
   try {
     await expect(progress).toContainText(/100 new jobs/i);
     const checkpoint = progress.getByLabel("Fit preparation progress", { exact: true });
-    await expect(checkpoint).toHaveText("0 of 100 postings checked. Fit scoring waits for posting and requirements checks across this search.");
+    await expect(checkpoint).toContainText("0 of 100 postings checked.");
+    await expect(checkpoint).toContainText("Each eligible job can be scored once its posting and requirements checks finish.");
     await expect(start).toBeDisabled();
     const frozen = await json<{ targetRoute: string; jobIds: string[] }>(api, "get", "/v1/preparation/runs/" + runId);
     expect(frozen.targetRoute).toBe("per_job");
     expect(new Set(frozen.jobIds).size).toBe(100);
-    await expect(page.getByRole("row").filter({ hasText: positions.at(-1)!.title }).getByRole("link", { name: "Waiting for search checks" }))
+    await expect(page.getByRole("row").filter({ hasText: positions.at(-1)!.title }).getByRole("link", { name: "Waiting for job checks" }))
       .toHaveAttribute("href", `/runs/${runId}`);
     await page.getByText("Add a job by URL or text", { exact: true }).click();
     await page.getByText("Import posting URL", { exact: true }).click();
@@ -103,7 +114,7 @@ test("Start search for 100 keeps Jobs current while a URL import waits for enric
     expect(importResponse.ok()).toBe(true);
     expect(importResponse.request().postDataJSON()).toEqual({ url: importedPosition.url });
     const importId = (await importResponse.json()).runId;
-    const importPage = await app.external.next();
+    const importPage = await app.external.next({ match: (call) => call.path === "/posting-page" && call.body["url"] === importedPosition.url });
     expect(importPage.path).toBe("/posting-page");
     expect(importPage.body["url"]).toBe(importedPosition.url);
     respondProducer(importPage, [importedPosition]);
@@ -116,7 +127,7 @@ test("Start search for 100 keeps Jobs current while a URL import waits for enric
       expect.objectContaining({ runId: importId, url: importedPosition.url, status: "waiting_for_capacity" }));
     expect(app.external.calls.filter(call => call.body?.["operation"] === "page_interpretation")).toHaveLength(1);
     await info.attach("queued-url-and-search", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
-    respondProducer(searchLane, [positions[0]!]);
+    respondProducer(searchLane, postings);
     const importModelCalls: string[] = [];
     let qualificationCalls = 0;
     while (qualificationCalls < positions.length || importModelCalls.length < 3) {

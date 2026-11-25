@@ -1,11 +1,23 @@
-import { expect, modelCall, type ApplicationStack } from "../harness/fixtures.js";
+import { expect, modelCall, type ApplicationStack, type ExternalCall } from "../harness/fixtures.js";
 import { citeSources, modelSources } from "./requirements-data.js";
 
 /** The external provider makes an explicit choice over the offered synthetic sources. */
 export type InvalidRoleTarget = "missing_field" | "unknown_verdict" | "foreign_source" | "extra_field" | "nonverbatim" | "title_only";
 
+export function roleTargetStream(app: ApplicationStack): ApplicationStack {
+  return { ...app, external: { ...app.external, next: (options) => app.external.next({
+    ...options, match: (call) => call.path === "/model" && call.body["operation"] === "discovery.role_target_match",
+  }) } };
+}
+
 export async function serveRoleTarget(app: ApplicationStack, verdict: "match" | "mismatch" | "unknown", invalid?: InvalidRoleTarget) {
   const call = await modelCall(app, "discovery.role_target_match");
+  replyRoleTarget(call, verdict, invalid);
+}
+
+export function replyRoleTarget(call: ExternalCall, verdict: "match" | "mismatch" | "unknown", invalid?: InvalidRoleTarget) {
+  expect(call.path).toBe("/model");
+  expect(call.body["operation"]).toBe("discovery.role_target_match");
   expect(call.body["lane"]).toBe("discovery");
   const sourceIds = modelSources(call).map((source) => source.source_id);
   expect(sourceIds).toEqual(expect.arrayContaining(["target:roles", "posting:title"]));

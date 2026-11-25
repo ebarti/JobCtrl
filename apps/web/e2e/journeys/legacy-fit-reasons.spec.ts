@@ -21,10 +21,20 @@ test("the Jobs grid identifies a run's source-bound language decision before and
   }
   const runPath = `/v1/preparation/runs/${started.runId}`;
   type Step = { jobId: string; stage: string; status: string; result: Record<string, unknown> | null };
-  const run = await json<{ targetRoute: string; jobIds: string[]; steps: Step[] }>(api, "get", runPath);
-  expect(run.targetRoute).toBe("per_job");
-  const id = run.jobIds[0]!;
-  const saved = await json<{ revision: number; source_hash: string }>(api, "get", `/v1/jobs/${id}`);
+  type Run = { targetRoute: string; jobIds: string[]; steps: Step[] };
+  const snapshot = await json<Run>(api, "get", runPath);
+  expect(snapshot.targetRoute).toBe("per_job");
+  const candidates = await Promise.all(snapshot.jobIds.map(async (jobId) => ({
+    jobId, job: await json<{ url: string; revision: number; source_hash: string }>(api, "get", `/v1/jobs/${jobId}`),
+  })));
+  const selected = candidates.find(({ job }) => job.url === target.url);
+  expect(selected, "the discovered target must be present in the run").toBeDefined();
+  const { jobId: id, job: saved } = selected!;
+  await expect.poll(async () => {
+    const value = await json<Run>(api, "get", runPath);
+    return value.steps.find((step) => step.jobId === id && step.stage === "requirements")?.status;
+  }, { message: "the target's source-bound requirements must commit", timeout: 30_000 }).toBe("succeeded");
+  const run = await json<Run>(api, "get", runPath);
   const requirements = await json<{ revision: number }>(api, "get", `/v1/jobs/${id}/requirements`);
   expect(requirements).toMatchObject({ status: "unsupported_language", posting_revision: saved.revision, posting_hash: saved.source_hash, stale: false });
   expect(run.steps).toContainEqual(expect.objectContaining({ jobId: id, stage: "requirements", status: "succeeded", result: expect.objectContaining({
