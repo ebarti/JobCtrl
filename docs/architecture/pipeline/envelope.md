@@ -1,6 +1,6 @@
 # Durable Execution Envelope
 
-The target uses Temporal for long-running work. The Python application registers
+The target uses DBOS for long-running work. The Python application registers
 feature-owned actions and the worker executes the same application behavior used
 by HTTP and CLI. This integration is in progress; do not infer a completed
 runtime from the contract alone.
@@ -8,8 +8,7 @@ runtime from the contract alone.
 ## Start, execution and acknowledgement
 
 A request validates its inputs, caller authority and source revisions before
-admission. Durable submission returns an accepted receipt only after Temporal
-accepts the workflow; acceptance does not mean completion. Execution retains
+admission. Durable submission returns an accepted receipt after domain acceptance and DBOS enqueue commit together; acceptance does not mean completion. Execution retains
 request/run identity and exposes a truthful status and safe failure detail.
 Features own idempotency, source checks and any external-effect authorization.
 A retry cannot create fresh approval or silently repeat an ambiguous action.

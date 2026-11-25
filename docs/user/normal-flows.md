@@ -358,17 +358,17 @@ the owned runtime and resume forward with `jobctrl update`. See
 | Lifecycle command | What it does |
 | --- | --- |
 | `start` | Start the local services and open the app (`--no-open`, `--foreground`). |
-| `stop` / `status` / `open` | Stop the runtime, report its state (`--json`, or `--pipeline` for pipeline stats), or open the app. Status includes Temporal probe errors in `healthError` and exits with an error if probe cleanup is unverified. Stop refuses to report success when recorded service ownership or exit is unresolved; see [Start JobCtrl](getting-started.md#_2-start-jobctrl). |
-| `logs [component]` | Show the last 200 lines of the `temporal`, `worker`, or `api` log, or of all three when no component is given. |
+| `stop` / `status` / `open` | Stop the runtime, report its state (`--json`, or `--pipeline` for pipeline stats), or open the app. Stop refuses to report success when recorded service ownership or exit is unresolved; see [Start JobCtrl](getting-started.md#_2-start-jobctrl). |
+| `logs [component]` | Show the last 200 lines of the `postgres`, `worker`, or `api` log, or of all three when no component is given. |
 | `version` | Print the installed version (`--json`). |
 | `update` / `rollback` / `uninstall` | Install a newer release, restore an earlier application and its saved database pair (`--to <build-id>`), or remove JobCtrl. Rollback keeps a compatible recovery launcher; Homebrew preserves the selection until an explicit update. `uninstall --remove-data` also deletes your local data after you type a confirmation phrase. |
-| `backup` | Snapshot `jobctrl.db` and `temporal.db` as a pair (`--output <directory>`); see [Back Up And Restore](data-and-safety.md#back-up-and-restore). |
+| `backup` | Back up the stopped workspace database including DBOS state; see [Back Up And Restore](data-and-safety.md#back-up-and-restore). |
 
 | Domain command | What it does |
 | --- | --- |
 | `init` | Initialize an admitted fresh workspace and show the Profile/import, Discovery and provider setup paths; existing authored state is retained. |
 | `setup` | Guide explicit provider/model selection, hidden native credential entry and optional managed Codex login, then report readiness. Source dependency/browser provisioning uses `corepack pnpm dev:setup`; setup supports noninteractive and mutation-free dry-run modes. |
-| `doctor` | Read the structured canonical setup/readiness report for Profile, providers, browser, worker, Temporal and budget. A successful read does not mean every capability is ready. |
+| `doctor` | Read the structured canonical setup/readiness report for Profile, providers, browser, worker, PostgreSQL, DBOS and budget. A successful read does not mean every capability is ready. |
 | `run [stages]` | Submit an explicit preparation recipe. The default `discover` recipe discovers and prepares new/pending work through the canonical worker; it does not implicitly submit applications. |
 | `legacy-evidence list` / `recover` / `decide` | Read retained originals/current cells; `recover --payload FILE` inventories a Profile recovery bundle or explicitly unavailable authority, and `decide --payload FILE` records the exact source/version-bound human decision. Neither command restores a database or overwrites current source text. |
 | `discover` / `assess` / `enrich` / `analyze` / `score` / `tailor` / `prepare` | Submit the corresponding durable recipe. `assess` requires explicit `--job-id` selection and runs enrichment, role context, requirements and person fit without Discovery, wording or resume work. Preparation commands accept `--force` and `--wait`; inspect `--help` for each command's supported selectors. |
@@ -383,8 +383,8 @@ the owned runtime and resume forward with `jobctrl update`. See
 | `credentials migrate` | Move allowlisted provider secrets from legacy `.env` files into the native credential store. |
 | `gmail-auth` | Connect Gmail for verification codes, outcome lookup, and approved email applications. |
 | `material-export RESUME_ID --output FILE --format docx --accepted` | Export the actual accepted Resumes document; an optional `--revision-id` pins a saved revision. The old generated-material migration command is retired with the explicit fresh-state cutover. |
-| `backup` | Source checkout only: write an integrity-checked SQLite backup of `jobctrl.db` without replacing an existing destination (`--output`). It is not an application/Temporal pair. |
-| `corepack pnpm worker:start` (source checkout) | Run the actual Python Temporal worker. Installed startup manages its worker; there is no current `jobctrl worker` command. |
+
+| `corepack pnpm worker:start` (source checkout) | Run the actual Python DBOS worker. Installed startup manages its worker; there is no current `jobctrl worker` command. |
 
 The digest counts new matches, stale scores and review items by their saved job
 identity. Hidden, closed and deleted jobs are excluded from those counts. New

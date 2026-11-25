@@ -1,5 +1,7 @@
-import { completed, expect, json, test } from "../harness/fixtures.js";
-import { posting } from "./preparation-cohort-data.js";
+import path from "node:path";
+
+import { expect, json, modelCall, test } from "../harness/fixtures.js";
+import { posting, respondProducer } from "./preparation-cohort-data.js";
 
 type Health = {
   databaseInstanceId: string;
@@ -7,7 +9,7 @@ type Health = {
   worker: { healthy: boolean; pid: number; build: string; heartbeatAt: string; reason?: string };
 };
 
-test("workspace identity survives a worker restart and refuses a mismatched history before writing", async ({ app, api, page }) => {
+test("workspace identity and saved work survive a worker restart", async ({ app, api, page }) => {
   const original = await json<Health>(api, "get", "/v1/health");
   expect(original.runtimeIdentity.workspace).toBe(app.workspace);
   expect(original.runtimeIdentity.build).toMatch(/^[a-f0-9]{64}$/);
@@ -15,13 +17,6 @@ test("workspace identity survives a worker restart and refuses a mismatched hist
   await page.goto("/jobs");
   await expect(page.getByText("Workspace workspace", { exact: true })).toHaveAttribute("title", app.workspace);
   const saved = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", posting(158));
-  const alternate = await app.alternateNamespaceApi("wrong-namespace");
-  const mismatch = await (await api.get(`${alternate}/v1/health`)).json();
-  expect(mismatch.databaseInstanceId).toBe(original.databaseInstanceId);
-  expect(mismatch.worker).toMatchObject({ healthy: false, reason: "workflow_history_mismatch" });
-  const refused = await api.post(`${alternate}/v1/jobs/capture`, { headers: { Origin: alternate }, data: posting(159) });
-  expect(refused.status()).toBe(409);
-  expect((await refused.json()).error.code).toBe("workflow_history_mismatch");
 
   const replacement = await app.restartWorker();
   const restarted = await json<Health>(api, "get", "/v1/health");
@@ -30,50 +25,62 @@ test("workspace identity survives a worker restart and refuses a mismatched hist
   expect((await json<{ jobs: { job_id: string }[] }>(api, "get", "/v1/jobs")).jobs.map(job => job.job_id)).toEqual([saved.job_id]);
 });
 
-test("dispatch readiness refuses an outage and retries the same action after service restoration", async ({ app, api, page, temporal }) => {
+test("a database outage becomes unavailable and recovers without losing accepted work", async ({ app, api, postgres }) => {
   test.setTimeout(90_000);
-  const name = "compensation.refresh_all";
-  const send = (key: string) => api.post(`/v1/actions/${name}`, { data: {}, headers: { "Idempotency-Key": key } });
-  const health = () => json<Health>(api, "get", "/v1/health");
-  const before = await health();
-  const first = await send("before-outage");
-  expect(first.status()).toBe(202);
-  const firstRun = await first.json();
-  const firstResult = await completed(api, firstRun.runId);
-
-  await temporal.pause();
+  const saved = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", posting(160));
+  await postgres.pause();
   try {
     await expect.poll(async () => {
-      const { worker } = await health();
-      return worker.pid === before.worker.pid && worker.heartbeatAt > before.worker.heartbeatAt && !worker.healthy && worker.reason;
-    }, { timeout: 18_000 }).toBe("workflow_service_unavailable");
-    const diagnostic = await json<{ worker: { healthy: boolean } }>(api, "get", "/v1/telemetry/pipeline");
-    expect(diagnostic.worker.healthy).toBe(false);
-    await page.goto("/jobs");
-    const warning = page.getByRole("alert").filter({ hasText: "The workflow service is unavailable." });
-    await expect(warning).toBeVisible();
-    await warning.getByRole("button", { name: "Check again" }).click();
-    const refused = await send("manual-retry");
-    expect(refused.status()).toBe(503);
-    expect((await refused.json()).error.code).toBe("workflow_service_unavailable");
-    expect((await api.get(`/v1/action-runs/by-idempotency-key?action=${name}`, { headers: { "Idempotency-Key": "manual-retry" } })).status()).toBe(404);
-    expect(await (await send("before-outage")).json()).toMatchObject({ runId: firstRun.runId, status: "succeeded" });
+      try { return (await api.get("/v1/health", { timeout: 2000 })).ok(); }
+      catch { return false; }
+    }, { timeout: 15_000 }).toBe(false);
   } finally {
-    await temporal.resume();
+    await postgres.resume();
   }
-  await expect.poll(async () => (await health()).worker.healthy, { timeout: 45_000 }).toBe(true);
-  const [retry, repeated] = await Promise.all([send("manual-retry"), send("manual-retry")]);
-  expect([retry.status(), repeated.status()]).toEqual([202, 202]);
-  const retryRun = await retry.json();
-  expect(await repeated.json()).toMatchObject({ runId: retryRun.runId, workflowId: retryRun.workflowId });
-  expect((await completed(api, retryRun.runId)).result).toEqual(firstResult.result);
-  expect(await (await send("manual-retry")).json()).toMatchObject({ runId: retryRun.runId, workflowId: retryRun.workflowId, status: "succeeded" });
-  const recorded = await json<{ runs: unknown[] }>(api, "get", `/v1/action-runs?action=${name}`);
-  expect(recorded.runs).toHaveLength(2);
+  await expect.poll(async () => {
+    try { return (await api.get("/v1/health", { timeout: 2000 })).ok(); }
+    catch { return false; }
+  }, { timeout: 45_000 }).toBe(true);
+  expect((await json<{ jobs: { job_id: string }[] }>(api, "get", "/v1/jobs")).jobs.map(job => job.job_id)).toContain(saved.job_id);
+  await app.restartWorker();
+});
 
-  await app.restartWorker("jobs");
-  const disabled = await send("missing-feature");
-  expect(disabled.status()).toBe(503);
-  expect((await disabled.json()).error.code).toBe("worker_action_unavailable");
-  expect(app.external.calls).toHaveLength(0);
+
+test("a logical backup cannot replay a provider action on a different PostgreSQL database", async ({ app, api }) => {
+  test.setTimeout(120_000);
+  const original = await json<Health>(api, "get", "/v1/health");
+  const row = posting(161);
+  const admitted = await json<{ runId: string }>(api, "post", "/v1/actions/jobs.capture_url", { url: row.url });
+  const page = await app.external.next({ match: (call) => call.path === "/posting-page" });
+  respondProducer(page, [row]);
+  const heldModelRequest = await modelCall(app, "page_interpretation");
+  const archiveName = "held-provider-work.pgdump";
+  try {
+    const backup = await app.cli(["backup", "--output", path.join(app.directory, archiveName)]);
+    expect(backup.exitCode, backup.stderr).toBe(0);
+  } finally {
+    respondProducer(heldModelRequest, [row]);
+  }
+  respondProducer(await modelCall(app, "posting_extraction"), [row]);
+  respondProducer(await modelCall(app, "description_quality"), [row]);
+  const runPath = `/v1/action-runs/${admitted.runId}`;
+  await expect.poll(() => json<{ status: string }>(api, "get", runPath).then((run) => run.status)).toBe("succeeded");
+  const modelCalls = app.external.calls.filter((call) => call.path === "/model").length;
+  expect(modelCalls).toBeGreaterThan(0);
+
+  const clone = await app.inspectLogicalBackup(archiveName, admitted.runId);
+  expect(clone.archived).toEqual(["running", "PENDING"]);
+  expect(clone.afterTrial).toEqual(clone.archived);
+  expect(clone.cli.exitCode).toBe(1);
+  expect(JSON.parse(clone.cli.stderr).error.code).toBe("workspace_restore_mismatch");
+  expect(clone.api.exitCode).toBe(1);
+  expect(clone.api.stderr).toContain("workspace_restore_mismatch");
+  expect(clone.worker.exitCode).toBe(1);
+  expect(clone.worker.stderr).toContain("This workspace is bound to another PostgreSQL database");
+  expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(modelCalls);
+  expect(await json<Health>(api, "get", "/v1/health")).toMatchObject({
+    databaseInstanceId: original.databaseInstanceId,
+    worker: { healthy: true },
+  });
+  expect(await json<{ status: string }>(api, "get", runPath)).toMatchObject({ status: "succeeded" });
 });

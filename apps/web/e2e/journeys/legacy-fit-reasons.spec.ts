@@ -4,9 +4,7 @@ import { createBaseline } from "./core-data.js";
 import { posting, respondProducer } from "./preparation-cohort-data.js";
 import { typedExtraction } from "./requirements-data.js";
 
-test.use({ sourceRevision: "17f9ce5be1de2f21735fb27d5dfe8f6d1b7c8118" });
-
-test("the predecessor Jobs grid identifies a run's source-bound language decision before and after it skips Fit", async ({ api, app, page }) => {
+test("the Jobs grid identifies a run's source-bound language decision before and after it skips Fit", async ({ api, app, page }) => {
   await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
   await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 11, resultsPerSite: 11 });

@@ -1,32 +1,19 @@
 # Storage
 
-The transformed source application stores canonical state in one private
-`jobctrl.db` SQLite file under `JOBCTRL_DIR` (default `~/.jobctrl`). Temporal owns
-its separate history database. Files, native credentials and provider runtime
-state have explicit owners; they are not alternate business databases.
+The source candidate stores application tables and DBOS system tables together
+in a private PostgreSQL database for each workspace. Feature-owned files, native
+credentials and provider runtime state retain their separate owners. This
+source change does not establish what an installed release contains.
 
-## Database admission
+## Workspace transition
 
-The target SQLite identity is application ID `0x4A435354` (`1245926228`),
-`user_version=1`, and metadata identifying `jobctrl-python`. Fresh initialization
-builds a complete database in an owned private stage and publishes it without
-replacing an existing path. Competing initializers admit the winner. Orphaned
-canonical WAL/SHM companions prevent creating an unrelated replacement.
-Publication and admission share a private initializer lock, so a second process
-cannot inspect the staged file's temporary second hard link. Legacy header
-rejection occurs before creating that lock.
-
-Existing files must be regular, private and have one link. The SQLite header is
-checked before any SQLite open, so a legacy WAL database is refused without
-creating companions. Metadata and the schema version are then checked. Each
-feature publishes its own schema and digest in the same write transaction;
-a changed feature schema requires an explicit migration. A live process checks
-the database identity before every connection and refuses a replaced database.
-
-The breaking transformation preserves the full Profile through the explicit
-stopped-runtime transfer. Other JobCtrl-owned data is reset only at that
-intentional cutover. Startup, tests and development do not perform a real-user
-reset. The one-off transfer proof is separate from the recurring E2E suite.
+The supported upgrade source is the current Python SQLite workspace. An explicit
+import takes a consistent SQLite snapshot and stages a PostgreSQL destination;
+it verifies row counts, content digests, identities and file bindings before
+activation. The source and owned artifacts are preserved. Drain outstanding
+work before migration; uncertain external effects and provider charges remain
+unsettled, and predecessor Temporal histories are not replayed. See the
+[migration plan](../plans/2026-11-25-postgres-dbos.md) for its acceptance gates.
 
 ## Ownership
 
@@ -38,7 +25,7 @@ reset. The one-off transfer proof is separate from the recurring E2E suite.
 | `app_action_runs`, `app_worker_heartbeats` | Durable application admission/results/cancellation and current worker observations. |
 | `app_model_calls` | Source-bound model attempt receipts, provenance, output and accounting status. |
 | Feature-owned tables | Profile, Jobs, Requirements, Fit, Resumes, Discovery, Companies, Contacts, Outreach, Applications, Interviews, Learning, Digest, Compensation and Offers own their schemas and canonical writes. |
-| `temporal.db` and companions | Durable workflow/activity history, supervised by the native runtime. |
+| DBOS system tables | Durable workflow execution, queue and recovery state in the workspace database. |
 | Feature-owned files | Profile sources and resume render/export artifacts, bound to the owning feature's immutable records. |
 | Native OS credential store | Allowlisted provider secrets; never ordinary settings or backup JSON. |
 | `extension-capability-token` | Private loopback/extension capability; rotation invalidates prior pairing. |
@@ -62,15 +49,15 @@ resume artifacts.
 
 ## Transactions, events and accepted artifacts
 
-Connections enable foreign keys, WAL and a bounded busy timeout. The shared
-transaction context starts `BEGIN IMMEDIATE`, commits on success, rolls back on
-failure and closes its connection. Feature adapters own domain repositories,
+The shared transaction context commits on success and rolls back on failure.
+Contested admissions, revisions and budget reservations require database
+serialization. Domain acceptance and DBOS dispatch share a transaction. Feature adapters own domain repositories,
 optimistic version predicates and exact accepted-artifact rules.
 
 `EventStore.append` requires an existing write transaction. SSE and Activity read
 only committed rows; rollback cannot publish an invalidation for a write that
 never happened. The stream supports integer replay cursors and closes with
-`workspace_changed` if the canonical file is replaced.
+`workspace_changed` if the workspace database identity changes.
 
 A failed refresh records its failed/blocked attempt separately from the last
 accepted artifact. Readers join recorded requirement/source/approval/receipt IDs.
@@ -80,7 +67,7 @@ remain distinct records with distinct authority.
 
 ## Sensitive material and accounting
 
-Database rows, WAL/SHM files, generated documents, source attachments, logs and
+Database data and backups, generated documents, source attachments, logs and
 provider profiles are private. They must not enter commits, issue comments or
 public verification artifacts. Synthetic QA evidence records behavior and
 identifiers without real applicant data.

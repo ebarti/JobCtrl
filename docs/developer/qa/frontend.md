@@ -20,7 +20,7 @@ or mocked internal API suite; see [Python application journeys](python-journeys.
 - TypeScript checks contract shapes and the boundary lint checks dependency
   direction. Neither proves runtime behavior. See
   [automated boundary checks](../../architecture/frontend/state-and-ports.md#automated-boundary-checks).
-- The actual browser suite reaches Python HTTP, SQLite, Temporal, the worker and
+- The actual browser suite reaches Python HTTP, PostgreSQL, DBOS, the worker and
   renderer. Only external services are controlled. It creates synthetic records
   through public entry points; it does not seed private tables, fake dispatch
   or replace internal API responses.

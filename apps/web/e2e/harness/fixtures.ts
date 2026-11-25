@@ -9,7 +9,7 @@ import {
 
 // JavaScript owns native processes. It is used only by the E2E harness.
 // @ts-expect-error Node harness modules do not ship with application declarations.
-import { applicationStack, temporalStack } from "./runtime.mjs";
+import { applicationStack, postgresStack } from "./runtime.mjs";
 
 export type ExternalCall = {
   method: string;
@@ -37,7 +37,7 @@ export type ApplicationStack = {
     calls: ExternalCall[];
     sends: ExternalCall[];
     setCatalog(value: { providers: Record<string, unknown>[] }): void;
-    next(options?: { timeout?: number }): Promise<ExternalCall>;
+    next(options?: { timeout?: number; match?: (call: ExternalCall) => boolean }): Promise<ExternalCall>;
   };
   discoveryCheckpoint(runId: string): Promise<{
     adapters: { unitId: string; site: string; state: Record<string, unknown>; emittedCount: number; completed: boolean; requestFingerprint: string; acknowledgedKeys: string[] }[];
@@ -48,16 +48,16 @@ export type ApplicationStack = {
   }>;
   restartWorker(features?: string): Promise<{ previous: number; current: number }>;
   restartApi(options?: { freshWorkspace?: boolean }): Promise<void>;
-  alternateNamespaceApi(namespace: string): Promise<string>;
+  upgradeSqliteToPostgres(): Promise<{ first: { state: string; rows: number; receipt_sha256: string }; repeated: { state: string; rows: number; receipt_sha256: string } }>;
   upgradeSource(): Promise<{ previous: number; current: number; backup: string; candidateOrigin: string; mode: "source" | "installed" }>;
   armFitRecoveryPause(operation: "fit.catalog-impact" | "fit.qualification-batch"): Promise<void>;
   waitForFitRecoveryPause(): Promise<void>;
   armCohortBoundaryPause(): Promise<void>;
-  armCohortReceiptPause(): Promise<void>;
   waitForCohortBoundaryPause(boundary?: "final-currentness-guard" | "fit-receipt"): Promise<void>;
   resumeCohortBoundary(): Promise<void>;
-  cohortReceiptCheckpoint(runId: string): Promise<{ operationId: string; phaseStatus: string; stateStatus: string; callStatus: string;
-    inputFingerprint: string; storedReceiptId: string | null; receipts: { receipt_id: string; status: string; operation: string; input_fingerprint: string }[] }>;
+  armModelReceiptPause(): Promise<void>;
+  waitForModelReceiptPause(): Promise<string>;
+  fitProviderReceipts(): Promise<{ receiptId: string; ownerKey: string | null; status: string; inputFingerprint: string; costUsd: number | null }[]>;
   fitRefreshCheckpoint(operationId: string): Promise<{ calls: Record<string, { kind: string; status: string; result?: { value: unknown; provenance: Record<string, unknown> } }>; checkpoints: Record<string, unknown>; impact_selection_scope_version?: string; qualification_transport_version?: string }>;
   databaseSchemaFingerprint(): Promise<string>;
   databaseSchemaInventory(): Promise<{ type: string; name: string; table: string; sql: string | null }[]>;
@@ -70,6 +70,13 @@ export type ApplicationStack = {
   }>;
   failRendering(): Promise<void>;
   restoreRendering(): Promise<void>;
+  inspectLogicalBackup(archiveName: string, runId: string): Promise<{
+    archived: [string, string];
+    afterTrial: [string, string];
+    cli: { exitCode: number; stderr: string };
+    api: { exitCode: number; stderr: string };
+    worker: { exitCode: number; stderr: string };
+  }>;
   cli(
     args: string[],
     options?: { input?: string },
@@ -84,9 +91,8 @@ export type ApplicationStack = {
 };
 
 type WorkerFixtures = {
-  temporal: {
-    address: string;
-    history(workflowId: string, runId: string): Promise<{ eventType: string }[]>;
+  postgres: {
+    createDatabase(): Promise<string>;
     pause(): Promise<void>;
     resume(): Promise<void>;
     retainForDiagnosis(): void;
@@ -101,8 +107,10 @@ type Fixtures = {
   discoveryTransport: "jobstreaming" | "jobstreaming-indeed-missing" | "jobstreaming-tls-failure";
   nativeAccountingPreflight: boolean;
   sourceRevision: string | undefined;
+  sqlitePredecessor: boolean;
   fitRecoveryDebugger: boolean;
   cohortBoundaryDebugger: boolean;
+  modelReceiptDebugger: boolean;
   expectedTransportFailures: {
     request: Request;
     errorText: "net::ERR_FAILED";
@@ -125,8 +133,10 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
   discoveryTransport: ["jobstreaming", { option: true }],
   nativeAccountingPreflight: [false, { option: true }],
   sourceRevision: [undefined, { option: true }],
+  sqlitePredecessor: [false, { option: true }],
   fitRecoveryDebugger: [false, { option: true }],
   cohortBoundaryDebugger: [false, { option: true }],
+  modelReceiptDebugger: [false, { option: true }],
   expectedTransportFailures: async ({}, use) => {
     await use([]);
   },
@@ -207,9 +217,9 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
       expectedTransportFailures.push({ request, errorText });
     });
   },
-  temporal: [
+  postgres: [
     async ({}, use) => {
-      const runtime = await temporalStack();
+      const runtime = await postgresStack();
       try {
         await use(runtime);
       } finally {
@@ -219,10 +229,10 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     { scope: "worker", timeout: 60_000 },
   ],
   app: [
-    async ({ temporal, features, discoveryTransport, nativeAccountingPreflight, sourceRevision, fitRecoveryDebugger, cohortBoundaryDebugger }, use, testInfo) => {
+    async ({ postgres, features, discoveryTransport, nativeAccountingPreflight, sourceRevision, sqlitePredecessor, fitRecoveryDebugger, cohortBoundaryDebugger, modelReceiptDebugger }, use, testInfo) => {
       const runtime: ApplicationStack = await applicationStack(
-        temporal.address,
-        { features, discoveryTransport, nativeAccountingPreflight, sourceRevision, fitRecoveryDebugger, cohortBoundaryDebugger },
+        await postgres.createDatabase(),
+        { features, discoveryTransport, nativeAccountingPreflight, sourceRevision, sqlitePredecessor, fitRecoveryDebugger, cohortBoundaryDebugger, modelReceiptDebugger, createDatabase: () => postgres.createDatabase() },
       );
       await testInfo.attach("runtime-setup", {
         contentType: "application/json",
@@ -237,11 +247,11 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
         await use(runtime);
       } finally {
         const retainState = testInfo.status !== testInfo.expectedStatus;
-        if (retainState) temporal.retainForDiagnosis();
+        if (retainState) postgres.retainForDiagnosis();
         await runtime.close({ retainState });
       }
     },
-    { timeout: 60_000 },
+    { timeout: 240_000 },
   ],
   api: async ({ playwright, app }, use) => {
     const request = await playwright.request.newContext({
@@ -341,7 +351,7 @@ export async function completed(api: APIRequestContext, runId: string) {
   const result = await terminal(api, runId);
   expect(
     result["status"],
-    `Temporal action ${runId}: ${JSON.stringify(result)}`,
+    `Durable action ${runId}: ${JSON.stringify(result)}`,
   ).toBe("succeeded");
   return result;
 }
@@ -362,7 +372,7 @@ export async function terminal(api: APIRequestContext, runId: string) {
       },
       // Production heartbeat timeout is 30s; allow its bounded retry and
       // canonical terminal reconciliation on the declared runner.
-      { timeout: 45_000, message: `Temporal action ${runId} must terminalize` },
+      { timeout: 45_000, message: `Durable action ${runId} must terminalize` },
     )
     .toBe(true);
   return result;

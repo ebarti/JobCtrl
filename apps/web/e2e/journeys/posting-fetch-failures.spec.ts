@@ -4,59 +4,6 @@ import { citeSources } from "./requirements-data.js";
 
 test.use({ features: "jobs" });
 
-test.describe("URL import action before capacity queues", () => {
-  test.use({ sourceRevision: "17f9ce5be1de2f21735fb27d5dfe8f6d1b7c8118" });
-  test("Jobs uses native URL import receipts on the predecessor and never requests the missing queue", async ({ api, app, page }) => {
-    const [holder, refused, available] = [911, 912, 913].map(posting);
-    let historyReads = 0;
-    page.on("request", (request) => { if (new URL(request.url()).pathname === "/v1/jobs/url-imports") historyReads++; });
-    const submit = async (url: string) => {
-      await page.goto("/jobs");
-      await page.getByText("Add a job by URL or text", { exact: true }).click();
-      await page.getByText("Import posting URL", { exact: true }).click();
-      const form = page.locator("form.jobs-capture__url");
-      await expect(form).toContainText("A busy model lane can fail the import without waiting");
-      await expect(form.getByRole("link", { name: "View URL import runs" })).toHaveAttribute("href", /workflowType=jobs.capture_url/);
-      await expect(page.getByRole("region", { name: "Recent URL imports" })).toHaveCount(0);
-      await form.locator("input").fill(url);
-      const submitted = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/v1/actions/jobs.capture_url");
-      await form.getByRole("button", { name: "Import job", exact: true }).click();
-      const response = await submitted;
-      expect(response.status()).toBe(202);
-      const { runId } = await response.json() as { runId: string };
-      await expect(page.getByRole("link", { name: "View import run", exact: true })).toHaveAttribute("href", `/runs/${runId}`);
-      return runId;
-    };
-    const heldRequest = api.post("/v1/jobs/import-url", { data: { url: holder!.url } });
-    respondProducer(await app.external.next(), [holder!]);
-    const held = await modelCall(app, "page_interpretation");
-    try {
-      const refusedId = await submit(refused!.url);
-      respondProducer(await app.external.next(), [refused!]);
-      expect(await terminal(api, refusedId)).toMatchObject({ status: "failed", errorCode: "model_lane_busy" });
-      await page.getByRole("link", { name: "View import run", exact: true }).click();
-      await expect(page.getByText("model_lane_busy", { exact: true })).toBeVisible();
-      expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(1);
-      respondProducer(held, [holder!]);
-      for (const operation of ["posting_extraction", "description_quality"]) respondProducer(await modelCall(app, operation), [holder!]);
-      expect((await heldRequest).status()).toBe(201);
-      const acceptedId = await submit(available!.url);
-      respondProducer(await app.external.next(), [available!]);
-      for (const operation of ["page_interpretation", "posting_extraction", "description_quality"]) respondProducer(await modelCall(app, operation), [available!]);
-      expect(await terminal(api, acceptedId)).toMatchObject({ status: "succeeded", result: { url: available!.url } });
-      await page.reload();
-      await page.getByText("Add a job by URL or text", { exact: true }).click();
-      await page.getByText("Import posting URL", { exact: true }).click();
-      await page.getByRole("link", { name: "View URL import runs" }).click();
-      for (const id of [acceptedId, refusedId]) await expect(page.locator(`a[href="/runs/${id}"]`)).toHaveText("jobs.capture_url");
-      expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(6);
-      expect(historyReads).toBe(0);
-    } finally {
-      if (!held.closed) held.disconnect();
-    }
-  });
-});
-
 test("URL imports wait for occupied model capacity and survive closing Jobs and restarting its worker", async ({ api, app, page }, testInfo) => {
   test.setTimeout(120_000);
   const [holder, target, abandoned] = [901, 902, 903].map(posting);

@@ -14,7 +14,7 @@ corepack pnpm e2e -- --headed --grep 'approved baseline'
 ```
 
 The runner owns fresh synthetic workspaces, actual Python HTTP/CLI/worker
-composition, Temporal, SQLite and the renderer. It freezes the source and
+composition, DBOS, PostgreSQL and the renderer. It freezes the source and
 runtime policy and records candidate hashes and setup-inclusive timings. Only
 external model, job, mail and provider boundaries are controlled; unexpected
 external calls fail the run. Use the observed results in
@@ -206,7 +206,7 @@ refer to the same source text. Cover duplicate and blank draft bullets, mixed
 authored/derived evidence, another save after reordering, and desktop/mobile
 controls without overflow or accessibility regressions.
 Verify unknown nested fields and raw numeric strings survive the actual outgoing
-Profile request. Use real Python GET/PATCH, SQLite persistence and the current
+Profile request. Use real Python GET/PATCH, PostgreSQL persistence and the current
 renderer for supported values/order; do not substitute deterministic preview
 HTML or an isolated internal API. During an observed delayed save acknowledgement,
 continue typing a newer title while the save is pending.

@@ -5,14 +5,12 @@ import { qualificationBatchDecision } from "./qualification-data.js";
 import { captureReusePosting, acceptReuseRequirements, reusableModelCatalog, type CapturedPosting } from "./reuse-data.js";
 import { typedExtraction } from "./requirements-data.js";
 
-const previous = "e41c55189285697549ea35d40bb62b4070c9462b";
 const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical) :
   value !== null && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, field]) => [key, canonical(field)])) : value;
 const fingerprint = (value: unknown) => createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 
-for (const generation of ["predecessor", "current"] as const) test.describe(`manual Fit paid qualification, ${generation} authority`, () => {
-  if (generation === "predecessor") test.use({ sourceRevision: previous });
-  const cases = generation === "predecessor" ? ["exact", "changed effort", "older other effort", "invalid evidence", "ambiguous"] as const : ["exact", "changed source", "unsettled"] as const;
+test.describe("manual Fit paid qualification authority", () => {
+  const cases = ["exact", "changed effort", "older other effort", "invalid evidence", "ambiguous", "changed source", "unsettled"] as const;
   for (const mode of cases) {
     test(`a fresh manual Fit refresh resolves a prior revision conflict with ${mode} receipt authority`, async ({ api, app }) => {
       test.setTimeout(105_000);
@@ -65,7 +63,7 @@ for (const generation of ["predecessor", "current"] as const) test.describe(`man
         else batch.reply(response);
         expect(await terminal(api, old.runId)).toMatchObject({ status: "failed", errorCode:
           mode === "unsettled" ? "model_provider_failed" : "revision_conflict" });
-        if (generation === "current") {
+        {
           const checkpoint = await app.fitRefreshCheckpoint(old.runId);
           expect(Object.values(checkpoint.calls).find(call => call.kind === "fit.qualification-batch")).toMatchObject({
             status: "started", receipt_id: expect.any(String), input_fingerprint: lastFingerprint,
@@ -75,7 +73,6 @@ for (const generation of ["predecessor", "current"] as const) test.describe(`man
         expect(await json<RefreshOperation>(api, "get", `/v1/fit/refresh/operations/${old.runId}`))
           .toMatchObject({ factual_published: false, counters: { model_calls: 1 } });
       }
-      if (generation === "predecessor") await app.upgradeSource();
       if (mode === "changed effort" || mode === "older other effort") await effort("low");
       if (mode === "changed source") {
         const extra = "Independently review recovery authorization before each service change.";

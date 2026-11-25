@@ -78,7 +78,7 @@ covers first-run setup in detail. `jobctrl uninstall` removes JobCtrl and keeps
    itself are emails from your Gmail, with the recipient and attachment you
    approved, sent at most once.
 
-Admitted discovery and preparation run on Temporal, a workflow engine, and
+Admitted discovery and preparation run on DBOS, a durable workflow engine, and
 retain their durable identity through interruptions.
 
 JobCtrl also shows posted salaries and market estimates with their evidence,

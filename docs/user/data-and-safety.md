@@ -178,19 +178,19 @@ Unless a row says otherwise, every path below is relative to JOBCTRL_DIR
 
 | Path | Contents |
 | --- | --- |
-| `jobctrl.db` plus `-wal` / `-shm` | Profile, jobs, discovery settings, events, projections, artifact metadata, import receipt bindings, review drafts, contacts, private offer terms/decisions and sources, and workflows. Treat all three files as one database. |
+| `postgres/` | Workspace PostgreSQL cluster and selected generation; application data and DBOS execution state share its database. |
 | `.jobctrl.db.llm-spend-pending/` | Private pending or unresolved provider-usage receipts. They contain model, lane and reported token counts, without prompts or completions. Keep them with the workspace when investigating incomplete accounting. |
-| `temporal.db` plus `-wal` / `-shm` | Shared Temporal history for new workspaces; earlier source workspaces may retain `temporal/temporal.db`. Treat the history and `jobctrl.db` as one pair. |
-| `jobctrl.db` feature settings | Revisioned shared settings plus Profile, Discovery, Compensation and other feature-owned preferences. The historical `config.json` is not the current Python settings authority. No credential secret belongs in these records. |
+| Earlier `jobctrl.db` and `temporal.db` files | Retained SQLite source and predecessor history after an upgrade. Preserve them and their companions. |
+| PostgreSQL feature settings | Revisioned shared settings plus Profile, Discovery, Compensation and other feature-owned preferences. The historical `config.json` is not the current Python settings authority. No credential secret belongs in these records. |
 | `.env` | Legacy/plaintext provider credentials used by remaining compatibility paths. Not encrypted at rest. |
 | `codex_home/` | Stable JobCtrl-owned Codex CLI state. `auth.json` is outside the prompt-readable `workspace/` subtree. |
 | `claude_home/`, `provider-packs/`, `provider-runtime/` | Isolated or separately acquired provider runtime state. |
 | `tailored_resumes/` | Generated text, HTML, and PDF artifacts. |
-| `profile-imports/` | Uploaded import PDFs retained for retry. The corresponding source-attempt bindings, which contain the digest and observed style but no PDF bytes, are in `jobctrl.db`. |
+| `profile-imports/` | Uploaded import PDFs retained for retry. The corresponding source-attempt bindings, which contain the digest and observed style but no PDF bytes, are in the workspace database. |
 | `logs/`, `apply-workers/`, `chrome-workers/` | Logs and local browser/apply state, including CAPTCHA usage metadata when applicable. |
 | `browser-profiles/` | Consented copied profiles retained for separate compatibility capabilities. Integrated `DiscoverWorkflow` never reads or launches them. Non-secret adoption metadata lives in `config.json`. |
 | `extension-capability-token`, `extension-discovery-installation-id` | Private local browser-extension pairing secret and the extension installation selected for Discovery. Discovery bridge task bodies and results are memory-only and are not stored beside them. |
-| `backups/` | Current installed `pair-<id>/` database snapshots and application-only `jobctrl-<timestamp>.db` snapshots. Older source-upgrade or purge bundles may remain from earlier releases; the Python application does not create automatic legacy-migration backups. See [Back Up And Restore](#back-up-and-restore). |
+| `backups/` | Private backup and transition evidence. Older SQLite and Temporal snapshots may remain from earlier releases. See [Back Up And Restore](#back-up-and-restore). |
 | `gmail/` | Gmail OAuth client and token files. |
 | Baseline/legacy resume files | `resume.txt`, `resume.pdf`, and older local style/template files. |
 
@@ -238,171 +238,49 @@ directory; treat those logs as sensitive too.
 
 ### Back Up And Restore
 
+A workspace backup must preserve the PostgreSQL database, including its DBOS
+system tables, and the separately owned files, credentials and unresolved usage
+receipts needed for recovery. A database snapshot alone is not a complete
+workspace archive. The native lifecycle takes a cold database backup after
+stopping owned writers; restore stages and verifies a new database generation
+before selecting it. Native rollback also verifies the recorded identity and
+byte digest of accepted PDFs; missing or changed files refuse selection. A
+database archive cannot reconstruct those files. Preserve the current generation and recovery evidence if a
+restore is refused or interrupted. Unresolved external effects and provider
+charges must not be erased by restoring an older state.
+
+The installed command is `jobctrl backup [--output DIRECTORY]`. The installed
+`jobctrl rollback --to BUILD_ID` uses a retained backup for the selected
+PostgreSQL release. Cross-engine rollback after PostgreSQL activation is refused;
+the preserved SQLite source and recovery backups remain available for deliberate
+recovery.
+
+In a source checkout, `jobctrl --workspace PATH backup [--output FILE_OR_EXISTING_DIR]`
+creates a private PostgreSQL custom archive with application and DBOS schemas
+from one snapshot. It does not include workspace identity, files or credentials.
+For inspection only, restore this archive into a new empty scratch database with
+`pg_restore --exit-on-error --single-transaction --no-owner --no-acl`. JobCtrl
+refuses to activate that physical clone; do not point the original workspace
+at it. Native verified recovery is a separate operation. PostgreSQL tools come
+from `JOBCTRL_POSTGRES_BIN_DIR` or PATH.
+
+The current Python SQLite workspace can be imported explicitly into PostgreSQL.
+Keep its source database, companions, predecessor workflow history and owned
+artifacts. Rehearse into an isolated target first; stop old writers and drain
+outstanding work before the final snapshot. Validation covers content and file
+bindings before activation. Temporal histories are not replayed. Restoring a
+pre-upgrade snapshot after later writes loses those later writes unless they are
+separately reconciled. See [Local Development](../local-development.md#schema-migrations-and-source-updates)
+and the [migration plan](../plans/2026-11-25-postgres-dbos.md).
+
 <a id="typed-requirements-upgrade"></a>
 
-The `requirements-v2` source upgrade is a separate generation boundary inside
-the Python application. Before operational rollout, stop every old application
-and worker writer and take a consistent workspace backup, including workflow
-history and referenced accepted artifacts. Verify ownership and stopped
-processes; do not treat a database-only snapshot as that complete backup.
-A source implementation alone does not establish a release or operational rollout.
-
-The new generation starts with an empty active Skills/Professional Experience
-catalog. Legacy accepted rows, job revision ordering and accepted resume bytes
-remain retained, while old results require refresh for the changed contract.
-They cannot prove current ranking or composition readiness. Ordinary reads or
-Profile saves do not run a conversion or model cascade. Incompatible old
-operations are refused rather than resumed with mixed semantics.
-
-After new-generation writes, rollback restores the verified pre-upgrade backup
-as one workspace unit with compatible application/workflow state. Installing an
-older binary alone is unsafe. Keep the backup and historical accepted artifacts
-until the deliberate rollout and recovery checks have succeeded. No development
-or QA instruction authorizes restoring or resetting a real user's workspace.
-
-The later capability-consolidation policy stays within `requirements-v2` and
-adds separate normalization records. It does not reset the catalog on startup.
-Before adopting the source update, stop the owned writers and verify the same
-paired workspace backup. **Consolidate skills** is an explicit model operation
-over the complete retained catalog, including deleted-job sources. A successful
-operation records stable identities, aliases and combined job demands atomically;
-earlier meanings, assessments, approvals and accepted resume bytes remain
-history. Refused, interrupted or cancelled work cannot partially replace them.
-Changed derivations require an explicitly admitted refresh before they establish
-current authority. Reads and Profile saves never start that work. See the
-[Requirements library](requirements-library.md) for the action and recovery
-behavior. After publication, rollback requires the compatible workspace backup
-and workflow state together; an older binary alone is insufficient.
-
-The Python target does not upgrade or restore a pre-Python legacy database into place.
-The explicit `profile-transfer` command reads the old workspace and requires a
-complete browser Profile source/attachment export through `--browser-sources`,
-a nonexistent target outside the source, and `--confirm-profile-only-reset`.
-It retains the full Profile and supporting sources, starts other application
-data fresh, and writes a transfer receipt without selecting the new workspace.
-Verify the receipt and source inventory before deliberately selecting the target;
-never perform a real-user reset during development or QA. See the current
-[cutover boundary](getting-started.md#update-roll-back-or-remove-jobctrl).
-
-In the target, `legacy-evidence list` shows retained original/current evidence.
-`recover --payload FILE` inventories a Profile recovery bundle or records
-explicitly unavailable authority with an expected Profile version; `decide
---payload FILE` records a human decision against the exact displayed source and
-review token. These commands do not restore databases, overwrite newer cells,
-or automatically reconfirm uncertain history. Preserve historical paired
-backups as evidence; independently captured files do not establish a stopped
-application/Temporal pair or human confirmation authority.
-
-
-```bash
-jobctrl backup
-```
-
-For an admitted Python workspace, the installed command snapshots `jobctrl.db`
-and `temporal.db` together into a new `backups/pair-<id>/` directory. A legacy
-workspace is refused and preserved for explicit Profile transfer. If JobCtrl is running, it stops for the
-snapshot and starts again afterward. If a source development fleet is running,
-stop it first; the installed backup command does not replace it with the
-installed app. `--output` takes an absolute directory.
-The two files are one restore unit: never restore just one of them. The
-launcher has no restore command for these pairs; updates and rollbacks write and
-restore their own, as described in
-[Update, Roll Back, Or Remove JobCtrl](getting-started.md#update-roll-back-or-remove-jobctrl).
-The pair does not include pending or unresolved spend receipts; preserve those
-separately and reconcile accounting when restoring a different database version.
-After stopping managed processes, rollback and transition recovery check that
-no spend receipt remains before restoring a pair or starting an older release.
-If accounting is unresolved or its receipt directory cannot be verified, JobCtrl
-stops before the next restore or startup step. A late refusal can happen after
-the current database pair was replaced. Preserve the current pair, pre-rollback
-and other paired backups, journal, and receipts; compare the receipts with the
-ledger and provider records. Whether recovery can be retried depends on the
-transition state. An absent, empty, or safe lock-only receipt directory does not
-block recovery.
-
-When a release promotion performs automatic release cleanup, JobCtrl keeps
-releases referenced by paired backups in the current workspace `backups/` and
-other workspaces recorded by the runtime, including a custom `JOBCTRL_DIR`.
-A source workspace is included when its checkout and runtime ownership can be
-verified; otherwise cleanup stops and preserves releases. Cleanup also preserves
-releases if an independent Apply run lacks verified completion, even after its
-launcher exits. It does not stop the run or prevent an ordinary restart.
-Paired backup metadata in differently named folders is still considered;
-unrelated folders without `pair.json` are left alone. If workspace ownership,
-pair metadata, or the release store's directory identity
-cannot be verified before cleanup, cleanup stops before deleting releases. A
-release is eligible for cleanup only if its sequence and identity are recorded
-in channel state and its signed payload and expected metadata can be verified;
-releases without that recorded history, modified payload files, and extra files
-and directories are preserved. Generated receipt and policy files are not
-independently signed, so a valid edit to those files cannot always be
-distinguished from the original metadata. A release claimed for cleanup that
-cannot be safely returned is
-preserved under a `.retention-*` directory for inspection. An interruption during
-cleanup may leave a partially removed owned release there. An actively
-concurrent writer with access inside that claimed directory can race the last
-check before an individual file is removed. Writers that change backup
-authorities outside JobCtrl's runtime transition lock can also race cleanup's
-reference checks. The message identifies when the new release is already active.
-Backups placed elsewhere with `--output` are outside this automatic discovery.
-Retention alone does not make a rollback eligible: the release must also pass
-its safety policy and the paired files must pass verification.
-
-In a source checkout, `uv --project workers/automation run jobctrl backup`
-writes one consistent copy of `jobctrl.db` to `backups/jobctrl-<timestamp>.db`
-through SQLite's backup API, checks its integrity and refuses to overwrite an
-existing destination. It is safe while the app runs and never deletes source
-data; `--output` takes a file or directory. This is an application-database
-snapshot, not a stopped and verified application/Temporal backup pair. It is
-not sufficient to restore a workspace with workflow history. Preserve the live
-databases and their WAL/SHM companions; do not delete companions or replace one
-database in isolation. The snapshot does not include pending or unresolved
-spend receipts; preserve those separately and reconcile accounting when
-restoring a different database version. The source checkout does not currently
-offer a paired restore command. Neither database-only backup is a complete
-archive of renderer artifacts or other workspace files; preserve those files
-alongside the database evidence. See
-[Local Development](../local-development.md#schema-migrations-and-source-updates)
-for fresh-target admission and recovery limitations. Source startup never
-silently migrates an old application database.
-
-After restoring or replacing a database, restart JobCtrl (or rerun
-`corepack pnpm dev` in a source checkout) and reload any open JobCtrl browser
-tabs to create fresh event subscriptions. API callers that supplied an explicit
-`?since` cursor must discard it and start a fresh subscription too.
-
-Never hand-import individual tables or reset projection watermarks as a
-substitute for a verified workspace recovery.
-
-#### Interrupted first database creation
-
-If startup refuses an unsafe database, unknown companions or an incompatible
-identity, preserve `jobctrl.db`, its `-wal`, `-shm` and `-journal` companions,
-and any staging files. Do not delete or open them while JobCtrl is running.
-Stop owned processes and independently confirm the workspace has no open
-database handles before inspecting recovery evidence. The workspace defaults
-to `~/.jobctrl/`; use its configured location when different.
-
-The current initializer uses private `.jobctrl-python-*.sqlite3` staging files
-and admits only the exact Python application identity. The older
-`.jobctrl-init-*/candidate.db` hard-link cleanup procedure is not a recovery
-procedure for this application. Do not remove links or rewrite schema markers
-to bypass admission. Preserve uncertain state and seek help or use a verified
-compatible backup. Legacy databases require the explicit read-only Profile
-transfer into a fresh target, not manual repair in place.
-
-#### Runtime cleanup failures
-
-A native paired backup, update or rollback must pass the complete process-cleanup
-gate. `jobctrl stop` requests clean shutdown, kills verified timed-out leftovers,
-and waits for their exit. Successful cleanup permits normal restart. A missing
-or unfamiliar ownership record is a failure, including legacy records that
-cannot identify detached children; JobCtrl preserves the registry and live data
-instead of claiming they are stopped. Inspect the reported process/permission
-problem and preserve the reported evidence. For a legacy runtime without
-complete ownership records, there is currently no documented self-service
-recovery; seek support. Restarting the computer alone does not clear this
-refusal. Do not delete ownership metadata or restore an older pair to bypass it.
+Schema and policy changes also require a compatible verified workspace backup
+before adopting the new source. An older binary alone does not restore prior
+data or workflow authority. Never reset a real workspace for development or QA.
+After a deliberate restore, restart JobCtrl and reload browser tabs; callers
+using an explicit event cursor must start a fresh subscription. Do not hand
+import individual tables or reset projection watermarks as a recovery shortcut.
 
 ### Credentials Outside The Workspace
 
@@ -622,7 +500,7 @@ prior bytes. See [Reviewed Locale Variants](locale-variants.md).
 
 ## Private Screening History
 
-[Screening answers](screening-answers.md), selected source facts and manual-use text are private local SQLite history. Only deliberate selected facts and exact saved question/posting context go to the configured Apply model lane. General activity and SSE carry safe references. Copying and manual-use attestation grant no form-entry or submission authority.
+[Screening answers](screening-answers.md), selected source facts and manual-use text are private local database history. Only deliberate selected facts and exact saved question/posting context go to the configured Apply model lane. General activity and SSE carry safe references. Copying and manual-use attestation grant no form-entry or submission authority.
 
 Optional [company briefings](company-briefings.md) fetch only explicitly selected anonymous public pages and send bounded public text plus the reviewed company identity to the enrichment model. They send no profile, mail, resume or search query. The local database retains source snapshots, model receipts and accepted/failure history; shared company history survives removal of its linked jobs.
 
@@ -636,7 +514,7 @@ unconfirmed evidence, declared skill lists, aspirations and milestone activity
 are not comparison evidence inputs. No external learning-resource research runs.
 
 Cohort revisions and chosen milestones retain private source snapshots,
-comparison provenance and user completion statements in local SQLite. Historical
+comparison provenance and user completion statements in the local database. Historical
 origins remain after Profile/cohort changes and job deletion. The job-data purge
 preserves them and reports their retained `career_learning_records` count.
 They are not sent in general SSE events or converted into Profile skills,

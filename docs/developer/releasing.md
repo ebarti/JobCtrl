@@ -99,7 +99,7 @@ For the Python cutover, require explicit fresh-target Profile/source transfer
 integrity and legacy-admission refusal, plus target-to-target lifecycle proof
 with the pinned installed runtimes as documented in
 [Reliability & QA](../local-reliability-qa.md). Use only owned synthetic workspaces.
-Check candidate activation, paired backup, preservation, readiness failure,
+Check candidate activation, workspace backup, preservation, readiness failure,
 rollback, and the exact Python application identity. Applicable checks and product QA must pass;
 version parity and a successful build do not establish migration safety.
 
@@ -258,45 +258,14 @@ server/worker entrypoints in its authenticated payload inventory. Launcher
 protocol compatibility alone never establishes database compatibility. Unknown
 application identities fail qualification.
 
-For a legacy application database (`application_id=0`, `user_version=14` or `15`),
-the harness saves a complete synthetic authored Profile through the predecessor's
-actual public API and records a real Temporal workflow. Acquiring a different
-candidate build into the old active runtime home succeeds as authenticated
-staging; it does not activate that build or admit legacy data. The refusal proof
-invokes the already staged candidate installer for first selection in the
-separate fresh acquisition home with the old `JOBCTRL_DIR`, and invokes the real
-Homebrew frontend against the old installation. Both must refuse legacy use
-before changing the source data,
-Temporal history, selectors, instance registries, transition journal or backups.
-The candidate's explicit `profile-transfer` command then imports the full Profile,
-baseline, style and template into a nonexistent target using a complete browser
-source manifest. Native first selection uses a separate fresh runtime home as
-well as the fresh application workspace, preserving the old runtime selection.
-The source remains unchanged. The new target must have empty
-Jobs and fresh Temporal history, preserve every authored Profile field, and pass
-actual start, healthy-worker, stop and restart checks. This qualifies the
-deliberate Profile-only cutover; it does not authorize an automatic in-place
-upgrade or a real-user reset.
-
-For an existing Python target (`application_id=1245926228`, `user_version=1`),
-both releases must declare that exact application identity. The harness upgrades,
-checks public Profile/Jobs/Discovery/Settings state and actual Temporal history,
-performs an explicit paired rollback, then upgrades again through the retained
-authenticated Homebrew frontend. The first pair belongs to the predecessor;
-later recovery pairs belong to the candidate. The re-update interrupts the
-actual controller at all eight current durable handoffs. Later canonical public
-writes and real Temporal workflow histories must survive every retry, a real
-readiness failure and the final selection commit. Failed startup preserves the
-live pair and continues forward; it cannot automatically restore an older
-snapshot. Rollback during an unfinished forward transition must refuse without
-mutation. Only an explicit paired rollback after a completed compatible update
-may restore accepted prior state. Installer trust failures retain the system
-verifier's diagnostic; investigate it without bypassing notarization.
-The disposable policy checks also revoke the running candidate: start/update
-must refuse, while authenticated owned stop still retires its execution receipts
-without changing the journal or selection. A revoked predecessor remains
-historical handoff evidence and cannot block forward recovery. These synthetic
-revocations are scoped to the private fixture policy, never a published channel.
+The release smoke qualifies the latest signed current-Python SQLite predecessor
+against the signed PostgreSQL/DBOS candidate. It exercises public Profile,
+Jobs, Discovery and Settings, preserves the stopped SQLite source and Temporal
+history, and verifies the imported state through the installed candidate. It
+then writes new state, backs up, verifies cross-engine rollback refusal and
+restarts. Older application identities are refused. These are acceptance steps,
+not a claim that a candidate or published release has passed them. Never run
+the rehearsal against personal data or contact external providers.
 
 The harness resolves that source from GitHub's published stable releases, so the
 source advances automatically after each release. Drafts, prereleases and the
@@ -332,7 +301,7 @@ GitHub publication still depend on that smoke succeeding.
 
 The exhaustive public curl/Homebrew predecessor and interruption matrix is not
 part of release, PR, scheduled or manual workflows. Schema upgrades, recovery,
-paired-backup preservation and interruption cases belong in the full native and
+workspace-backup preservation and interruption cases belong in the full native and
 worker CI suites before merge; removing the public matrix does not remove those
 cases or waive the separate signed predecessor qualification above. The public
 smoke has a 20-minute job budget. Its retained evidence contains public-delivery
@@ -361,55 +330,23 @@ rather than duplicate workflow commands and security policy.
 
 ## Python application cutover and installed qualification
 
-The previous schema-14-to-15 in-place migration is historical. The Python target
-requires application ID `1245926228`, `user_version=1`, exact `app_metadata`,
-and an authenticated `launcher/application-schema.json` declaration. A retained
-`launcher/schema-transition.json` or historical release-smoke result is not
-authority to migrate old data into this application.
+The supported migration source is the current Python SQLite workspace. Stop and
+drain its writers, preserve the source, history, receipts and owned files, and
+rehearse a consistent snapshot into an isolated PostgreSQL destination. Validate
+schema, identity, table counts and digests, generated keys and file bindings
+before activation. Earlier application generations and Temporal history replay
+are outside this contract. Unknown identities refuse without mutation.
 
-Legacy application databases, legacy Temporal layout and incompatible backup
-pairs must be refused without changing source data or using an old runtime
-bridge. For the deliberate transition, `profile-transfer` reads an existing
-source and a complete browser-source/attachment export through `--browser-sources`,
-requires a nonexistent target outside the source and `--confirm-profile-only-reset`,
-and preserves the full Profile and supporting sources. Other application data
-starts fresh. The command emits a transfer receipt and does not select the
-target. Verify the receipt and inventory before deliberately selecting it with
-both `JOBCTRL_DIR=NEW_WORKSPACE` and a separate fresh
-`JOBCTRL_RUNTIME_HOME=NEW_RUNTIME_HOME`. Preserve the source workspace and old
-runtime home/selection. The native installer's first selection admits an
-application-only database only with a complete private transfer receipt and
-absent Temporal state; it consumes that one-time workspace authority before
-selection. Reusing a consumed workspace under another runtime home, or an
-incomplete transfer, refuses. Update and rollback continue to require a complete
-authenticated pair.
-The original transfer receipt remains `selected:false`; a separate durable
-workspace marker records consumption before native selection. If that first
-selection is interrupted, preserve the Profile, marker and source. Inspect the
-interruption or explicitly transfer again into a different nonexistent target;
-never automatically remove the marker, reset data or retry under another home.
-Development and QA must use owned synthetic workspaces, never a real-user reset.
+The native lifecycle takes a coherent cold PostgreSQL backup including DBOS
+state, and restores into a verified staged generation. Preserve unresolved
+accounting and external effects. Cross-engine rollback after PostgreSQL
+activation is refused; never overwrite subsequent writes with an older
+snapshot automatically. Test startup, shutdown, restart, interruption and
+recovery on the built native candidate using owned synthetic data.
 
-Later target-to-target updates and paired rollbacks must authenticate the exact
-Python application identity and preserve current data. Before backup/restore,
-the controller must verify owned-process cleanup and the complete paired data
-authority. If candidate startup fails, retain live databases and receipts;
-`jobctrl stop` followed by `jobctrl update` continues forward. Never automatically
-restore an earlier snapshot over possible later commits. Unresolved accounting,
-unknown process ownership or an incompatible pair refuses the operation.
-
-Source merge and unsigned synthetic payloads do not establish a published
-upgrade. Before publication, exercise the actual signed/notarized installer
-and target through curl and unmodified Homebrew, preserving predecessor
-authentication and revocation checks. Prove legacy refusal, current-target
-start/stop/restart, update/backup/rollback, interruption and readiness failure,
-forward recovery, and preservation of app/Temporal WAL and unrelated files.
-Use real entry points; an old executable pathname passed to a new in-process
-implementation does not establish an archived-binary boundary.
-
-The current local native lifecycle/custody partitions and pinned installed
-application suite are documented in
-[Reliability & QA](../local-reliability-qa.md#schema-15-forward-upgrade).
-Their local passes do not replace signed acquisition or release-specific
-predecessor qualification. Preserve the protected signing, notarization,
-manifest, platform and publication gates when updating the release harness.
+Before publication, qualify the signed/notarized installer and authenticated
+predecessor through the actual acquisition entrypoints. Source merge, unsigned
+fixtures and local synthetic results do not establish a published upgrade. See
+[Reliability & QA](../local-reliability-qa.md#schema-15-forward-upgrade) and the
+[migration plan](../plans/2026-11-25-postgres-dbos.md). Preserve signing,
+notarization, manifest, platform and publication gates.

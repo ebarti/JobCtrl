@@ -88,5 +88,5 @@ clearer.
   — inspect requirement fit, confidence, eligibility, and corrections.
 - [At-most-once application submission](/guides/at-most-once-job-application-submission)
   — stop ambiguous employer-facing work from becoming a blind retry.
-- [Temporal workflows in a desktop app](/guides/temporal-workflows-desktop-app)
+- [Durable workflows in a desktop app](/guides/temporal-workflows-desktop-app)
   — make long-running local automation recoverable and visible.

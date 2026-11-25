@@ -1,12 +1,8 @@
 import { test, expect, json, modelCall, action, completed, terminal, type ExternalCall } from "../harness/fixtures.js";
 import { createBaseline } from "./core-data.js";
-import { authoredPartition, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
-import { indeedPage } from "./indeed-data.js";
-import { posting as cohortPosting, untilNormalization } from "./preparation-cohort-data.js";
-import { qualificationBatchDecision } from "./qualification-data.js";
 import { captureReusePosting, acceptReuseRequirements, reusableModelCatalog, type CapturedPosting, type RequirementSnapshot } from "./reuse-data.js";
-import { catalogContext, catalogMatching, catalogSource, citeSources, modelSources, EXTRACTION_PROMPT_VERSION, V6_NORMALIZATION_PROMPT_VERSION,
-  REFRESH_NORMALIZATION_PROMPT_VERSION, SOURCE_DICTIONARY_PROMPT_VERSION, V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION, typedExtraction } from "./requirements-data.js";
+import { catalogContext, catalogMatching, catalogSource, citeSources, modelSources, EXTRACTION_PROMPT_VERSION,
+  REFRESH_NORMALIZATION_PROMPT_VERSION, typedExtraction } from "./requirements-data.js";
 
 const requirement = [{ localId: "recovery", text: "Implement durable workflow recovery." }];
 const body = requirement[0]!.text;
@@ -134,68 +130,34 @@ test("one complete single-job comparison binds all 100 original postings and eve
   const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
   await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
 
-  // Build the historical catalog through bounded real search cohorts. Repeated
-  // single-job refreshes would compare every growing prefix of the same catalog.
   const description = (index: number) => {
     const note = `Synthetic division ${index} reviews its own source evidence and retains the service details. `;
     return `${body}\n${note.repeat(12).trimEnd()}`;
   };
-  const demand = requirement[0]!.text;
-  const historical = Array.from({ length: 99 }, (_, offset) => ({
-    ...cohortPosting(offset + 1), description: description(offset + 1), demand,
-  }));
-  const jobIds = new Set<string>();
-  let retained: { requirementId: string; demandFingerprint: string } | undefined;
-  const groupId = "shared-recovery";
-  // Larger searches use per-job preparation. Keep the fixture within the
-  // product's shared normalization limit of ten new jobs per cohort.
-  for (let offset = 0; offset < historical.length; offset += 10) {
-    const listings = historical.slice(offset, offset + 10);
-    const search = await action(api, "discovery.search", {
-      queries: ["Synthetic Engineer"], locations: ["Madrid"], boards: ["indeed"], hoursOld: 0,
-      newJobLimit: listings.length,
+  // Use the Requirements entrypoint to build the retained catalog. Discovery
+  // now prepares each admitted job independently.
+  const historical = new Map<string, CapturedPosting>();
+  let canonicalId: string | undefined;
+  for (let index = 1; index < 100; index++) {
+    const posting = await captureReusePosting(api, `tables-division-${index}`, description(index));
+    const prior = await acceptReuseRequirements(api, app, posting, requirement, {
+      recovery: canonicalId ? { verdict: "equivalent", requirementId: canonicalId } : { verdict: "new" },
     });
-    const board = await app.external.next();
-    expect(board.path).toBe("/jobstreaming/indeed");
-    board.respond(indeedPage({ jobs: listings, cursor: null, complete: true }));
-    const matching = await untilNormalization(app, listings);
-    const incoming = catalogContext(matching).incoming;
-    expect(incoming).toHaveLength(listings.length);
-    const capability = retained ? retainedCapability(matching, retained.requirementId, groupId) : {
-      groupId, memberIds: [], name: demand, definition: demand, category: "professional_experience" as const,
-    };
-    capability.memberIds.push(...incoming.map((row) => row.member_id));
-    for (const row of incoming) jobIds.add(row.job_id);
-    matching.reply(authoredPartition(matching, [capability], [{
-      groupId, definition: demand, jobIds: [...jobIds],
-      ...(retained ? { reuseDemandFingerprint: retained.demandFingerprint } : {}),
-    }]));
-    if (!retained) {
-      const qualification = await modelCall(app, "fit.qualification-batch");
-      qualification.reply(qualificationBatchDecision(qualification, () => ({ kind: "missing" })));
-    }
-    expect((await completed(api, search.runId)).result).toMatchObject({
-      newJobs: listings.length, preparation: { assessedJobs: listings.length, failedJobs: 0 },
-    });
-    if (!retained) {
-      const prior = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${incoming[0]!.job_id}/requirements`);
-      const accepted = prior.requirements[0]!;
-      retained = { requirementId: accepted.requirement_id, demandFingerprint: accepted.normalized_demand.demand_fingerprint };
-    }
+    canonicalId ??= prior.snapshot.requirements[0]!.requirement_id;
+    expect(prior.snapshot.requirements[0]!.requirement_id).toBe(canonicalId);
+    historical.set(posting.job_id, posting);
   }
-
-  const { jobs } = await json<{ jobs: (CapturedPosting & { url: string })[] }>(api, "get", "/v1/jobs?limit=100");
-  expect(jobIds.size).toBe(99);
-  expect(jobs.map((row) => row.job_id).sort()).toEqual([...jobIds].sort());
-  const offered = new Map(historical.map((row) => [row.url, row.description]));
-  for (const row of jobs) expect(row.description).toBe(offered.get(row.url));
-  const canonicalId = retained!.requirementId;
+  expect(canonicalId).toBeTruthy();
+  expect(historical.size).toBe(99);
+  const { jobs } = await json<{ jobs: CapturedPosting[] }>(api, "get", "/v1/jobs?limit=100");
+  expect(jobs.map((row) => row.job_id).sort()).toEqual([...historical.keys()].sort());
+  for (const row of jobs) expect(row.description).toBe(historical.get(row.job_id)!.description);
 
   const last = await captureReusePosting(api, "tables-division-100", description(100));
   const postings = new Map([...jobs, last].map((row) => [row.job_id, row]));
   const before = app.external.calls.length;
   const result = await acceptReuseRequirements(api, app, last, requirement, {
-    recovery: { verdict: "equivalent", requirementId: canonicalId },
+    recovery: { verdict: "equivalent", requirementId: canonicalId! },
   });
   expect(result.snapshot.requirements[0]!.requirement_id).toBe(canonicalId);
   const call = result.matching!;
@@ -217,77 +179,69 @@ test("one complete single-job comparison binds all 100 original postings and eve
   }) });
 });
 
-for (const [version, sourceRevision, prompt] of [
-  ["v6", "38ef94613ebb7c0413d8d5ee89987ef860f53b13", V6_NORMALIZATION_PROMPT_VERSION],
-  ["v8", "e41c55189285697549ea35d40bb62b4070c9462b", SOURCE_DICTIONARY_PROMPT_VERSION],
-  ["v9 background", "c74d8ae3e43c55ae57c6d2bcb9e024c42f27d708", V9_BACKGROUND_NORMALIZATION_PROMPT_VERSION],
-] as const) test.describe(`single-job catalog transport upgrade from ${version}`, () => {
-  test.use({ sourceRevision });
+test("an interrupted single-job catalog comparison preserves accepted receipts and needs an explicit new refresh", async ({ api, app }) => {
+  test.setTimeout(120_000);
+  const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
+  const posting = await captureReusePosting(api, "single-catalog-wire", body);
+  const payload = { job_id: posting.job_id, expected_posting_revision: posting.revision, expected_revision: 0 };
+  const send = () => api.post("/v1/actions/requirements.refresh", { headers: { "idempotency-key": "original-wire" }, data: payload });
+  const admission = await send();
+  expect(admission.ok()).toBe(true);
+  const original = (await admission.json()).runId;
+  const extraction = await modelCall(app, "requirements.extract");
+  extraction.reply(typedExtraction(extraction, { requirements: requirement }));
+  const comparison = await modelCall(app, "requirements.match_catalog");
+  expect(comparison.body["prompt_version"]).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
+  assertNormalizationDestination(comparison, posting);
+  comparison.reply(catalogMatching(comparison, { recovery: { verdict: "new" } }));
+  await completed(api, original);
+  const snapshot = () => json<RequirementSnapshot>(api, "get", `/v1/jobs/${posting.job_id}/requirements`);
+  const accepted = await snapshot();
 
-  test("a versioned single-job catalog keeps predecessor receipts and refuses an interrupted paid comparison before a new refresh uses the table format", async ({ api, app }) => {
-    test.setTimeout(120_000);
-    const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
-    await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
-    const posting = await captureReusePosting(api, "single-catalog-wire", body);
-    const payload = { job_id: posting.job_id, expected_posting_revision: posting.revision, expected_revision: 0 };
-    const send = () => api.post("/v1/actions/requirements.refresh", { headers: { "idempotency-key": "original-wire" }, data: payload });
-    const admission = await send();
-    expect(admission.ok()).toBe(true);
-    const original = (await admission.json()).runId;
-    const extraction = await modelCall(app, "requirements.extract");
-    extraction.reply(typedExtraction(extraction, { requirements: requirement }));
-    const comparison = await modelCall(app, "requirements.match_catalog");
-    expect(comparison.body["prompt_version"]).toBe(prompt);
-    comparison.reply(catalogMatching(comparison, { recovery: { verdict: "new" } }));
-    await completed(api, original);
-    const snapshot = () => json<RequirementSnapshot>(api, "get", `/v1/jobs/${posting.job_id}/requirements`);
-    const accepted = await snapshot();
+  const priorJob = await captureReusePosting(api, "single-catalog-prior-refusal", `${body}\nAdditional source.`);
+  const prior = api.post(`/v1/jobs/${priorJob.job_id}/requirements`, { data: { expected_revision: 0, expected_posting_revision: priorJob.revision } });
+  const priorExtraction = await modelCall(app, "requirements.extract");
+  priorExtraction.reply({ unexpected: true });
+  expect((await prior).status()).toBe(502);
+  const priorAttempt = () => json(api, "get", `/v1/jobs/${priorJob.job_id}/requirements/attempts/latest`);
+  const refused = await priorAttempt();
+  expect(refused).toMatchObject({ state: "blocked", failure_code: "model_schema_violation" });
 
-    const priorJob = await captureReusePosting(api, "single-catalog-prior-refusal", `${body}\nPredecessor source.`);
-    const prior = api.post(`/v1/jobs/${priorJob.job_id}/requirements`, { data: { expected_revision: 0, expected_posting_revision: priorJob.revision } });
-    const priorExtraction = await modelCall(app, "requirements.extract");
-    priorExtraction.reply({ unexpected: true });
-    expect((await prior).status()).toBe(502);
+  const force = { ...payload, expected_revision: accepted.revision, force: true };
+  const interrupted = await action(api, "requirements.refresh", force);
+  const oldExtraction = await modelCall(app, "requirements.extract");
+  oldExtraction.reply(typedExtraction(oldExtraction, { requirements: requirement }));
+  const held = await modelCall(app, "requirements.match_catalog");
+  expect(held.body["prompt_version"]).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
+  assertNormalizationDestination(held, posting);
+  const count = app.external.calls.length;
+  const replacement = await app.restartWorker();
+  expect(replacement.current).not.toBe(replacement.previous);
+  expect(await terminal(api, interrupted.runId)).toMatchObject({ status: "failed", errorCode: "requirements_consolidation_call_unsettled" });
+  const replay = await send();
+  expect(replay.ok()).toBe(true);
+  expect(await replay.json()).toMatchObject({ runId: original, status: "succeeded" });
+  expect(app.external.calls).toHaveLength(count);
+  expect(await priorAttempt()).toEqual(refused);
+  expect(await json(api, "get", `/v1/jobs/${priorJob.job_id}/requirements`)).toBeNull();
+  expect(await snapshot()).toEqual(accepted);
 
-    const force = { ...payload, expected_revision: accepted.revision, force: true };
-    const interrupted = await action(api, "requirements.refresh", force);
-    const oldExtraction = await modelCall(app, "requirements.extract");
-    oldExtraction.reply(typedExtraction(oldExtraction, { requirements: requirement }));
-    const held = await modelCall(app, "requirements.match_catalog");
-    expect(held.body["prompt_version"]).toBe(prompt);
-    if (version === "v9 background") expect(held.body["context"]).toHaveProperty("catalog_tables");
-    else expect(held.body["context"]).not.toHaveProperty("catalog_tables");
-    if (version === "v8") expect(held.body["context"]).toHaveProperty("cohort_texts");
-    else expect(held.body["context"]).not.toHaveProperty("cohort_texts");
-    const count = app.external.calls.length;
-    await app.upgradeSource();
-    expect(await terminal(api, interrupted.runId)).toMatchObject({ status: "failed", errorCode: "requirements_consolidation_call_unsettled" });
-    const replay = await send();
-    expect(replay.ok()).toBe(true);
-    expect(await replay.json()).toMatchObject({ runId: original, status: "succeeded" });
-    expect(app.external.calls).toHaveLength(count);
-    const historical = await json(api, "get", `/v1/jobs/${priorJob.job_id}/requirements/attempts/latest`);
-    expect(historical).toMatchObject({ state: "blocked", failure_code: "model_schema_violation" });
-    if (version !== "v9 background") expect(historical).not.toHaveProperty("failure_details");
-    expect(await json(api, "get", `/v1/jobs/${priorJob.job_id}/requirements`)).toBeNull();
-    expect((await snapshot()).requirements).toEqual(accepted.requirements);
-
-    const fresh = await action(api, "requirements.refresh", force);
-    const currentExtraction = await modelCall(app, "requirements.extract");
-    currentExtraction.reply(typedExtraction(currentExtraction, { requirements: requirement }));
-    const packed = await modelCall(app, "requirements.match_catalog");
-    expect(packed.body["prompt_version"]).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
-    assertNormalizationDestination(packed, posting);
-    const choice = catalogMatching(packed, { recovery: { verdict: "equivalent", requirementId: accepted.requirements[0]!.requirement_id } });
-    packed.reply(choice);
-    await completed(api, fresh.runId);
-    expect((await snapshot()).requirements[0]!.provenance.resolution[0]).toMatchObject({ prompt_version: REFRESH_NORMALIZATION_PROMPT_VERSION });
-    expect(app.external.calls.filter(call => call.body["operation"] === "requirements.match_catalog")).toHaveLength(3);
-  });
+  const fresh = await action(api, "requirements.refresh", force);
+  const currentExtraction = await modelCall(app, "requirements.extract");
+  currentExtraction.reply(typedExtraction(currentExtraction, { requirements: requirement }));
+  const packed = await modelCall(app, "requirements.match_catalog");
+  expect(packed.body["prompt_version"]).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
+  assertNormalizationDestination(packed, posting);
+  const choice = catalogMatching(packed, { recovery: { verdict: "equivalent", requirementId: accepted.requirements[0]!.requirement_id } });
+  packed.reply(choice);
+  await completed(api, fresh.runId);
+  expect((await snapshot()).requirements[0]!.provenance.resolution[0]).toMatchObject({ prompt_version: REFRESH_NORMALIZATION_PROMPT_VERSION });
+  expect(app.external.calls.filter(call => call.body["operation"] === "requirements.match_catalog")).toHaveLength(3);
 });
 
-test.describe("role-analysis offered-source schema compatibility", () => {
-test.use({ features: "jobs", sourceRevision: "5d3fda5352fe4418332b989c05f710e0529f578c" });
+test.describe("role-analysis offered-source authority", () => {
+test.use({ features: "jobs" });
 
 test("role analysis reuses exact body authority across Jobs while force and effort make fresh calls", async ({ api, app }, testInfo) => {
   reusableModelCatalog(app);
@@ -298,7 +252,7 @@ test("role analysis reuses exact body authority across Jobs while force and effo
   const analyze = (posting: CapturedPosting) => api.post(`/v1/jobs/${posting.job_id}/analysis`, { data: { expectedRevision: posting.revision } });
   const pending = analyze(first);
   const call = await modelCall(app, "jobs.role_analysis");
-  expect(call.body["prompt_version"]).toBe("role-analysis-v2-content-bound");
+  expect(call.body["prompt_version"]).toBe("role-analysis-v3-offered-sources");
   expect(call.body["context"]).toEqual({ qualified_requirements: [] });
   expect(JSON.stringify(call.body)).not.toContain(first.job_id);
   const source = modelSources(call)[0]!;
@@ -339,17 +293,17 @@ test("role analysis reuses exact body authority across Jobs while force and effo
   expect((await changed).status()).toBe(200);
   expect(app.external.calls.filter((item) => item.body["operation"] === "jobs.role_analysis")).toHaveLength(3);
 
-  const legacy = await json<Analysis>(api, "get", `/v1/jobs/${third.job_id}/analysis`);
-  const upgraded = await app.upgradeSource();
-  expect(upgraded.current).not.toBe(upgraded.previous);
-  expect(await json<Analysis>(api, "get", `/v1/jobs/${third.job_id}/analysis`)).toEqual(legacy);
-  const beforeLegacyReuse = app.external.calls.length;
+  const priorAnalysis = await json<Analysis>(api, "get", `/v1/jobs/${third.job_id}/analysis`);
+  const replacement = await app.restartWorker("jobs");
+  expect(replacement.current).not.toBe(replacement.previous);
+  expect(await json<Analysis>(api, "get", `/v1/jobs/${third.job_id}/analysis`)).toEqual(priorAnalysis);
+  const beforeRestartReuse = app.external.calls.length;
   const reused = await analyze(third);
   expect(reused.status(), await reused.text()).toBe(200);
-  expect((await reused.json() as Analysis).accepted).toEqual(legacy.accepted);
-  expect(app.external.calls).toHaveLength(beforeLegacyReuse);
+  expect((await reused.json() as Analysis).accepted).toEqual(priorAnalysis.accepted);
+  expect(app.external.calls).toHaveLength(beforeRestartReuse);
 
-  // Restore the forced v2 analysis's exact selection and require its distinct
+  // Restore the forced analysis's exact selection and require its distinct
   // immutable receipt to remain reusable too, without a provider determination.
   const restoredSettings = await json<{ revision: number }>(api, "get", "/v1/settings");
   await json(api, "patch", "/v1/settings", { expectedRevision: restoredSettings.revision,
@@ -407,6 +361,6 @@ test("role analysis reuses exact body authority across Jobs while force and effo
   await testInfo.attach("role-analysis-failure-evidence", { contentType: "application/json",
     body: Buffer.from(JSON.stringify({ runId: refused.runId, jobId: second.job_id, failure: attempt.data,
       retainedReceiptId: retained.accepted.provenance.receipt_id,
-      legacyReceiptId: legacy.accepted.provenance.receipt_id, acceptedV3ReceiptId: acceptedV3.accepted.provenance.receipt_id }, null, 2)) });
+      priorReceiptId: priorAnalysis.accepted.provenance.receipt_id, acceptedV3ReceiptId: acceptedV3.accepted.provenance.receipt_id }, null, 2)) });
 });
 });

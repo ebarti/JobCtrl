@@ -292,6 +292,13 @@ use the updated formula, while bundled-installer installations use their signed
 release channel. Pulling source changes does not publish an update to installed
 users.
 
+The PostgreSQL/DBOS source candidate supports an explicit migration of the
+current Python SQLite workspace. It preserves the source and owned files, stages
+and verifies a destination, and does not replay predecessor workflow history.
+Stop and drain old writers before the final snapshot; rehearse in an isolated
+target first. See [workspace compatibility](../local-development.md#schema-migrations-and-source-updates).
+This source candidate is not evidence of a published installed upgrade.
+
 For compatible Homebrew updates, `brew upgrade ebarti/tap/jobctrl` updates the
 formula and retains the workspace. Moving from v0.4.x to v0.5.0 follows the
 Profile transfer below.

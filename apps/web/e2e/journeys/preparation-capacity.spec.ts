@@ -1,11 +1,12 @@
 import { indeedPage } from "./indeed-data.js";
 import type { APIRequestContext } from "@playwright/test";
-import { action, completed, expect, json, modelCall, terminal, test, type ApplicationStack } from "../harness/fixtures.js";
+import { action, completed, expect, json, modelCall, terminal, test, type ApplicationStack, type ExternalCall } from "../harness/fixtures.js";
 import { createBaseline } from "./core-data.js";
 import { authoredPartition } from "./consolidation-data.js";
 import { COMMON_DEMAND, posting, respondProducer, type CohortPosting } from "./preparation-cohort-data.js";
-import { catalogContext, COHORT_NORMALIZATION_PROMPT_VERSION, REFRESH_NORMALIZATION_PROMPT_VERSION, typedExtraction } from "./requirements-data.js";
+import { catalogContext, REFRESH_NORMALIZATION_PROMPT_VERSION, typedExtraction } from "./requirements-data.js";
 import { serveQualification } from "./search-assessment-data.js";
+import { qualificationBatchDecision } from "./qualification-data.js";
 
 async function capturePosting(api: APIRequestContext, index: number, description?: string) {
   const row = posting(index);
@@ -28,9 +29,8 @@ async function servePostingAndRole(app: ApplicationStack, target: CohortPosting)
   }
 }
 
-async function publishSingleDemand(app: ApplicationStack, prompt: string) {
-  const matching = await modelCall(app, "requirements.match_catalog");
-  expect(matching.body["prompt_version"]).toBe(prompt);
+function publishSingleDemand(matching: ExternalCall) {
+  expect(matching.body["prompt_version"]).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
   const input = catalogContext(matching);
   expect(input.incoming).toHaveLength(1);
   const member = input.incoming[0]!;
@@ -60,19 +60,19 @@ test("a search waiting for the Requirements lane survives worker replacement, ca
   expect(source.path).toBe("/jobstreaming/indeed");
   source.respond(indeedPage({ jobs: [target], cursor: null, complete: true }));
   await servePostingAndRole(app, target);
-  await expect.poll(() => waitEvents(api, search.runId, "requirements_extract", "model_lane_busy")).toBe(1);
+  await expect.poll(() => waitEvents(api, search.runId, "requirements", "model_lane_busy")).toBe(1);
   const cancel = await action(api, "preparation.run", { recipe: "score", job_ids: [abandoned.job_id], resume_mode: "baseline" });
   await expect.poll(() => waitEvents(api, cancel.runId, "requirements", "model_lane_busy")).toBe(1);
   await json(api, "post", `/v1/action-runs/${cancel.runId}/cancel`, {});
   expect(await terminal(api, cancel.runId)).toMatchObject({ status: "cancelled" });
   const replacement = await app.restartWorker();
   expect(replacement.current).not.toBe(replacement.previous);
-  await expect.poll(() => waitEvents(api, search.runId, "requirements_extract", "model_lane_busy"), { timeout: 50_000 }).toBe(2);
+  await expect.poll(() => waitEvents(api, search.runId, "requirements", "model_lane_busy"), { timeout: 50_000 }).toBe(2);
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.extract")).toHaveLength(1);
   held.reply(typedExtraction(held, { classification: "non_english", status: "unsupported_language" }));
   expect((await heldRequest).ok()).toBe(true);
   respondProducer(await modelCall(app, "requirements.extract"), [target]);
-  const jobId = await publishSingleDemand(app, COHORT_NORMALIZATION_PROMPT_VERSION);
+  const jobId = publishSingleDemand(await modelCall(app, "requirements.match_catalog"));
   await serveQualification(app, library);
   expect((await completed(api, search.runId)).result).toMatchObject({ newJobs: 1, preparation: { assessedJobs: 1, failedJobs: 0 } });
   expect(await json(api, "get", `/v1/jobs/${jobId}/fit`)).toMatchObject({ current: true, score: { revision: 1 } });
@@ -84,16 +84,11 @@ test("a search waiting for the Requirements lane survives worker replacement, ca
   expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(1);
 });
 
-test("a search above the cohort cutoff resumes the per-job Requirements stage and completes the entire frozen selection", async ({ api, app }) => {
+test("a large search completes every independently queued assessment without depending on cross-job request order", async ({ api, app }) => {
   test.setTimeout(120_000);
   const { library } = await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
   await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
-  const holder = await capturePosting(api, 970, "Revisar procedimientos del almacén.");
-  const heldRequest = api.post(`/v1/jobs/${holder.job_id}/requirements`, {
-    data: { expected_posting_revision: holder.revision, expected_revision: 0 }, timeout: 110_000,
-  });
-  const held = await modelCall(app, "requirements.extract");
   const rows = [posting(971), ...Array.from({ length: 10 }, (_, index) => ({
     ...posting(972 + index), description: `Gestionar el equipo de recuperación número ${index + 1}.`, unsupported: true,
   }))];
@@ -105,25 +100,36 @@ test("a search above the cohort cutoff resumes the per-job Requirements stage an
   expect(source.path).toBe("/jobstreaming/indeed");
   source.respond(indeedPage({ jobs: rows.map(({ job_key, url, title, company, description, location }) =>
     ({ job_key, url, title, company, description, location })), cursor: null, complete: true }));
-  await servePostingAndRole(app, rows[0]!);
-  await expect.poll(() => waitEvents(api, run.runId, "requirements", "model_lane_busy")).toBe(1);
+
+  const result = completed(api, run.runId);
+  let assessedJobId: string | undefined;
+  for (;;) {
+    const call = await Promise.race([result.then(() => null), app.external.next()]);
+    if (!call) break;
+    const operation = call.body?.["operation"];
+    if (operation === "requirements.match_catalog") {
+      expect(assessedJobId).toBeUndefined();
+      assessedJobId = publishSingleDemand(call);
+    } else if (operation === "fit.qualification-batch") {
+      const achievement = library.roles[0]!.achievements[0]!;
+      call.reply(qualificationBatchDecision(call, () => ({
+        achievementIds: [achievement.achievement_id],
+        evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`],
+      })));
+    } else {
+      respondProducer(call, rows);
+    }
+  }
+
   const frozen = await json<{ jobIds: string[]; targetRoute: string }>(api, "get", `/v1/preparation/runs/${run.runId}`);
   expect(frozen.targetRoute).toBe("per_job");
   expect(frozen.jobIds).toHaveLength(rows.length);
-  held.reply(typedExtraction(held, { classification: "non_english", status: "unsupported_language" }));
-  expect((await heldRequest).ok()).toBe(true);
-  respondProducer(await modelCall(app, "requirements.extract"), [rows[0]!]);
-  const jobId = await publishSingleDemand(app, REFRESH_NORMALIZATION_PROMPT_VERSION);
-  for (const row of rows.slice(1)) {
-    await servePostingAndRole(app, row);
-    respondProducer(await modelCall(app, "requirements.extract"), [row]);
-  }
-  await serveQualification(app, library);
-  expect((await completed(api, run.runId)).result).toMatchObject({
+  expect((await result).result).toMatchObject({
     newJobs: rows.length, preparation: { assessedJobs: 1, failedJobs: 0, skippedJobs: 10 },
   });
-  expect(await json(api, "get", `/v1/jobs/${jobId}/fit`)).toMatchObject({ current: true });
-  expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.extract")).toHaveLength(rows.length + 1);
+  expect(assessedJobId).toBeTruthy();
+  expect(await json(api, "get", `/v1/jobs/${assessedJobId}/fit`)).toMatchObject({ current: true });
+  expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.extract")).toHaveLength(rows.length);
 });
 
 test("a preparation waiting on monetary serialization respects the actual settled spend limit without dispatch", async ({ api, app }) => {

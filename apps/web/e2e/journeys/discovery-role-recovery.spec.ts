@@ -39,17 +39,17 @@ test("a saved role search never dispatches a second paid decision after losing i
   await board(app, "interrupted");
   const interrupted = await modelCall(app, "discovery.role_target_match");
   try {
-    await app.restartWorker();
-    await board(app, "interrupted");
+    const replacement = await app.restartWorker();
+    expect(replacement.current).not.toBe(replacement.previous);
+    await expect.poll(() => interrupted.closed).toBe(true);
     const done = terminal(api, runId);
-    const duplicate = await Promise.race([done.then(() => null), app.external.next({ timeout: 45_000 })]);
-    // Complete an unexpected dispatch so its erroneous terminal publication
-    // is visible alongside the call count instead of masking it with a timeout.
-    if (duplicate) reply(duplicate);
+    const unexpected = await Promise.race([done.then(() => null), app.external.next({ timeout: 45_000 })]);
+    expect(unexpected?.path ?? null, "Recovery uses the committed board page and original unsettled model receipt").toBeNull();
     const status = (await done).status;
-    const calls = app.external.calls.filter((call) => call.body?.["operation"] === "discovery.role_target_match").length;
+    const modelCalls = app.external.calls.filter((call) => call.body?.["operation"] === "discovery.role_target_match").length;
+    const boardCalls = app.external.calls.filter((call) => call.path === "/jobstreaming/indeed").length;
     const { total } = await json<{ total: number }>(api, "get", "/v1/jobs");
-    expect({ calls, status, total }).toEqual({ calls: 1, status: "failed", total: 0 });
+    expect({ boardCalls, modelCalls, status, total }).toEqual({ boardCalls: 1, modelCalls: 1, status: "failed", total: 0 });
     const { runs } = await json<{ runs: { runId: string; failures: { code: string }[] }[] }>(api, "get", "/v1/discovery/runs");
     expect(runs.find((run) => run.runId === runId)?.failures).toContainEqual(expect.objectContaining({ code: "discovery_role_call_unsettled" }));
   } finally {

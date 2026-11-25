@@ -65,16 +65,16 @@ test("search assesses the exact saved LinkedIn detail after a later posting is t
   const description = "Maintain durable workflow recovery.";
   firstDetail.raw(`<div class="show-more-less-html__markup"><p>${description}</p></div>`);
   await serveRoleTarget(app, "match");
-  const secondDetail = await app.external.next();
+  const secondDetail = await app.external.next({ match: (call) => call.path === "/jobstreaming/linkedin/jobs/view/1235" });
   expect(secondDetail.path).toBe("/jobstreaming/linkedin/jobs/view/1235");
   secondDetail.raw("Private synthetic response", { status: 429, headers: { "Retry-After": "601" } });
   await serveSavedAssessment(app, library);
 
-  const result = (await completed(api, started.runId)).result as { newJobIds: string[] };
-  expect(result).toMatchObject({ status: "partial", newJobs: 1, observedJobs: 1,
-    failures: [{ boards: ["linkedin"], code: "discovery_provider_rate_limited" }],
-    preparation: { status: "succeeded", assessedJobs: 1, failedJobs: 0 } });
-  const job = result.newJobIds[0]!;
+  const jobs = await json<{ jobs: { job_id: string }[] }>(api, "get", "/v1/jobs");
+  expect(jobs.jobs).toHaveLength(1);
+  const job = jobs.jobs[0]!.job_id;
+  await expect.poll(async () => (await json<FitState>(api, "get", `/v1/jobs/${job}/fit`)).current).toBe(true);
+  expect(await json(api, "get", `/v1/action-runs/${started.runId}`)).toMatchObject({ status: "running" });
   const posting = await json<{ revision: number }>(api, "get", `/v1/jobs/${job}`);
   expect(posting).toMatchObject({ content_state: "provider_detail", needs_enrichment: true, full_description: description });
   const run = await json<{ steps: unknown[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
@@ -92,6 +92,9 @@ test("search assesses the exact saved LinkedIn detail after a later posting is t
     leaseEpoch: 1, responses: { listing: 1, detail: 2, other: 0 }, elapsedMs: expect.any(Number),
     receivedAt: expect.any(String), retryAfterSeconds: 601,
   } }));
+  await json(api, "post", `/v1/action-runs/${started.runId}/cancel`, {});
+  expect((await terminal(api, started.runId)).status).toBe("cancelled");
+  expect((await json<FitState>(api, "get", `/v1/jobs/${job}/fit`)).score).toEqual(fit.score);
 });
 
 test("saved search checks each LinkedIn page before requesting the next with literal roles", async ({ api, app, page }) => {

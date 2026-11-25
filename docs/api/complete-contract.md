@@ -16,7 +16,7 @@ Feature-owned `/v1/...` routes register explicitly. The intended error envelope
 is `{ "error": { "code": "...", "message": "...", "details": {} } }`;
 `details` is optional. Unexpected errors use a generic message and request ID,
 not exception text or secrets. Ordinary reads/writes use 200/201; a durable
-submission returns 202 only after Temporal accepts it. Completion is a separate
+submission returns 202 after the action and DBOS enqueue commit together. Completion is a separate
 state. A revision conflict is a conflict, not permission to overwrite newer data.
 See [foundation contract](../plans/2026-11-06-python-contracts.md) and
 [operations](operations-and-events.md).

@@ -34,9 +34,9 @@ tooling.
 | --- | --- |
 | Runtime processes or the Python application/worker boundary | [Runtime & Processes](../architecture/runtime.md) |
 | Feature services, REST DTOs, or client boundaries | [Contracts, Types & API Boundaries](../architecture/contracts-types-and-api-boundaries.md) |
-| SQLite authority, domain events, projections, SSE, or telemetry separation | [Data, Events & Projections](../architecture/data-events-and-projections.md) |
+| PostgreSQL authority, domain events, projections, SSE, or telemetry separation | [Data, Events & Projections](../architecture/data-events-and-projections.md) |
 | A browser-facing route or response | [Local Python API](../local-ts-api.md), then its focused API reference |
-| Temporal workflows, activities, retries, or stage execution | [Job Pipeline](../architecture/pipeline/index.md) |
+| DBOS workflows, steps, retries, or stage execution | [Job Pipeline](../architecture/pipeline/index.md) |
 | Backend aggregates, ports, or bounded-context language | [Backend Domain Model](../architecture/domain-model/index.md) |
 | Frontend state, contexts, ports, or realtime invalidation | [Frontend Architecture](../architecture/frontend/index.md) |
 | Version preparation, signed publication, or release verification | [Releasing JobCtrl](releasing.md) |

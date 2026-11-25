@@ -43,7 +43,7 @@ a posting fits your location constraints.
 
 Profile owns target facts/preferences and their optimistic Profile version.
 Discovery owns boards, lookback, the new-job limit, sources, schedules and
-execution settings in its own SQLite rows. The connected screen composes those
+execution settings in its own PostgreSQL rows. The connected screen composes those
 public owners rather than creating another settings store. An incomplete or
 conflicting save retains the draft; check saved state before retrying.
 
@@ -117,10 +117,10 @@ a missing credential, configure that variable and restart the worker. An HTTP
 credential has access to its search API. A TLS or proxy diagnostic points to
 the worker’s connection settings. Older runs may show a general access error.
 A board that rate-limits a search appears by name in the progress strip and
-Search details. JobCtrl skips that board's remaining queries and locations in
-the run and continues the other selected boards. Wait before starting another
-search on the rate-limited board. Older runs
-show this explanation when they recorded the board’s rate-limit code.
+Search details. A board that supplies a retry time pauses its own queries until
+that time. Other boards and assessments of saved jobs can continue. The wait
+survives a worker or app restart. A board that supplies no retry time records
+a rate-limit failure and defers its remaining queries.
 
 **Search details** retains every recorded failure and its query-unit identity;
 different boards, codes or messages remain separate notices.
@@ -180,83 +180,35 @@ and the maximum number of new jobs have one ordinary editor in **Search settings
 Source fetch limits are automatic; there is no per-board results control.
 Opening a disclosure preserves its draft and starts no search or model work.
 
-The task invokes the existing `discovery.search` action with a retained
-idempotency key and database identity. Queued means Temporal accepted the request,
-not that acquisition or person-fit assessment completed. The complete application
-keeps that one action active while the preparation owner checks each newly
-saved job, records role context and extracts its requirements. It completes this
-work for all newly saved jobs before assessing person fit, so a later posting's
-capability consolidation cannot invalidate an earlier score from the same search.
-If another job temporarily occupies a model lane, the affected stage waits for
-capacity. Activity records the wait. You can cancel the run while it waits.
-When capacity returns, the worker checks the current spending limits and resumes
-the same stage.
-It checks that accepted Fit results are still current before reporting successful
-assessment. A concurrent Profile, posting or requirement change is reported as an
-assessment failure requiring review; accepted scores remain in history and the
-search does not repeatedly rescore jobs. Search does not prepare wording or
-generate resumes. Source counts remain
-acquisition counts; source failures and per-job assessment failures are reported
-separately. A job whose assessment fails stays saved with its explicit outcome,
-and other jobs continue. A completed source alone cannot complete the overall
-search or enable a second launch during assessment.
-The Jobs progress changes to **Assessing saved jobs** while that work runs and
-shows recorded assessed, failed and cohort counts when available. While Fit
-waits, it shows how many of those jobs have completed posting and requirements
-checks. A previously accepted, current posting counts as checked. Smaller
-searches also show when requirements are being reconciled or evidence is being
-checked across jobs. The checkpoint summary gives way to the assessed count
-when per-job scoring starts. In the Jobs table, an unassessed job can show
-that it is waiting for the search, that Fit is running, or which check failed.
-Follow the label to inspect the recorded run. The Fit tab includes the recorded
-failure code. A current non-English posting is marked as skipped. All of these
-jobs still match the **Not assessed** filter while no Fit score exists. When
-the recorded run cannot be tied to the current posting, the table keeps the
-general **Not assessed** label. On older servers, **Non-English in this run**
-means the run’s requirements check classified this exact posting revision.
-**Skipped in this run · non-English** means its Fit step also recorded the skip.
-The Fit tab shows the latest accepted requirements for the posting. Selected job
-details identify an active `search` or `assess` recipe as **Assessing fit**, with
-its current stage; this task generates no resume. The ordinary **Prepare resume**
-action is available again after assessment settles. If the preparation owner is
-absent, the completed result explicitly says initial fit assessment is
-unavailable rather than implying that saved jobs were assessed.
-If every source eventually fails after saving jobs, those retained new jobs
-still receive initial assessment. The overall search reports a partial outcome,
-while its acquisition status and source failures remain failed and inspectable.
-When the same search saved a full LinkedIn description through its targeted
-detail request, assessment uses that exact posting revision. If LinkedIn
-throttles the search, saved listings that still need detail can be checked
-manually after the source is available again.
+A search receives one action ID. The worker saves each received listing alongside
+the board's acknowledged position in PostgreSQL. The progress strip shows how
+many listings were received, already saved, excluded or still pending. A newly
+saved job and its independent assessment enter the database together. The worker
+can begin checking that job while another page or query is still pending.
+A previously saved job is counted as an observation and keeps its accepted Fit.
 
-Assessment reuses exact accepted results before making another model request.
-Requirements keeps content-based result reuse separate from each job's actual
-posting identity. Fit reuses current person assessments for the exact capability,
-normalized job demand and Profile evidence; different demands keep separate
-assessments. A newly admitted search with up to ten new jobs stages their source-bound
-extractions, then consolidates all its incoming reusable requirements with the
-complete retained catalog in one determination. After final demands are frozen,
-Fit sends the cohort's distinct missing qualification bindings together, with
-Profile evidence supplied once. Each requirement retains its own evidence and result;
-no source text is shortened or replaced by word-overlap matching. See
-[Scoring](scoring-and-employer-analysis.md#how-the-score-is-calculated) for reuse,
-validation and score calculation. Search still performs no wording preparation.
+Each assessment uses the saved posting revision for enrichment, employer role
+analysis, Requirements and Fit. It reuses the full LinkedIn detail when the
+search's receipt identifies that exact posting revision. Requirements and Fit
+reuse accepted work for the same source content, normalized demand and Profile
+evidence. Changed inputs get their own determination. The same model lanes and
+spending limits apply while other jobs run.
 
-Independent preparation stages may overlap across different model lanes while
-respecting their saved capacities. A finite daily spending cap retains serial
-model work. Shared catalog publication remains ordered, and Fit waits for the
-complete cohort's Requirements results. The action remains active through score
-publication and the final currentness check; acquisition completion is not an
-assessment-completion signal. Legacy queued work and retries retain their
-original execution policy and recorded request identities. Larger searches keep
-per-job matching and qualification, with the same overall acquisition limit.
+Select a job in **Jobs** to see its stage, current assessment and any failure
+code. **Retry fit assessment for this job** retries its unfinished stages, even
+while the source is waiting. Its completed stages and other jobs keep their
+records. An unresolved paid request requires its receipt to be reconciled
+before another attempt. A classified non-English posting shows its recorded skip.
+The **Not assessed** filter includes jobs without an accepted score.
 
-The cohort contains only jobs newly saved by this search. Existing accepted
-scores are not reassessed because a Profile or catalog changed; use the explicit
-affected-matches operation for that decision. Reads and preference saves start
-no assessment. In a reduced application with Discovery but no preparation owner,
-the action is acquisition-only and reports `preparationAvailable: false`;
-acquisition success does not establish a person-fit result.
+The search stays active until acquisition and the admitted assessments settle.
+It verifies each score against the current posting, requirements and Profile.
+Source failures and failed assessments are reported separately. Even if every
+source subsequently fails, jobs already admitted still receive assessment.
+Use **Request stop** to stop outstanding work. Accepted jobs, checks and scores
+remain available. A reduced installation with only Discovery reports
+`preparationAvailable: false` in its acquisition result.
+[How Fit scores are calculated](scoring-and-employer-analysis.md#how-the-score-is-calculated).
 
 For already saved jobs that need initial assessment, deliberately submit
 `preparation.run` with `recipe: "assess"`, `scope: "selected"` and the exact
@@ -344,9 +296,9 @@ Legacy saved `resultsPerSite` values, API overrides and CLI `--results-per-site`
 remain readable for compatibility but do not limit new searches. Already admitted
 older searches retain their frozen finite request and checkpoint semantics.
 The shared maximum-new-jobs setting counts canonical new admissions across all
-selected boards. The final accepted job and receipt commit before provider
-acknowledgement and acquisition stops immediately afterward. In-flight provider
-work can still exist; no further job admission is allowed at capacity. Budget
+selected boards. The worker saves received listings with their provider
+acknowledgements. Admitting the final job consumes the last place and stops
+acquisition. Additional listings already received on the page stay recorded. Budget
 exhaustion, user cancellation and confirmed provider exhaustion remain distinct.
 Authentication, native source limits, pacing and cancellation remain enforced.
 
@@ -385,22 +337,16 @@ owns how the accepted analysis supplies qualified requirements and person fit.
 ## Crawl Politeness
 
 JobStreaming performs board searches and retrieves supported posting details. Each board has its own access requirements, supported search filters, native page sizes and safety limits. JobCtrl records board-specific authentication failures and rate limits alongside accepted jobs. LinkedIn listing requests and targeted detail requests share a four-second
-minimum interval between request starts. A terminal rate limit defers remaining
-queries for that board. A response without a usable retry delay, or with one
-above the retry cap, also stops queued LinkedIn detail requests.
+minimum interval between request starts across searches and worker restarts.
 
-The activity log records each LinkedIn HTTP 429 seen during search. The event
-shows when it occurred, whether a listing or posting-detail request was
-throttled, how many responses the worker had received and how long LinkedIn
-asked it to wait when a valid `Retry-After` was supplied.
-
-If LinkedIn pauses a search, JobCtrl can still assess the matches already saved.
-**Continue LinkedIn search** resumes with the original roles, locations and
-remaining new-job allowance. It resumes the saved page position, skips postings
-already checked on that page and honors any outstanding wait supplied by LinkedIn.
-Short waits within the worker's retry window are also supported for posting details.
-
-JobCtrl freezes the selected boards and search criteria at launch. Its worker checkpoints the provider cursor, saves an admission or exclusion receipt, and acknowledges the provider. Only a newly created job uses one place in the requested limit. Cancellation and worker recovery keep the same run identity.
+The activity log records when a LinkedIn listing or detail request receives HTTP
+429, the number of responses received and the requested delay. When LinkedIn
+supplies a valid `Retry-After`, Jobs displays the wait. The same search resumes
+the pending posting or page after that deadline. You can stop it during the
+wait. Without a retry time, JobCtrl records a backoff and stops the remaining
+LinkedIn queries. Once the wait expires, **Continue LinkedIn search** uses
+the unfinished positions, the original criteria and the unspent new-job allowance.
+Jobs already assessed keep their original scores.
 
 For a user-supplied posting URL, Jobs validates the public destination and redirects. The posting transport respects host cooldowns following server deferrals. A failed refresh retains the last accepted posting snapshot. See [Enrichment & Extraction](enrichment-and-extraction.md).
 

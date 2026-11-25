@@ -14,7 +14,7 @@ unit, component, snapshot, Fastify/RPC and isolated fixture commands are retired
 | Requirements library lifecycle | Only accepted occurrences on existing nondeleted Jobs keep a reusable meaning active; shared/hidden Jobs retain it, soft delete hides it, and restore or an equivalent new Job recovers its identity without automatic inference. Reviewed permanent deletion removes only meanings with no retained Job occurrence and their owner-managed Fit links, preserving authored Profile facts/wording and independent audit receipts |
 | Resume composition | Every baseline section, role and achievement is retained, including Language / Proficiency; exactly one current approved variant per achievement; one point per eligible canonical requirement then complementary depth and stable ties; no implicit brevity penalty |
 | Accepted artifacts | Failed model/render/publication/refresh/cancellation preserves the accepted pointer and exact bytes; a failed candidate stays separate |
-| Durable work | Actual Temporal acceptance, committed state/events, cancellation and real worker replacement keep one run identity and recover honestly |
+| Durable work | Actual DBOS acceptance, committed state/events, cancellation and real worker replacement keep one run identity and recover honestly |
 | Submission | Exact reviewed payload, final revalidation, durable at-most-once intent, trusted receipt or explicit uncertainty; restart/reset cannot duplicate the send |
 | Credentials and privacy | Native values never enter settings/events/logs; mutation rollback and process custody preserve peer writes; real OS behavior needs real platform proof |
 | Frontend state | One SSE connection, post-read invalidation, version-fenced local edits, correct optimistic rollback and retained focus/selection; actual responsive/accessibility inspection |
@@ -163,7 +163,7 @@ refresh keeps accepted pointers. After new writes, rollback restores the
 pre-upgrade backup with compatible workflow state. This proof does not establish
 a live rollout.
 
-## Temporal fault injection
+## DBOS fault injection
 
 Start and inspect real workflows through Python HTTP/CLI. Hold only an external
 provider/model boundary. Cancel through the real API, kill the actual worker,

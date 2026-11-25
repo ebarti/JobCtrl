@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { test, expect, json, modelCall, action, terminal, completed } from "../harness/fixtures.js";
 import { createBaseline, type Profile } from "./core-data.js";
 import { qualificationBatchDecision, qualificationKey, type QualificationBinding } from "./qualification-data.js";
-import { captureReusePosting, acceptReuseRequirements, type CapturedPosting, type RequirementSnapshot } from "./reuse-data.js";
-import { catalogMatching, legacyCatalogMatchingV5, typedExtraction, modelSources, EXTRACTION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
+import { captureReusePosting, acceptReuseRequirements, type CapturedPosting } from "./reuse-data.js";
+import { catalogMatching, modelSources, type CatalogContext } from "./requirements-data.js";
 import { createScoredFit, impactPartition, refreshPayload, startRefresh, type PendingRefresh, type RefreshOperation } from "./fit-data.js";
 
 const definitions = [
@@ -23,28 +23,17 @@ const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(
   : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => [key, canonical(entry)])) : value;
 const fingerprint = (value: unknown) => createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 
-async function cold(api: Parameters<typeof json>[0], app: Parameters<typeof modelCall>[0], slug: string, predecessor = false) {
+async function cold(api: Parameters<typeof json>[0], app: Parameters<typeof modelCall>[0], slug: string) {
   const { library } = await createBaseline(api);
   const posting = await captureReusePosting(api, slug, definitions.map((row) => row.text).join("\n"));
-  let snapshot: RequirementSnapshot;
-  if (predecessor) {
-    const pending = api.post(`/v1/jobs/${posting.job_id}/requirements`, { data: { expected_posting_revision: posting.revision, expected_revision: 0 } });
-    const extracting = await modelCall(app, "requirements.extract");
-    extracting.reply(typedExtraction(extracting, { requirements: definitions }));
-    const matching = await modelCall(app, "requirements.match_catalog");
-    matching.reply(legacyCatalogMatchingV5(matching, choices));
-    const accepted = await pending;
-    expect(accepted.status(), await accepted.text()).toBe(200);
-    snapshot = await accepted.json() as RequirementSnapshot;
-  } else ({ snapshot } = await acceptReuseRequirements(api, app, posting, definitions, choices));
+  const { snapshot } = await acceptReuseRequirements(api, app, posting, definitions, choices);
   const achievement = library.roles[0]!.achievements[0]!;
   return { posting, snapshot, library, choose: (_binding: QualificationBinding) => ({ achievementIds: [achievement.achievement_id], evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] }) };
 }
 
-test.describe("permission transport preserves accepted v4 authority", () => {
-test.use({ sourceRevision: "df06b08ae201f7a73dc2c359944c06daf517c69e" });
+test.describe("permission transport preserves accepted authority", () => {
 test("Fit batches cold requirements once, shares exact receipts and reuses only current authority across Jobs", async ({ api, app }, testInfo) => {
-  const seed = await cold(api, app, "batch-cold", true);
+  const seed = await cold(api, app, "batch-cold");
   const before = app.external.calls.length;
   const pending = api.post(`${fitPath(seed.posting)}/assess`, { data: assessBody });
   const batch = await modelCall(app, "fit.qualification-batch");
@@ -74,24 +63,18 @@ test("Fit batches cold requirements once, shares exact receipts and reuses only 
   expect(factualSources.length).toBeGreaterThan(1);
   expect(new Set(factualSources.map((row) => row.source_id)).size).toBe(factualSources.length);
 
-  const legacyRead = await json<Fit>(api, "get", fitPath(seed.posting));
-  const upgrade = await app.upgradeSource();
-  expect(upgrade.current).not.toBe(upgrade.previous);
-  expect(await json<Fit>(api, "get", fitPath(seed.posting))).toEqual({
-    ...legacyRead, requirements_current: true, qualifications_current: true,
-  });
-  const beforeUpgradeReuse = app.external.calls.length;
+  const beforeSameJobReuse = app.external.calls.length;
   const sameJob = await json<Fit>(api, "post", `${fitPath(seed.posting)}/assess`, { ...assessBody, expected_revision: first.score!.revision });
   expect(sameJob.score).toEqual(first.score);
   expect(sameJob.current).toBe(true);
-  expect(app.external.calls).toHaveLength(beforeUpgradeReuse);
+  expect(app.external.calls).toHaveLength(beforeSameJobReuse);
 
   const equivalent = Object.fromEntries(definitions.map((row, index) => [row.localId, { verdict: "equivalent" as const, requirementId: seed.snapshot.requirements[index]!.requirement_id }]));
   const second = await captureReusePosting(api, "batch-exact-peer", definitions.map((row) => row.text).join("\n"));
   // The peer needs current extraction authority. Its exact canonical demands
-  // can still reuse the predecessor's accepted Fit qualifications.
-  const peerRequirements = await acceptReuseRequirements(api, app, second, definitions, equivalent);
-  expect(peerRequirements.extraction!.body["prompt_version"]).toBe(EXTRACTION_PROMPT_VERSION);
+  // can still reuse the accepted Fit qualifications.
+  const peerRequirements = await acceptReuseRequirements(api, app, second, definitions, equivalent, { extract: false });
+  expect(peerRequirements.extraction).toBeUndefined();
   const beforeExact = app.external.calls.length;
   const reused = await json<Fit>(api, "post", `${fitPath(second)}/assess`, assessBody);
   expect(reused.score!.assessments.map((row) => row.assessment_id).sort()).toEqual(first.score!.assessments.map((row) => row.assessment_id).sort());
@@ -118,7 +101,7 @@ test("Fit batches cold requirements once, shares exact receipts and reuses only 
   expect(app.external.calls.slice(beforeMixed).map((call) => call.body["operation"])).toEqual(["fit.qualification-batch"]);
   expect(mixedFit.score!.assessments.find((row) => row.requirement_id === missingId)!.provenance).toMatchObject({ context_transport_binding: wire.context_transport_binding });
   await testInfo.attach("qualification-permission-transport", { contentType: "application/json",
-    body: Buffer.from(JSON.stringify({ acceptedV4Retained: true, binding: wire.context_transport_binding }, null, 2)) });
+    body: Buffer.from(JSON.stringify({ acceptedRetained: true, binding: wire.context_transport_binding }, null, 2)) });
 });
 });
 
