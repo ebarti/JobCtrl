@@ -798,7 +798,7 @@ with psycopg.connect(os.environ['JOBCTRL_DATABASE_URL']) as connection:
       async cli(args, { input } = {}) {
         try {
           const pending = execFile(
-            pythonExecutable,
+            sqlitePredecessor && !upgraded ? predecessorPython : pythonExecutable,
             ["-m", "jobctrl", "--workspace", workspace, ...args],
             {
               cwd: repo,
@@ -888,6 +888,7 @@ with psycopg.connect(os.environ["JOBCTRL_DATABASE_URL"], options="-c default_tra
             keys = [row[0] for row in conn.execute("SELECT job_key FROM discovery_provider_keys WHERE run_id=%s AND unit_id=%s AND site=%s ORDER BY ordinal", (run_id, unit_id, site))]
             assert len(keys) == adapter["emitted_count"]
             adapters.append({"unitId": unit_id, "site": site, "state": adapter["state"], "emittedCount": adapter["emitted_count"], "completed": adapter["completed"], "requestFingerprint": checkpoint["request_fingerprint"], "acknowledgedKeys": keys})
+    received = [{"unitId": unit_id, "site": site, "jobKey": job_key, "status": status} for unit_id, site, job_key, status in conn.execute("SELECT unit_id,site,job_key,status FROM discovery_postings WHERE run_id=%s ORDER BY received_order", (run_id,))]
     receipts = dict(conn.execute("SELECT outcome,COUNT(*) FROM discovery_intake_receipts WHERE run_id=%s GROUP BY outcome", (run_id,)))
     receipt_keys = []
     for unit_id, data in conn.execute("SELECT unit_id,data_json FROM discovery_intake_receipts WHERE run_id=%s ORDER BY created_at,receipt_key", (run_id,)):
@@ -911,8 +912,8 @@ with psycopg.connect(os.environ["JOBCTRL_DATABASE_URL"], options="-c default_tra
             country_indeed=data["country_indeed"], description_format="markdown", linkedin_fetch_description=data["linkedin_fetch_description"])
         units.append({"unitId": unit_id, "status": status, "resultsPerSite": data["results_per_site"], "sdkFingerprint": sdk.fingerprint(),
             "sdkResultsWanted": sdk.results_wanted, "sdkMaxPages": sdk.max_pages, "result": json.loads(result) if result else None})
-print(json.dumps({"adapters": adapters, "receipts": receipts, "receiptKeys": receipt_keys, "request": request, "units": units}))
-`, workspace, runId], { env, timeout: 5000, maxBuffer: 100_000 });
+print(json.dumps({"adapters": adapters, "received": received, "receipts": receipts, "receiptKeys": receipt_keys, "request": request, "units": units}))
+`, workspace, runId], { env, timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
         return JSON.parse(inspected.stdout);
       },
       async restartWorker(workerFeatures) {

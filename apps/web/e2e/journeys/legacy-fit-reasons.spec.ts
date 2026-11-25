@@ -14,11 +14,11 @@ test("the Jobs grid identifies a run's source-bound language decision before and
   const source = await app.external.next();
   expect(source.path).toBe("/jobstreaming/indeed");
   source.respond(indeedPage({ jobs: [target, ...siblings], complete: true, cursor: null }));
-  respondProducer(await app.external.next(), [target]);
+  respondProducer(await app.external.next({ match: (call) => call.path === "/posting-page" && call.body.url === target.url }), [target]);
   for (const operation of ["page_interpretation", "posting_extraction", "description_quality", "jobs.role_analysis", "requirements.extract"]) {
-    respondProducer(await modelCall(app, operation), [{ ...target, unsupported: true }]);
+    const call = await app.external.next({ match: (item) => item.path === "/model" && item.body.operation === operation });
+    respondProducer(call, [{ ...target, unsupported: true }]);
   }
-  const held = await app.external.next();
   const runPath = `/v1/preparation/runs/${started.runId}`;
   type Step = { jobId: string; stage: string; status: string; result: Record<string, unknown> | null };
   const run = await json<{ targetRoute: string; jobIds: string[]; steps: Step[] }>(api, "get", runPath);
@@ -37,8 +37,8 @@ test("the Jobs grid identifies a run's source-bound language decision before and
   await page.goto("/jobs?fit_state=unassessed");
   const row = page.getByRole("row").filter({ hasText: target.title });
   await expect(row.getByRole("link", { name: "Non-English in this run", exact: true })).toHaveAttribute("href", `/runs/${started.runId}`);
-  for (const [index, sibling] of siblings.entries()) {
-    const fetch = index === 0 ? held : await app.external.next();
+  for (const sibling of siblings) {
+    const fetch = await app.external.next({ match: (call) => call.path === "/posting-page" && call.body.url === sibling.url });
     expect(fetch.path).toBe("/posting-page");
     expect(fetch.body.url).toBe(sibling.url);
     fetch.respond({}, 503);

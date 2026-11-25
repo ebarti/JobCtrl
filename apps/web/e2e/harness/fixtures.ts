@@ -41,6 +41,7 @@ export type ApplicationStack = {
   };
   discoveryCheckpoint(runId: string): Promise<{
     adapters: { unitId: string; site: string; state: Record<string, unknown>; emittedCount: number; completed: boolean; requestFingerprint: string; acknowledgedKeys: string[] }[];
+    received: { unitId: string; site: string; jobKey: string; status: string }[];
     receipts: Record<string, number>;
     receiptKeys: { unitId: string; site: string; jobKey: string; isNew: boolean }[];
     request: { fingerprint: string; sourceFetchPolicy?: string; settings: { resultsPerSite: number; newJobLimit: number } };
