@@ -782,7 +782,7 @@ class DiscoveryRepository:
         return decision
 
     def accept_posting(self, lease, unit, posting, *, jobs, receipt_key, excluded=False, limit=None, cancelled=None,
-                       role_target_decision=None, role_target_unavailable=None):
+                       role_target_decision=None, role_target_unavailable=None, existing_only=False):
         with self.database.transaction() as conn:
             run = self.guard_run(conn, lease)
             if cancelled and cancelled():
@@ -804,7 +804,10 @@ class DiscoveryRepository:
                     receipt_key=receipt_key,
                     connection=conn,
                     guard=lambda current_conn: self.guard_run(current_conn, lease),
+                    existing_only=existing_only,
                 )
+                if saved is None:
+                    return None
                 if saved.get("deleted"):
                     outcome = "operator_deleted"
                 created = outcome == "accepted" and saved.get("capture_created") is True

@@ -31,6 +31,9 @@ escape hatch.
   accepted job records the receipt and frozen plan identity. A listing without
   a description requires native detail or records a missing source. Explicit query
   overrides and earlier runs retain their respective acquisition contracts.
+  An exact saved LinkedIn card records an observation at the existing Jobs
+  revision before targeted detail or role qualification. It uses no new-job
+  slot and provides no role verdict for the current run.
   Gateway admission atomically records the paid receipt for the run and candidate,
   or for the exact historical review revision. Recovery resolves that receipt
   before any provider call. A matching interrupted legacy receipt also blocks

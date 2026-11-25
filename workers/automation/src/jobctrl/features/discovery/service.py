@@ -558,6 +558,13 @@ class DiscoveryService:
             if settled is not None:
                 return settled
             plan = settings["targetPlan"]
+            if fetch_detail is not None:
+                known = self.repository.accept_posting(
+                    lease, unit, posting, jobs=self.jobs, receipt_key=key, existing_only=True,
+                    limit=limit, cancelled=context.cancelled,
+                )
+                if known is not None:
+                    return known
             if not posting_role_evidence(posting)["description"].strip() and fetch_detail is not None:
                 details = await fetch_detail()
                 if details:

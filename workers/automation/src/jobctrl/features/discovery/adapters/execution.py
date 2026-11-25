@@ -246,8 +246,8 @@ class DiscoveryExecutionAdapter:
                             age = posting_age_evidence(event.site.value, event.job.date_posted, hours_old=spec.hours_old, reference=settings["_criteriaAsOf"])
                             posting["provenance"]["postingAge"] = age
                             posting["provenance"]["providerHoursOld"] = scope["hours_old"]
-                        # A saved-role check obtains missing LinkedIn detail after
-                        # its receipt and exclusion fences, before Jobs identity.
+                        # Saved-role admission obtains detail only after the
+                        # receipt, exclusion and existing-posting checks.
                         needs_role_detail = event.site.value == "linkedin" and settings.get("_roleTargetPolicy") == ROLE_TARGET_POLICY
                         if not needs_role_detail and (age is None or age["accepted"]) and not posting["description"] and self._needs_detail(posting):
                             detail = gateway.fetch_detail_for_job_event(event, registry=registry)

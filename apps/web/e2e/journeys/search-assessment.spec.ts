@@ -13,6 +13,44 @@ function linkedinCard(id: number) {
   return `<div class="base-search-card"><a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/synthetic-engineer-${id}"><span class="sr-only">Synthetic Systems Engineer</span></a><h4 class="base-search-card__subtitle">Synthetic Board Company</h4></div>`;
 }
 
+test("saved-role LinkedIn discovery fetches details only for new postings", async ({ api, app }) => {
+  const { profile, library } = await createBaseline(api, { ...baseline,
+    experience: { target_role: "Synthetic systems engineer", target_locations: "Madrid" } });
+  const saved = await json<{ job_id: string; revision: number }>(api, "post", "/v1/jobs/capture", {
+    url: "https://www.linkedin.com/jobs/view/1234", title: "Saved Synthetic Engineer",
+    company: "Synthetic Board Company", description: "Previously accepted posting details.",
+  });
+  const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 1 });
+
+  const search = await action(api, "discovery.search", { queries: [], locations: [], expectedProfileVersion: profile.profileVersion });
+  const listing = await app.external.next();
+  expect(listing.path).toContain("/jobstreaming/linkedin/jobs-guest/jobs/api/seeMoreJobPostings/search?");
+  listing.raw(linkedinCard(1234) + linkedinCard(1235));
+  const detail = await app.external.next();
+  expect(detail.path).toBe("/jobstreaming/linkedin/jobs/view/1235");
+  detail.raw('<div class="show-more-less-html__markup"><p>Maintain durable workflow recovery.</p></div>');
+  await serveRoleTarget(app, "match");
+  await serveSavedAssessment(app, library);
+
+  const result = (await completed(api, search.runId)).result as { newJobIds: string[] };
+  expect(result).toMatchObject({
+    status: "completed", newJobs: 1, observedJobs: 2,
+    jobIds: expect.arrayContaining([saved.job_id]),
+    roleTargetObservations: { match: 1 },
+    preparation: { status: "succeeded", assessedJobs: 1 },
+  });
+  expect(result.newJobIds).toHaveLength(1);
+  expect(result.newJobIds).not.toContain(saved.job_id);
+  expect(await json(api, "get", `/v1/jobs/${saved.job_id}`)).toMatchObject({
+    revision: saved.revision, title: "Saved Synthetic Engineer", description: "Previously accepted posting details.",
+  });
+  expect((await app.discoveryCheckpoint(search.runId)).receipts).toEqual({ accepted: 2 });
+  expect(app.external.calls.filter((call) => call.path.includes("/jobstreaming/linkedin/jobs/view/")).map((call) => call.path))
+    .toEqual(["/jobstreaming/linkedin/jobs/view/1235"]);
+  expect(app.external.calls.filter((call) => call.path === "/model" && call.body?.["operation"] === "discovery.role_target_match")).toHaveLength(1);
+});
+
 test("search assesses the exact saved LinkedIn detail after a later posting is throttled", async ({ api, app }) => {
   const { profile, library } = await createBaseline(api, { ...baseline,
     experience: { target_role: "Synthetic systems engineer", target_locations: "Madrid" } });
