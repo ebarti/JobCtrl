@@ -287,8 +287,24 @@ class Application:
                            503, {"idempotencyKey": key}) from None
         return {field: receipt[field] for field in ("runId", "workflowId", "status")}
 
+    def _pending_children(self, row, connection):
+        preparation = self.services.get("preparation")
+        if preparation is None or row["action"] not in {"discovery.search", "preparation.run"}:
+            return []
+        return preparation.pending_child_actions(row["run_id"], connection)
+
     def _finish(self, row, status, code, connection, *, result=None):
         run_id, action = row["run_id"], row["action"]
+        if action in {"discovery.search", "preparation.run"}:
+            # A Stop can arrive while a page or its assessments are executing.
+            # Only the child's feature finalizer settles its handoff, after its
+            # provider call has returned or unwound and its receipts are saved.
+            current = connection.execute("SELECT cancellation_requested,payload_json FROM app_action_runs WHERE run_id=?",
+                                         (run_id,)).fetchone()
+            if current["cancellation_requested"] and search_workflow(action, json.loads(current["payload_json"])):
+                if self._pending_children(row, connection):
+                    return
+                status, code = "cancelled", "action_cancelled"
         changed = connection.execute(
             "UPDATE app_action_runs SET status=?,error_code=?,result_json=?,updated_at=? WHERE run_id=? "
             "AND status IN ('pending','start_failed','queued','running')",
@@ -410,24 +426,41 @@ class Application:
                                            {"runId": run_id, "action": run["action"]},
                                            feature=run["action"].split(".")[0], aggregate_id=run_id)
 
+    def _request_stop(self, row, connection):
+        if row["cancellation_requested"] or row["status"] in TERMINAL_STATUSES:
+            return
+        connection.execute("UPDATE app_action_runs SET cancellation_requested=?,updated_at=? WHERE run_id=?",
+                           (STOP_REQUESTED, now(), row["run_id"]))
+        self.runtime.events.append(connection, "ActionCancellationRequested",
+                                   {"runId": row["run_id"], "action": row["action"]},
+                                   feature=row["action"].split(".")[0], aggregate_id=row["run_id"])
+
     async def cancel(self, run_id: str) -> dict:
         def stop():
             with self.runtime.database.transaction() as connection:
                 row = connection.execute("SELECT * FROM app_action_runs WHERE run_id=? FOR UPDATE", (run_id,)).fetchone()
                 if row is None:
                     raise NotFoundError("The action run does not exist.")
-                if row["status"] in TERMINAL_STATUSES:
+                if row["status"] in TERMINAL_STATUSES and (row["status"] != "cancelled" or not row["cancellation_requested"]):
+                    return self._run_payload(row)
+                pending = self._pending_children(row, connection)
+                if row["status"] in TERMINAL_STATUSES and not pending:
                     return self._run_payload(row)
                 if (row["action"] not in self.actions
                         or self._input_digest(row["action"], json.loads(row["payload_json"])) != row["input_hash"]):
                     raise AppError("action_contract_changed", "Use the compatible action version to stop and settle this pending run.", 409)
-                if not row["cancellation_requested"]:
-                    connection.execute("UPDATE app_action_runs SET cancellation_requested=?,updated_at=? WHERE run_id=?",
-                                       (STOP_REQUESTED, now(), run_id))
-                    self.runtime.events.append(connection, "ActionCancellationRequested", {"runId": run_id, "action": row["action"]},
-                                               feature=row["action"].split(".")[0], aggregate_id=run_id)
-            self._deliver_stop(run_id, row["workflow_id"])
-            self._reconcile(row)
+                self._request_stop(row, connection)
+                # The handoff owner guards admission using the parent's Stop in this
+                # same writer transaction. No new child can appear after this snapshot.
+                children = connection.execute(
+                    "SELECT run_id,action,workflow_id,cancellation_requested,status FROM app_action_runs "
+                    "WHERE run_id=ANY(?) ORDER BY run_id FOR UPDATE", (pending,),
+                ).fetchall() if pending else []
+                for child in children:
+                    self._request_stop(child, connection)
+            for target in [*children, row]:
+                self._deliver_stop(target["run_id"], target["workflow_id"])
+                self._reconcile(target)
             return self.action_run(run_id)
         return await asyncio.to_thread(stop)
 

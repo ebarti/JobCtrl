@@ -154,7 +154,11 @@ bypasses accepted authority or refresh admission.
 New searches enqueue a separate assessment for each eligible posting. Fit
 uses `resolve_many` for that job's normalized demands and its permitted Profile
 evidence. The score retains the original Requirements and qualification IDs.
-A failed job can be retried independently from Jobs.
+Missing bindings coordinate through PostgreSQL while other demands can be
+assessed independently. An interrupted provider call keeps its immutable
+receipt. A known validation refusal is shared with equivalent waiting jobs
+without another charge. An explicit retry from Jobs may request a fresh result
+for that job once the earlier charge is settled.
 
 ### Retained cohort operations
 

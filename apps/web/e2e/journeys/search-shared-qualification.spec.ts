@@ -12,7 +12,10 @@ function matching(app: ApplicationStack, predicate: (call: ExternalCall) => bool
   return { ...app, external: { ...app.external, next: (options) => app.external.next({ ...options, match: predicate }) } };
 }
 
-test("overlapping jobs share one paid qualification while an unrelated demand finishes", async ({ api, app }) => {
+for (const [name, refusal] of [
+  ["overlapping jobs share one paid qualification while an unrelated demand finishes", false],
+  ["overlapping jobs retain a paid Fit refusal until an explicit single-job retry", true],
+] as const) test(name, async ({ api, app }) => {
   const { library } = await createBaseline(api);
   const settings = await json<{ revision: number; laneConcurrency: Record<string, number> }>(api, "get", "/v1/settings");
   await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0,
@@ -71,6 +74,28 @@ test("overlapping jobs share one paid qualification while an unrelated demand fi
   const billedShared = () => app.external.calls.filter((call) => call.body["operation"] === "fit.qualification-batch"
     && qualificationBindings(call)[0]?.requirement_id === sharedRequirement);
   expect(billedShared()).toHaveLength(1);
+  if (refusal) {
+    const invalid = qualificationBatchDecision(held, () => ({ achievementIds: [achievement.achievement_id],
+      evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] }));
+    invalid.requirements[0]!.evidence = [{ source_id: "unowned", quote: "Outside the supplied factual inventory." }];
+    held.reply(invalid);
+    const result = (await completed(api, search.runId)).result;
+    expect(result).toMatchObject({ preparation: { assessedJobs: 1, failedJobs: 2, failures: expect.arrayContaining([
+      { jobId: id(first.url), stage: "fit", code: "fit_foreign_source_id" },
+      { jobId: id(twin.url), stage: "fit", code: "fit_foreign_source_id" },
+    ]) } });
+    expect(billedShared()).toHaveLength(1);
+    const retry = await action(api, "preparation.retry", { run_id: search.runId, job_ids: [id(twin.url)] });
+    const fresh = await modelCall(app, "fit.qualification-batch");
+    expect(qualificationBindings(fresh)[0]!.requirement_id).toBe(sharedRequirement);
+    answer(fresh);
+    await completed(api, retry.runId);
+    expect((await readFit(twin.url)).current).toBe(true);
+    expect((await readFit(first.url)).score).toBeNull();
+    expect((await readFit(other.url)).current).toBe(true);
+    expect(billedShared()).toHaveLength(2);
+    return;
+  }
   answer(held);
   expect((await completed(api, search.runId)).result).toMatchObject({ preparation: { assessedJobs: 3, failedJobs: 0 } });
   const accepted = (await readFit(first.url)).score.assessments[0]!;

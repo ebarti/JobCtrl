@@ -106,6 +106,9 @@ class PreparationService:
     def bind_run_reader(self, reader: RunReader):
         self.run_reader = reader
 
+    def pending_child_actions(self, run_id, connection):
+        return self.checkpoints.pending_child_actions(run_id, connection)
+
     def admit(self, run_id, raw, settings, connection):
         # Only initial acquisition owns a new-job cohort. Forced/selected
         # recipes retain their existing explicit single-job semantics.
@@ -1027,6 +1030,8 @@ class PreparationService:
     def _dispatch_discovered(self, search_id, posting, connection):
         if self.action_admitter is None:
             raise AppError("assessment_dispatch_unavailable", "The assessment queue is unavailable.", 503)
+        if self.run_reader(search_id, connection=connection)["cancellationRequested"]:
+            raise AppError("action_cancelled", "The search was stopped.", 409)
         payload = {"search_id": search_id, "job_id": posting["job_id"], "posting_revision": posting["revision"],
                    "source_hash": posting["source_hash"]}
         receipt = self.action_admitter("preparation.assess_discovered", payload, connection=connection,

@@ -154,7 +154,10 @@ ready, including while the search waits for another page. Fit reuses a saved
 qualification when the capability revision, normalized demand and permitted
 Profile facts agree. The job's own posting and Requirements are checked again
 before publishing its score. A source change or a refused decision appears on
-that job. Other jobs can finish, and previously accepted scores stay available.
+that job. If two jobs need the same determination at once, they share the
+result, including a validation refusal. A fresh result for a failed job can be
+requested from Jobs after the earlier provider charge is settled. Other jobs
+can finish, and previously accepted scores stay available.
 
 Evidence stays within the category's permitted sources:
 
