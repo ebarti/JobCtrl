@@ -1,4 +1,4 @@
-"""SQLite adapter for Digest watermark and committed event persistence."""
+"""PostgreSQL adapter for Digest watermark and committed event persistence."""
 
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -8,7 +8,7 @@ from jobctrl.features.digest.domain import is_later, parse_time
 from jobctrl.features.digest.ports import DigestReadScope
 
 
-class SqliteDigestRepository:
+class PostgresDigestRepository:
     def __init__(self, database, events):
         self.database, self.events = database, events
 
@@ -20,7 +20,6 @@ class SqliteDigestRepository:
     @contextmanager
     def read_scope(self):
         with self.database.connect() as connection:
-            connection.execute("BEGIN")
             since = self._state(connection)["lastAcknowledgedAt"]
             if since is not None and parse_time(since) is None:
                 raise AppError("invalid_watermark", "The saved digest watermark is invalid.", status_code=409)

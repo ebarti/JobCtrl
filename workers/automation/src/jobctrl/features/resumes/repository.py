@@ -1,4 +1,4 @@
-"""SQLite aggregate adapter and committed invalidations for the Resumes owner."""
+"""PostgreSQL aggregate adapter and committed invalidations for the Resumes owner."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ def state_artifacts(state):
     return {artifact["artifact_id"]: artifact for artifact in artifacts}
 
 
-class SqliteResumeRepository:
+class PostgresResumeRepository:
     def __init__(self, runtime):
         self.runtime = runtime
 
@@ -231,7 +231,10 @@ class SqliteResumeRepository:
                                  "(artifact_id,job_id,artifact_json,status,reason,created_at,updated_at) VALUES(?,?,?,'pending','job_deleted',?,?) "
                                  "ON CONFLICT(artifact_id) DO UPDATE SET status='pending',reason='job_deleted',owner_pid=NULL,updated_at=excluded.updated_at",
                                  (artifact["artifact_id"], job_id, encoded, now(), now()))
-            conn.execute("DELETE FROM resumes_operation_receipts WHERE json_extract(result_json,'$.job_id') = ?", (job_id,))
+            receipts = conn.execute("SELECT operation_id,result_json FROM resumes_operation_receipts")
+            receipt_ids = [ident for ident, result in receipts if json.loads(result).get("job_id") == job_id]
+            if receipt_ids:
+                conn.execute("DELETE FROM resumes_operation_receipts WHERE operation_id=ANY(?::text[])", (receipt_ids,))
             for state in self.list(job_id=job_id, connection=conn):
                 self._event(conn, state, "ResumeDeleted")
             conn.execute("DELETE FROM resumes_documents WHERE job_id = ?", (job_id,))

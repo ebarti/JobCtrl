@@ -1,4 +1,4 @@
-"""SQLite adapter for Interview generations, notes and determination links."""
+"""PostgreSQL adapter for Interview generations, notes and determination links."""
 
 from contextlib import contextmanager
 import json
@@ -8,7 +8,7 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-class SqliteInterviewSession:
+class PostgresInterviewSession:
     def __init__(self, connection, events):
         self.source_context, self.events = connection, events
 
@@ -96,27 +96,34 @@ class SqliteInterviewSession:
         self.source_context.execute("DELETE FROM interview_preparations WHERE job_id=?", (job_id,))
         self.source_context.execute("DELETE FROM interview_generation_runs WHERE job_id=?", (job_id,))
         prefix = job_id + ":question:"
-        self.source_context.execute("DELETE FROM interview_determinations WHERE json_extract(envelope_json,'$.entity_id')=? OR substr(json_extract(envelope_json,'$.entity_id'),1,length(?))=?", (job_id, prefix, prefix))
+        determinations = self.source_context.execute("SELECT determination_id,envelope_json FROM interview_determinations")
+        identifiers = []
+        for ident, envelope in determinations:
+            entity = json.loads(envelope).get("entity_id")
+            if isinstance(entity, str) and (entity == job_id or entity.startswith(prefix)):
+                identifiers.append(ident)
+        if identifiers:
+            self.source_context.execute("DELETE FROM interview_determinations WHERE determination_id=ANY(?::text[])",
+                                        (identifiers,))
         self.events.append(self.source_context, "InterviewDataDeleted", {"jobId": job_id}, feature="interviews", aggregate_id=job_id)
 
 
-class SqliteInterviewRepository:
+class PostgresInterviewRepository:
     def __init__(self, database, events, workspace):
         self.database, self.events, self.workspace = database, events, workspace
 
     @contextmanager
     def read_session(self, source_context=None):
         if source_context is not None:
-            yield SqliteInterviewSession(source_context, self.events)
+            yield PostgresInterviewSession(source_context, self.events)
         else:
             with self.database.connect() as connection:
-                connection.execute("BEGIN")
-                yield SqliteInterviewSession(connection, self.events)
+                yield PostgresInterviewSession(connection, self.events)
 
     @contextmanager
     def transaction(self, source_context=None):
         if source_context is not None:
-            yield SqliteInterviewSession(source_context, self.events)
+            yield PostgresInterviewSession(source_context, self.events)
         else:
             with self.database.transaction() as connection:
-                yield SqliteInterviewSession(connection, self.events)
+                yield PostgresInterviewSession(connection, self.events)

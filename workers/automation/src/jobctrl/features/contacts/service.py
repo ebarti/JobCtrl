@@ -268,23 +268,53 @@ class ContactsService:
         _, linked, _ = validate_request(payload)
         self._linked_job(linked)
 
-    def queue_research(self, payload: dict) -> None:
+    def queue_research(self, run_id: str, payload: dict, connection) -> None:
+        from jobctrl.app.model_custody import assert_retryable_owners
         from .research import queued_task
 
-        task = queued_task(payload, payload["taskId"])
-        with self.store.write() as session:
-            current = session.task(task["taskId"])
+        task_id = payload.get("taskId") or run_id
+        if not isinstance(task_id, str) or not 1 <= len(task_id) <= 240:
+            raise InvalidContact("The research task identity is invalid.")
+        task = queued_task(payload, task_id)
+        with self.store.write(connection) as session:
+            self._linked_job(task["jobId"], connection)
+            current = session.task(task_id)
             if current:
                 if current["request"] != task["request"]:
                     raise StaleContact("The research identity already belongs to different sources.")
-                return  # A worker may already have started or completed this task.
-            task["revision"] = 1
+                if current["status"] in {"queued", "running"}:
+                    raise StaleContact("Another action already owns this research task.")
+                if current["status"] in {"needs_review", "completed"}:
+                    session.bind_run(run_id, task_id)
+                    return
+                if current.get("ownerRunId"):
+                    assert_retryable_owners([f"contacts:{current['ownerRunId']}:{index}" for index in range(len(task['request']['sources']))],
+                                            connection)
+            task = current or task
+            if payload.get("expectedRevision", task["revision"]) != task["revision"]:
+                raise StaleContact("The research task changed before retry.")
+            task.update(status="queued", ownerRunId=run_id, updatedAt=domain.now(), failedAt=None, errorClass=None)
+            task["revision"] += 1
             session.put_task(task)
-            session.event("ContactResearchTaskStarted", task["taskId"], {"taskId": task["taskId"], "jobId": task["jobId"], "status": "queued"})
+            session.bind_run(run_id, task_id)
+            session.event("ContactResearchTaskStarted", task_id, {"taskId": task_id, "jobId": task["jobId"], "status": "queued"})
+
+    def finalize_research(self, run_id, status, error_code, connection):
+        if status not in {"cancelled", "failed"}:
+            return
+        with self.store.write(connection) as session:
+            task = session.task_for_run(run_id)
+            if not task or task.get("ownerRunId") != run_id or task["status"] not in {"queued", "running"}:
+                return
+            stamp = domain.now()
+            task.update(status="failed", errorClass="cancelled" if status == "cancelled" else error_code or "research_source_failed",
+                        failedAt=stamp, updatedAt=stamp, revision=task["revision"] + 1)
+            session.put_task(task)
+            session.event("ContactResearchTaskFailed", task["taskId"], {"taskId": task["taskId"], "errorClass": task["errorClass"]})
 
 
 def research_summary(task: dict) -> dict:
-    result = {key: copy.deepcopy(value) for key, value in task.items() if key not in {"candidates", "sourceAttempts", "request"}}
+    result = {key: copy.deepcopy(value) for key, value in task.items() if key not in {"candidates", "sourceAttempts", "request", "ownerRunId"}}
     result.update(candidateCount=len(task["candidates"]), needsReviewCount=sum(item["status"] == "needs_review" for item in task["candidates"]),
                   confirmedCount=sum(item["status"] == "confirmed" for item in task["candidates"]))
     return result

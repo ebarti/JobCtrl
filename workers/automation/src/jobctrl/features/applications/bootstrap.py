@@ -6,20 +6,20 @@ from jobctrl.app.contracts import Feature, Runtime
 from jobctrl.app.errors import AppError
 
 from .autofill import AutofillService
-from .application_store import SqliteApplicationStore
+from .application_store import PostgresApplicationStore
 from .browser import BrowserRehearsal
 from .domain import ApplicationFailure, ApprovedBatch, Batch, Execute, Prepare, Rehearse
 from .feedback import FeedbackService
-from .feedback_repository import SqliteFeedbackRepository
+from .feedback_repository import PostgresFeedbackRepository
 from .http import routes
 from .inspection import ApplicationInspection
 from .mail import MailAdapter
 from .repository import ApplicationRepository
 from .repeat import RepeatApplicationService
-from .repeat_store import SqliteRepeatStore
+from .repeat_store import PostgresRepeatStore
 from .schema import SCHEMA
 from .screening import ScreeningCommand, ScreeningService
-from .screening_store import SqliteScreeningStore
+from .screening_store import PostgresScreeningStore
 from .semantic import ApplicationModel
 from .service import ApplicationsService
 from .sources import ApplicationSources
@@ -31,12 +31,12 @@ def build_feature(runtime: Runtime, *, profile, jobs, resumes, fit=None) -> Feat
     sources = ApplicationSources(profile=profile, jobs=jobs, resumes=resumes)
     model = ApplicationModel(runtime.model, repository)
     mail = MailAdapter(runtime)
-    feedback = FeedbackService(SqliteFeedbackRepository(runtime), jobs=jobs, profile=profile, mail=mail, model=runtime.model)
-    screening = ScreeningService(SqliteScreeningStore(repository, sources), model)
+    feedback = FeedbackService(PostgresFeedbackRepository(runtime), jobs=jobs, profile=profile, mail=mail, model=runtime.model)
+    screening = ScreeningService(PostgresScreeningStore(repository, sources), model)
     autofill = AutofillService(repository, sources, model)
     inspection = ApplicationInspection(repository, sources, model)
-    repeat = RepeatApplicationService(SqliteRepeatStore(repository, sources, feedback), model)
-    store = SqliteApplicationStore(repository, sources, screening=screening.store, repeat=repeat.store,
+    repeat = RepeatApplicationService(PostgresRepeatStore(repository, sources, feedback), model)
+    store = PostgresApplicationStore(repository, sources, screening=screening.store, repeat=repeat.store,
                                    inspection=inspection, feedback=feedback, validate_mail=mail.validate_payload, fit=fit)
     service = ApplicationsService(store, mail=mail, rehearsal=BrowserRehearsal(runtime), inspection=inspection,
                                   feedback=feedback, screening=screening, repeat=repeat, autofill=autofill)

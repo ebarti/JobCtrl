@@ -1,4 +1,4 @@
-"""Cross-process refresh exclusion without holding SQLite locks across I/O."""
+"""Cross-process refresh exclusion without holding PostgreSQL locks across I/O."""
 
 from __future__ import annotations
 

@@ -65,6 +65,23 @@ class ExecutionCustody:
             raise AppError("action_custody_changed", "Action custody changed; inspect the retained run.", 409)
         return True
 
+    def publish_registration(self, registration: str):
+        if not self.owned:
+            raise AppError("worker_custody_lost", "The worker no longer owns this workspace.", 409)
+        # Windows locks byte zero. The registration is readable at offset one
+        # while its owner holds the lock on either supported locking backend.
+        os.lseek(self.descriptor, 1, os.SEEK_SET)
+        data = registration.encode("ascii")
+        if os.write(self.descriptor, data) != len(data):
+            raise OSError("The worker registration could not be recorded.")
+        os.ftruncate(self.descriptor, 1 + len(data))
+
+    def held_by_registration(self, registration: str) -> bool:
+        if self.try_acquire():
+            return False
+        os.lseek(self.descriptor, 1, os.SEEK_SET)
+        return os.read(self.descriptor, 128) == registration.encode("ascii")
+
     async def acquire(self, cancelled):
         while not self.try_acquire():
             if cancelled():

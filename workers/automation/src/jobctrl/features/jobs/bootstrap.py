@@ -12,7 +12,7 @@ from jobctrl.app.contracts import Feature
 from jobctrl.app.errors import AppError
 from jobctrl.features.jobs.adapters.acquisition import SourceBoundPostingAcquirer
 from jobctrl.features.jobs.adapters.role_analysis import SourceBoundRoleAnalysis
-from jobctrl.features.jobs.repository import SqliteJobsRepository
+from jobctrl.features.jobs.repository import PostgresJobsRepository
 from jobctrl.features.jobs.schema import RECOVER_DISCOVERY_DETAILS, SCHEMA
 from jobctrl.features.jobs.service import JobsService
 from jobctrl.features.jobs.url_imports import SCHEMA as URL_IMPORT_SCHEMA, UrlImports
@@ -23,7 +23,7 @@ def build_feature(runtime, **ports):
     runtime.database.initialize_feature("jobs_recover_discovery_details_v1", RECOVER_DISCOVERY_DETAILS)
     runtime.database.initialize_feature("jobs_url_imports_v1", URL_IMPORT_SCHEMA)
     imports = UrlImports(runtime.database)
-    repository = SqliteJobsRepository(runtime.database, runtime.events)
+    repository = PostgresJobsRepository(runtime.database, runtime.events)
     fetcher = ports.get("posting_fetcher")
     if os.environ.get("JOBCTRL_POSTING_PROVIDER_ENDPOINT"):
         from jobctrl.features.jobs.adapters.http_posting import HttpPostingFetcher

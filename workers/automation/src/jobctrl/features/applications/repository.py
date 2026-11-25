@@ -1,9 +1,9 @@
-"""SQLite adapter for Applications. No SQL crosses a feature boundary."""
+"""PostgreSQL adapter for Applications. No SQL crosses a feature boundary."""
 
 from __future__ import annotations
 
 import json
-from contextlib import closing, contextmanager
+from contextlib import contextmanager
 
 from .domain import ApplicationFailure, copied, digest, timestamp
 
@@ -21,7 +21,7 @@ class ApplicationRepository:
         if connection is not None:
             yield connection
         else:
-            with closing(self.runtime.database.connect()) as conn:
+            with self.runtime.database.connect() as conn:
                 yield conn
 
     @contextmanager
@@ -76,6 +76,21 @@ class ApplicationRepository:
     def receipt(self, conn, tenant, key, request, response):
         conn.execute("INSERT INTO applications_action_receipts VALUES(?,?,?,?,?)",
                      (tenant, key, digest(request), encode(response), timestamp()))
+
+    def delete_job_receipts(self, conn, tenant, job):
+        # Receipts retain exact JSON text, including escapes PostgreSQL cannot
+        # decode as TEXT (such as a NUL in an unrelated field).
+        matching = []
+        for key, raw in conn.execute(
+            "SELECT action_key,response_json FROM applications_action_receipts WHERE tenant_id=?", (tenant,)
+        ):
+            response = json.loads(raw)
+            if not isinstance(response, dict):
+                continue
+            application = response.get("application")
+            if response.get("jobId") == job or (isinstance(application, dict) and application.get("jobId") == job):
+                matching.append((tenant, key))
+        conn.executemany("DELETE FROM applications_action_receipts WHERE tenant_id=? AND action_key=?", matching)
 
     def add_payload(self, conn, tenant, payload):
         conn.execute("INSERT INTO applications_payloads VALUES(?,?,?,?,?,?)", (
@@ -146,7 +161,7 @@ class ApplicationRepository:
             tenant, intent["intent_id"], intent["run_id"], intent["payload_sha256"], encode(receipt), timestamp()))
 
     def add_rehearsal(self, conn, tenant, rehearsal):
-        conn.execute("INSERT INTO applications_rehearsals VALUES(?,?,?,?,?,?)", (
+        conn.execute("INSERT INTO applications_rehearsals(tenant_id,rehearsal_id,job_id,payload_id,payload_sha256,rehearsal_json) VALUES(?,?,?,?,?,?)", (
             tenant, rehearsal["rehearsalId"], rehearsal["jobId"], rehearsal["payloadId"], rehearsal["payloadSha256"], encode(rehearsal)))
 
     def rehearsal(self, conn, tenant, ident):
@@ -155,7 +170,7 @@ class ApplicationRepository:
 
     def rehearsals(self, conn, tenant, job):
         return [json.loads(row[0]) for row in conn.execute(
-            "SELECT rehearsal_json FROM applications_rehearsals WHERE tenant_id=? AND job_id=? ORDER BY rowid DESC", (tenant, job))]
+            "SELECT rehearsal_json FROM applications_rehearsals WHERE tenant_id=? AND job_id=? ORDER BY storage_order DESC", (tenant, job))]
 
     def determination(self, conn, tenant, record):
         conn.execute("INSERT INTO applications_determinations VALUES(?,?,?,?,?,?,?,?,?)", (

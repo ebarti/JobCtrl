@@ -1,4 +1,4 @@
-"""Profile SQLite adapter. Every mutation and its invalidation commit together."""
+"""Profile PostgreSQL adapter. Every mutation and its invalidation commit together."""
 
 from __future__ import annotations
 
@@ -128,9 +128,13 @@ class ProfileRepository:
         return conn.execute("SELECT * FROM profile_authoring_requests WHERE profile_id=? AND proposal_id=?", (profile_id, proposal_id)).fetchone()
 
     def authoring_retry_successor(self, conn, profile_id, proposal_id):
-        return conn.execute("""SELECT * FROM profile_authoring_requests WHERE profile_id=?
-            AND json_extract(brief_json,'$.origin_metadata.retry_of_proposal_id')=? ORDER BY rowid DESC LIMIT 1""",
-            (profile_id, proposal_id)).fetchone()
+        rows = conn.execute("SELECT * FROM profile_authoring_requests WHERE profile_id=? ORDER BY insertion_order DESC",
+                            (profile_id,))
+        for row in rows:
+            metadata = json.loads(row["brief_json"]).get("origin_metadata")
+            if isinstance(metadata, dict) and metadata.get("retry_of_proposal_id") == proposal_id:
+                return row
+        return None
 
     @staticmethod
     def authoring_interrupted(row):
@@ -156,7 +160,7 @@ class ProfileRepository:
     def start_authoring(self, conn, *, profile_id, origin_key, brief):
         import os
         proposal_id = identifier("proposal")
-        conn.execute("INSERT INTO profile_authoring_requests VALUES(?,?,?,?, 'generating',NULL,NULL)",
+        conn.execute("INSERT INTO profile_authoring_requests (profile_id,origin_key,proposal_id,brief_json,status,variant_id,failure_code) VALUES(?,?,?,?, 'generating',NULL,NULL)",
                      (profile_id, origin_key, proposal_id, canonical({**brief, "_authoring_owner": {"pid": os.getpid(), "created_at": now()}})))
         return proposal_id
 
@@ -172,11 +176,7 @@ class ProfileRepository:
             yield connection
             return
         with self.runtime.database.connect() as conn:
-            conn.execute("BEGIN")
-            try:
-                yield conn
-            finally:
-                conn.rollback()
+            yield conn
 
     def root(self, conn, profile_id="default"):
         return conn.execute("SELECT * FROM profile_documents WHERE profile_id=?", (profile_id,)).fetchone()
@@ -391,7 +391,11 @@ class ProfileRepository:
     def sync_authored_sources(self, conn, document, old_document, *, profile_id="default", imported=False):
         # Keep independently attached evidence. Derived authored sources are
         # rebuilt mechanically by stable field/entry/achievement identities.
-        conn.execute("UPDATE profile_sources SET active=0 WHERE profile_id=? AND json_extract(content_json,'$.origin')='profile'", (profile_id,))
+        sources = conn.execute("SELECT source_id,content_json FROM profile_sources WHERE profile_id=? AND active=1", (profile_id,))
+        derived_ids = [source_id for source_id, content in sources if json.loads(content).get("origin") == "profile"]
+        if derived_ids:
+            conn.execute("UPDATE profile_sources SET active=0 WHERE profile_id=? AND source_id=ANY(?::text[])",
+                         (profile_id, derived_ids))
         old_achievements = [dict(row) for row in conn.execute("SELECT * FROM profile_achievements WHERE profile_id=? AND active=1 ORDER BY position", (profile_id,))]
         conn.execute("UPDATE profile_achievements SET active=0 WHERE profile_id=?", (profile_id,))
         for section in ("personal", "work_authorization", "compensation", "experience", "availability", "application_attestations", "application_preferences", "eeo_voluntary"):

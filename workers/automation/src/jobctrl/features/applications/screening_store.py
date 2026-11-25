@@ -1,4 +1,4 @@
-"""SQLite adapter for reviewed screening transactions and source snapshots."""
+"""PostgreSQL adapter for reviewed screening transactions and source snapshots."""
 
 import json
 from contextlib import contextmanager
@@ -33,7 +33,7 @@ class _ScreeningSession:
 
     def library(self, tenant):
         return [json.loads(row[0]) for row in self._connection.execute(
-            "SELECT entry_json FROM applications_screening_library WHERE tenant_id=? ORDER BY rowid", (tenant,)
+            "SELECT entry_json FROM applications_screening_library WHERE tenant_id=? ORDER BY storage_order", (tenant,)
         )]
 
     def library_entry(self, tenant, library_id):
@@ -76,7 +76,7 @@ class _ScreeningSession:
         ))
 
     def append_library(self, tenant, entry):
-        self._connection.execute("INSERT INTO applications_screening_library VALUES(?,?,?)", (tenant, entry["libraryId"], encode(entry)))
+        self._connection.execute("INSERT INTO applications_screening_library(tenant_id,library_id,entry_json) VALUES(?,?,?)", (tenant, entry["libraryId"], encode(entry)))
 
     def save_receipt(self, tenant, key, request, response):
         self._repository.receipt(self._connection, tenant, key, request, response)
@@ -85,7 +85,7 @@ class _ScreeningSession:
         self._repository.event(self._connection, "ScreeningAnswerUpdated", job, **references)
 
 
-class SqliteScreeningStore:
+class PostgresScreeningStore:
     def __init__(self, repository, sources):
         self._repository, self._sources = repository, sources
         self._payload_reader = None

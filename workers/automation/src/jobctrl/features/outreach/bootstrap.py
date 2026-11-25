@@ -3,14 +3,14 @@
 from jobctrl.app.contracts import Feature, Runtime
 
 from .http import routes
-from .repository import SqliteOutreachStore
+from .repository import PostgresOutreachStore
 from .schema import SCHEMA
 from .service import OutreachService
 
 
 def build_feature(runtime: Runtime, *, contacts, profile, jobs=None, offers=None, compensation=None, applications=None, model=None, **ports) -> Feature:
     runtime.database.initialize_feature("outreach", SCHEMA)
-    service = OutreachService(SqliteOutreachStore(runtime.database, runtime.events), contacts=contacts, profile=profile,
+    service = OutreachService(PostgresOutreachStore(runtime.database, runtime.events), contacts=contacts, profile=profile,
                              jobs=jobs, offers=offers, compensation=compensation, applications=applications,
                              model=model if model is not None else runtime.model)
 

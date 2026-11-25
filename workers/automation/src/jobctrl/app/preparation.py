@@ -1,6 +1,6 @@
 """Explicit preparation policy over public feature and checkpoint ports.
 
-This application service has no HTTP, SQLite, Runtime or Temporal dependency.
+This application service has no HTTP, storage or workflow-runtime dependency.
 Stable stage identities and accepted feature receipts survive worker retries.
 """
 
@@ -13,6 +13,7 @@ from contextlib import nullcontext
 from jobctrl.app.contracts import ActionContext
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 from jobctrl.app.model_capacity import wait_for_model_capacity
+from jobctrl.app.model_custody import assert_retryable_owners, model_call_scope
 from jobctrl.app.preparation_ports import PreparationCheckpoints, PreparationSettings, RunReader
 
 RECIPES = {"run", "discover", "search", "assess", "enrich", "analyze", "score", "tailor", "prepare"}
@@ -28,9 +29,10 @@ STAGES = {
     "prepare": ("requirements", "fit", "compose", "review", "render"),
 }
 DISCOVERY_RECIPES = {"run", "discover", "search"}
-DISCOVERY_KEYS = {"queries", "locations", "boards", "newJobLimit", "resultsPerSite", "hoursOld", "expectedProfileVersion"}
+DISCOVERY_KEYS = {"queries", "locations", "boards", "newJobLimit", "resultsPerSite", "hoursOld", "expectedProfileVersion", "resumeFromRunId"}
 TERMINAL_STEPS = {"succeeded", "skipped", "warning"}
 COHORT_POLICY = "search-cohort-v1"
+INDEPENDENT_POLICY = "search-jobs-v1"
 COHORT_PRODUCERS = ("enrich", "role_analysis", "requirements_extract")
 SEARCH_JOB_LIMIT = 10_000
 # Larger searches retain the established per-job preparation policy. The
@@ -67,7 +69,7 @@ def _validate(raw: dict, *, selection_limit=1000) -> dict:
     if recipe == "assess" and scope != "selected":
         raise AppError("explicit_job_selection_required", "Select the saved jobs to assess.")
     limit = raw.get("limit", max(100, len(ids)))
-    maximum = SEARCH_JOB_LIMIT if recipe == "search" else 1000
+    maximum = SEARCH_JOB_LIMIT if recipe == "search" or selection_limit == SEARCH_JOB_LIMIT else 1000
     if type(limit) is not int or not 1 <= limit <= maximum:
         raise AppError("invalid_preparation_limit", f"Use a limit from 1 to {maximum:,}.")
     if scope == "selected" and len(ids) > limit:
@@ -96,6 +98,10 @@ class PreparationService:
         self.profile, self.jobs, self.requirements = profile, jobs, requirements
         self.fit, self.resumes, self.discovery = fit, resumes, discovery
         self.run_reader: RunReader | None = None
+        self.action_admitter = None
+
+    def bind_action_admitter(self, admit):
+        self.action_admitter = admit
 
     def bind_run_reader(self, reader: RunReader):
         self.run_reader = reader
@@ -117,8 +123,7 @@ class PreparationService:
                        cohort_catalog_prompt_version=self.requirements.cohort_catalog_prompt_version,
                        resume_mode=request.get("resume_mode", settings.get("resumeMode", "tailored")),
                        min_fit_score=request["min_fit_score"] or settings.get("minFitScore", 7),
-                       execution_policy={"version": COHORT_POLICY,
-                                         "producer_mode": "serial" if settings.get("dailyBudgetUsd", 0) else "cross_lane"})
+                       target_route="per_job", execution_policy={"version": INDEPENDENT_POLICY})
         self.checkpoints.admit_run(run_id, request, connection)
 
     def admit_search(self, run_id, payload, settings, connection):
@@ -132,6 +137,28 @@ class PreparationService:
         if not isinstance(parent, str):
             return
         original = self.checkpoints.request(parent, connection=connection)
+        if original and (original.get("execution_policy", {}).get("version") == INDEPENDENT_POLICY or original.get("search_retry")):
+            _, requested = self._retry_options(payload)
+            prior = self.checkpoints.get_run(parent, connection=connection)
+            if original.get("search_retry") and prior["status"] not in {"partial", "cancelled", "failed"}:
+                raise ConflictError("Wait for this assessment to settle before retrying.")
+            completed = {step["jobId"] for step in prior["steps"] if step["stage"] == "fit" and step["status"] in TERMINAL_STEPS}
+            unfinished = [job for job in prior["jobIds"] if job not in completed]
+            if not original.get("search_retry"):
+                eligible = self.checkpoints.failed_handoffs(parent, connection)
+                if prior["status"] in {"running","pending","cancelled"}:
+                    unfinished = [job for job in unfinished if job in eligible]
+            selected = list(dict.fromkeys(requested)) if requested is not None else unfinished
+            if any(job not in unfinished for job in selected):
+                raise AppError("invalid_job_selection", "Retry only unfinished jobs from this search.", 409)
+            if not selected:
+                raise AppError("nothing_to_retry", "No unfinished assessments remain in this search.", 409)
+            assert_retryable_owners((_operation(parent, job, stage) for job in selected for stage in STAGES["search"]), connection)
+            request = {**original, "recipe": "assess", "scope": "selected", "discovery": {}, "job_ids": selected,
+                       "limit": len(selected), "search_retry": True}
+            request.pop("execution_policy", None)
+            self.checkpoints.admit_run(run_id, request, connection, parent=parent, targets=selected)
+            return
         if original is None or self._cohort_policy(original) is None:
             return
         _, requested = self._retry_options(payload)
@@ -165,6 +192,8 @@ class PreparationService:
             self.checkpoints.finish_step(run_id, "", "discover", status, result=acquisition, connection=connection)
 
     def finalize(self, run_id, status, error_code, connection):
+        if self.discovery is not None:
+            self.discovery.finalize(run_id, status, error_code, connection)
         if status == "cancelled" and self.run_reader is not None:
             request = self.checkpoints.request(run_id, connection=connection)
             if (request and self._cohort_policy(request) is not None
@@ -175,7 +204,7 @@ class PreparationService:
     @staticmethod
     def _cohort_policy(request):
         policy = request.get("execution_policy")
-        if policy is None:
+        if policy is None or policy == {"version": INDEPENDENT_POLICY}:
             return None
         if (not isinstance(policy, dict) or set(policy) != {"version", "producer_mode"}
                 or policy["version"] != COHORT_POLICY or policy["producer_mode"] not in {"serial", "cross_lane"}):
@@ -305,12 +334,15 @@ class PreparationService:
             return {"skip": "unsupported_posting_language", "requirements_revision": requirements["revision"]}
         if stage == "enrich":
             posting = self.jobs.snapshot(job_id)
+            if request.get("_acquired_posting") is not None:
+                binding = request["_acquired_posting"]
+                self.jobs.assert_posting_current(job_id, binding["posting_revision"], binding["source_hash"])
             if request["recipe"] in {"run", "discover", "search", "assess"} and not posting.get("needs_enrichment", True):
                 return {"skip": "accepted_detail_current", "revision": posting["revision"]}
             if request.get("_acquisition_run_id") and posting["source_id"] == "jobstreaming:linkedin":
                 if self.discovery.has_acquired_linkedin_detail(request["_acquisition_run_id"], posting):
                     return {"skip": "saved_provider_detail", "revision": posting["revision"]}
-                if request["_defer_linkedin_enrichment"]:
+                if request.get("_defer_linkedin_enrichment") or self.discovery.board_cooling_down("linkedin"):
                     return {"expected_revision": posting["revision"], "_defer_source_rate_limit": True}
             return {"expected_revision": posting["revision"]}
         if stage == "role_analysis":
@@ -410,7 +442,7 @@ class PreparationService:
         def cancelled():
             return self._work_cancelled(context)
         if stage == "enrich":
-            if inputs.pop("_defer_source_rate_limit", False) and request.get("_defer_linkedin_enrichment"):
+            if inputs.pop("_defer_source_rate_limit", False):
                 raise AppError("posting_check_deferred_source_rate_limited",
                                "LinkedIn throttled this search. Check the saved posting manually later.", 409)
             value = await self.jobs.refresh(job_id, **inputs, receipt_key=op, cancelled=cancelled)
@@ -824,7 +856,9 @@ class PreparationService:
                         inputs.setdefault("_operation_id", _operation(context.run_id, job_id, stage))
                         inputs = self.checkpoints.start_step(context.run_id, job_id, stage, inputs)
                         context.heartbeat({"jobId": job_id, "stage": stage})
-                        with self._capacity_wait(context, job_id, stage):
+                        scoped = request.get("_acquired_posting") is not None or request.get("search_retry")
+                        custody = model_call_scope(_operation(context.run_id, job_id, stage)) if scoped else nullcontext()
+                        with custody, self._capacity_wait(context, job_id, stage):
                             result = await self._execute_stage(context, job_id, stage, inputs, request)
                         status = "warning" if stage == "review" and result.get("review_status") not in {None, "pass", "not_applicable"} else "succeeded"
                         self.checkpoints.finish_step(context.run_id, job_id, stage, status, result=result)
@@ -855,7 +889,7 @@ class PreparationService:
     async def run(self, context, raw, *, parent=None):
         # The action keeps the configured mode and threshold throughout replay.
         frozen = self.checkpoints.request(context.run_id)
-        selection_limit = SEARCH_JOB_LIMIT if parent and frozen and self._cohort_policy(frozen) else 1000
+        selection_limit = SEARCH_JOB_LIMIT if parent and frozen and (frozen.get("search_retry") or self._cohort_policy(frozen)) else 1000
         request = _validate(raw, selection_limit=selection_limit)
         request["contract_version"] = "requirements-v2"
         if frozen is not None:
@@ -886,7 +920,7 @@ class PreparationService:
             request["min_fit_score"] = request["min_fit_score"] or settings.get("minFitScore", 7)
         policy = self._cohort_policy(request)
         self.checkpoints.open_run(context.run_id, request, parent)
-        if parent and not policy:
+        if parent and not policy and not request.get("search_retry"):
             # Successful work from the prior run is evidence, not permission to
             # repeat it. Each later stage still rechecks its current sources.
             self.checkpoints.inherit_retry_steps(context.run_id, parent, request["job_ids"])
@@ -984,17 +1018,87 @@ class PreparationService:
             raise
 
 
-    async def search(self, context, payload):
-        """Acquire and initially assess under the public search action identity."""
+    def _dispatch_discovered(self, search_id, posting, connection):
+        if self.action_admitter is None:
+            raise AppError("assessment_dispatch_unavailable", "The assessment queue is unavailable.", 503)
+        payload = {"search_id": search_id, "job_id": posting["job_id"], "posting_revision": posting["revision"],
+                   "source_hash": posting["source_hash"]}
+        receipt = self.action_admitter("preparation.assess_discovered", payload, connection=connection,
+                                      idempotency_key=_operation(search_id, posting["job_id"], f"assess:{posting['revision']}"))
+        self.checkpoints.add_handoff(payload, receipt["runId"], connection)
+
+    async def assess_discovered(self, context, payload):
+        search, job = payload["search_id"], payload["job_id"]
+        if not self.checkpoints.owns_handoff(context.run_id, payload):
+            raise ConflictError("This assessment does not own the saved Discovery posting.")
+        request = self.checkpoints.request(search)
+        parent = ActionContext(search, context.request_id,
+                               lambda: context.cancelled() or self.run_reader(search)["cancellationRequested"], context.heartbeat)
+        if self._user_cancelled(parent):
+            raise AppError("search_cancelled", "The search was stopped.", 409)
+        request = {**request, "_acquisition_run_id": search, "_acquired_posting": payload}
         try:
-            # Discovery's authored new-job limit already bounds this cohort to
-            # 10,000. Do not silently impose the manual selection default of 100.
-            run = await self.run(context, {"recipe": "search", "scope": "pending", "discovery": payload, "limit": SEARCH_JOB_LIMIT})
-        except AppError as error:
-            if error.code != "preparation_partial":
-                raise
-            run = self.get_run(context.run_id)
-        discovered = self.checkpoints.step(context.run_id, "", "discover")["result"]
+            failed = await self._run_job(parent, job, request, stages=STAGES["search"][:-1])
+            self._prepare_search_fit(parent, [job], request)
+            failed = await self._run_job(parent, job, request) or failed
+        except asyncio.CancelledError:
+            if self._user_cancelled(parent):
+                raise AppError("search_cancelled", "The search was stopped.", 409) from None
+            raise
+        if failed:
+            raise AppError("preparation_partial", "This job needs attention. Its completed stages were retained.", 409)
+        return {"searchId": search, "jobId": job}
+
+    def finalize_discovered(self, run_id, status, error_code, connection):
+        self.checkpoints.finish_handoff(run_id, status, error_code, connection)
+
+    async def search_turn(self, context, payload, *, preparation_recipe=False):
+        request = self.checkpoints.request(context.run_id)
+        if request is None or request.get("execution_policy") != {"version": INDEPENDENT_POLICY}:
+            raise AppError("action_contract_changed", "Start a search admitted under the current workflow contract.", 409)
+        self.checkpoints.open_run(context.run_id, request)
+        settled = self.checkpoints.step(context.run_id, "", "discover")
+        if settled is None or settled["status"] not in TERMINAL_STEPS:
+            if settled is None:
+                self.checkpoints.start_step(context.run_id, "", "discover", request["discovery"])
+            try:
+                turn = await self.discovery.search_turn(context, request["discovery"], handoff=self._dispatch_discovered)
+                if not turn["done"]:
+                    return turn
+                discovered = turn["result"]
+            except AppError as failure:
+                discovered = self.discovery.search_outcome(context.run_id) if failure.code == "discovery_sources_failed" else None
+                if discovered is None or not discovered.get("newJobIds"):
+                    raise
+            if discovered["status"] == "failed" and not discovered.get("newJobIds"):
+                raise AppError("discovery_sources_failed", "The selected sources could not complete their search.", 502)
+            self.checkpoints.finish_step(context.run_id, "", "discover", "warning" if discovered.get("failures") else "succeeded",
+                                         result=discovered)
+        else:
+            discovered = settled["result"]
+        targets, _ = self.checkpoints.save_targets(context.run_id, self._search_targets(request, discovered), route="per_job")
+        if self.checkpoints.handoffs_pending(context.run_id):
+            return {"done": False, "waitSeconds": 1.0}
+        failed = self.checkpoints.settle_search(context.run_id, bool(discovered.get("failures")),
+                     lambda conn: self._verify_search_fit(context, targets, connection=conn))
+        run = self.get_run(context.run_id)
+        if preparation_recipe:
+            if failed:
+                raise AppError("preparation_partial", "Some preparation steps need attention. Inspect the run for each outcome.", 409)
+            result = run
+        else:
+            result = self._search_result(run, discovered)
+        return {"done": True, "result": result}
+
+    async def search(self, context, payload):
+        while True:
+            turn = await self.search_turn(context, payload)
+            if turn["done"]:
+                return turn["result"]
+            await asyncio.sleep(turn["waitSeconds"])
+
+    @staticmethod
+    def _search_result(run, discovered):
         failures = [{"jobId": step["jobId"], "stage": step["stage"], "code": step["errorCode"]}
                     for step in run["steps"] if step["jobId"] and step["status"] == "failed"]
         if run.get("targetRoute") == "cohort":
@@ -1031,7 +1135,7 @@ class PreparationService:
     async def retry(self, context, payload):
         parent, requested = self._retry_options(payload)
         frozen = self.checkpoints.request(context.run_id)
-        if frozen and self._cohort_policy(frozen):
+        if frozen and (frozen.get("search_retry") or self._cohort_policy(frozen)):
             return await self.run(context, {key: frozen[key] for key in PREPARATION_OPTIONS if key in frozen}, parent=parent)
         previous = self.get_run(parent)
         if previous["status"] not in {"failed", "partial", "cancelled"}:

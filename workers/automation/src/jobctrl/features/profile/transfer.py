@@ -27,11 +27,19 @@ from .service import ProfileService, normalize_style, validate_profile
 
 FORMAT = "jobctrl.profile-transfer.v1"
 BROWSER_FORMAT = "jobctrl.profile-browser-sources.v1"
-TARGET_TABLES = (
-    "profile_documents", "profile_versions", "profile_sources", "profile_source_versions",
-    "profile_achievements", "profile_variants", "profile_decisions", "profile_authoring_requests",
-    "profile_determinations", "profile_import_drafts", "profile_transfer_provenance",
-)
+TARGET_TABLE_ORDER = {
+    "profile_documents": "profile_id",
+    "profile_versions": "revision",
+    "profile_sources": "source_id",
+    "profile_source_versions": "source_id,revision",
+    "profile_achievements": "achievement_id",
+    "profile_variants": "variant_id",
+    "profile_decisions": "decision_id",
+    "profile_authoring_requests": "insertion_order",
+    "profile_determinations": "determination_id",
+    "profile_import_drafts": "attempt_id",
+    "profile_transfer_provenance": "profile_id",
+}
 LEGACY_TABLES = (
     "candidate_profiles", "candidate_profile_experience_bullets", "candidate_profile_achievement_evidence",
     "candidate_profile_experience_entries", "candidate_profile_education_entries", "candidate_profile_skill_items",
@@ -47,7 +55,7 @@ def _json_cell(value):
     return {"$bytes_base64": base64.b64encode(value).decode()} if isinstance(value, bytes) else value
 
 
-def _rows(conn, table, *, where="", params=()):
+def _legacy_rows(conn, table, *, where="", params=()):
     return [{key: _json_cell(row[key]) for key in row.keys()} for row in conn.execute(f'SELECT * FROM "{table}" {where} ORDER BY rowid', params)]
 
 
@@ -172,10 +180,22 @@ def _decode_legacy_profile(root, tables):
     return document
 
 
+def _portable_columns(conn, table):
+    return [row[0] for row in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_schema=current_schema() "
+        "AND table_name=? AND is_identity='NO' ORDER BY ordinal_position",
+        (table,),
+    )]
+
+
 def export_profile(service, profile_id="default") -> dict:
     with service.repository.reader() as conn:
         snapshot = service.snapshot(profile_id, conn)
-        tables = {table: _rows(conn, table, where="WHERE profile_id=?", params=(profile_id,)) for table in TARGET_TABLES}
+        tables = {}
+        for table, order in TARGET_TABLE_ORDER.items():
+            columns = ",".join(_portable_columns(conn, table))
+            rows = conn.execute(f'SELECT {columns} FROM "{table}" WHERE profile_id=? ORDER BY {order}', (profile_id,))
+            tables[table] = [dict(row) for row in rows]
         return _bundle({"kind": "target", "profile_id": profile_id, "snapshot": snapshot.to_dict(), "tables": tables})
 
 
@@ -278,18 +298,18 @@ def export_legacy_profile(source_workspace: Path, *, profile_id="default", brows
         if len(rows) != 1:
             raise AppError("profile_transfer_missing", "The source must contain exactly one selected Profile.")
         root = dict(rows[0])
-        tables = {table: _rows(conn, table, where="WHERE tenant_id='local' AND profile_id=?", params=(profile_id,))
+        tables = {table: _legacy_rows(conn, table, where="WHERE tenant_id='local' AND profile_id=?", params=(profile_id,))
                   for table in LEGACY_TABLES if table in tables_present}
         profile_events = []
         if "job_events" in tables_present:
-            profile_events = _rows(conn, "job_events", where="WHERE tenant_id='local' AND event_type IN ('ProfileUpdated','ProfileImported','LegacyEvidenceReviewRecorded')")
+            profile_events = _legacy_rows(conn, "job_events", where="WHERE tenant_id='local' AND event_type IN ('ProfileUpdated','ProfileImported','LegacyEvidenceReviewRecorded')")
         bindings = []
         if "semantic_entity_bindings" in tables_present:
-            bindings = _rows(conn, "semantic_entity_bindings", where="WHERE tenant_id='local' AND entity_kind IN ('profile','profile_coaching','resume_import_attempt')")
+            bindings = _legacy_rows(conn, "semantic_entity_bindings", where="WHERE tenant_id='local' AND entity_kind IN ('profile','profile_coaching','resume_import_attempt')")
         determination_ids = {item["determination_id"] for item in bindings}
         determinations = []
         if "semantic_determinations" in tables_present:
-            determinations = [item for item in _rows(conn, "semantic_determinations", where="WHERE tenant_id='local' AND lane='profile'")
+            determinations = [item for item in _legacy_rows(conn, "semantic_determinations", where="WHERE tenant_id='local' AND lane='profile'")
                               if item.get("kind") in PROFILE_DETERMINATIONS or item.get("determination_id") in determination_ids]
         document = validate_profile(_decode_legacy_profile(root, tables))
         confirmations = {}
@@ -347,15 +367,15 @@ def import_profile(service, bundle: dict, *, expected_profile_version=None):
         raise ConflictError("Profile transfer requires an empty target Profile.")
     if data.get("kind") == "target":
         tables = data.get("tables")
-        if not isinstance(tables, dict) or set(tables) != set(TARGET_TABLES):
+        if not isinstance(tables, dict) or set(tables) != set(TARGET_TABLE_ORDER):
             raise AppError("invalid_profile_transfer", "The complete target Profile table manifest is required.")
         with service.repository.transaction() as conn:
             service.repository.check(conn, None, profile_id)
-            if any(conn.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone() for table in TARGET_TABLES):
+            if any(conn.execute(f'SELECT 1 FROM "{table}" LIMIT 1').fetchone() for table in TARGET_TABLE_ORDER):
                 raise ConflictError("The target Profile store is not empty.")
-            for table in TARGET_TABLES:
+            for table in TARGET_TABLE_ORDER:
+                allowed = set(_portable_columns(conn, table))
                 for row in tables[table]:
-                    allowed = {item[1] for item in conn.execute(f'PRAGMA table_info("{table}")')}
                     if not isinstance(row, dict) or set(row) != allowed or row.get("profile_id") != profile_id:
                         raise AppError("invalid_profile_transfer", "A Profile table row or identity is invalid.")
                     columns = list(row)

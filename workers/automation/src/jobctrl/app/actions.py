@@ -5,26 +5,23 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-import os
+import logging
 import uuid
 from collections.abc import Collection
-from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from datetime import datetime, timezone
 
-from temporalio.api.common.v1 import WorkflowExecution
-from temporalio.api.enums.v1 import TaskQueueType
-from temporalio.api.taskqueue.v1 import TaskQueue
-from temporalio.api.workflowservice.v1 import DescribeNamespaceRequest, DescribeTaskQueueRequest, RequestCancelWorkflowExecutionRequest
-from temporalio.client import Client, WorkflowExecutionStatus
-from temporalio.common import WorkflowIDReusePolicy
-from temporalio.exceptions import WorkflowAlreadyStartedError
-from temporalio.service import RPCError, RPCStatusCode
+from dbos import DBOSClient, DBOSPortableJSONSerializer
+from dbos import error as dbos_error
+from sqlalchemy.exc import SQLAlchemyError
 
 from jobctrl.app.contracts import ActionContext, Feature, Runtime
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 from jobctrl.app.events import now
 from jobctrl.app.execution import ExecutionCustody
-from jobctrl.app.worker_identity import SCHEMA as WORKER_IDENTITY_SCHEMA, process_identity
+from jobctrl.app.worker_identity import (
+    ACTION_WORKFLOW, DBOS_APPLICATION, DBOS_SCHEMA, SEARCH_WORKFLOW, STOP_TOPIC, WORKFLOW_VERSION,
+    SCHEMA as WORKER_IDENTITY_SCHEMA, process_identity, search_workflow,
+)
 
 
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
@@ -35,10 +32,6 @@ STOP_ACKNOWLEDGED = 2
 
 def encode(value) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
-
-
-def task_queue(workspace: Path) -> str:
-    return os.environ.get("JOBCTRL_TEMPORAL_TASK_QUEUE") or "jobctrl-python-" + hashlib.sha256(str(workspace).encode()).hexdigest()[:16]
 
 
 class Application:
@@ -73,23 +66,25 @@ class Application:
                     raise ValueError(f"Invalid action admission: {name}")
                 self.action_admissions[name] = admission
         self.runtime.database.initialize_feature("worker_identity", WORKER_IDENTITY_SCHEMA)
-        self.identity = process_identity(runtime, task_queue(runtime.workspace))
-        self._temporal = None
-        self._temporal_lock = asyncio.Lock()
+        self.identity = process_identity(runtime)
+        configuration = (sorted(self.actions), sorted(self.features), self.action_versions)
+        self.identity["composition"] = hashlib.sha256(encode(configuration).encode()).hexdigest()
+        self.identity["workflowVersion"] = WORKFLOW_VERSION
+        self.dbos = None if runtime.database.read_only else DBOSClient(
+            system_database_engine=runtime.database.engine, dbos_system_schema=DBOS_SCHEMA,
+            application_name=DBOS_APPLICATION, serializer=DBOSPortableJSONSerializer(),
+            lazy=True, retry_connection_errors=False,
+        )
+
+    def close(self):
+        if self.dbos is not None:
+            self.dbos.destroy()
+        self.runtime.database.close()
 
     def _finalize_feature(self, action, run_id, status, error_code, connection):
         finalizer = self.action_finalizers.get(action)
         if finalizer is not None:
             finalizer(run_id, status, error_code, connection)
-
-    async def temporal(self):
-        if self._temporal is None:
-            async with self._temporal_lock:
-                if self._temporal is None:
-                    self._temporal = await Client.connect(
-                        self.identity["address"], namespace=self.identity["namespace"],
-                    )
-        return self._temporal
 
     def _require_action(self, action: str, payload: dict) -> str:
         if action not in self.actions:
@@ -101,57 +96,73 @@ class Application:
             raise AppError("action_payload_too_large", "The action input exceeds its limit.", 413)
         return encoded
 
-    def _create_run(self, action: str, payload: dict, *, idempotency_key: str | None = None,
-                    request_id: str | None = None, run_id: str | None = None, workflow_id: str | None = None,
-                    existing_only: bool = False):
-        encoded = self._require_action(action, payload)
+    def _input_digest(self, action, payload):
         identity = {"action": action, "payload": payload}
-        version = self.action_versions.get(action)
-        if version is not None:
+        if version := self.action_versions.get(action):
             identity["contract_version"] = version
-        digest = hashlib.sha256(encode(identity).encode()).hexdigest()
-        if idempotency_key is not None and (not idempotency_key.strip() or len(idempotency_key) > 200):
+        return hashlib.sha256(encode(identity).encode()).hexdigest()
+
+    def _existing(self, connection, action, payload, encoded, key):
+        row = connection.execute(
+            "SELECT * FROM app_action_runs WHERE idempotency_key=?", (key,),
+        ).fetchone()
+        if row is None:
+            return None
+        if row["action"] != action or row["input_hash"] != self._input_digest(action, payload):
+            if action in self.action_versions and row["action"] == action and row["payload_json"] == encoded:
+                raise AppError("action_contract_changed", "This action belongs to an earlier processing contract. Start a new action. The earlier result remains in history.", 409)
+            raise ConflictError("This action identity already belongs to different input.")
+        return self._run_payload(row)
+
+    @staticmethod
+    def _check_key(key):
+        if not isinstance(key, str) or not key.strip() or len(key) > 200:
             raise AppError("invalid_idempotency_key", "Use a nonempty idempotency key of at most 200 characters.")
-        run_id = run_id or str(uuid.uuid4())
-        workflow_id = workflow_id or f"{self.identity['taskQueue']}-{run_id}"
-        access = self.runtime.database.connect if existing_only else self.runtime.database.transaction
-        with access() as connection:
-            existing = connection.execute(
-                "SELECT * FROM app_action_runs WHERE run_id=? OR (? IS NOT NULL AND idempotency_key=?)",
-                (run_id, idempotency_key, idempotency_key),
-            ).fetchone()
-            if existing:
-                if existing["input_hash"] != digest or existing["action"] != action:
-                    if version is not None and existing["action"] == action and existing["payload_json"] == encoded:
-                        raise AppError("action_contract_changed", "This action belongs to an earlier processing contract. Start a new action; the earlier result remains in history.", 409)
-                    raise ConflictError("This action identity already belongs to different input.")
-                return self._run_payload(existing)
-            if existing_only:
-                return None
-            scope = self.action_scopes.get(action)
-            if scope is not None:
-                requested_scope = scope(payload)
-                active = connection.execute(
-                    "SELECT run_id,payload_json FROM app_action_runs WHERE action=? "
-                    "AND status IN ('pending','start_failed','queued','running')",
-                    (action,),
-                ).fetchall()
-                for candidate in active:
-                    if scope(json.loads(candidate["payload_json"])) == requested_scope:
-                        raise AppError(
-                            "action_scope_busy", "An action for this scope is already pending or running.", 409,
-                            {"runId": candidate["run_id"], "action": action},
-                        )
-            created = now()
-            connection.execute(
-                "INSERT INTO app_action_runs(run_id,action,request_id,idempotency_key,input_hash,payload_json,status,workflow_id,created_at,updated_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (run_id, action, request_id or uuid.uuid4().hex, idempotency_key, digest, encoded, "pending", workflow_id, created, created),
-            )
-            admission = self.action_admissions.get(action)
-            if admission is not None:
-                admission(run_id, payload, connection)
-        return self.action_run(run_id)
+
+    def admit(self, action: str, payload: dict, *, connection, idempotency_key: str,
+              request_id: str | None = None) -> dict:
+        """Commit the feature receipt, queue entry and event in the caller's transaction."""
+        encoded = self._require_action(action, payload)
+        self._check_key(idempotency_key)
+        # Serialize same-key retries even across independent API and worker processes.
+        connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", ("action-key:" + idempotency_key,))
+        saved = self._existing(connection, action, payload, encoded, idempotency_key)
+        if saved is not None:
+            return saved
+        scope = self.action_scopes.get(action)
+        if scope is not None:
+            requested_scope = scope(payload)
+            lock = encode(["action-scope", action, requested_scope])
+            connection.execute("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", (lock,))
+            for candidate in connection.execute(
+                "SELECT run_id,payload_json FROM app_action_runs WHERE action=? "
+                "AND status IN ('pending','start_failed','queued','running')", (action,),
+            ):
+                if scope(json.loads(candidate["payload_json"])) == requested_scope:
+                    raise AppError("action_scope_busy", "An action for this scope is already pending or running.", 409,
+                                   {"runId": candidate["run_id"], "action": action})
+        run_id = str(uuid.uuid4())
+        workflow_id = f"{self.identity['taskQueue']}-{run_id}"
+        created = now()
+        connection.execute(
+            "INSERT INTO app_action_runs(run_id,action,request_id,idempotency_key,input_hash,payload_json,status,workflow_id,created_at,updated_at) "
+            "VALUES(?,?,?,?,?,?,'queued',?,?,?)",
+            (run_id, action, request_id or run_id, idempotency_key, self._input_digest(action, payload),
+             encoded, workflow_id, created, created),
+        )
+        if admission := self.action_admissions.get(action):
+            admission(run_id, payload, connection)
+        search = search_workflow(action, payload)
+        self.dbos.enqueue_in_transaction(
+            connection.sa_connection, {
+                "workflow_name": SEARCH_WORKFLOW if search else ACTION_WORKFLOW,
+                "workflow_id": workflow_id, "workflow_id_reuse_policy": "reject",
+                "queue_name": self.identity["searchQueue" if search else "taskQueue"],
+                "app_version": self.identity["workflowVersion"],
+            }, run_id,
+        )
+        self.runtime.events.append(connection, "ActionQueued", {"runId": run_id, "action": action}, feature=action.split(".")[0])
+        return self.action_run(run_id, connection)
 
     @staticmethod
     def _run_payload(row) -> dict:
@@ -204,8 +215,8 @@ class Application:
         names = ",".join("?" for _ in action_names)
         row = connection.execute(
             f"SELECT run_id FROM app_action_runs WHERE action IN ({names}) "
-            "AND json_extract(payload_json,'$.jobId')=? "
-            "AND (json_extract(payload_json,'$.payloadId') IS NULL OR json_extract(payload_json,'$.payloadId')=?) "
+            "AND (payload_json::jsonb ->> 'jobId')=? "
+            "AND ((payload_json::jsonb ->> 'payloadId') IS NULL OR (payload_json::jsonb ->> 'payloadId')=?) "
             "ORDER BY (status IN ('pending','queued','running')) DESC, created_at DESC, run_id DESC LIMIT 1",
             (*action_names, job_id, payload_id),
         ).fetchone()
@@ -213,9 +224,12 @@ class Application:
 
     def run_page(self, *, before: str | None = None, limit: int = 100, status: str | None = None,
                  action: str | None = None, since: str | None = None, until: str | None = None) -> dict:
-        conditions = ["(? IS NULL OR status=?)", "(? IS NULL OR action=?)",
-                      "(? IS NULL OR created_at>=?)", "(? IS NULL OR created_at<=?)"]
-        parameters = [status, status, action, action, since, since, until, until]
+        conditions = ["TRUE"]
+        parameters = []
+        for condition, value in (("status=?", status), ("action=?", action), ("created_at>=?", since), ("created_at<=?", until)):
+            if value is not None:
+                conditions.append(condition)
+                parameters.append(value)
         with self.runtime.database.connect() as connection:
             if before:
                 cursor = connection.execute("SELECT created_at FROM app_action_runs WHERE run_id=?", (before,)).fetchone()
@@ -238,303 +252,285 @@ class Application:
         return {"counts": counts, "total": sum(counts.values()), "active": sum(counts.get(status, 0) for status in ("queued", "running")),
                 "pendingCancellation": cancellations}
 
-    async def reconcile_runs(self, *, after: str = "") -> str:
-        """Recover terminal transport receipts when no activity can settle them.
+    async def submit(self, action: str, payload: dict, *, idempotency_key: str | None = None,
+                     request_id: str | None = None) -> dict:
+        if action == "preparation.assess_discovered":
+            raise NotFoundError("This action requires an admitted Discovery handoff.")
+        encoded = self._require_action(action, payload)
+        key = uuid.uuid4().hex if idempotency_key is None else idempotency_key
+        self._check_key(key)
 
-        An interrupted activity may never run again after workflow cancellation
-        or exhausted retries. Only an exact Temporal terminal result closes its
-        local receipt; feature acceptance and provider accounting stay owned by
-        their original transactions.
-        """
-        with self.runtime.database.connect() as connection:
-            rows = connection.execute(
-                "SELECT run_id,action,workflow_id,temporal_run_id FROM app_action_runs "
-                "WHERE status IN ('pending','queued','running','start_failed') AND run_id>? "
-                "ORDER BY run_id LIMIT 50", (after,),
-            ).fetchall()
-        if not rows:
-            return ""
-        client = await self.temporal()
-        capacity = asyncio.Semaphore(5)
-
-        async def settle(row):
-            async with capacity:
-                custody = ExecutionCustody(self.runtime.workspace, row["run_id"])
-                try:
-                    if not custody.try_acquire():
-                        return
-                    handle = client.get_workflow_handle(row["workflow_id"], run_id=row["temporal_run_id"])
-                    description = await handle.describe(rpc_timeout=timedelta(seconds=2))
-                    terminal = {
-                        WorkflowExecutionStatus.COMPLETED: ("succeeded", None),
-                        WorkflowExecutionStatus.CANCELED: ("cancelled", "action_cancelled"),
-                        WorkflowExecutionStatus.FAILED: ("failed", "workflow_failed"),
-                        WorkflowExecutionStatus.TIMED_OUT: ("failed", "workflow_timed_out"),
-                        WorkflowExecutionStatus.TERMINATED: ("failed", "workflow_terminated"),
-                    }.get(description.status)
-                    if terminal is None:
-                        return
-                    result = encode(await handle.result(follow_runs=False, rpc_timeout=timedelta(seconds=2))) if terminal[0] == "succeeded" else None
-                    with self.runtime.database.transaction() as connection:
-                        changed = connection.execute(
-                            "UPDATE app_action_runs SET status=?,error_code=?,result_json=?,updated_at=?,"
-                            "temporal_run_id=COALESCE(temporal_run_id,?) WHERE run_id=? "
-                            "AND status IN ('pending','queued','running','start_failed')",
-                            (*terminal, result, now(), description.run_id, row["run_id"]),
-                        ).rowcount
-                        if changed:
-                            self._finalize_feature(row["action"], row["run_id"], *terminal, connection)
-                            self.runtime.events.append(
-                                connection, "ActionCompleted" if terminal[0] == "succeeded" else "ActionFailed",
-                                {"runId": row["run_id"], "action": row["action"], "code": terminal[1], "source": "workflow_recovery"},
-                                feature=row["action"].split(".")[0],
-                                level="info" if terminal[0] == "succeeded" else "warn" if terminal[0] == "cancelled" else "error",
-                            )
-                except Exception:
-                    # Missing or unreachable history is not a terminal outcome.
-                    return
-                finally:
-                    custody.close()
-
-        await asyncio.gather(*(settle(row) for row in rows))
-        return rows[-1]["run_id"] if len(rows) == 50 else ""
-
-    async def submit(self, action: str, payload: dict, *, idempotency_key: str | None = None, request_id: str | None = None) -> dict:
-        self._require_action(action, payload)
-        if idempotency_key is not None:
-            saved = self._create_run(action, payload, idempotency_key=idempotency_key, existing_only=True)
-            if saved and saved["status"] not in {"pending", "start_failed"}:
-                return {key: saved[key] for key in ("runId", "workflowId", "status")}
-        readiness = await self.dispatch_readiness(action)
-        if not readiness["healthy"]:
-            raise AppError(readiness["reason"], readiness["message"], 503)
-        idempotency_key = idempotency_key or uuid.uuid4().hex
-        run = self._create_run(action, payload, idempotency_key=idempotency_key, request_id=request_id)
-        if run["status"] not in {"pending", "start_failed"}:
-            return {key: run[key] for key in ("runId", "workflowId", "status")}
-        if run["cancellationRequested"]:
-            raise AppError("action_stop_requested", "A Stop is already recorded for this run. Check it in Runs.", 409,
-                           {"runId": run["runId"]})
-        try:
-            client = await self.temporal()
-            handle = await client.start_workflow(
-                "JobCtrlAction", {"run_id": run["runId"], "action": action, "payload": payload,
-                                 "request_id": request_id or run["runId"]},
-                id=run["workflowId"], task_queue=self.identity["taskQueue"],
-                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
-                rpc_timeout=timedelta(seconds=5),
-            )
-            temporal_run_id = handle.first_execution_run_id
-        except WorkflowAlreadyStartedError as error:
-            temporal_run_id = error.run_id
-        except Exception:
+        def submit_transaction():
+            if idempotency_key is not None:
+                with self.runtime.database.connect() as connection:
+                    saved = self._existing(connection, action, payload, encoded, key)
+                if saved:
+                    return saved
+            readiness = self._readiness(action)
+            if not readiness["healthy"]:
+                raise AppError(readiness["reason"], readiness["message"], 503)
             with self.runtime.database.transaction() as connection:
-                connection.execute("UPDATE app_action_runs SET status='start_failed',error_code='workflow_start_failed',updated_at=? WHERE run_id=? AND status='pending'", (now(), run["runId"]))
-            raise AppError("workflow_start_failed", "The durable action was not confirmed as queued; retry with the same idempotency key.", 503,
-                           {"runId": run["runId"], "idempotencyKey": idempotency_key}) from None
-        with self.runtime.database.transaction() as connection:
-            queued = connection.execute(
-                "UPDATE app_action_runs SET status='queued',temporal_run_id=COALESCE(temporal_run_id,?),"
-                "error_code=NULL,updated_at=? WHERE run_id=? AND status IN ('pending','start_failed')",
-                (temporal_run_id, now(), run["runId"]),
-            )
-            if queued.rowcount:
-                self.runtime.events.append(connection, "ActionQueued", {"runId": run["runId"], "action": action}, feature=action.split(".")[0])
-            receipt = self.action_run(run["runId"], connection)
-        return {key: receipt[key] for key in ("runId", "workflowId", "status")}
+                # A worker replacement invalidates the earlier readiness probe. Its
+                # startup fence and this final admission serialize in PostgreSQL.
+                confirmed = self.worker_status(action, connection=connection)
+                if not confirmed["healthy"]:
+                    raise AppError(confirmed["reason"], confirmed["message"], 503)
+                return self.admit(action, payload, connection=connection, idempotency_key=key, request_id=request_id)
 
-    async def execute(self, action: str, payload: dict, *, run_id: str | None = None, request_id: str | None = None,
-                      context: ActionContext | None = None, workflow_id: str | None = None,
-                      temporal_run_id: str | None = None):
-        run = self._create_run(action, payload, run_id=run_id, request_id=request_id, workflow_id=workflow_id)
-        run_id = run["runId"]
-        source = context or ActionContext(run_id, request_id or run_id,
-                                         cancelled=lambda: self.action_run(run_id)["cancellationRequested"])
+        try:
+            receipt = await asyncio.to_thread(submit_transaction)
+        except (SQLAlchemyError, dbos_error.DBOSException):
+            # A dropped commit acknowledgement leaves a single idempotent question.
+            # The domain receipt and DBOS work are either both present or both absent.
+            raise AppError("workflow_start_failed", "Queue admission could not be confirmed. Retry with the same idempotency key.",
+                           503, {"idempotencyKey": key}) from None
+        return {field: receipt[field] for field in ("runId", "workflowId", "status")}
+
+    def _finish(self, row, status, code, connection, *, result=None):
+        run_id, action = row["run_id"], row["action"]
+        changed = connection.execute(
+            "UPDATE app_action_runs SET status=?,error_code=?,result_json=?,updated_at=? WHERE run_id=? "
+            "AND status IN ('pending','start_failed','queued','running')",
+            (status, code, encode(result) if status == "succeeded" else None, now(), run_id),
+        ).rowcount
+        if changed:
+            self._finalize_feature(action, run_id, status, code, connection)
+            event = {"runId": run_id, "action": action}
+            if code:
+                event["code"] = code
+            self.runtime.events.append(connection, "ActionCompleted" if status == "succeeded" else "ActionFailed", event,
+                                       feature=action.split(".")[0],
+                                       level="info" if status == "succeeded" else "warn" if status == "cancelled" else "error")
+
+    async def execute_turn(self, run_id: str, workflow_id: str, *, search: bool, stopping) -> dict:
+        """Run one checkpointed turn. Only the DBOS worker invokes a feature."""
+        if workflow_id != f"{self.identity['taskQueue']}-{run_id}":
+            raise AppError("worker_workspace_mismatch", "This workspace does not own this workflow.", 409)
         custody = ExecutionCustody(self.runtime.workspace, run_id)
         try:
-            await custody.acquire(source.cancelled)
-            owned = ActionContext(run_id, source.request_id,
-                                  lambda: source.cancelled() or not custody.owned, source.heartbeat)
-            return await self._execute_owned(action, payload, run_id=run_id, request_id=request_id,
-                                             context=owned, workflow_id=workflow_id, temporal_run_id=temporal_run_id)
+            await custody.acquire(stopping)
+            with self.runtime.database.transaction() as connection:
+                row = connection.execute(
+                    "SELECT * FROM app_action_runs WHERE run_id=? AND workflow_id=? FOR UPDATE", (run_id, workflow_id),
+                ).fetchone()
+                if row is None:
+                    raise AppError("worker_workspace_mismatch", "The workflow has no matching admission.", 409)
+                action = row["action"]
+                payload = json.loads(row["payload_json"])
+                if search != search_workflow(action, payload) or row["input_hash"] != self._input_digest(action, payload):
+                    raise AppError("action_contract_changed", "This action belongs to an incompatible processing contract.", 409)
+                if row["status"] == "succeeded":
+                    return {"done": True}
+                if row["status"] in {"failed", "cancelled"}:
+                    raise AppError(row["error_code"] or "action_terminal", "The action already reached a terminal outcome.", 409)
+                if row["cancellation_requested"]:
+                    self._finish(row, "cancelled", "action_cancelled", connection)
+                    refused = True
+                else:
+                    refused = False
+                    if row["status"] != "running":
+                        connection.execute("UPDATE app_action_runs SET status='running',updated_at=? WHERE run_id=?", (now(), run_id))
+                        self.runtime.events.append(connection, "ActionStarted", {"runId": run_id, "action": action},
+                                                   feature=action.split(".")[0])
+            if refused:
+                raise AppError("action_cancelled", "The action was stopped before execution.", 409)
+
+            def user_cancelled():
+                return self.action_run(run_id)["cancellationRequested"]
+
+            def cancelled():
+                return stopping() or not custody.owned or user_cancelled()
+
+            context = ActionContext(run_id, row["request_id"], cancelled, user_cancelled=user_cancelled)
+            try:
+                if stopping():
+                    raise asyncio.CancelledError()
+                if search:
+                    if action == "preparation.run":
+                        turn = await self.services["preparation"].search_turn(context, payload, preparation_recipe=True)
+                    else:
+                        owner = self.services.get("preparation") or self.services["discovery"]
+                        turn = await owner.search_turn(context, payload)
+                    if not turn["done"]:
+                        return {"done": False, "waitSeconds": turn["waitSeconds"]}
+                    result = turn["result"]
+                else:
+                    result = await self.actions[action](context, payload)
+                with self.runtime.database.transaction() as connection:
+                    self._finish(row, "succeeded", None, connection, result=result)
+                # Product output stays in the owning transaction. DBOS needs only a receipt.
+                return {"done": True}
+            except (asyncio.CancelledError, Exception) as error:
+                explicitly_stopped = self.action_run(run_id)["cancellationRequested"]
+                if (isinstance(error, asyncio.CancelledError) or stopping() or not custody.owned) and not explicitly_stopped:
+                    # Process shutdown preserves pending work and its external fences.
+                    raise asyncio.CancelledError() from None
+                code = error.code if isinstance(error, AppError) else "action_cancelled" if explicitly_stopped else "action_failed"
+                if not explicitly_stopped and not isinstance(error, AppError):
+                    frame = error.__traceback__
+                    while frame is not None and frame.tb_next is not None:
+                        frame = frame.tb_next
+                    if frame is not None:
+                        location = frame.tb_frame
+                        logging.getLogger(__name__).error("Action failed action=%s error_type=%s at=%s.%s:%s",
+                            action, type(error).__name__, location.f_globals.get("__name__", ""), location.f_code.co_name, frame.tb_lineno)
+                with self.runtime.database.transaction() as connection:
+                    self._finish(row, "cancelled" if explicitly_stopped else "failed", code, connection)
+                # Never persist a provider's exception or input in workflow logs.
+                raise RuntimeError(code) from None
         finally:
             custody.close()
 
-    async def _execute_owned(self, action: str, payload: dict, *, run_id: str, request_id: str | None,
-                             context: ActionContext, workflow_id: str | None, temporal_run_id: str | None):
-        run = self._create_run(action, payload, run_id=run_id, request_id=request_id, workflow_id=workflow_id)
-        run_id = run["runId"]
-        if run["status"] == "succeeded":
-            return run["result"]
-        if run["status"] in {"failed", "cancelled"}:
-            raise AppError(run["errorCode"] or "action_terminal", "This action already reached a terminal outcome.", 409)
-        with self.runtime.database.transaction() as connection:
-            current = connection.execute("SELECT cancellation_requested,status FROM app_action_runs WHERE run_id=?", (run_id,)).fetchone()
-            refused = bool(current[0]) or current[1] == "cancelled"
-            if refused and current["status"] != "cancelled":
-                self._cancel_before_execution(action, run_id, temporal_run_id, connection)
-            elif not refused:
-                connection.execute("UPDATE app_action_runs SET status='running',temporal_run_id=COALESCE(?,temporal_run_id),updated_at=? WHERE run_id=?", (temporal_run_id, now(), run_id))
-                self.runtime.events.append(connection, "ActionStarted", {"runId": run_id, "action": action}, feature=action.split(".")[0])
-        if refused:
-            raise AppError("action_cancelled", "The action was cancelled before execution.", 409)
+    def _deliver_stop(self, run_id, workflow_id):
+        if workflow_id != f"{self.identity['taskQueue']}-{run_id}":
+            return
         try:
-            result = await self.actions[action](context, payload)
-            encoded = encode(result)
-        except BaseException as error:
-            cancelled = isinstance(error, asyncio.CancelledError) or context.cancelled()
-            # Worker shutdown leaves a running action recoverable by Temporal.
-            # Explicit user cancellation becomes terminal and is never replayed.
-            if cancelled and not self.action_run(run_id)["cancellationRequested"]:
-                # A feature may surface its cancellation guard as AppError.
-                # Transport interruption still must not become a user-cancelled
-                # terminal receipt that would prevent the waiting retry.
-                raise asyncio.CancelledError from None
-            code = error.code if isinstance(error, AppError) else "action_cancelled" if cancelled else "action_failed"
-            with self.runtime.database.transaction() as connection:
-                connection.execute("UPDATE app_action_runs SET status=?,error_code=?,updated_at=? WHERE run_id=? AND status='running'", ("cancelled" if cancelled else "failed", code, now(), run_id))
-                self._finalize_feature(action, run_id, "cancelled" if cancelled else "failed", code, connection)
-                self.runtime.events.append(connection, "ActionFailed", {"runId": run_id, "action": action, "code": code},
-                                           feature=action.split(".")[0], level="warn" if cancelled else "error")
-            raise
-        with self.runtime.database.transaction() as connection:
-            connection.execute("UPDATE app_action_runs SET status='succeeded',result_json=?,error_code=NULL,updated_at=? WHERE run_id=? AND status='running'", (encoded, now(), run_id))
-            self._finalize_feature(action, run_id, "succeeded", None, connection)
-            self.runtime.events.append(connection, "ActionCompleted", {"runId": run_id, "action": action}, feature=action.split(".")[0])
-        return result
-
-    async def cancel(self, run_id: str) -> dict:
-        with self.runtime.database.transaction() as connection:
-            run = self.action_run(run_id, connection)
-            if run["status"] in TERMINAL_STATUSES or run.get("cancellationDelivery") == "acknowledged":
-                return run
-            action = run["action"]
-            event = {"runId": run_id, "action": action}
-            feature = action.split(".")[0]
-            if not run["cancellationRequested"]:
-                connection.execute("UPDATE app_action_runs SET cancellation_requested=?,updated_at=? WHERE run_id=?",
-                                   (STOP_REQUESTED, now(), run_id))
-                self.runtime.events.append(connection, "ActionCancellationRequested", event, feature=feature, aggregate_id=run_id)
-        try:
-            async with asyncio.timeout(2):
-                client = await self.temporal()
-                await client.workflow_service.request_cancel_workflow_execution(
-                    RequestCancelWorkflowExecutionRequest(
-                        namespace=client.namespace, identity=client.identity, request_id=run_id,
-                        workflow_execution=WorkflowExecution(
-                            workflow_id=run["workflowId"], run_id=run["temporalRunId"] or "",
-                        ),
-                    ),
-                    retry=True,
-                )
-        except RPCError as error:
-            if error.status == RPCStatusCode.NOT_FOUND:
-                with self.runtime.database.transaction() as connection:
-                    current = self.action_run(run_id, connection)
-                    # Withdraw an unconfirmed start after Temporal reports it absent.
-                    # The recorded Stop prevents even a late start from executing.
-                    if current["status"] in {"pending", "start_failed"} and current.get("cancellationDelivery") == "pending" and not current["temporalRunId"]:
-                        self._cancel_before_execution(action, run_id, None, connection)
-                    return self.action_run(run_id, connection)
-            return self.action_run(run_id)
-        except (TimeoutError, OSError, RuntimeError):
-            return self.action_run(run_id)
+            handle = self.dbos.retrieve_workflow(workflow_id)
+            before = handle.get_status()
+            if before.status not in {"CANCELLED", "ERROR", "SUCCESS", "MAX_RECOVERY_ATTEMPTS_EXCEEDED"}:
+                self.dbos.cancel_workflow(workflow_id)
+            confirmed = handle.get_status().status == "CANCELLED"
+            if confirmed and before.name == SEARCH_WORKFLOW:
+                self.dbos.send(workflow_id, True, topic=STOP_TOPIC, idempotency_key=run_id)
+        except (dbos_error.DBOSException, SQLAlchemyError):
+            # The local stop survives. Missing history is not delivery evidence.
+            return
+        if not confirmed:
+            return
         with self.runtime.database.transaction() as connection:
             changed = connection.execute(
-                "UPDATE app_action_runs SET cancellation_requested=?,updated_at=? WHERE run_id=? AND cancellation_requested=?",
-                (STOP_ACKNOWLEDGED, now(), run_id, STOP_REQUESTED),
+                "UPDATE app_action_runs SET cancellation_requested=?,updated_at=? "
+                "WHERE run_id=? AND workflow_id=? AND cancellation_requested=?",
+                (STOP_ACKNOWLEDGED, now(), run_id, workflow_id, STOP_REQUESTED),
             ).rowcount
             if changed:
-                self.runtime.events.append(connection, "ActionCancellationAcknowledged", event, feature=feature, aggregate_id=run_id)
-            return self.action_run(run_id, connection)
+                run = self.action_run(run_id, connection)
+                self.runtime.events.append(connection, "ActionCancellationAcknowledged",
+                                           {"runId": run_id, "action": run["action"]},
+                                           feature=run["action"].split(".")[0], aggregate_id=run_id)
 
-    def _cancel_before_execution(self, action, run_id, temporal_run_id, connection):
-        connection.execute("UPDATE app_action_runs SET status='cancelled',error_code='action_cancelled',updated_at=?,"
-                           "temporal_run_id=COALESCE(temporal_run_id,?) WHERE run_id=?", (now(), temporal_run_id, run_id))
-        self._finalize_feature(action, run_id, "cancelled", "action_cancelled", connection)
-        self.runtime.events.append(connection, "ActionFailed", {"runId": run_id, "action": action, "code": "action_cancelled"},
-                                   feature=action.split(".")[0], level="warn")
+    async def cancel(self, run_id: str) -> dict:
+        def stop():
+            with self.runtime.database.transaction() as connection:
+                row = connection.execute("SELECT * FROM app_action_runs WHERE run_id=? FOR UPDATE", (run_id,)).fetchone()
+                if row is None:
+                    raise NotFoundError("The action run does not exist.")
+                if row["status"] in TERMINAL_STATUSES:
+                    return self._run_payload(row)
+                if (row["action"] not in self.actions
+                        or self._input_digest(row["action"], json.loads(row["payload_json"])) != row["input_hash"]):
+                    raise AppError("action_contract_changed", "Use the compatible action version to stop and settle this pending run.", 409)
+                if not row["cancellation_requested"]:
+                    connection.execute("UPDATE app_action_runs SET cancellation_requested=?,updated_at=? WHERE run_id=?",
+                                       (STOP_REQUESTED, now(), run_id))
+                    self.runtime.events.append(connection, "ActionCancellationRequested", {"runId": run_id, "action": row["action"]},
+                                               feature=row["action"].split(".")[0], aggregate_id=run_id)
+            self._deliver_stop(run_id, row["workflow_id"])
+            self._reconcile(row)
+            return self.action_run(run_id)
+        return await asyncio.to_thread(stop)
 
-    def worker_status(self, action: str | None = None) -> dict:
+    def _reconcile(self, row):
+        run_id, workflow_id = row["run_id"], row["workflow_id"]
+        if workflow_id != f"{self.identity['taskQueue']}-{run_id}":
+            return  # Imported predecessor receipts are never dispatched or settled by DBOS.
+        custody = ExecutionCustody(self.runtime.workspace, run_id)
+        try:
+            if not custody.try_acquire():
+                return  # An in-flight feature still owns its external effect and result.
+            try:
+                state = self.dbos.retrieve_workflow(workflow_id).get_status().status
+            except (dbos_error.DBOSException, SQLAlchemyError):
+                return
+            terminal = {
+                "CANCELLED": ("cancelled", "action_cancelled"),
+                "ERROR": ("failed", "workflow_failed"),
+                "MAX_RECOVERY_ATTEMPTS_EXCEEDED": ("failed", "workflow_recovery_exhausted"),
+            }.get(state)
+            if terminal:
+                with self.runtime.database.transaction() as connection:
+                    self._finish(row, *terminal, connection)
+            # DBOS success follows the committed canonical result. It cannot
+            # reconstruct a missing feature receipt or authorize another effect.
+        finally:
+            custody.close()
+
+    async def reconcile_runs(self, *, after: str = "") -> str:
+        def reconcile():
+            with self.runtime.database.connect() as connection:
+                rows = connection.execute(
+                    "SELECT run_id,action,workflow_id,cancellation_requested FROM app_action_runs "
+                    "WHERE status IN ('queued','running','pending','start_failed') AND run_id>? ORDER BY run_id LIMIT 50", (after,),
+                ).fetchall()
+            for row in rows:
+                if row["cancellation_requested"] == STOP_REQUESTED:
+                    self._deliver_stop(row["run_id"], row["workflow_id"])
+                self._reconcile(row)
+            return rows[-1]["run_id"] if len(rows) == 50 else ""
+        return await asyncio.to_thread(reconcile)
+
+    def dbos_status(self) -> dict:
+        try:
+            with self.runtime.database.connect() as connection:
+                available = connection.execute("SELECT to_regclass('dbos.workflow_status') IS NOT NULL").fetchone()[0]
+        except (SQLAlchemyError, AppError):
+            available = False
+        return {"available": bool(available), "engine": "dbos", "systemSchema": DBOS_SCHEMA}
+
+    def worker_status(self, action: str | None = None, *, connection=None) -> dict:
+        if connection is None:
+            with self.runtime.database.connect() as owned:
+                return self.worker_status(action, connection=owned)
         queue = self.identity["taskQueue"]
         unavailable = {"status": "unavailable", "healthy": False, "pid": None, "workerId": None,
-                       "heartbeatAt": None, "taskQueue": queue}
-        with self.runtime.database.connect() as connection:
-            binding = connection.execute("SELECT history,namespace,namespace_id FROM app_workflow_history WHERE singleton=1").fetchone()
-            unavailable["namespaceId"] = binding["namespace_id"] if binding else None
-            if binding and (binding["history"], binding["namespace"]) != (self.identity["history"], self.identity["namespace"]):
-                return {**unavailable, "reason": "workflow_history_mismatch",
-                        "message": "Restart JobCtrl with this workspace’s original workflow service."}
-            rows = connection.execute(
-                """SELECT h.*,r.identity_json,r.actions_json FROM app_worker_heartbeats h
-                   LEFT JOIN app_worker_registrations r ON r.worker_id=h.worker_id
-                   WHERE h.status='running' ORDER BY h.heartbeat_at DESC""",
-            ).fetchall()
-        ready = None
+                       "heartbeatAt": None, "taskQueue": queue, "engine": "dbos",
+                       "namespaceId": self.identity["databaseInstanceId"]}
+        rows = connection.execute(
+            "SELECT h.*,r.identity_json,r.actions_json FROM app_worker_heartbeats h "
+            "JOIN app_worker_registrations r ON r.worker_id=h.worker_id "
+            "WHERE h.status='running' AND h.task_queue=? ORDER BY h.heartbeat_at DESC", (queue,),
+        ).fetchall()
         for row in rows:
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(row["heartbeat_at"])).total_seconds()
             if age > 15 or age < -5:
                 continue
+            custody = ExecutionCustody(self.runtime.workspace, "dbos-executor-" + queue)
             try:
-                os.kill(row["pid"], 0)
-            except (ProcessLookupError, PermissionError):
-                continue
-            if not row["identity_json"] or json.loads(row["identity_json"]) != self.identity:
+                if not custody.held_by_registration(row["worker_id"]):
+                    continue
+            finally:
+                custody.close()
+            if json.loads(row["identity_json"]) != self.identity:
                 return {**unavailable, "reason": "worker_incompatible",
-                        "message": "Stop and restart JobCtrl so the API and worker use the same workspace and build."}
+                        "message": "Restart JobCtrl so the API and worker use the same workspace and build."}
             if action is not None and action not in json.loads(row["actions_json"]):
                 return {**unavailable, "reason": "worker_action_unavailable",
-                        "message": "Restart the worker with the requested feature enabled, then retry."}
-            if ready is None:
-                ready = {"status": "healthy", "healthy": True, "pid": row["pid"], "workerId": row["worker_id"],
-                         "heartbeatAt": row["heartbeat_at"], "taskQueue": queue, "build": self.identity["build"],
-                         "namespaceId": binding["namespace_id"] if binding else None}
-        return ready or {**unavailable, "reason": "worker_unavailable", "message": "Start the JobCtrl worker and retry."}
+                        "message": "Restart the worker with the requested feature enabled."}
+            return {**unavailable, "status": "healthy", "healthy": True, "pid": row["pid"], "workerId": row["worker_id"],
+                    "heartbeatAt": row["heartbeat_at"], "build": self.identity["build"]}
+        return {**unavailable, "reason": "worker_unavailable", "message": "Start the JobCtrl worker and retry."}
 
     async def require_write_identity(self):
-        status = self.worker_status()
-        if status.get("reason") in {"workflow_history_mismatch", "worker_incompatible"}:
+        status = await asyncio.to_thread(self.worker_status)
+        if status.get("reason") == "worker_incompatible":
             raise AppError(status["reason"], status["message"], 409)
-        if not status.get("namespaceId"):
-            return
-        try:
-            async with asyncio.timeout(2):
-                client = await self.temporal()
-                namespace = await client.workflow_service.describe_namespace(DescribeNamespaceRequest(namespace=client.namespace))
-                if namespace.namespace_info.id == status["namespaceId"]:
-                    return
-        except RPCError as error:
-            if error.status != RPCStatusCode.NOT_FOUND:
-                return  # Local edits remain available when the workflow service is offline.
-        except (TimeoutError, OSError, RuntimeError):
-            return
-        raise AppError("workflow_history_mismatch", "Restart JobCtrl with this workspace’s original workflow service.", 409)
 
-    async def dispatch_readiness(self, action: str | None = None) -> dict:
+    def _readiness(self, action=None):
         worker = self.worker_status(action)
         if not worker["healthy"]:
             return worker
-        unavailable = {**worker, "healthy": False, "status": "unavailable"}
         try:
-            async with asyncio.timeout(2):
-                client = await self.temporal()
-                service = client.workflow_service
-                namespace, workflows, activities = await asyncio.gather(
-                    service.describe_namespace(DescribeNamespaceRequest(namespace=client.namespace)),
-                    *(service.describe_task_queue(DescribeTaskQueueRequest(
-                        namespace=client.namespace, task_queue=TaskQueue(name=worker["taskQueue"]), task_queue_type=kind,
-                    )) for kind in (TaskQueueType.TASK_QUEUE_TYPE_WORKFLOW, TaskQueueType.TASK_QUEUE_TYPE_ACTIVITY)),
-                )
-        except Exception:
-            return {**unavailable, "reason": "workflow_service_unavailable",
-                    "message": "The workflow service is unavailable. Start it, then retry."}
-        if namespace.namespace_info.id != worker["namespaceId"]:
-            return {**unavailable, "reason": "workflow_history_mismatch",
-                    "message": "Restart JobCtrl with this workspace’s original workflow service."}
-        # A healthy idle worker can spend a minute in a single long poll.
-        recent = datetime.now(timezone.utc).timestamp() - 120
-        if not all(any(p.identity == worker["workerId"] and p.last_access_time.seconds >= recent for p in queue.pollers)
-                   for queue in (workflows, activities)):
-            return {**unavailable, "reason": "worker_not_polling",
-                    "message": "The worker is connecting to its queue. Retry once it is ready."}
-        return worker
+            # Confirm each queue and the executor version against the same system
+            # database that the transactional enqueue will use.
+            queues = {queue.name for queue in self.dbos.list_queues(application_name=DBOS_APPLICATION)}
+            expected = {self.identity[name] for name in ("taskQueue", "searchQueue", "scheduleQueue")}
+            latest = self.dbos.get_latest_application_version()
+            if expected.issubset(queues) and latest["version_name"] == self.identity["workflowVersion"]:
+                return worker
+        except (dbos_error.DBOSException, SQLAlchemyError):
+            pass
+        return {**worker, "healthy": False, "status": "unavailable", "reason": "workflow_service_unavailable",
+                "message": "The DBOS queues are unavailable. Start the workspace worker and retry."}
+
+    async def dispatch_readiness(self, action: str | None = None) -> dict:
+        return await asyncio.to_thread(self._readiness, action)

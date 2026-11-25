@@ -2,7 +2,7 @@
 
 Contacts owns confirmed people, fact provenance, reviewed CSV/vCard imports and
 supervised public-source research. `bootstrap.py` composes the service, its
-feature-owned SQLite store, HTTP routes and the `contacts.research` durable
+feature-owned PostgreSQL store, HTTP routes and the `contacts.research` durable
 action. It has no Outreach or Profile dependency. An employer-linked contact
 works when Jobs is omitted; a job link is checked through the Jobs public port.
 

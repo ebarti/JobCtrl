@@ -2,7 +2,7 @@
 
 This is the Python Applications implementation for transformation #1428 and
 workstream #1436. `bootstrap.py` explicitly composes the service, feature-owned
-SQLite adapter, HTTP routes and durable actions. HTTP, CLI and durable workers
+PostgreSQL adapter, HTTP routes and durable actions. HTTP, CLI and durable workers
 call these same actions. There is no TypeScript business writer or JSON-RPC
 forwarder in this owner.
 
@@ -62,7 +62,7 @@ The retained capabilities are:
 
 Applications owns `applications_*` and `application_feedback_*` tables. Foreign
 feature identities are references, with no sibling-private-table queries or
-cross-feature business writes. Public snapshot methods receive the same SQLite
+cross-feature business writes. Public snapshot methods receive the same PostgreSQL
 writer connection for final validation. Model calls use `Runtime.model` lane,
 spend, schema and provider authority; this feature persists exact source-bound
 determinations. Readers join the actual shared model receipt ID and verify its

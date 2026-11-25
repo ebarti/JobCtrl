@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS requirements_catalog (
     revision INTEGER NOT NULL,
     indexed_revision INTEGER NOT NULL
 );
-INSERT OR IGNORE INTO requirements_catalog VALUES (1, 0, 0);
+INSERT INTO requirements_catalog VALUES (1, 0, 0) ON CONFLICT (singleton) DO NOTHING;
 CREATE TABLE IF NOT EXISTS requirements_meanings (
     requirement_id TEXT NOT NULL,
     revision INTEGER NOT NULL,
@@ -20,9 +20,14 @@ CREATE TABLE IF NOT EXISTS requirements_heads (
     revision INTEGER NOT NULL,
     FOREIGN KEY(requirement_id, revision) REFERENCES requirements_meanings(requirement_id, revision)
 );
-CREATE VIRTUAL TABLE IF NOT EXISTS requirements_retrieval USING fts5(
-    requirement_id UNINDEXED, revision UNINDEXED, document, tokenize='unicode61'
+CREATE TABLE IF NOT EXISTS requirements_retrieval (
+    requirement_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    document TEXT NOT NULL,
+    search_vector tsvector GENERATED ALWAYS AS (to_tsvector('pg_catalog.simple'::regconfig, document)) STORED,
+    PRIMARY KEY(requirement_id, revision)
 );
+CREATE INDEX IF NOT EXISTS requirements_retrieval_search ON requirements_retrieval USING GIN(search_vector);
 CREATE TABLE IF NOT EXISTS requirements_snapshots (
     job_id TEXT NOT NULL,
     revision INTEGER NOT NULL,

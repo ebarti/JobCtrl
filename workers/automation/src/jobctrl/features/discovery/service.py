@@ -10,7 +10,7 @@ from jobctrl.app.errors import AppError, ConflictError
 from jobctrl.app.model_capacity import wait_for_model_capacity
 from jobctrl.features.discovery.domain import SOURCE_FETCH_POLICY, fingerprint, now, search_units, validate_settings
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY, match_role_targets, posting_role_evidence, read_role_decision, role_binding, role_target_sources
-from jobctrl.features.discovery.query_fairness import FAIR_QUERY_SCHEDULING, run_fair_query_units
+from jobctrl.features.discovery.query_fairness import FAIR_QUERY_SCHEDULING, BoardQueryTurn, query_allowances
 from jobctrl.features.discovery.remote_search import validate_remote_search_scope
 from jobctrl.features.discovery.role_calls import ROLE_CALL_CUSTODY
 from jobctrl.features.discovery.targets import TargetPlanner
@@ -349,7 +349,22 @@ class DiscoveryService:
         if "resumeFromRunId" in payload:
             self.repository.continuation_request(payload, connection)
 
+    def board_cooling_down(self, board):
+        return self.repository.cooldown(board) > 0
+
+    def finalize(self, run_id, status, error_code, connection):
+        if status in {"cancelled","failed"}:
+            self.repository.finalize_action(run_id, status, error_code, connection)
+
     async def search(self, context, payload, *, durable=True):
+        while True:
+            turn = await self.search_turn(context, payload, durable=durable)
+            if turn["done"]:
+                return turn["result"]
+            await asyncio.sleep(turn["waitSeconds"])
+
+    async def search_turn(self, context, payload, *, durable=True, handoff=None):
+        """Advance one source page or return the outstanding provider deadline."""
         run_id = context.run_id
         saved = self.repository.run_request(run_id)
         if saved:
@@ -397,6 +412,7 @@ class DiscoveryService:
                 "sources": self.list_sources()["sources"],
                 "command_hash": fingerprint(payload),
                 "boardUnitsVersion": 1,
+                "pageWorkflowVersion": 1,
                 "sourceFetchPolicy": SOURCE_FETCH_POLICY,
                 "boardQueryScheduling": FAIR_QUERY_SCHEDULING,
                 "criteriaAsOf": now(),
@@ -414,7 +430,7 @@ class DiscoveryService:
         )
         execution_settings = {**request["settings"], "_criteriaAsOf": request.get("criteriaAsOf"),
                               "_roleTargetPolicy": request.get("roleTargetPolicy"), "_roleCallCustody": request.get("roleCallCustody"),
-                              "_durableRoleChecks": durable}
+                              "_durableRoleChecks": durable, "_assessmentHandoff": handoff}
         # Older frozen requests may contain retired feeds. Only the SDK board
         # identity can authorize acquisition when a worker resumes.
         board_states = {source["sourceId"]: source["state"] for source in request["sources"]}
@@ -427,7 +443,7 @@ class DiscoveryService:
             execution_settings["_resumeUnits"] = request["resumeUnits"]
         lease = self.repository.claim_run(run_id, request)
         if lease["completed"]:
-            return lease["result"]
+            return {"done": True, "result": lease["result"]}
         supported_sources = {"jobstreaming:" + board for board in self.repository.boards}
         if saved and any(source_id not in supported_sources and state in {"active", "experimental"}
                          for source_id, state in board_states.items()):
@@ -436,8 +452,6 @@ class DiscoveryService:
         if not units:
             self.repository.settle(lease, "failed", failure_code="discovery_targets_missing")
             raise AppError("discovery_targets_missing", "Select an active JobStreaming board and supply a search query and location.", 409)
-        prior_outcome = self.repository.finalize_bounded_units(lease, request["settings"]["newJobLimit"])
-        prior_source_failures = {failure["sourceId"]: failure for failure in prior_outcome["failures"]}
         self.execution.begin(lease)
 
         async def keep_alive():
@@ -451,86 +465,43 @@ class DiscoveryService:
                 context.heartbeat({"runId": run_id})
 
         heartbeat = asyncio.create_task(keep_alive())
-        failures = []
         try:
-            ready = []
-            prior_units = {}
-            fair = request.get("boardQueryScheduling") == FAIR_QUERY_SCHEDULING and len({u["query"] for u in units}) > 1
-            rate_limit_codes = {"rate_limited", "discovery_provider_rate_limited"}
-            rate_limited = {
-                source_id.removeprefix("jobstreaming:") for source_id, failure in prior_source_failures.items()
-                if source_id.startswith("jobstreaming:") and failure["code"] in rate_limit_codes
-            }
-            for unit in units:
-                if context.cancelled():
-                    raise AppError("action_cancelled", "Discovery was cancelled.", 409)
-                previous = self.repository.unit(run_id, unit["unit_id"])
-                if previous and previous["status"] in {"completed", "budget_exhausted", "deferred"}:
-                    continue
-                if previous and previous["status"] == "failed" and (previous.get("result") or {}).get("failure"):
-                    failure = previous["result"]["failure"]
-                    failures.append(failure)
-                    if failure["code"] in rate_limit_codes:
-                        rate_limited.update(unit["sites"])
-                    for board in failure.get("boards", unit["sites"]):
-                        self.repository.source_result(lease, "jobstreaming:" + board, "failed", error_code=failure["code"])
-                    continue
-                ready.append(unit)
-                if previous is not None:
-                    prior_units[unit["unit_id"]] = previous
-
-            def remaining():
-                return self.repository.budget_remaining(lease, execution_settings["newJobLimit"])
-
-            async def visit(unit, turn=None):
-                if context.cancelled():
-                    raise AppError("action_cancelled", "Discovery was cancelled.", 409)
-                previous = prior_units.get(unit["unit_id"])
-                if isolate_boards and rate_limited.intersection(unit["sites"]):
-                    if previous:
-                        self.repository.save_unit(lease, unit, status="deferred", cursor=previous["data"].get("cursor"),
-                                                  result={**(previous.get("result") or {}), "termination": "rate_limited"})
-                    return False
+            if context.cancelled():
+                raise AppError("action_cancelled", "Discovery was cancelled.", 409)
+            states = self.repository.unit_states(run_id)
+            failed_boards = {board for unit in units for failure in [(states.get(unit["unit_id"], {}).get("result") or {}).get("failure", {})]
+                             if failure.get("code") in {"rate_limited", "discovery_provider_rate_limited"} for board in unit["sites"]}
+            ready = [unit for unit in units if states.get(unit["unit_id"], {}).get("status") not in
+                     {"completed", "budget_exhausted", "failed", "deferred"} and not failed_boards.intersection(unit["sites"])]
+            remaining = self.repository.budget_remaining(lease, request["settings"]["newJobLimit"])
+            if ready and remaining:
+                cooldowns = {site: self.repository.cooldown(site) for site in {s for u in ready for s in u["sites"]}}
+                delays = {u["unit_id"]: max(cooldowns[site] for site in u["sites"]) for u in ready}
+                available = [u for u in ready if not delays[u["unit_id"]]]
+                if not available:
+                    for unit in ready:
+                        state = states.get(unit["unit_id"], {})
+                        if state.get("status") != "waiting_for_source":
+                            self.repository.save_unit(lease, unit, status="waiting_for_source", result=state.get("result", {}))
+                    return {"done": False, "waitSeconds": min(3600.0, min(delays.values()))}
+                counts = self.repository.board_new_jobs_by_query(lease)
+                candidate = min(available, key=lambda u: (counts.get(u["query"], 0), states.get(u["unit_id"], {}).get("updatedAt", "")))
+                limits = query_allowances(dict.fromkeys(u["query"] for u in available), counts, remaining)
+                turn = BoardQueryTurn(limits[candidate["query"]]) if len(limits) > 1 else None
                 try:
-                    yielded = await self.execution.run_board_unit(context, lease, unit, execution_settings, previous, turn)
-                    if yielded:
-                        prior_units[unit["unit_id"]] = self.repository.unit(run_id, unit["unit_id"])
-                    return yielded
+                    await self.execution.run_board_unit(context, lease, candidate, execution_settings, states.get(candidate["unit_id"]), turn)
                 except AppError as error:
                     if error.code == "action_cancelled":
                         raise
-                    if error.code in rate_limit_codes:
-                        rate_limited.update(unit["sites"])
-                    failures.append(self.repository.record_board_failure(lease, unit, error))
-
-            # Recover recorded failures even if a prior lease filled the
-            # budget. Only newly admitted multi-query requests share turns.
-            if fair and ready:
-                admitted = self.repository.board_new_jobs_by_query(lease)
-                yielded = {unit_id for unit_id, state in prior_units.items() if state["status"] == "waiting_for_query_turn"}
-                await run_fair_query_units(ready, admitted, remaining, visit, yielded)
-            else:
-                for unit in ready:
-                    if not remaining():
-                        break
-                    await visit(unit)
-
-            run = next(r for r in self.repository.runs()["runs"] if r["runId"] == run_id)
+                    self.repository.record_board_failure(lease, candidate, error)
+                return {"done": False, "waitSeconds": 0.0}
             outcome = self.repository.finalize_bounded_units(lease, request["settings"]["newJobLimit"])
-            represented = {
-                source_id
-                for failure in failures
-                for source_id in ([failure["sourceId"]] if failure.get("sourceId") else ["jobstreaming:" + board for board in failure.get("boards", [])])
-            }
-            failures.extend(failure for failure in outcome["failures"] if failure["sourceId"] not in represented)
+            failures = [state["result"]["failure"] for state in states.values() if state["result"].get("failure")]
+            represented = {board for failure in failures for board in failure.get("boards", [])}
+            failures.extend(item for item in outcome["failures"] if item["sourceId"].removeprefix("jobstreaming:") not in represented)
             status = "failed" if failures and outcome["fulfilledUnitCount"] == 0 else "partial" if failures else "completed"
-            result = {
-                "ok": not failures,
-                **run,
-                **self.repository.run_job_ids(run_id),
-                "status": status,
-                "failures": failures,
-            }
+            result = {**self.repository.run_summary(run_id), **self.repository.run_job_ids(run_id),
+                      "ok": not failures, "status": status, "failures": failures, "postings": self.repository.posting_counts(run_id)}
             settled = self.repository.settle(
                 lease, status, result, failure_code="source_family_failed" if failures else None
             )
@@ -543,13 +514,15 @@ class DiscoveryService:
                     502,
                     {"runId": run_id, "failures": failures},
                 )
-            return result
+            return {"done": True, "result": {**result, "preparationAvailable": False} if handoff is None else result}
+        except asyncio.CancelledError:
+            # Worker shutdown leaves committed pages and pending work recoverable.
+            raise
         except BaseException as error:
             code = getattr(error, "code", "discovery_failed")
-            with suppress(ConflictError):
-                self.repository.settle(
-                    lease, "cancelled" if code == "action_cancelled" else "failed", failure_code=code
-                )
+            if self.repository.run_outcome(run_id) is None:
+                with suppress(ConflictError):
+                    self.repository.settle(lease, "cancelled" if code == "action_cancelled" else "failed", failure_code=code)
             raise
         finally:
             self.execution.stop(lease)
@@ -622,4 +595,5 @@ class DiscoveryService:
             role_target_unavailable=unavailable,
             limit=int(settings["newJobLimit"]),
             cancelled=context.cancelled,
+            handoff=settings.get("_assessmentHandoff"),
         )

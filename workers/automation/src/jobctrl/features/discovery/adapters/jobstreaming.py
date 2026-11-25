@@ -130,7 +130,7 @@ class _RemoteScopeAdapter:
 
 def _remote_safe_registry(
     spec: JobStreamingSearchSpec, registry: AdapterRegistry | None,
-    linkedin_page_accepted: threading.Event | None,
+    page_accepted: threading.Event | None,
 ) -> AdapterRegistry:
     """Retain unsupported boards as failures instead of broadening a search."""
     normalized = _normalize_tls_adapter_timeouts(registry)
@@ -144,7 +144,7 @@ def _remote_safe_registry(
         def guarded_factory(*, _site: str = site, **kwargs: Any) -> _RemoteScopeAdapter:
             return _RemoteScopeAdapter(
                 normalized.create(_site, **kwargs),
-                linkedin_page_accepted if _site == Site.LINKEDIN.value else None,
+                page_accepted,
             )
 
         # The provider's public cursor-version contract must remain unchanged
@@ -286,7 +286,7 @@ class JobStreamingGateway:
         retry_backoff: float = 5.0,
         cancel_event: threading.Event | None = None,
         registry: AdapterRegistry | None = None,
-        linkedin_page_accepted: threading.Event | None = None,
+        page_accepted: threading.Event | None = None,
     ) -> SearchStream:
         """Open an explicit-ack stream without consuming any event.
 
@@ -311,8 +311,20 @@ class JobStreamingGateway:
             retry_backoff=retry_backoff,
             ack_mode=AckMode.EXPLICIT,
             cancel_event=cancel_event,
-            registry=_remote_safe_registry(spec, registry, linkedin_page_accepted),
+            registry=_remote_safe_registry(spec, registry, page_accepted),
         )
+
+    @staticmethod
+    def restore_posting(stored: dict) -> JobPost:
+        # These SDK enums have tuple-valued members. JSON encodes them as arrays
+        # and the pinned SDK requires their exact tuple values for validation.
+        posting = dict(stored)
+        location = posting.get("location")
+        if location and isinstance(location.get("country"), list):
+            posting["location"] = {**location, "country": tuple(location["country"])}
+        if posting.get("job_type"):
+            posting["job_type"] = [tuple(item) if isinstance(item, list) else item for item in posting["job_type"]]
+        return JobPost.model_validate(posting)
 
     @classmethod
     def frame_for_job_event(

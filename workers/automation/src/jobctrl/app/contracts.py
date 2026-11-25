@@ -21,6 +21,7 @@ class ActionContext:
     request_id: str
     cancelled: Callable[[], bool] = lambda: False
     heartbeat: Callable[[dict | None], None] = lambda details=None: None
+    user_cancelled: Callable[[], bool] | None = None
 
 
 ActionHandler = Callable[[ActionContext, dict], Awaitable[Any]]

@@ -1,4 +1,4 @@
-"""SQLite adapter for compensation-owned state and transaction-bound ports."""
+"""PostgreSQL adapter for compensation-owned state and transaction-bound ports."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def _now() -> str:
 
 
 class CompensationSession:
-    """A semantic unit of work backed by one private SQLite connection."""
+    """A semantic unit of work backed by one private PostgreSQL connection."""
 
     def __init__(self, connection, *, events, jobs, model, settings, writable: bool):
         self._connection = connection
@@ -136,13 +136,19 @@ class CompensationSession:
             # Older market records reference their then-current posted fact
             # implicitly. Keep their original comparison verifiable when a
             # newer employer range is published ahead of market research.
-            self._connection.execute(
-                "UPDATE compensation_market AS m SET record_json=json_set(m.record_json,'$.postedReceiptId',"
-                "json_extract(p.record_json,'$.fact.judgment.determination.reference')) "
-                "FROM compensation_posted AS p WHERE m.job_id=? AND p.job_id=m.job_id "
-                "AND p.posting_revision=m.posting_revision AND p.posting_hash=m.posting_hash "
-                "AND json_type(m.record_json,'$.postedReceiptId') IS NULL", (snapshot["job_id"],),
-            )
+            prior = self._connection.execute(
+                "SELECT m.record_json,p.record_json FROM compensation_market AS m "
+                "JOIN compensation_posted AS p USING (job_id,posting_revision,posting_hash) WHERE m.job_id=?",
+                (snapshot["job_id"],),
+            ).fetchone()
+            if prior:
+                market = json.loads(prior[0])
+                if "postedReceiptId" not in market:
+                    market["postedReceiptId"] = json.loads(prior[1])["fact"]["judgment"]["determination"]["reference"]
+                    self._connection.execute(
+                        "UPDATE compensation_market SET record_json=? WHERE job_id=?",
+                        (json.dumps(market, ensure_ascii=False, separators=(",", ":"), allow_nan=False), snapshot["job_id"]),
+                    )
             self._connection.execute(
                 "INSERT INTO compensation_posted(job_id,posting_revision,posting_hash,source_hash,record_json,updated_at) "
                 "VALUES(?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET "
@@ -378,11 +384,7 @@ class CompensationRepository:
                 yield self._session(current, writable=False)
         else:
             with self._database.connect() as current:
-                current.execute("BEGIN")
-                try:
-                    yield self._session(current, writable=False)
-                finally:
-                    current.rollback()
+                yield self._session(current, writable=False)
 
     @contextmanager
     def write(self, connection=None) -> Iterator[CompensationSession]:

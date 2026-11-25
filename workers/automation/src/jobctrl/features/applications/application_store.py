@@ -1,4 +1,4 @@
-"""Applications SQLite adapter: semantic atomic commands and committed source guards.
+"""Applications PostgreSQL adapter: semantic atomic commands and committed source guards.
 
 The application layer receives immutable admissions, never a connection or
 transaction facade. All final authority and intent writes share one writer lock.
@@ -16,7 +16,7 @@ from .ports import RehearsalAdmission, SubmissionAdmission
 _REVIEW_ACTIONS = ("applications.rehearse", "applications.repeat_check", "applications.execute")
 
 
-class SqliteApplicationStore:
+class PostgresApplicationStore:
     def __init__(self, repository, sources, *, screening, repeat, inspection, feedback, validate_mail, fit=None):
         self.repository, self.sources = repository, sources
         self.screening, self.repeat, self.inspection, self.feedback, self.fit = screening, repeat, inspection, feedback, fit
@@ -465,8 +465,7 @@ class SqliteApplicationStore:
                           "applications_rehearsals", "applications_screening", "applications_failures",
                           "applications_repeat_overrides", "applications_repeat_checks"):
                 conn.execute(f"DELETE FROM {table} WHERE tenant_id=? AND job_id=?", (tenant_id, job_id))
-            conn.execute("DELETE FROM applications_action_receipts WHERE tenant_id=? AND (json_extract(response_json,'$.application.jobId')=? OR json_extract(response_json,'$.jobId')=?)",
-                         (tenant_id, job_id, job_id))
+            self.repository.delete_job_receipts(conn, tenant_id, job_id)
             self.repository.event(conn, "ApplicationsUpdated", job_id, deleted=True)
 
     def admit_execution(self, claim, command, tenant_id="local"):
@@ -525,7 +524,7 @@ class SqliteApplicationStore:
                     "approvalId": decision["decisionId"], "attachmentSha256": payload["sources"]["resume"]["pdf"]["sha256"],
                     "createdAt": timestamp()}
                 repo.add_intent(conn, tenant, intent_value)
-                # Source files are outside SQLite. Recheck after intent insert
+                # Source files are outside PostgreSQL. Recheck after intent insert
                 # while rollback is still possible, and send the first pinned
                 # approved byte copy rather than reopening a mutable path.
                 if self.sources.pinned_attachment(job, payload["sources"], tenant, conn) != attachment:

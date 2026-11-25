@@ -6,14 +6,14 @@ from starlette.routing import Route
 from jobctrl.app.contracts import Feature
 from jobctrl.app.http import json_object
 from jobctrl.features.learning.schema import REQUEST_SCHEMA, SCHEMA
-from jobctrl.features.learning.repository import SqliteLearningRepository
+from jobctrl.features.learning.repository import PostgresLearningRepository
 from jobctrl.features.learning.service import LearningService
 
 
 def build_feature(runtime, *, profile, jobs, **_ports):
     runtime.database.initialize_feature("learning", SCHEMA)
     runtime.database.initialize_feature("learning_requests", REQUEST_SCHEMA)
-    service = LearningService(SqliteLearningRepository(runtime.database, runtime.events, runtime.workspace),
+    service = LearningService(PostgresLearningRepository(runtime.database, runtime.events, runtime.workspace),
                               model=runtime.model, profile=profile, jobs=jobs)
 
     async def read(_request):

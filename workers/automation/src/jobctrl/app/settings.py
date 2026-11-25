@@ -44,8 +44,9 @@ class Settings:
     def __init__(self, database: Database, events: EventStore):
         self.database = database
         self.events = events
-        with database.transaction() as connection:
-            connection.execute("INSERT OR IGNORE INTO app_settings VALUES(1,1,?)", (json.dumps(DEFAULTS),))
+        if not database.read_only:
+            with database.transaction() as connection:
+                connection.execute("INSERT INTO app_settings VALUES(1,1,?) ON CONFLICT(id) DO NOTHING", (json.dumps(DEFAULTS),))
 
     def snapshot(self, connection=None) -> dict:
         if connection is None:

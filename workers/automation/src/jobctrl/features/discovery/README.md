@@ -57,7 +57,7 @@ escape hatch.
   Only a committed new Jobs identity spends a slot. On restart, intake receipts
   restore each query's count and the provider checkpoint restores its position.
   Backfill can revisit a partial page, preserving its acknowledged receipts.
-  An exhausted SDK retry defers that board's remaining units for the run.
+  A 429 without a retry deadline defers that board's remaining units for the run.
   A streamed error and a directly raised detail error use the same safe
   rate-limit diagnostic. The run list explains older generic messages from
   their recorded board rate-limit code, including after an upgrade.
@@ -82,9 +82,9 @@ escape hatch.
   At that limit, existing running units become `budget_exhausted`; failed units
   remain failed and unstarted/scoped-out sources do not count as completed.
   The quota-filling admission transaction returns its committed budget state.
-  The consumer acknowledges that receipt before stopping acquisition, with
-  `termination=budget_exhaustion`. The transactional gate closes admissions at capacity. Prefetched
-  SDK emissions can remain in flight without creating extra admissions.
+  The transactional gate closes admissions at capacity with
+  `termination=budget_exhaustion`. Additional postings already received on the
+  same page remain recorded as beyond the limit.
   A completed empty source still constitutes completed acquisition. `partial`
   requires both fulfilled bounded work and a failed source; all-source failure
   remains `failed`, independently of how many jobs were accepted.
@@ -99,10 +99,12 @@ escape hatch.
   location text cannot establish eligibility. Exclusions consume no new-job
   quota; traversal follows the frozen native or legacy finite source policy.
   No lexical inference changes the authored criteria.
-- The actual pinned JobStreaming explicit-ack gateway is retained. Accepted or
-  filtered receipts commit before provider acknowledgement. Provider cursor
-  fingerprint/schema errors fail explicitly. Epoch-fenced admissions prevent an
-  abandoned activity from writing after a retry or cancellation.
+- The pinned JobStreaming explicit-ack stream saves provider cursor headers,
+  ordered seen keys and each received posting in PostgreSQL. A listing and
+  its acknowledgement commit together. The adapter drains pending postings
+  before opening the next page. Accepting a new job, its intake receipt, the
+  new-job count and its independent DBOS assessment enqueue share a transaction.
+  Cursor schema/fingerprint errors fail explicitly. Epoch checks fence stale writers.
 - Discovery seeds state only for boards provided by the installed JobStreaming registry. Selection limits a search to the saved board IDs. Reopening an existing database retains its job and run history. An unfinished search with a retired active source records `discovery_source_retired` and requires a fresh launch.
 - Capture prepare/supersede creates a new 64-character review lifetime. Import
   claims, input fingerprints, canonical posting writes and acknowledgement
@@ -167,12 +169,14 @@ tables.
 
 Saved searches freeze literal role titles and location/work-arrangement filters.
 Model admission and accounting apply to source-bound role matching and Fit.
-LinkedIn listings and targeted posting details share four-second pacing per run.
-A missing or over-cap retry delay on HTTP 429 stops pending details before
-the stream delivers its error. For saved-role searches the adapter waits for
-the durable page acknowledgement before requesting another listing page.
-Targeted detail reads use the shared pacing deadline and allow two retries
-for an explicit in-window server delay.
+LinkedIn listings and targeted details share a persisted four-second request
+interval across runs. A server-supplied retry time stays in PostgreSQL, including
+delays longer than the SDK's internal sleep limit. A DBOS timer releases the
+acquisition step until that deadline. Other ready boards advance before a search
+sleeps. Independent job assessment workflows and the shared provider/model
+accounting remain available. The search can be stopped during its wait.
+A 429 without a server deadline records bounded exponential backoff and defers
+remaining LinkedIn work for explicit continuation.
 
 An explicit `discovery.search` with only `resumeFromRunId` continues unfinished
 LinkedIn units after a rate limit. Admission verifies the prior outcome, source

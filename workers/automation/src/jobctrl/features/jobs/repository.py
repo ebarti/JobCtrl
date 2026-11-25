@@ -1,4 +1,4 @@
-"""Jobs' SQLite adapter: one canonical writer for all intake paths."""
+"""Jobs' PostgreSQL adapter: one canonical writer for all intake paths."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 from jobctrl.features.jobs.domain.postings import canonical_posting, digest, identity_keys, utc_now
 
 
-class SqliteJobsRepository:
+class PostgresJobsRepository:
     def __init__(self, database, events):
         self.database, self.events = database, events
         self.deletion_ports = []
@@ -239,7 +239,8 @@ class SqliteJobsRepository:
                 )
             observation_id = str(uuid4())
             conn.execute(
-                "INSERT INTO jobs_observations VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO jobs_observations(observation_id,job_id,source_id,source_native_id,observed_url,observed_at,"
+                "run_id,receipt_key,provenance_json,posting_revision,receipt_fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     observation_id,
                     job_id,
@@ -289,50 +290,85 @@ class SqliteJobsRepository:
         elif not filters.get("include_hidden") and filters.get("status") != "all":
             clauses.append("j.hidden_at IS NULL")
         if filters.get("since"):
-            clauses.append("julianday(j.created_at)>julianday(?)")
-            values.append(str(filters["since"]))
-        if filters.get("q") or filters.get("query") or filters.get("search"):
-            literal = str(filters.get("q") or filters.get("query") or filters["search"]).casefold()
-            fields = ("title", "company", "location", "url", "source_id")
-            clauses.append(
-                "(" + " OR ".join(f"instr(lower(json_extract(p.data_json,'$.{field}')),?)>0" for field in fields) + ")"
-            )
-            values.extend([literal] * len(fields))
-        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+            since = str(filters["since"])
+            if "\0" in since:
+                clauses.append("FALSE")
+            else:
+                clauses.append("CASE WHEN pg_input_is_valid(?, 'timestamptz') THEN j.created_at::timestamptz>?::text::timestamptz END")
+                values.extend((since, since))
+        search = filters.get("q") or filters.get("query") or filters.get("search")
+        literal = str(search).casefold() if search else None
+        fields = ("title", "company", "location", "url", "source_id")
         limit = max(1, min(1000, int(filters.get("limit") or 100)))
         offset = max(0, int(filters.get("offset") or 0))
         sort = {"discoveredAt": "created_at", "discovered_at": "created_at"}.get(
             filters.get("sort"), filters.get("sort")
         ) or "created_at"
+        posting_sort = sort in {"title", "company", "location", "salary", "source_id", "active_state"}
         if sort in {"created_at", "updated_at", "revision"}:
             order = "j." + sort
-        elif sort in {"title", "company", "location", "salary", "source_id", "active_state"}:
-            order = "json_extract(p.data_json,'$." + sort + "') COLLATE NOCASE"
+        elif posting_sort:
+            order = f"lower((p.data_json::jsonb ->> '{sort}') COLLATE \"C\")"
         else:
             raise AppError("invalid_job_sort", "Choose a supported saved-job sort field.")
         direction = str(filters.get("direction") or filters.get("sortDirection") or "desc").lower()
         if direction not in {"asc", "desc"}:
             raise AppError("invalid_job_sort", "Choose ascending or descending sorting.")
+        base = " FROM jobs_jobs j JOIN jobs_postings p ON p.job_id=j.job_id AND p.revision=j.revision"
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
         with nullcontext(connection) if connection is not None else self.database.connect() as conn:
-            total = conn.execute(
-                "SELECT count(*) FROM jobs_jobs j JOIN jobs_postings p ON p.job_id=j.job_id AND p.revision=j.revision"
-                + where,
-                values,
-            ).fetchone()[0]
-            rows = conn.execute(
-                "SELECT j.job_id FROM jobs_jobs j JOIN jobs_postings p ON p.job_id=j.job_id AND p.revision=j.revision"
-                + where
-                + " ORDER BY "
-                + order
-                + " "
-                + direction
-                + ",j.job_id LIMIT ? OFFSET ?",
-                (*values, limit, offset),
-            ).fetchall()
+            if (literal is not None or posting_sort) and (
+                literal is not None and "\0" in literal
+                or conn.execute(
+                    "SELECT 1" + base + where + (" AND " if where else " WHERE ")
+                    + "NOT pg_input_is_valid(p.data_json, 'jsonb') LIMIT 1", values,
+                ).fetchone()
+            ):
+                # PostgreSQL jsonb cannot project an escaped zero even if that
+                # character lives in an unrelated free-text field. Preserve
+                # exact retained text when filtering this exceptional result set.
+                candidates = conn.execute(
+                    "SELECT j.job_id,j.created_at,j.updated_at,j.revision,p.data_json" + base + where, values,
+                )
+                job_ids, total = self._list_unqueryable_postings(
+                    candidates, literal, fields, sort, posting_sort, direction, limit, offset,
+                )
+            else:
+                if literal is not None:
+                    clauses.append("(" + " OR ".join(
+                        f"strpos(lower((p.data_json::jsonb ->> '{field}') COLLATE \"C\"),?)>0" for field in fields
+                    ) + ")")
+                    values.extend([literal] * len(fields))
+                    where = " WHERE " + " AND ".join(clauses)
+                total = conn.execute("SELECT count(*)" + base + where, values).fetchone()[0]
+                rows = conn.execute(
+                    "SELECT j.job_id" + base + where + " ORDER BY " + order + " " + direction
+                    + (" NULLS FIRST" if direction == "asc" else " NULLS LAST")
+                    + ",j.job_id LIMIT ? OFFSET ?",
+                    (*values, limit, offset),
+                )
+                job_ids = [row[0] for row in rows]
             if ids_only:
-                return {"job_ids": [row[0] for row in rows], "total": total, "offset": offset, "limit": limit}
-            jobs = [self._snapshot(conn, row[0], include_deleted=True) for row in rows]
+                return {"job_ids": job_ids, "total": total, "offset": offset, "limit": limit}
+            jobs = [self._snapshot(conn, job_id, include_deleted=True) for job_id in job_ids]
         return {"jobs": jobs, "total": total, "offset": offset, "limit": limit}
+
+    @staticmethod
+    def _list_unqueryable_postings(candidates, literal, fields, sort, posting_sort, direction, limit, offset):
+        ascii_lower = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+        matches = []
+        for row in candidates:
+            data = json.loads(row["data_json"])
+            if literal is not None and not any(literal in (data.get(field) or "").translate(ascii_lower)
+                                               for field in fields):
+                continue
+            value = data.get(sort) if posting_sort else row[sort]
+            if posting_sort and value is not None:
+                value = value.translate(ascii_lower)
+            matches.append((row["job_id"], value))
+        matches.sort(key=lambda row: row[0])
+        matches.sort(key=lambda row: (row[1] is not None, row[1]), reverse=direction == "desc")
+        return [row[0] for row in matches[offset:offset + limit]], len(matches)
 
     def history(self, job_id):
         with self.database.connect() as conn:
@@ -349,13 +385,16 @@ class SqliteJobsRepository:
             observations = [
                 {**dict(row), "provenance": json.loads(row["provenance_json"])}
                 for row in conn.execute(
-                    "SELECT * FROM jobs_observations WHERE job_id=? ORDER BY observed_at DESC", (job_id,)
+                    "SELECT observation_id,job_id,source_id,source_native_id,observed_url,observed_at,run_id,receipt_key,"
+                    "provenance_json,posting_revision,receipt_fingerprint FROM jobs_observations WHERE job_id=? ORDER BY observed_at DESC",
+                    (job_id,)
                 )
             ]
             attempts = [
                 {**dict(row), "data": json.loads(row["data_json"])}
                 for row in conn.execute(
-                    "SELECT * FROM jobs_capture_attempts WHERE job_id=? ORDER BY started_at DESC LIMIT 100", (job_id,)
+                    "SELECT attempt_id,job_id,url,started_at,finished_at,state,failure_code,data_json FROM jobs_capture_attempts "
+                    "WHERE job_id=? ORDER BY started_at DESC LIMIT 100", (job_id,)
                 )
             ]
         return {"snapshots": snapshots, "observations": observations, "attempts": attempts}
@@ -363,57 +402,72 @@ class SqliteJobsRepository:
     def availability(self, job_id, *, connection=None):
         with nullcontext(connection) if connection is not None else self.database.connect() as conn:
             current = self._snapshot(conn, job_id)
-            row = conn.execute(
-                "SELECT observation_id,observed_at,provenance_json FROM jobs_observations WHERE job_id=? AND posting_revision=? AND json_type(provenance_json,'$.availability')='object' ORDER BY julianday(observed_at) DESC,observation_id DESC LIMIT 1",
-                (job_id, current["revision"]),
-            ).fetchone()
-            availability = (
-                json.loads(row["provenance_json"])["availability"]
-                if row
-                else current.get("provenance", {}).get("availability")
-            )
-            # Read actual captures of this URL. Profile edits, imported listing guesses,
-            # and copies of an earlier observation do not renew its verification time.
             observations = conn.execute(
-                """SELECT o.observed_at,
-                          COALESCE(json_extract(o.provenance_json, '$.availability.state'),
-                                   json_extract(p.data_json, '$.active_state')) AS verdict
+                """SELECT o.observation_id,o.observed_at,o.observed_url,o.posting_revision,o.provenance_json,
+                          p.observed_at AS posting_observed_at,p.data_json
                    FROM jobs_observations o JOIN jobs_postings p
                      ON p.job_id=o.job_id AND p.revision=o.posting_revision
-                   WHERE o.job_id=? AND o.observed_url=? AND (
-                     (json_extract(o.provenance_json,'$.availability.metadata.requested_url')=o.observed_url
-                      AND julianday(json_extract(o.provenance_json,'$.availability.observedAt'))=julianday(o.observed_at))
-                     OR (json_type(o.provenance_json,'$.availability') IS NULL
-                         AND json_extract(o.provenance_json,'$.authority')='source_bound_model'
-                         AND json_type(o.provenance_json,'$.pageInterpretation')='object'
-                         AND p.observed_at=o.observed_at))
-                   ORDER BY julianday(o.observed_at) DESC, o.rowid DESC""",
+                   WHERE o.job_id=? AND (o.posting_revision=? OR o.observed_url=?)
+                   ORDER BY o.observed_at::timestamptz DESC,o.insertion_order DESC""",
+                (job_id, current["revision"], current["url"]),
+            )
+            attempts = conn.execute(
+                """SELECT started_at,data_json FROM jobs_capture_attempts WHERE job_id=? AND url=?
+                   ORDER BY started_at::timestamptz DESC,insertion_order DESC""",
                 (job_id, current["url"]),
             )
-            failure = conn.execute(
-                """SELECT started_at FROM jobs_capture_attempts WHERE job_id=? AND url=?
-                   AND json_extract(data_json,'$.operation')='availability'
-                   ORDER BY julianday(started_at) DESC, rowid DESC LIMIT 1""",
-                (job_id, current["url"]),
-            ).fetchone()
-            last_attempt = {"at": failure["started_at"], "outcome": "failed"} if failure else None
-            last_confirmed = None
+            last_attempt = next((
+                {"at": at, "outcome": "failed"} for at, data in attempts
+                if json.loads(data).get("operation") == "availability"
+            ), None)
+            last_confirmed = latest = None
             for observed in observations:
-                outcome = observed["verdict"] or "unknown"
-                if last_attempt is None or datetime.fromisoformat(observed["observed_at"]) > datetime.fromisoformat(last_attempt["at"]):
+                provenance = json.loads(observed["provenance_json"])
+                availability = provenance.get("availability")
+                when = datetime.fromisoformat(observed["observed_at"])
+                identity = (when, observed["observation_id"])
+                if isinstance(availability, dict) and observed["posting_revision"] == current["revision"]:
+                    if latest is None or identity > latest[0]:
+                        latest = (identity, observed["observed_at"], availability)
+                if observed["observed_url"] != current["url"] or last_confirmed is not None:
+                    continue
+                # Profile edits, listing guesses and copied observations do
+                # not renew the verification time of the exact captured URL.
+                reported_at = None
+                if isinstance(availability, dict) and isinstance(availability.get("metadata"), dict):
+                    if availability["metadata"].get("requested_url") == observed["observed_url"]:
+                        timestamp = availability.get("observedAt")
+                        if isinstance(timestamp, str):
+                            try:
+                                reported_at = datetime.fromisoformat(timestamp)
+                                if reported_at.tzinfo is None:
+                                    reported_at = reported_at.replace(tzinfo=timezone.utc)
+                            except ValueError:
+                                pass
+                interpreted = (
+                    "availability" not in provenance and provenance.get("authority") == "source_bound_model"
+                    and isinstance(provenance.get("pageInterpretation"), dict)
+                    and observed["posting_observed_at"] == observed["observed_at"]
+                )
+                if reported_at != when and not interpreted:
+                    continue
+                outcome = availability.get("state") if isinstance(availability, dict) else None
+                if outcome is None:
+                    outcome = json.loads(observed["data_json"]).get("active_state")
+                outcome = outcome or "unknown"
+                if last_attempt is None or when > datetime.fromisoformat(last_attempt["at"]):
                     last_attempt = {"at": observed["observed_at"], "outcome": outcome}
                 if outcome != "unknown":
                     last_confirmed = {"at": observed["observed_at"], "state": outcome}
-                    break
             return {
                 "job_id": job_id,
                 "revision": current["revision"],
                 "active_state": current["active_state"],
                 "last_confirmed": last_confirmed,
                 "last_attempt": last_attempt,
-                "observation_id": row["observation_id"] if row else None,
-                "checked_at": row["observed_at"] if row else None,
-                "availability": availability,
+                "observation_id": latest[0][1] if latest else None,
+                "checked_at": latest[1] if latest else None,
+                "availability": latest[2] if latest else current.get("provenance", {}).get("availability"),
             }
 
     def create_delete_selection(self, job_ids=None, filters=None):
@@ -553,7 +607,7 @@ class SqliteJobsRepository:
                                 )
                                 raise AppError(code, message, 409, {"jobId": job_id}) from None
                             raise
-                    conn.execute("DELETE FROM jobs_operations WHERE json_extract(result_json,'$.job_id')=?", (job_id,))
+                    conn.execute("DELETE FROM jobs_operations WHERE (result_json::jsonb ->> 'job_id')=?", (job_id,))
                     conn.execute("DELETE FROM jobs_capture_attempts WHERE job_id=?", (job_id,))
                     conn.execute("DELETE FROM jobs_quarantine WHERE job_id=?", (job_id,))
                     conn.execute("DELETE FROM jobs_jobs WHERE job_id=?", (job_id,))
@@ -595,7 +649,7 @@ class SqliteJobsRepository:
         with self.database.transaction() as conn:
             attempt_id, now = str(uuid4()), utc_now()
             conn.execute(
-                "INSERT INTO jobs_capture_attempts VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO jobs_capture_attempts(attempt_id,job_id,url,started_at,finished_at,state,failure_code,data_json) VALUES(?,?,?,?,?,?,?,?)",
                 (
                     attempt_id,
                     job_id,

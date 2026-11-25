@@ -1,4 +1,4 @@
-"""SQLite Companies adapter and its atomic source/receipt publication boundary."""
+"""PostgreSQL Companies adapter and its atomic source/receipt publication boundary."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
 
 
-class SqliteCompanyUnitOfWork:
+class PostgresCompanyUnitOfWork:
     def __init__(self, connection, jobs, model, events):
         self._connection, self._jobs, self._model, self._events = connection, jobs, model, events
 
@@ -57,6 +57,20 @@ class SqliteCompanyUnitOfWork:
         return {"receipt_id": row["receipt_id"], "configuration_id": row["configuration_id"],
                 "sources": json.loads(row["sources_json"]), "result": json.loads(row["result_json"])}
 
+    def refresh_run(self, run_id):
+        row = self._connection.execute('SELECT * FROM companies_refresh_runs WHERE run_id=?', (run_id,)).fetchone()
+        return {'binding': json.loads(row['binding_json']), 'sources': json.loads(row['sources_json']),
+                'result': json.loads(row['result_json']) if row['result_json'] else None, 'error_code': row['error_code']} if row else None
+
+    def retain_refresh(self, run_id, binding, sources):
+        self._connection.execute('INSERT INTO companies_refresh_runs(run_id,binding_json,sources_json) VALUES (?,?,?)',
+                                 (run_id, _json(binding), _json(sources)))
+
+    def finish_refresh(self, run_id, *, result=None, error_code=None):
+        self._connection.execute('UPDATE companies_refresh_runs SET result_json=?,error_code=? WHERE run_id=? '
+                                 'AND result_json IS NULL AND error_code IS NULL',
+                                 (_json(result) if result is not None else None, error_code, run_id))
+
     def recent_linked_jobs(self, limit):
         return [row[0] for row in self._connection.execute(
             "SELECT l.job_id FROM companies_links l WHERE l.revision="
@@ -71,7 +85,7 @@ class SqliteCompanyUnitOfWork:
         self._connection.execute("INSERT INTO companies_links(job_id,company_id,payload_json) VALUES (?,?,?)", (job_id, company_id, _json(value)))
 
     def record_determination(self, fingerprint, company_id, receipt_id, configuration_id, sources, result):
-        self._connection.execute("INSERT OR IGNORE INTO companies_determinations VALUES(?,?,?,?,?,?)", (
+        self._connection.execute("INSERT INTO companies_determinations VALUES(?,?,?,?,?,?) ON CONFLICT(fingerprint) DO NOTHING", (
             fingerprint, company_id, receipt_id, configuration_id, _json(sources), _json(result),
         ))
 
@@ -100,17 +114,16 @@ class SqliteCompanyUnitOfWork:
             self._notify_job(link["companyId"], job_id)
 
 
-class SqliteCompanyHistory:
+class PostgresCompanyHistory:
     def __init__(self, database, jobs, model, events):
         self._database, self._jobs, self._model, self._events = database, jobs, model, events
 
     def _unit(self, connection):
-        return SqliteCompanyUnitOfWork(connection, self._jobs, self._model, self._events)
+        return PostgresCompanyUnitOfWork(connection, self._jobs, self._model, self._events)
 
     @contextmanager
     def read(self):
         with self._database.connect() as connection:
-            connection.execute("BEGIN")
             yield self._unit(connection)
 
     @contextmanager

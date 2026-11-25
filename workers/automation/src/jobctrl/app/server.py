@@ -26,6 +26,7 @@ def main():
     if not is_loopback(args.host) or not 1 <= args.port <= 65535:
         parser.error("The API must bind a loopback host and valid port.")
     os.environ["JOBCTRL_DIR"] = str(args.workspace.expanduser().resolve())
+    application = None
     try:
         application = create_application(args.workspace, enabled_features=args.features.split(",") if args.features else None)
         app = create_http_app(application, static_dir=args.static_dir, port=args.port)
@@ -34,6 +35,9 @@ def main():
     except AppError as error:
         print(f"{error.code}: {error.message}", file=sys.stderr)
         raise SystemExit(1) from None
+    finally:
+        if application is not None:
+            application.close()
 
 
 if __name__ == "__main__":
