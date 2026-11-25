@@ -92,7 +92,10 @@ test("a new posting demand keeps prior Fit and accepted PDF history until an exp
 
   const replacement = await app.restartWorker();
   expect(replacement.current).not.toBe(replacement.previous);
-  expect(await startRefresh(api, refresh, key)).toEqual(completedRun);
+  expect(await startRefresh(api, refresh, key)).toEqual({
+    runId: run.runId, status: "succeeded", workflowId: completedRun.workflowId,
+  });
+  expect(await json(api, "get", `/v1/action-runs/${run.runId}`)).toEqual(completedRun);
   expect((await json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending")).latest_operation).toEqual(operation);
   expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/action-runs?action=fit.refresh")).runs.map(row => row.runId)).toEqual([run.runId]);
   const retained = await getResume(api, resume.resume_id);

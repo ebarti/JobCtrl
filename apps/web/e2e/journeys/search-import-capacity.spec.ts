@@ -8,13 +8,15 @@ import { qualificationBatchDecision } from "./qualification-data.js";
 import { modelSources, typedExtraction } from "./requirements-data.js";
 
 test("Start search for 100 keeps Jobs current while a URL import waits for enrichment", async ({ api, app, page }, info) => {
-  test.setTimeout(180_000);
+  // Exercise all 100 independently durable assessments at ordinary worker and
+  // model limits, including their posting, extraction and qualification calls.
+  test.setTimeout(360_000);
   const { profile } = await createBaseline(api, {
     ...baseline, experience: { target_role: "Reliability Engineer", target_locations: "Madrid", target_work_models: "remote" },
   });
   const { sources } = await json<{ sources: { path?: string[]; source_id: string }[] }>(api, "get", "/v1/profile/sources");
   const educationId = sources.find((row) => row.path?.[1] === "education_entries")!.source_id;
-  const userSettings = await json<{ revision: number }>(api, "get", "/v1/settings");
+  const userSettings = await json<{ revision: number; workerActivitySlots: number; laneConcurrency: Record<string, number> }>(api, "get", "/v1/settings");
   await json(api, "patch", "/v1/settings", { expectedRevision: userSettings.revision, dailyBudgetUsd: 0 });
   const discoverySettings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
   await json(api, "patch", "/v1/discovery/settings", {
@@ -67,6 +69,7 @@ test("Start search for 100 keeps Jobs current while a URL import waits for enric
   await expect(start).toBeEnabled();
   const admitted = page.waitForResponse(response => response.request().method() === "POST" &&
     new URL(response.url()).pathname === "/v1/actions/discovery.search");
+  const searchStartedAt = Date.now();
   await start.click();
   const response = await admitted;
   expect(response.ok()).toBe(true);
@@ -109,6 +112,7 @@ test("Start search for 100 keeps Jobs current while a URL import waits for enric
     await form.locator("input").fill(importedPosition.url);
     const importAdmission = page.waitForResponse(response => response.request().method() === "POST" &&
       new URL(response.url()).pathname === "/v1/actions/jobs.capture_url");
+    const importStartedAt = Date.now();
     await form.getByRole("button", { name: "Import job", exact: true }).click();
     const importResponse = await importAdmission;
     expect(importResponse.ok()).toBe(true);
@@ -129,6 +133,7 @@ test("Start search for 100 keeps Jobs current while a URL import waits for enric
     await info.attach("queued-url-and-search", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
     respondProducer(searchLane, postings);
     const importModelCalls: string[] = [];
+    let importElapsedMs: number | undefined;
     let qualificationCalls = 0;
     while (qualificationCalls < positions.length || importModelCalls.length < 3) {
       const call = await app.external.next();
@@ -153,6 +158,7 @@ test("Start search for 100 keeps Jobs current while a URL import waits for enric
           importModelCalls.push(String(operation));
           if (operation === "description_quality") {
             await completed(api, importId);
+            importElapsedMs = Date.now() - importStartedAt;
             expect((await json(api, "get", "/v1/action-runs/" + runId))["status"]).toBe("running");
           }
         }
@@ -160,6 +166,7 @@ test("Start search for 100 keeps Jobs current while a URL import waits for enric
     }
     expect(importModelCalls).toEqual(["page_interpretation", "posting_extraction", "description_quality"]);
     const search = await completed(api, runId);
+    const searchElapsedMs = Date.now() - searchStartedAt;
     const result = search["result"] as { newJobIds: string[] };
     expect(result).toMatchObject({ newJobs: 100, preparation: { assessedJobs: 100, failedJobs: 0, skippedJobs: 0 } });
     expect(new Set(result.newJobIds)).toEqual(new Set(frozen.jobIds));
@@ -170,6 +177,16 @@ test("Start search for 100 keeps Jobs current while a URL import waits for enric
     expect(history.observations).toHaveLength(1);
     const jobs = await json<{ jobs: { job_id: string }[] }>(api, "get", "/v1/jobs?limit=150");
     expect(new Set(jobs.jobs.map((row) => row.job_id)).size).toBe(101);
+    const ranked = await json<{ rows: { job: { job_id: string }; scalars: { fit_score: number | null } }[] }>(
+      api, "get", "/v1/jobs/query?limit=100&sort=fit_score&direction=desc");
+    expect(new Set(ranked.rows.filter(row => row.scalars.fit_score === 10).map(row => row.job.job_id))).toEqual(new Set(frozen.jobIds));
+    const { llmSpend } = await json<{ llmSpend: { costUsd: number; activeCalls: number; unresolvedCalls: number } }>(api, "get", "/v1/health");
+    expect(llmSpend).toMatchObject({ activeCalls: 0, unresolvedCalls: 0 });
+    await info.attach("scale-result", { contentType: "application/json", body: JSON.stringify({
+      searchElapsedMs, importElapsedMs, workerActivitySlots: userSettings.workerActivitySlots, laneConcurrency: userSettings.laneConcurrency,
+      scoredJobs: ranked.rows.length, manualImports: 1, controlledModelCalls: app.external.calls.filter(call => call.path === "/model").length,
+      controlledCostUsd: llmSpend.costUsd, unresolvedCalls: llmSpend.unresolvedCalls,
+    }) });
     expect(browserWrites.filter((path) => path === "/v1/actions/discovery.search")).toHaveLength(1);
     expect(browserWrites.filter((path) => path === "/v1/actions/jobs.capture_url")).toHaveLength(1);
     expect(browserWrites).not.toContain("/v1/jobs/capture");
