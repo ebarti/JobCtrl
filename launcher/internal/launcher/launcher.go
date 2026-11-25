@@ -49,7 +49,7 @@ const (
 	startupTimeout           = 30 * time.Second
 	postgresProbeTimeout     = 3 * time.Second
 	postgresProbeOutputLimit = 16 << 10
-	// Detached start spans two sequential supervisor health phases: Temporal,
+	// Detached start spans database bootstrap, optional import,
 	// then API/worker. The parent must not kill a supervisor that is still
 	// within those valid phase deadlines.
 	detachedStartupTimeout = 2 * time.Hour // Initial verified imports can exceed ordinary service startup deadlines.
@@ -85,8 +85,8 @@ type runtimeManifest struct {
 	SchemaVersion    int `json:"schemaVersion"`
 	LauncherProtocol int `json:"launcherProtocol"`
 	Ports            struct {
-		TemporalGRPC int `json:"temporalGrpc"`
-		TemporalUI   int `json:"temporalUi"`
+		TemporalGRPC int `json:"temporalGrpc,omitempty"`
+		TemporalUI   int `json:"temporalUi,omitempty"`
 		API          int `json:"api"`
 	} `json:"ports"`
 	Components []commandSpec `json:"components"`
@@ -256,8 +256,8 @@ type instanceState struct {
 }
 
 type runtimePorts struct {
-	TemporalGRPC int `json:"temporalGrpc"`
-	TemporalUI   int `json:"temporalUi"`
+	TemporalGRPC int `json:"temporalGrpc,omitempty"`
+	TemporalUI   int `json:"temporalUi,omitempty"`
 	API          int `json:"api"`
 }
 
@@ -418,7 +418,7 @@ func transitionRecoveryUnavailable(journal release.Journal) bool {
 }
 
 // Control/read-only commands run outside the runtime's execution boundary.
-// Temporal status probes acquire their own short-lived durable OS scope.
+// PostgreSQL status probes acquire their own short-lived durable OS scope.
 // Every public entry that can leave runtime children gets a durable OS scope.
 func commandRequiresOwnedExecution(args []string) bool {
 	if len(args) == 0 {

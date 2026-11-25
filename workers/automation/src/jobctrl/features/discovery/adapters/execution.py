@@ -6,21 +6,18 @@ import asyncio
 
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from functools import partial
 from math import ceil
 from pathlib import Path
 import threading
-from time import monotonic
 from urllib.parse import urlsplit
 
 from jobctrl.app.errors import AppError
 from jobctrl.features.discovery.adapters.board_diagnostics import board_access_error, board_rate_limit_error
-from jobctrl.features.discovery.domain import fingerprint
+from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, fingerprint
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY
 from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
 from jobctrl.features.discovery.adapters.checkpoints import ProviderCheckpointStore
 
-LINKEDIN_REQUEST_INTERVAL_SECONDS = 4.0
 
 
 def _retry_after_seconds(value, received_at):
@@ -38,53 +35,47 @@ def _retry_after_seconds(value, received_at):
     return None
 
 
-class _LinkedInRequests:
-    def __init__(self, repository, lease, stop):
+class _BoardRequests:
+    def __init__(self, repository, lease, unit_id, board, stop):
         self.repository = repository
         self.lease = lease
+        self.unit_id = unit_id
+        self.board = board
         self.stop = stop
-        self.started = monotonic()
-        self.counts = {"listing": 0, "detail": 0, "other": 0}
+        self.interval = LINKEDIN_REQUEST_INTERVAL_SECONDS if board == "linkedin" else 0
         self.limited = False
         self.advertised = False
+        self.transient_delay = None
 
-    def send(self, unit_id, send_request, request, *args, **kwargs):
+    def send(self, send_request, *args, **kwargs):
         from jobstreaming.exception import RateLimitError, StreamCancelledError
         while not self.stop.is_set():
-            slot = self.repository.reserve_board_request(self.lease, "linkedin", LINKEDIN_REQUEST_INTERVAL_SECONDS)
+            slot = self.repository.reserve_board_request(self.lease, self.board, self.interval)
             if slot["cooldown"] > 0:
-                self.limited = True
-                self.advertised = True
+                self.limited = self.advertised = True
                 raise RateLimitError("The source is cooling down.", retry_after=slot["cooldown"])
             if not slot["pace"]:
-                response = send_request(request, *args, **kwargs)
-                self.observe(unit_id, response)
+                response = send_request(*args, **kwargs)
+                self.observe(response)
                 return response
             self.stop.wait(slot["pace"])
         raise StreamCancelledError("Discovery stopped.")
 
-    def observe(self, unit_id, response):
-        # Only the endpoint category leaves the transport.
-        path = urlsplit(response.url).path
-        if path.endswith("/jobs-guest/jobs/api/seeMoreJobPostings/search"):
-            phase = "listing"
-        elif "/jobs/view/" in path:
-            phase = "detail"
-        else:
-            phase = "other"
-        received = datetime.now(timezone.utc) if response.status_code == 429 else None
-        self.counts[phase] += 1
-        if received is None:
-            return
-        elapsed_ms = round((monotonic() - self.started) * 1000)
-        delay = _retry_after_seconds(response.headers.get("Retry-After"), received)
-        self.limited = True
-        self.advertised = delay is not None
-        self.repository.record_rate_limit_response(self.lease, {
-            "board": "linkedin", "unitId": unit_id, "phase": phase, "httpStatus": 429,
-            "leaseEpoch": self.lease["epoch"], "responses": dict(self.counts), "elapsedMs": elapsed_ms,
-            "receivedAt": received.isoformat(timespec="milliseconds"), "retryAfterSeconds": delay,
-        })
+    def observe(self, response):
+        path = urlsplit(getattr(response, "url", "") or "").path
+        phase = "listing"
+        if self.board == "linkedin":
+            phase = ("listing" if path.endswith("/jobs-guest/jobs/api/seeMoreJobPostings/search")
+                     else "detail" if "/jobs/view/" in path else "other")
+        observed = datetime.now(timezone.utc)
+        delay = _retry_after_seconds(response.headers.get("Retry-After"), observed)
+        if response.status_code == 429:
+            self.limited = True
+            self.advertised = delay is not None and delay > 0
+        elif response.status_code in {408, 425} or 500 <= response.status_code < 600:
+            self.transient_delay = delay
+        self.repository.provider_response(self.lease, self.board, self.unit_id, phase,
+                                          response.status_code, observed, delay, self.interval)
 
 
 class DiscoveryExecutionAdapter:
@@ -125,10 +116,11 @@ class DiscoveryExecutionAdapter:
         stop = self._signals[key]
         gateway = JobStreamingGateway()
         registry = controlled_registry(self.workspace)
-        linkedin = None
-        if "linkedin" in spec.sites:
-            linkedin = _LinkedInRequests(self.repository, lease, stop)
-            registry = gateway.configure_linkedin_transport(registry, partial(linkedin.send, unit["unit_id"]))
+        transports = {}
+        for site in spec.sites:
+            observer = _BoardRequests(self.repository, lease, unit["unit_id"], site, stop)
+            transports[site] = observer
+            registry = gateway.configure_transport(registry, site, observer)
         recorded = dict((previous or {}).get("result") or {})
         pending = self.repository.pending_postings(lease, unit)
         try:
@@ -149,19 +141,27 @@ class DiscoveryExecutionAdapter:
         except JobStreamingError as error:
             if context.cancelled() or stop.is_set():
                 raise AppError("action_cancelled", "Discovery was cancelled.", 409) from None
+            board = getattr(error, "board", unit["sites"][0])
+            transport = transports[board]
+            if error.code.value == "transient_network" and recorded.get("networkRetries", 0) < 2:
+                count = recorded.get("networkRetries", 0) + 1
+                recorded["networkRetries"] = count
+                delay = max(5 * 2 ** (count - 1), transport.transient_delay or 0, error.retry_after or 0)
+                self.repository.defer_transient(lease, unit, recorded, board, delay)
+                return True
             if error.code.value != "rate_limited":
                 raise AppError("discovery_provider_" + error.code.value, "The search source could not complete the request.", 502) from None
-            board = unit["sites"][0]
-            if linkedin and linkedin.limited:
-                advertised = linkedin.advertised
+            if transport.limited:
+                advertised = transport.advertised
             else:
-                advertised = error.retry_after is not None
+                advertised = bool(error.retry_after)
                 self.repository.record_rate_limit_response(lease, {"board": board, "unitId": unit["unit_id"],
                     "phase": "acquisition", "retryAfterSeconds": error.retry_after, "leaseEpoch": lease["epoch"]})
             if advertised:
                 self.repository.save_unit(lease, unit, status="waiting_for_source", result=recorded)
                 return True
             raise board_rate_limit_error() from None
+        recorded.pop("networkRetries", None)
         reasons = recorded.get("sourceTerminations", {})
         if reasons:
             for site, reason in reasons.items():
@@ -176,7 +176,7 @@ class DiscoveryExecutionAdapter:
 
     def _receive_page(self, context, lease, unit, spec, registry, gateway, stop, recorded):
         from jobstreaming import ErrorEvent, JobEvent, ProgressEvent, SearchCompleteEvent, SiteCompleteEvent
-        from jobstreaming.exception import RateLimitError
+        from jobstreaming.exception import RateLimitError, TransientNetworkError
 
         store = ProviderCheckpointStore(self.repository, lease, unit["unit_id"])
         page_reviewed = threading.Event()
@@ -200,10 +200,12 @@ class DiscoveryExecutionAdapter:
                 if isinstance(event, ErrorEvent):
                     if event.reset_checkpoint:
                         raise AppError("discovery_checkpoint_incompatible", "The provider requires an explicit cursor reset.", 409)
-                    if event.code.value == "rate_limited":
-                        # An error can carry the cursor for a prefetched page. Keep
-                        # the last acknowledged page, including its pending jobs.
-                        raise RateLimitError("A search source requested a cooldown.", retry_after=event.retry_after)
+                    if event.code.value in {"rate_limited", "transient_network"}:
+                        # Keep the last acknowledged page and its pending jobs.
+                        kind = RateLimitError if event.code.value == "rate_limited" else TransientNetworkError
+                        error = kind("A search source could not complete this page.", retry_after=event.retry_after)
+                        error.board = event.site.value
+                        raise error
                     if event.code.value == "authentication_configuration":
                         raise board_access_error(event)
                     raise AppError("discovery_provider_" + event.code.value, "The source could not complete its search.", 502)
@@ -219,7 +221,9 @@ class DiscoveryExecutionAdapter:
                     with self.repository.database.transaction() as conn:
                         self.repository.save_unit(lease, unit, status="page_received", result=recorded, connection=conn)
                         acknowledge(conn)
-                    if event.progress.has_more is not False:
+                    progress = event.progress
+                    if (progress.has_more is not False and progress.completed_units < gateway.build_request(spec).max_pages
+                            and (spec.results_per_site is None or progress.jobs_emitted < spec.results_per_site)):
                         return
                     page_reviewed.set()
                     continue

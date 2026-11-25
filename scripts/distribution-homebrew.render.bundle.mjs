@@ -9305,6 +9305,7 @@ var POSTGRES_RUNTIME_EXECUTABLES = [
   "psql"
 ];
 var PYTHON_RUNTIME_NON_RUNTIME_PATHS = /* @__PURE__ */ new Set([
+  "dbos/_templates",
   "email/architecture.rst",
   "google/protobuf/testdata",
   "numpy/ma/README.rst",
@@ -9767,10 +9768,24 @@ async function normalizeInstalledPythonMetadata(sitePackagesRoots) {
       const recordPath = path3.join(distInfoRoot, "RECORD");
       if (!await exists(recordPath)) continue;
       const rows = (await readFile3(recordPath, "utf8")).split(/\r?\n/).filter(Boolean);
+      let metadataRecord = null;
+      const metadataRelativePath = path3.posix.join(distInfo.name, "METADATA");
+      if (distInfo.name.startsWith("croniter-")) {
+        const metadataPath = path3.join(sitePackages, metadataRelativePath);
+        const metadata = await readFile3(metadataPath, "utf8");
+        const headers = metadata.split(/\r?\n\r?\n/, 1)[0];
+        invariant3(/^Name: croniter$/m.test(headers), "unexpected metadata in the croniter dist-info directory");
+        const contents = Buffer.from(`${headers}
+
+`);
+        await writeFile2(metadataPath, contents, { mode: 420 });
+        const digest = createHash3("sha256").update(contents).digest("base64url");
+        metadataRecord = `${metadataRelativePath},sha256=${digest},${contents.length}`;
+      }
       const canonicalRows = rows.filter((row) => {
         const installedPath = pythonRecordPath(row);
         return !installedPath.startsWith("bin/") && !installedPath.endsWith("/direct_url.json") && !installedPath.endsWith("/uv_cache.json") && !isKnownPythonNonRuntimePath(installedPath);
-      });
+      }).map((row) => metadataRecord && pythonRecordPath(row) === metadataRelativePath ? metadataRecord : row);
       await writeFile2(recordPath, `${canonicalRows.join("\n")}
 `, { mode: 420 });
       await chmod2(recordPath, 420);

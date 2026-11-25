@@ -2,7 +2,9 @@ package launcher
 
 import (
 	"archive/tar"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -92,13 +94,21 @@ func archivePostgres(data, dest string) error {
 	}
 	return output.Sync()
 }
-func unpackPostgres(archive, data string) error {
+func unpackPostgres(archive, data string, pair databasePair) error {
+	var expected databaseFile
+	for _, file := range pair.Files {
+		if file.Name == clusterArchive {
+			expected = file
+		}
+	}
 	file, err := os.OpenFile(archive, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	tr := tar.NewReader(file)
+	digest := sha256.New()
+	stream := io.TeeReader(file, digest)
+	tr := tar.NewReader(stream)
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -135,6 +145,13 @@ func unpackPostgres(archive, data string) error {
 		default:
 			return errors.New("PostgreSQL backup has unsupported external or special files")
 		}
+	}
+	if _, err := io.Copy(io.Discard, stream); err != nil {
+		return err
+	}
+	stat, err := file.Stat()
+	if err != nil || stat.Size() != expected.SizeBytes || hex.EncodeToString(digest.Sum(nil)) != expected.SHA256 {
+		return errors.New("staged PostgreSQL backup does not match verified checksum")
 	}
 	if err := filepath.Walk(data, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -274,7 +291,7 @@ var pgEffectDigest = regexp.MustCompile(`jobctrl_effects_([a-f0-9]{64})`)
 func postgresEffects(ctx launchContext, data string) (string, error) {
 	// A restored approval or an already consumed user override must not become
 	// available again. Preserve these records even when the provider settled.
-	relations := []string{"app_model_calls", "applications_decisions", "applications_runs", "applications_repeat_overrides", "applications_submit_intents", "applications_submit_receipts", "outreach_action_receipts"}
+	relations := []string{"app_model_calls", "applications_state", "applications_payloads", "applications_decisions", "applications_runs", "applications_repeat_overrides", "applications_submit_intents", "applications_submit_receipts", "extension_browser_tasks", "extension_capture_receipts", "outreach_action_receipts"}
 	parts := make([]string, 0, len(relations))
 	for _, name := range relations {
 		parts = append(parts, "SELECT '"+name+":' || encode(sha256(convert_to(row_to_json(t)::text,'UTF8')),'hex') AS hash FROM public."+name+" t")
@@ -285,6 +302,8 @@ func postgresEffects(ctx launchContext, data string) (string, error) {
    AND (status IN ('running','uncertain') OR cost_usd IS NULL OR input_tokens IS NULL OR output_tokens IS NULL OR cost_source IS NULL))
  AND NOT EXISTS (SELECT 1 FROM public.applications_submit_intents i LEFT JOIN public.applications_submit_receipts r USING(tenant_id,intent_id) WHERE r.intent_id IS NULL)
  AND NOT EXISTS (SELECT 1 FROM public.app_action_runs WHERE status IN ('pending','queued','running','start_failed'))
+ AND NOT EXISTS (SELECT 1 FROM public.extension_browser_tasks WHERE state NOT IN ('succeeded','failed'))
+ AND NOT EXISTS (SELECT 1 FROM public.extension_capture_receipts WHERE state='importing')
  AND NOT EXISTS (SELECT 1 FROM dbos.workflow_status WHERE status NOT IN ('SUCCESS','ERROR','CANCELLED','MAX_RECOVERY_ATTEMPTS_EXCEEDED'));`
 	sql = strings.Join(strings.Fields(sql), " ")
 	var output string
@@ -339,7 +358,7 @@ func preflightPostgresRestore(ctx launchContext, pair databasePair) error {
 	}
 	defer os.RemoveAll(temp)
 	archive := filepath.Join(ctx.Instance.StateDir, "backups", pair.ID, clusterArchive)
-	if err := unpackPostgres(archive, temp); err != nil {
+	if err := unpackPostgres(archive, temp, pair); err != nil {
 		return err
 	}
 	if err := verifyPostgresFiles(ctx, temp); err != nil {
@@ -390,7 +409,7 @@ func restorePostgres(ctx launchContext, pair databasePair) error {
 		return err
 	}
 	// Keep the previous complete generation. The only authority change is an atomic pointer publication.
-	if err := unpackPostgres(filepath.Join(ctx.Instance.StateDir, "backups", pair.ID, clusterArchive), data); err != nil {
+	if err := unpackPostgres(filepath.Join(ctx.Instance.StateDir, "backups", pair.ID, clusterArchive), data, pair); err != nil {
 		return err
 	}
 	if err := verifyPostgresPair(ctx, pair); err != nil {

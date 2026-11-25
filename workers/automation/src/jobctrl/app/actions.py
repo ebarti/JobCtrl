@@ -15,6 +15,7 @@ from dbos import error as dbos_error
 from sqlalchemy.exc import SQLAlchemyError
 
 from jobctrl.app.contracts import ActionContext, Feature, Runtime
+from jobctrl.app.credentials import read_process_identity
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 from jobctrl.app.events import now
 from jobctrl.app.execution import ExecutionCustody
@@ -494,13 +495,12 @@ class Application:
             age = (datetime.now(timezone.utc) - datetime.fromisoformat(row["heartbeat_at"])).total_seconds()
             if age > 15 or age < -5:
                 continue
-            custody = ExecutionCustody(self.runtime.workspace, "dbos-executor-" + queue)
-            try:
-                if not custody.held_by_registration(row["worker_id"]):
-                    continue
-            finally:
-                custody.close()
-            if json.loads(row["identity_json"]) != self.identity:
+            registration = json.loads(row["identity_json"])
+            birth = registration.pop("processBirth", None)
+            process = read_process_identity(row["pid"])
+            if process.get("state") != "alive" or (birth and process.get("identity") != birth):
+                continue
+            if not birth or registration != self.identity:
                 return {**unavailable, "reason": "worker_incompatible",
                         "message": "Restart JobCtrl so the API and worker use the same workspace and build."}
             if action is not None and action not in json.loads(row["actions_json"]):

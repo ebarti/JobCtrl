@@ -56,7 +56,8 @@ fi
 tar -xzf "$archive" -C "$work"
 source_dir="$work/postgresql-$version"
 
-case $(uname -s) in
+platform=$(uname -s)
+case "$platform" in
   Darwin)
     cc=/usr/bin/clang
     export MACOSX_DEPLOYMENT_TARGET=15.0
@@ -119,6 +120,19 @@ cp -R "$installed/share" "$runtime/share"
 install -m 0644 "$source_dir/COPYRIGHT" "$runtime/COPYRIGHT"
 install -m 0644 "$source_dir/src/backend/regex/COPYRIGHT" "$runtime/COPYRIGHT.regex"
 install -m 0644 "$repo_root/packaging/distribution/licenses/Snowball-BSD-3-Clause.txt" "$runtime/Snowball-BSD-3-Clause.txt"
+
+if [[ $platform == Darwin ]]; then
+  # install-strip uses a temporary basename containing a process ID. Use
+  # stable ad hoc identifiers before the protected release signing stage.
+  for image in "$runtime"/bin/* "$runtime"/lib/*.dylib; do
+    [[ -f "$image" && ! -L "$image" ]] || continue
+    if ! signature=$(/usr/bin/codesign --force --sign - --timestamp=none \
+      --identifier "org.postgresql.${image##*/}" "$image" 2>&1); then
+      printf '%s\n' "$signature" >&2
+      exit 1
+    fi
+  done
+fi
 
 for tool in postgres initdb pg_ctl pg_isready createdb pg_dump pg_restore psql; do
   if [[ $("$runtime/bin/$tool" --version) != "$tool (PostgreSQL) $version" ]]; then

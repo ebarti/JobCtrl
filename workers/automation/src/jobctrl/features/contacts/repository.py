@@ -71,7 +71,10 @@ class _Session:
     def retain_page(self, run_id, index, page):
         self.connection.execute('INSERT INTO contacts_research_pages VALUES (?,?,?) ON CONFLICT DO NOTHING',
                                 (run_id, index, json.dumps(page, ensure_ascii=False)))
-        return self.captured_page(run_id, index)
+        record = self.captured_page(run_id, index)
+        if record is None:
+            raise RuntimeError('The research source snapshot could not be retained.')
+        return record
 
     def determination(self, record):
         self.connection.execute("INSERT INTO contacts_model_records VALUES(?,?,?,?) ON CONFLICT(determination_id) DO NOTHING",

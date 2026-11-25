@@ -162,10 +162,10 @@ async function liveAuthority(){
  const files=['postgres/active.json','.jobctrl-postgres-identity'].map(name=>path.join(workspace,name)).concat([path.join(runtime,'active.json'),path.join(runtime,'transition.json'),selector]);
  return Object.fromEntries(await Promise.all(files.map(async name=>[name,digest(await readFile(name))])));
 }
-async function refuseRollback(target,label){
+async function refuseRollback(target,label,reason){
  const before=await liveAuthority();
  const result=await run(selector,['rollback','--to',target.buildId],{acceptFailure:true});
- assert.notEqual(result.code,0,label);assert.deepEqual(await liveAuthority(),before,label);
+ assert.notEqual(result.code,0,label);if(reason)assert.match(result.stderr,reason);assert.deepEqual(await liveAuthority(),before,label);
  assert(await alive(control.pid),'Refusal affected unrelated process control');
 }
 
@@ -191,6 +191,35 @@ print(file)`,workspace,socket]);
  return result.stdout.trim();
 }
 
+async function raceRollbackWithSettledCall(first){
+ await put(path.join(root,'.jobctrl-release-qa'),'jobctrl-release-qa-v1\n',0o600);
+ const before=await liveAuthority();
+ const oldWorker=(await api('/v1/health')).worker.pid;
+ const pause='rollback_prechecked';
+ const child=spawn(selector,['rollback','--to',first.buildId],{
+  env:{...env,TMPDIR:path.dirname(taskParent),JOBCTRL_RELEASE_QA_ROOT:root,JOBCTRL_RELEASE_QA_PAUSE:pause},
+  stdio:['ignore','ignore','pipe'],
+ });
+ let diagnostics='';
+ const ready=new Promise((resolve,reject)=>{
+  child.stderr.on('data',bytes=>{diagnostics+=bytes;if(diagnostics.includes('jobctrl-release-qa-checkpoint:'+pause))resolve();});
+  child.once('exit',()=>reject(Error('Missing guarded checkpoint: '+diagnostics)));child.once('error',reject);
+ });
+ const ended=new Promise((resolve,reject)=>{child.once('exit',resolve);child.once('error',reject);});
+ const timeout=setTimeout(()=>{child.kill('SIGCONT');child.kill('SIGTERM');},300000);
+ try{
+  await ready;
+  await workspaceSql("INSERT INTO app_model_calls(receipt_id,operation,provider,model,lane,prompt_version,input_fingerprint,created_at,status,owner_pid,provider_started,input_tokens,output_tokens,cost_usd,cost_source) VALUES('qa-late','native.qa','synthetic','synthetic','interactive','1','hash','2026-11-25T00:00:00Z','completed',0,1,10,10,0.2,'usage')");
+  child.kill('SIGCONT');
+  assert.notEqual(await ended,0);assert.match(diagnostics,/revert approvals, submission or provider receipts/);
+  assert.deepEqual(await liveAuthority(),before);
+  const restored=await api('/v1/health');assert.equal(restored.worker.status,'healthy');assert.notEqual(restored.worker.pid,oldWorker);
+  const kept=await workspaceSql("SELECT count(*) FROM app_model_calls WHERE receipt_id='qa-late'");assert.equal(kept.stdout.trim(),'1');
+  await workspaceSql("DELETE FROM app_model_calls WHERE receipt_id='qa-late'");
+ }finally{clearTimeout(timeout);if(child.exitCode===null && child.signalCode===null){child.kill('SIGCONT');child.kill('SIGTERM');await ended;}}
+ passed('settlement-between-precheck-and-drain-restarts-previous-release-and-preserves-receipt');
+}
+
 async function lifecycle(first,second){
  const artifact=await acceptedArtifactFixture();
  await run(selector,['backup']);
@@ -207,7 +236,7 @@ async function lifecycle(first,second){
  await workspaceSql("INSERT INTO app_action_runs(run_id,action,request_id,input_hash,payload_json,status,workflow_id,created_at,updated_at) VALUES('qa-incompatible','removed.synthetic-action','qa-request','hash','{}','pending','qa-workflow','2026-11-25T00:00:00Z','2026-11-25T00:00:00Z')");
  try{
   const refusal=await run(selector,['update','--to',second.buildId],{acceptFailure:true});
-  assert.notEqual(refusal.code,0);
+  assert.notEqual(refusal.code,0);assert.match(refusal.stderr,/cannot resume all pending workflows/);
   assert.deepEqual(await liveAuthority(),stateBefore);
   assert.equal((await api('/v1/health')).worker.pid,workerBefore);
  }finally{await workspaceSql("DELETE FROM app_action_runs WHERE run_id='qa-incompatible'");}
@@ -220,10 +249,11 @@ async function lifecycle(first,second){
  await workspaceSql("INSERT INTO app_model_calls(receipt_id,operation,provider,model,lane,prompt_version,input_fingerprint,created_at,status,owner_pid,provider_started,input_tokens,output_tokens,cost_usd,cost_source) VALUES('qa-settled','native.qa','synthetic','synthetic','interactive','1','hash','2026-11-25T00:00:00Z','completed',0,1,10,10,0.1,'usage')");
  const runningWorker=(await api('/v1/health')).worker.pid;
  try{
-  await refuseRollback(first,'settled charged call after retained backup');
+  await refuseRollback(first,'settled charged call after retained backup',/revert approvals, submission or provider receipts/);
   assert.equal((await api('/v1/health')).worker.pid,runningWorker);
  }finally{await workspaceSql("DELETE FROM app_model_calls WHERE receipt_id='qa-settled'");}
  passed('settled-charge-since-backup-refuses-rollback-while-current-release-serves');
+ await raceRollbackWithSettledCall(first);
  await stop();
  const completed=await json(path.join(runtime,'transition.json'));
  const pairPath=path.join(workspace,'backups',completed.backupId,'pair.json');
@@ -239,9 +269,9 @@ async function lifecycle(first,second){
  const retained=artifact+'.qa-preserved';
  await rename(artifact,retained);
  try{
-  await refuseRollback(first,'retired accepted PDF');
+  await refuseRollback(first,'retired accepted PDF',/missing, changed or unverified resume artifacts/);
   await cp(retained,artifact);
-  await refuseRollback(first,'replaced PDF inode with identical bytes');
+  await refuseRollback(first,'replaced PDF inode with identical bytes',/missing, changed or unverified resume artifacts/);
  }finally{
   await rm(artifact,{force:true});
   await rename(retained,artifact);

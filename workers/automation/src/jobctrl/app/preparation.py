@@ -445,6 +445,10 @@ class PreparationService:
             if inputs.pop("_defer_source_rate_limit", False):
                 raise AppError("posting_check_deferred_source_rate_limited",
                                "LinkedIn throttled this search. Check the saved posting manually later.", 409)
+            if request.get("_acquisition_run_id") or request.get("search_retry"):
+                posting = self.jobs.snapshot(job_id)
+                if posting["source_id"] == "jobstreaming:linkedin":
+                    await self.discovery.reserve_linkedin_detail(cancelled)
             value = await self.jobs.refresh(job_id, **inputs, receipt_key=op, cancelled=cancelled)
             return {"revision": value["revision"]}
         if stage == "role_analysis":

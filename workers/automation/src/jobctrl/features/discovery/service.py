@@ -8,7 +8,7 @@ from contextlib import nullcontext, suppress
 
 from jobctrl.app.errors import AppError, ConflictError
 from jobctrl.app.model_capacity import wait_for_model_capacity
-from jobctrl.features.discovery.domain import SOURCE_FETCH_POLICY, fingerprint, now, search_units, validate_settings
+from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, SOURCE_FETCH_POLICY, fingerprint, now, search_units, validate_settings
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY, match_role_targets, posting_role_evidence, read_role_decision, role_binding, role_target_sources
 from jobctrl.features.discovery.query_fairness import FAIR_QUERY_SCHEDULING, BoardQueryTurn, query_allowances
 from jobctrl.features.discovery.remote_search import validate_remote_search_scope
@@ -351,6 +351,18 @@ class DiscoveryService:
 
     def board_cooling_down(self, board):
         return self.repository.cooldown(board) > 0
+
+    async def reserve_linkedin_detail(self, cancelled):
+        """A search assessment using the public posting URL shares board pacing."""
+        while not cancelled():
+            slot = self.repository.reserve_board_request(None, "linkedin", LINKEDIN_REQUEST_INTERVAL_SECONDS)
+            if slot["cooldown"]:
+                raise AppError("posting_check_deferred_source_rate_limited",
+                               "LinkedIn paused posting checks. Retry this job after the source is available.", 409)
+            if not slot["pace"]:
+                return
+            await asyncio.sleep(min(1, slot["pace"]))
+        raise asyncio.CancelledError()
 
     def finalize(self, run_id, status, error_code, connection):
         if status in {"cancelled","failed"}:
