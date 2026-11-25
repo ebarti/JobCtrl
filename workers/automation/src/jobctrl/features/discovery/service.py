@@ -34,7 +34,7 @@ class DiscoveryService:
     ):
         self.repository, self.jobs, self.model = repository, jobs, model
         self.profile, self.execution = profile, execution
-        self.targets = TargetPlanner(repository, profile, model)
+        self.targets = TargetPlanner(repository, profile)
 
     def get_settings(self):
         return self.repository.read_settings()

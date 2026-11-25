@@ -143,6 +143,11 @@ Profile revision and the database incarnation used to read its preferences.
 
 `GET /v1/discovery/sources` returns boards from the installed JobStreaming registry and their local state. Change an existing board with `PATCH /v1/discovery/sources/{source_id}/state` and its `expectedRevision`. A preview reads saved observations. Automatic searches run exclusively through JobStreaming. Jobs independently owns the durable `jobs.capture_url` action for a supplied posting URL.
 
+New saved searches use the exact role titles and location/work-arrangement
+filters from the pinned Profile revision. `discovery.refresh_targets` records
+those literal inputs for inspection. Role matching uses the saved preferences
+when a posting is returned.
+
 `GET /v1/discovery/settings` defaults to `boards: ["linkedin"]` when a workspace
 has no saved board selection. Saved selections and explicit per-run overrides
 can include Indeed and ZipRecruiter.
@@ -158,6 +163,9 @@ failure in `payload.sourceFailure` before the SDK acknowledges the event.
 SDK board rate limits use `discovery_provider_rate_limited` and set
 `diagnostic` to `rate_limited` in the warning and run result. A terminal board
 rate limit stops that board's remaining query and location units for the run.
+LinkedIn listing and detail requests share four-second pacing in each run.
+A LinkedIn HTTP 429 with a missing, unusable or over-cap `Retry-After` also
+prevents queued detail requests from sending.
 The run list also explains rate limits from historical records that stored this
 code with a generic message.
 Historical action receipts and already-published events retain their original fields.

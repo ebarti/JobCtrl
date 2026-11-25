@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
+from concurrent.futures import CancelledError
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from functools import partial
@@ -19,8 +20,10 @@ from jobctrl.features.discovery.adapters.board_diagnostics import board_access_e
 from jobctrl.features.discovery.domain import fingerprint
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY
 from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
+from jobctrl.network.rate_limiter import HostRateLimiter
 
 logger = logging.getLogger(__name__)
+LINKEDIN_REQUEST_INTERVAL_SECONDS = 4.0
 
 
 def _retry_after_seconds(value, received_at):
@@ -38,17 +41,44 @@ def _retry_after_seconds(value, received_at):
     return None
 
 
-class _LinkedInResponses:
-    def __init__(self, repository, lease):
+class _LinkedInRequests:
+    def __init__(self, repository, lease, stop):
+        from jobstreaming.exception import MAX_RETRY_AFTER_SECONDS
+
         self.repository = repository
         self.lease = lease
+        self.stop = stop
         self.started = monotonic()
-        self.lock = threading.Lock()
+        self.pacing = HostRateLimiter(max_retry_after_seconds=MAX_RETRY_AFTER_SECONDS)
+        self.deferred = threading.Event()
         self.counts = {"listing": 0, "detail": 0, "other": 0}
 
-    def observe(self, unit_id, response, **_):
-        # Requests calls this for each response, including attempts the SDK
-        # later recovers. Only the endpoint category leaves the transport.
+    def send(self, unit_id, send_request, request, *args, **kwargs):
+        from jobstreaming.exception import RateLimitError, StreamCancelledError, parse_retry_after
+
+        if self.deferred.is_set():
+            raise RateLimitError("LinkedIn deferred this search.")
+        try:
+            with self.pacing.slot("linkedin", min_interval_seconds=LINKEDIN_REQUEST_INTERVAL_SECONDS,
+                                  max_concurrency=1, cancel_event=self.stop):
+                if self.deferred.is_set():
+                    raise RateLimitError("LinkedIn deferred this search.")
+                response = send_request(request, *args, **kwargs)
+                self.observe(unit_id, response)
+                if response.status_code == 429:
+                    retry_after = parse_retry_after(response.headers.get("Retry-After"))
+                    # A bare or over-cap 429 is terminal in the SDK. Stop queued
+                    # detail requests as well, before the stream error is consumed.
+                    if retry_after is None or retry_after > self.pacing.max_retry_after_seconds:
+                        self.deferred.set()
+                    else:
+                        self.pacing.note_retry_after("linkedin", retry_after)
+                return response
+        except CancelledError:
+            raise StreamCancelledError("Discovery stopped.") from None
+
+    def observe(self, unit_id, response):
+        # Only the endpoint category leaves the transport.
         path = urlsplit(response.url).path
         if path.endswith("/jobs-guest/jobs/api/seeMoreJobPostings/search"):
             phase = "listing"
@@ -57,16 +87,14 @@ class _LinkedInResponses:
         else:
             phase = "other"
         received = datetime.now(timezone.utc) if response.status_code == 429 else None
-        with self.lock:
-            self.counts[phase] += 1
-            if received is None:
-                return
-            counts = dict(self.counts)
-            elapsed_ms = round((monotonic() - self.started) * 1000)
+        self.counts[phase] += 1
+        if received is None:
+            return
+        elapsed_ms = round((monotonic() - self.started) * 1000)
         try:
             self.repository.record_rate_limit_response(self.lease, {
                 "board": "linkedin", "unitId": unit_id, "phase": phase, "httpStatus": 429,
-                "leaseEpoch": self.lease["epoch"], "responses": counts, "elapsedMs": elapsed_ms,
+                "leaseEpoch": self.lease["epoch"], "responses": dict(self.counts), "elapsedMs": elapsed_ms,
                 "receivedAt": received.isoformat(timespec="milliseconds"),
                 "retryAfterSeconds": _retry_after_seconds(response.headers.get("Retry-After"), received),
             })
@@ -80,7 +108,7 @@ class DiscoveryExecutionAdapter:
         self.repository, self.jobs = repository, jobs
         self.workspace = Path(workspace)
         self._signals = {}
-        self._linkedin_responses = {}
+        self._linkedin_requests = {}
         self._admit = None
 
     def bind_admission(self, admission):
@@ -92,7 +120,7 @@ class DiscoveryExecutionAdapter:
 
     def stop(self, lease):
         key = (lease["run_id"], lease["epoch"])
-        self._linkedin_responses.pop(key, None)
+        self._linkedin_requests.pop(key, None)
         signal = self._signals.pop(key, None)
         if signal is not None:
             signal.set()
@@ -156,19 +184,19 @@ class DiscoveryExecutionAdapter:
                     raise AppError("discovery_provider_" + reason, "The source stopped before confirmed exhaustion; start a new search to retry.", 502)
         self.repository.save_unit(lease, unit, status="running", result=recorded)
         loop = asyncio.get_running_loop()
-        responses = None
+        linkedin = None
         if "linkedin" in spec.sites:
-            if key not in self._linkedin_responses:
-                self._linkedin_responses[key] = _LinkedInResponses(self.repository, lease)
-            responses = self._linkedin_responses[key]
+            if key not in self._linkedin_requests:
+                self._linkedin_requests[key] = _LinkedInRequests(self.repository, lease, stop)
+            linkedin = self._linkedin_requests[key]
 
         def consume():
             from jobctrl.features.discovery.adapters.synthetic_jobstreaming import controlled_registry
 
             gateway = JobStreamingGateway()
             registry = controlled_registry(self.workspace)
-            if responses is not None:
-                registry = gateway.observe_linkedin_responses(registry, partial(responses.observe, unit["unit_id"]))
+            if linkedin is not None:
+                registry = gateway.configure_linkedin_transport(registry, partial(linkedin.send, unit["unit_id"]))
             terminations = dict(recorded.get("sourceTerminations", {}))
             with gateway.open_stream(spec, checkpoint_store=store, cancel_event=stop, registry=registry) as stream:
                 completed = False

@@ -1,11 +1,11 @@
 import { indeedPage } from "./indeed-data.js";
-import { test, expect, json, action, completed, terminal } from "../harness/fixtures.js";
+import { test, expect, json, action, completed, terminal, modelCall } from "../harness/fixtures.js";
 import { baseline, createBaseline, createPosting } from "./core-data.js";
 import { serveRoleTarget } from "./discovery-role-scope-data.js";
 import type { FitState } from "./fit-data.js";
 import { servePostingAssessment, serveSavedAssessment, serveQualification } from "./search-assessment-data.js";
 import { authoredPartition, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
-import { modelSources, NORMALIZATION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
+import { citeSources, modelSources, NORMALIZATION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
 import { qualificationBindings } from "./qualification-data.js";
 import { respondProducer, untilNormalization } from "./preparation-cohort-data.js";
 
@@ -54,6 +54,51 @@ test("search assesses the exact saved LinkedIn detail after a later posting is t
     leaseEpoch: 1, responses: { listing: 1, detail: 2, other: 0 }, elapsedMs: expect.any(Number),
     receivedAt: expect.any(String), retryAfterSeconds: 601,
   } }));
+});
+
+test("saved search sends literal roles and stops buffered details after a listing 429", async ({ api, app, page }) => {
+  const { profile, library } = await createBaseline(api, { ...baseline, experience: {
+    target_role: "Synthetic systems engineer", target_functions: "Synthetic workflow reliability",
+    target_locations: "Madrid", target_work_models: "remote",
+  } });
+  const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 100 });
+  await page.goto("/jobs");
+  const admitted = page.waitForResponse((response) => new URL(response.url()).pathname === "/v1/actions/discovery.search" && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Start search", exact: true }).click();
+  const actionResponse = await admitted;
+  expect(actionResponse.status()).toBe(202);
+  const started = await actionResponse.json() as { runId: string };
+  const listing = await app.external.next();
+  const listingStart = performance.now();
+  const listingParams = new URL(listing.path, "http://localhost").searchParams;
+  expect(listingParams.get("keywords")).toBe("Synthetic systems engineer");
+  expect(listingParams.get("location")).toBe("Madrid");
+  expect(listingParams.get("f_WT")).toBe("2");
+  listing.raw(linkedinCard(1237) + linkedinCard(1238) + '<div class="base-search-card"></div>'.repeat(8));
+  const detail = await app.external.next();
+  const detailStart = performance.now();
+  expect(detail.path).toBe("/jobstreaming/linkedin/jobs/view/1237");
+  expect(detailStart - listingStart).toBeGreaterThan(3500);
+  detail.raw('<div class="show-more-less-html__markup"><p>Maintain durable workflow recovery.</p></div>');
+  const role = await modelCall(app, "discovery.role_target_match");
+  const continuation = await app.external.next();
+  expect(new URL(continuation.path, "http://localhost").searchParams.get("start")).toBe("10");
+  expect(performance.now() - detailStart).toBeGreaterThan(3500);
+  continuation.raw("Too many requests", { status: 429 });
+  const throttles = () => json<{ events: { payload: unknown }[] }>(api, "get", `/v1/events?aggregateId=${started.runId}&type=DiscoverySourceRateLimited`);
+  await expect.poll(async () => (await throttles()).events.map((event) => event.payload)).toEqual([expect.objectContaining({
+    phase: "listing", responses: { listing: 2, detail: 1, other: 0 }, retryAfterSeconds: null,
+  })]);
+  role.reply({ verdict: "match", citations: citeSources(role, ["target:roles", "posting:description"]), rationale: "The cited posting matches the authored role." });
+  await serveSavedAssessment(app, library);
+  expect((await completed(api, started.runId)).result).toMatchObject({ status: "partial", newJobs: 1,
+    failures: [{ code: "discovery_provider_rate_limited" }], preparation: { assessedJobs: 1 } });
+  const plan = await json<{ accepted: { queries: unknown[]; provenance: unknown } }>(api, "get", "/v1/discovery/target-search");
+  expect(plan.accepted).toMatchObject({ profileRevision: profile.profileVersion, provenance: null,
+    queries: [{ query: "Synthetic systems engineer", authority: "literal_authored_target" }] });
+  expect(app.external.calls.filter((call) => call.path.startsWith("/jobstreaming/linkedin"))).toHaveLength(3);
+  expect(app.external.calls.filter((call) => call.body?.["operation"] === "discovery.query_plan")).toHaveLength(0);
 });
 
 test("search retains a listing and makes no automatic posting fetch after LinkedIn throttles", async ({ api, app }) => {

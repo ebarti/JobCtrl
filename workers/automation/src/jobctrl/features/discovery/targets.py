@@ -1,4 +1,4 @@
-"""Literal authored targets plus source-bound recall query planning."""
+"""Freeze literal saved roles and locations for a Discovery run."""
 
 from __future__ import annotations
 
@@ -6,12 +6,10 @@ from collections import Counter
 import re
 import math
 from uuid import uuid4
-from pydantic import Field, StrictInt, StrictStr
 
 from jobctrl.app.errors import AppError, NotFoundError
-from jobctrl.semantic import Citation, DeterminationFailure, DeterminationModel, Source, validate_citations
 from jobctrl.features.discovery.domain import fingerprint, now
-from jobctrl.features.discovery.ports import DiscoveryStore, ModelPort
+from jobctrl.features.discovery.ports import DiscoveryStore
 
 
 FIELDS = {
@@ -72,22 +70,9 @@ def selected_places(experience):
     return result
 
 
-class RecallQuery(DeterminationModel):
-    query: StrictStr = Field(min_length=1, max_length=1000)
-    tier: StrictInt = Field(ge=1, le=3)
-    source_scope: list[StrictStr] = Field(max_length=30)
-    citations: list[Citation] = Field(min_length=1, max_length=20)
-    rationale: StrictStr = Field(min_length=1, max_length=3000)
-
-
-class QueryPlan(DeterminationModel):
-    queries: list[RecallQuery] = Field(max_length=30)
-    rationale: StrictStr = Field(min_length=1, max_length=3000)
-
-
 class TargetPlanner:
-    def __init__(self, repository: DiscoveryStore, profile, model: ModelPort):
-        self.repository, self.profile, self.model = repository, profile, model
+    def __init__(self, repository: DiscoveryStore, profile):
+        self.repository, self.profile = repository, profile
 
     def _source(self):
         if self.profile is None:
@@ -110,7 +95,7 @@ class TargetPlanner:
         accepted = self.repository.latest_target_plan()
         return {
             "ok": True,
-            "current": bool(accepted and accepted["profileFingerprint"] == snapshot.fingerprint),
+            "current": bool(accepted and accepted.get("provenance") is None and accepted["profileFingerprint"] == snapshot.fingerprint),
             "accepted": accepted,
             "targets": target,
             "profileRevision": snapshot.profile_revision,
@@ -138,7 +123,7 @@ class TargetPlanner:
         snapshot, target = self._source()
         if expected_profile_revision is not None and (snapshot is None or expected_profile_revision != snapshot.profile_revision):
             raise AppError("target_profile_changed", "The saved Profile targets changed.", 409)
-        if snapshot is None or not any(target.values()):
+        if snapshot is None or not any(literal_rows(target["roles"])):
             return {"ok": True, "current": False, "accepted": None, "targets": target}
         previous = self.read()
         if previous["current"] and not force:
@@ -155,41 +140,11 @@ class TargetPlanner:
                 accepted, lambda conn: self.profile.assert_current(snapshot, connection=conn)
             )
             return {**previous, "accepted": accepted}
-        sources = [
-            Source(source_id="target:" + key, text=value)
-            for key, value in target.items()
-            if isinstance(value, str) and value.strip()
-        ]
         queries = [
             {"query": role, "tier": 1, "source_scope": [], "authority": "literal_authored_target"}
             for role in literal_rows(target["roles"])
             if role
         ]
-        receipt = None
-        if any(target.get(key) for key in ("tracks", "seniority", "functions", "specializations")):
-            result = await self.model.determine(
-                operation="discovery.query_plan",
-                instructions=(
-                    "Prepare bounded high-recall job-board search queries from the user's explicitly authored target fields only. "
-                    "Do not infer preferred roles, seniority, geography or work authorization from employment history. "
-                    "Preserve specific authored role queries; propose complementary function/track/specialization/seniority recall queries "
-                    "where the saved fields support them. Declare tier 1-3 and optional exact board source_scope. Every query needs "
-                    "verbatim target citations and an explanation; query generation is not evidence that a returned job fits. "
-                    "Never invent a location or silently tighten/broaden work-model rows. Return at most thirty queries."
-                ),
-                sources=[s.model_dump() for s in sources],
-                response_schema=QueryPlan.model_json_schema(),
-                context={"profileRevision": snapshot.profile_revision},
-                prompt_version="discovery-query-plan-v1",
-                lane="enrichment",
-            )
-            plan = QueryPlan.model_validate(result.value)
-            try:
-                validate_citations(plan, sources)
-            except DeterminationFailure as error:
-                raise AppError(error.code, "The query plan is not bound to the saved targets.", 409) from None
-            queries.extend(query.model_dump() for query in plan.queries)
-            receipt = result.provenance
         places, models = literal_rows(target["locations"]), literal_rows(target["work_models"])
         place_bindings = {binding["rowIndex"]: binding for binding in target.get("location_bindings", [])}
         locations = []
@@ -219,7 +174,7 @@ class TargetPlanner:
             "targets": target,
             "queries": list({fingerprint([q["query"], q.get("source_scope")]): q for q in queries}.values()),
             "locations": list({fingerprint(row): row for row in locations}.values()),
-            "provenance": receipt,
+            "provenance": None,
             "createdAt": now(),
             "operationId": operation_id,
             "operationFingerprint": operation_fingerprint,

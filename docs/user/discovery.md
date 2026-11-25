@@ -24,18 +24,6 @@ shared spend policy.
 
 <DiscoveryPipeline />
 
-When saved tracks, levels or areas of interest need a fresh model-generated
-query plan, **Start search** checks the selected model's recorded cost-accounting
-capability. If a finite daily cap has no supported cost source, the action opens
-an explicit setup dialog. **Review spending setup** opens Budgets and preserves
-the originating Jobs filters or Search preferences view. Add an exact sourced
-`provider:model` pricing quote, save, and use the return link to start deliberately.
-The app does not guess a price, switch providers, remove the cap or retry the
-search automatically. A saved quote establishes accounting configuration, not
-provider sign-in or live model availability. Literal role queries and current accepted plans do not
-need this query-planning setup. A prior `cost_accounting_unavailable` failure is
-shown as a cost-tracking setup problem, before job-source acquisition.
-
 ## Saved Search Preferences
 
 Add target roles as independent repeatable inputs; Enter adds a row and moves
@@ -61,12 +49,9 @@ conflicting save retains the draft; check saved state before retrying.
 
 ### How target search controls are used
 
-Literal role queries and location/work-arrangement rows retain their authored
-meaning. Track/function/seniority-based recall plans use explicit source-bound
-model determinations with source IDs, revisions and persisted receipts; a
-failed or stale plan preserves the prior accepted one. Search indexes, word
-lists and token similarity cannot infer meanings or turn suggestions into
-consent.
+Each saved role title becomes a search query. The saved locations and work
+arrangements supply the source filters. Tracks, seniority, areas of interest and
+specializations guide the role match after a source returns a posting.
 
 The ordinary **Start search** path uses the current Profile Search preferences
 and saved Discovery board/limit policy. It explicitly sets empty one-run
@@ -146,10 +131,8 @@ The new-job limit is not a promise that enough new or suitable postings exist.
 
 The primary launch also binds the saved `expectedProfileVersion`. Queued or
 replayed planning refuses a changed Profile instead of silently absorbing new
-criteria. A current accepted target plan can be reused without another model
-connection. Otherwise the task shows known local blockers; provider auth,
-lane/spend and dispatch checks run only after deliberate **Start search**, not
-as navigation probes. Unsaved search drafts survive Preferences ↔ Search within
+criteria. A current literal query plan can be reused. Model and spending checks apply when
+a posting needs a role decision or assessment. Unsaved search drafts survive Preferences ↔ Search within
 the same session, tenant and database incarnation; saved values persist through
 reload. The offline demo clears those transient drafts on reset.
 
@@ -397,7 +380,10 @@ owns how the accepted analysis supplies qualified requirements and person fit.
 
 ## Crawl Politeness
 
-JobStreaming performs board searches and retrieves supported posting details. Each board has its own access requirements, supported search filters, native page sizes and safety limits. JobCtrl records board-specific authentication failures and rate limits alongside accepted jobs. A terminal rate limit defers the board's remaining queries in that run.
+JobStreaming performs board searches and retrieves supported posting details. Each board has its own access requirements, supported search filters, native page sizes and safety limits. JobCtrl records board-specific authentication failures and rate limits alongside accepted jobs. LinkedIn listing requests and targeted detail requests share a four-second
+minimum interval between request starts. A terminal rate limit defers remaining
+queries for that board. A response without a usable retry delay, or with one
+above the retry cap, also stops queued LinkedIn detail requests.
 
 The activity log records each LinkedIn HTTP 429 seen during search. The event
 shows when it occurred, whether a listing or posting-detail request was

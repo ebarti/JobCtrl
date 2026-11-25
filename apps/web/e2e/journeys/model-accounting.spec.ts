@@ -1,5 +1,6 @@
 import { test, expect, json, action, completed, terminal, modelCall, type ExternalCall } from "../harness/fixtures.js";
-import { baseline, createBaseline } from "./core-data.js";
+import { baseline, createBaseline, createPosting, type Posting } from "./core-data.js";
+import { citeSources, modelSources } from "./requirements-data.js";
 
 type Spend = {
   costUsd: number | null; knownCostUsd: number; costStatus: string; tokenStatus: string;
@@ -7,18 +8,29 @@ type Spend = {
   accountingBlocked: boolean; monetaryAccountingBlocked: boolean; tokenAccountingBlockedLanes: string[];
   activeCalls: number; dailyActiveCalls: number; unresolvedCalls: number; unavailableCostCalls: number; unavailableTokenCalls: number;
 };
-function plan(call: ExternalCall) {
-  const source = (call.body["sources"] as { source_id: string; text: string }[]).find((row) => row.source_id === "target:functions")!;
-  expect(source).toBeTruthy();
-  return { queries: [{ query: "Synthetic reliability operations", tier: 2, source_scope: [],
-    citations: [{ source_id: source.source_id, quote: source.text }], rationale: "The authored synthetic function supports this complementary query." }],
-    rationale: "Retain the literal role and this explicitly supported function query." };
+function assessment(call: ExternalCall) {
+  const source = modelSources(call)[0]!;
+  const citations = citeSources(call, [source.source_id]);
+  const statement = { text: source.text, citations, uncertainty: "Only the supplied posting was considered." };
+  return { role_framing: statement,
+    inferred_seniority: { value: "unknown", citations, rationale: "The posting does not specify a level." },
+    ideal_candidate_narrative: statement, keywords: [] };
 }
-async function profileForPlanning(api: Parameters<typeof createBaseline>[0]) {
-  return (await createBaseline(api, { ...baseline, experience: {
-    target_role: "Synthetic Reliability Engineer", target_functions: "Synthetic reliability operations",
-    target_locations: "Madrid", target_work_models: "remote",
-  } })).profile;
+async function postingForAnalysis(api: Parameters<typeof createBaseline>[0]) {
+  await createBaseline(api, { ...baseline, experience: {
+    target_role: "Synthetic Reliability Engineer", target_locations: "Madrid", target_work_models: "remote",
+  } });
+  return createPosting(api, "model-accounting");
+}
+const startAnalysis = (api: Parameters<typeof createBaseline>[0], posting: Posting) =>
+  action(api, "jobs.analyze", { job_id: posting.job_id, expectedRevision: posting.revision, force: true });
+const readAnalysis = (api: Parameters<typeof createBaseline>[0], posting: Posting) =>
+  json<{ accepted: { provenance: { receipt_id: string } } }>(api, "get", `/v1/jobs/${posting.job_id}/analysis`);
+async function expectRefusal(api: Parameters<typeof createBaseline>[0], posting: Posting, runId: string) {
+  expect(await terminal(api, runId)).toMatchObject({ status: "failed", errorCode: "role_analysis_failed" });
+  const history = await json<{ attempts: unknown[] }>(api, "get", `/v1/jobs/${posting.job_id}/snapshots`);
+  expect(history.attempts).toContainEqual(expect.objectContaining({ failure_code: "role_analysis_failed",
+    data: expect.objectContaining({ failures: [expect.objectContaining({ code: "spend_accounting_unresolved" })] }) }));
 }
 async function settings(api: Parameters<typeof createBaseline>[0], patch: Record<string, unknown>) {
   const saved = await json<{ revision: number }>(api, "get", "/v1/settings");
@@ -27,12 +39,12 @@ async function settings(api: Parameters<typeof createBaseline>[0], patch: Record
 const spend = async (api: Parameters<typeof createBaseline>[0]) => (await json<{ llmSpend: Spend }>(api, "get", "/v1/health")).llmSpend;
 
 test("unlimited money accepts repeated settled token receipts without inventing spend or reconciliation and finite money still refuses", async ({ api, app, page }, testInfo) => {
-  const profile = await profileForPlanning(api);
+  const posting = await postingForAnalysis(api);
   await settings(api, { dailyBudgetUsd: 0 });
   let lastAccepted: unknown;
   for (let count = 1; count <= 2; count++) {
-    const run = await action(api, "discovery.refresh_targets", { force: true, expectedProfileVersion: profile.profileVersion });
-    const call = await modelCall(app, "discovery.query_plan");
+    const run = await startAnalysis(api, posting);
+    const call = await modelCall(app, "jobs.role_analysis");
     expect(await spend(api)).toMatchObject({ costStatus: "pending", tokenStatus: "pending", activeCalls: 1, dailyActiveCalls: 1, unresolvedCalls: 0, costUsd: null, unlimited: true });
     await Promise.all([
       page.waitForResponse((response) => new URL(response.url()).pathname === "/v1/digest" && response.request().method() === "GET" && response.ok()),
@@ -41,12 +53,12 @@ test("unlimited money accepts repeated settled token receipts without inventing 
     await expect(page.locator(".connection-spend")).toHaveText("LLM running · No daily limit");
     await expect(page.getByText("Model call needs reconciliation", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Spending needs reconciliation", { exact: true })).toHaveCount(0);
-    call.respond({ value: plan(call), usage: { input_tokens: 20, output_tokens: 10 } });
+    call.respond({ value: assessment(call), usage: { input_tokens: 20, output_tokens: 10 } });
     await completed(api, run.runId);
     expect(await spend(api)).toMatchObject({ costStatus: "unavailable", tokenStatus: "complete", costUsd: null, knownCostUsd: 0,
       accountingComplete: false, costAuthority: "incomplete", activeCalls: 0, dailyActiveCalls: 0, unresolvedCalls: 0,
       unavailableCostCalls: count, unavailableTokenCalls: 0, unlimited: true });
-    const saved = await json<{ accepted: { provenance: { receipt_id: string } } }>(api, "get", "/v1/discovery/target-search");
+    const saved = await readAnalysis(api, posting);
     expect(saved.accepted.provenance.receipt_id).toBeTruthy();
     lastAccepted = saved;
     const digest = await json<{ budget: Record<string, unknown> }>(api, "get", "/v1/digest");
@@ -64,10 +76,10 @@ test("unlimited money accepts repeated settled token receipts without inventing 
   await testInfo.attach("unlimited-settled-cost-unavailable", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
   const calls = app.external.calls.length;
   await settings(api, { dailyBudgetUsd: 25 });
-  const refused = await action(api, "discovery.refresh_targets", { force: true, expectedProfileVersion: profile.profileVersion });
-  expect(await terminal(api, refused.runId)).toMatchObject({ status: "failed", errorCode: "spend_accounting_unresolved" });
+  const refused = await startAnalysis(api, posting);
+  await expectRefusal(api, posting, refused.runId);
   expect(app.external.calls).toHaveLength(calls);
-  expect(await json(api, "get", "/v1/discovery/target-search")).toEqual(lastAccepted);
+  expect(await readAnalysis(api, posting)).toEqual(lastAccepted);
   expect((await json<{ budget: Record<string, unknown> }>(api, "get", "/v1/digest")).budget).toMatchObject({ status: "incomplete", unlimited: false, costStatus: "unavailable", estimatedUsd: null });
   await Promise.all([
       page.waitForResponse((response) => new URL(response.url()).pathname === "/v1/digest" && response.request().method() === "GET" && response.ok()),
@@ -77,12 +89,12 @@ test("unlimited money accepts repeated settled token receipts without inventing 
 });
 
 test("settled monetary receipts remain complete when token counts are unavailable and a finite token lane still refuses", async ({ api, app, page }) => {
-  const profile = await profileForPlanning(api);
-  const run = await action(api, "discovery.refresh_targets", { force: true, expectedProfileVersion: profile.profileVersion });
-  const call = await modelCall(app, "discovery.query_plan");
-  call.respond({ value: plan(call), usage: { cost_usd: 0.25, cost_source: "provider_reported" } });
+  const posting = await postingForAnalysis(api);
+  const run = await startAnalysis(api, posting);
+  const call = await modelCall(app, "jobs.role_analysis");
+  call.respond({ value: assessment(call), usage: { cost_usd: 0.25, cost_source: "provider_reported" } });
   await completed(api, run.runId);
-  const accepted = await json(api, "get", "/v1/discovery/target-search");
+  const accepted = await readAnalysis(api, posting);
   expect(await spend(api)).toMatchObject({ costStatus: "complete", tokenStatus: "unavailable", costUsd: 0.25, knownCostUsd: 0.25,
     costAuthority: "reported", accountingComplete: false, activeCalls: 0, unresolvedCalls: 0, unavailableCostCalls: 0, unavailableTokenCalls: 1 });
   expect((await json<{ budget: Record<string, unknown> }>(api, "get", "/v1/digest")).budget).toMatchObject({ status: "ok", estimatedUsd: 0.25, remainingUsd: 24.75, costStatus: "complete", tokenStatus: "unavailable" });
@@ -92,31 +104,31 @@ test("settled monetary receipts remain complete when token counts are unavailabl
     ]);
   await expect(page.locator(".connection-spend")).toHaveText("LLM $0.25");
   await expect(page.getByText("Model call needs reconciliation", { exact: true })).toHaveCount(0);
-  await settings(api, { dailyBudgetUsd: 0, laneTokenLimits: { enrichment: 1000 } });
+  await settings(api, { dailyBudgetUsd: 0, laneTokenLimits: { analysis: 1000 } });
   const calls = app.external.calls.length;
-  const refused = await action(api, "discovery.refresh_targets", { force: true, expectedProfileVersion: profile.profileVersion });
-  expect(await terminal(api, refused.runId)).toMatchObject({ status: "failed", errorCode: "spend_accounting_unresolved" });
+  const refused = await startAnalysis(api, posting);
+  await expectRefusal(api, posting, refused.runId);
   expect(app.external.calls).toHaveLength(calls);
-  expect(await json(api, "get", "/v1/discovery/target-search")).toEqual(accepted);
+  expect(await readAnalysis(api, posting)).toEqual(accepted);
 });
 
 
 test("unknown usage after public cancellation is informational without caps while finite money and affected token lanes still refuse", async ({ api, app, page }, testInfo) => {
-  const profile = await profileForPlanning(api);
+  const posting = await postingForAnalysis(api);
   await settings(api, { dailyBudgetUsd: 0 });
-  const cancelled = await action(api, "discovery.refresh_targets", { force: true, expectedProfileVersion: profile.profileVersion });
-  const held = await modelCall(app, "discovery.query_plan");
+  const cancelled = await startAnalysis(api, posting);
+  const held = await modelCall(app, "jobs.role_analysis");
   await json(api, "post", `/v1/action-runs/${cancelled.runId}/cancel`, {});
   expect(await terminal(api, cancelled.runId)).toMatchObject({ status: "cancelled", cancellationRequested: true });
   await expect.poll(() => held.closed).toBe(true);
   expect(await spend(api)).toMatchObject({ costStatus: "unresolved", tokenStatus: "unresolved", unresolvedCalls: 1,
     costUsd: null, accountingComplete: false, accountingBlocked: false, monetaryAccountingBlocked: false, tokenAccountingBlockedLanes: [] });
   expect((await json<{ budget: Record<string, unknown> }>(api, "get", "/v1/digest")).budget).toMatchObject({ status: "ok", costStatus: "unresolved", estimatedUsd: null, accountingBlocked: false });
-  // A finite unrelated lane is not a global blocker for the enrichment receipt.
+  // A finite unrelated lane is not a global blocker for the analysis receipt.
   await settings(api, { laneTokenLimits: { scoring: 1000 } });
   expect((await spend(api)).tokenAccountingBlockedLanes).toEqual([]);
-  const fresh = await action(api, "discovery.refresh_targets", { force: true, expectedProfileVersion: profile.profileVersion });
-  const next = await modelCall(app, "discovery.query_plan");
+  const fresh = await startAnalysis(api, posting);
+  const next = await modelCall(app, "jobs.role_analysis");
   expect(await spend(api)).toMatchObject({ activeCalls: 1, unresolvedCalls: 1, costStatus: "unresolved", accountingBlocked: false });
   await Promise.all([
     page.waitForResponse((response) => new URL(response.url()).pathname === "/v1/digest" && response.ok()),
@@ -124,9 +136,9 @@ test("unknown usage after public cancellation is informational without caps whil
   ]);
   await expect(page.locator(".connection-spend")).toHaveText("LLM running · No daily limit");
   await expect(page.getByRole("heading", { name: "Needs attention", exact: true })).toHaveCount(0);
-  next.respond({ value: plan(next), usage: { input_tokens: 20, output_tokens: 10 } });
+  next.respond({ value: assessment(next), usage: { input_tokens: 20, output_tokens: 10 } });
   await completed(api, fresh.runId);
-  const accepted = await json(api, "get", "/v1/discovery/target-search");
+  const accepted = await readAnalysis(api, posting);
   await page.goto("/settings/budgets");
   await page.getByText("Today's model usage", { exact: true }).click();
   await expect(page.getByText("1 past model call has unknown final usage. The original receipts remain unchanged.", { exact: true })).toBeVisible();
@@ -136,13 +148,13 @@ test("unknown usage after public cancellation is informational without caps whil
   const calls = app.external.calls.length;
   for (const policy of [
     { dailyBudgetUsd: 25, laneTokenLimits: {}, monetaryAccountingBlocked: true, tokenAccountingBlockedLanes: [], label: "Daily limit needs cost tracking" },
-    { dailyBudgetUsd: 0, laneTokenLimits: { enrichment: 1000 }, monetaryAccountingBlocked: false, tokenAccountingBlockedLanes: ["enrichment"], label: "Token limit needs usage tracking" },
+    { dailyBudgetUsd: 0, laneTokenLimits: { analysis: 1000 }, monetaryAccountingBlocked: false, tokenAccountingBlockedLanes: ["analysis"], label: "Token limit needs usage tracking" },
   ]) {
     await settings(api, { dailyBudgetUsd: policy.dailyBudgetUsd, laneTokenLimits: policy.laneTokenLimits });
-    const refused = await action(api, "discovery.refresh_targets", { force: true, expectedProfileVersion: profile.profileVersion });
-    expect(await terminal(api, refused.runId)).toMatchObject({ status: "failed", errorCode: "spend_accounting_unresolved" });
+    const refused = await startAnalysis(api, posting);
+    await expectRefusal(api, posting, refused.runId);
     expect(app.external.calls).toHaveLength(calls);
-    expect(await json(api, "get", "/v1/discovery/target-search")).toEqual(accepted);
+    expect(await readAnalysis(api, posting)).toEqual(accepted);
     expect(await spend(api)).toMatchObject({ unresolvedCalls: 1, costUsd: null, accountingBlocked: true,
       monetaryAccountingBlocked: policy.monetaryAccountingBlocked, tokenAccountingBlockedLanes: policy.tokenAccountingBlockedLanes });
     await Promise.all([

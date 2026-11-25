@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 import threading
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import pandas as pd
@@ -203,13 +204,14 @@ class JobStreamingGateway:
     """Build and consume the pinned JobStreaming event contract."""
 
     @staticmethod
-    def observe_linkedin_responses(registry, observer):
+    def configure_linkedin_transport(registry, send):
         source = registry or default_registry()
         observed = source.copy()
 
         def factory(**kwargs):
             adapter = source.create(Site.LINKEDIN, **kwargs)
-            adapter.session.hooks["response"].append(observer)
+            for transport in set(adapter.session.adapters.values()):
+                transport.send = partial(send, transport.send)
             return adapter
 
         cursor_version = source.cursor_schema_version(Site.LINKEDIN)

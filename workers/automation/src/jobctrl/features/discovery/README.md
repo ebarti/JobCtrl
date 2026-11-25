@@ -162,9 +162,8 @@ tables.
 
 `JOBCTRL_JOBSTREAMING_PROVIDER_ENDPOINT` confines registered SDK board traffic to the authenticated loopback boundary of an owned synthetic workspace. Journeys exercise native Indeed responses, LinkedIn listing and detail pages, and the SDK's missing-credential refusal. The installed SDK owns parsing, checkpointing, limits and cancellation throughout these journeys.
 
-Saved-search launch composes model accounting capability from the read-only
-settings snapshot when a fresh semantic query plan is needed. Missing native
-accounting under a finite cap opens a setup action rather than disabling Start
-search or submitting a known-to-fail action. The ModelGateway admission gate
-remains authoritative. Pricing setup preserves criteria, provider, cap and the
-originating route; saving never retries the search.
+Saved searches freeze literal role titles and location/work-arrangement filters.
+Model admission and accounting apply to source-bound role matching and Fit.
+LinkedIn listings and targeted posting details share four-second pacing per run.
+A missing or over-cap retry delay on HTTP 429 stops pending details before
+the stream delivers its terminal error.

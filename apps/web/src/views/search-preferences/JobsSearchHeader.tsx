@@ -30,7 +30,7 @@ function ConnectedJobsSearchHeader({ preferencesAction, connectionAction, spendi
     preferencesLoading: preferences.loading, settingsLoading: settings.loading,
     preferencesError: preferences.error, settingsError: settings.error,
   });
-  return <SavedDiscoverySearch workspaceIdentity={runtime.data?.databaseInstanceId} profileVersion={preferences.state.profileVersion} disabledReason={readiness.disabledReason} accountingSetupReason={readiness.accountingSetupReason} spendingAction={spendingAction} renderFeedback={renderSearchFeedback}>
+  return <SavedDiscoverySearch workspaceIdentity={runtime.data?.databaseInstanceId} profileVersion={preferences.state.profileVersion} disabledReason={readiness.disabledReason} spendingAction={spendingAction} renderFeedback={renderSearchFeedback}>
     {({ action, feedback }) => <>
       <PageHead title="Jobs" subtitle="Compare saved opportunities and choose your next step."
         actions={<>{preferencesAction}{action}</>} />
