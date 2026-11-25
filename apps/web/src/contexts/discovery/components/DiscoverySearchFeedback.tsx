@@ -75,6 +75,8 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
       <div className="discovery-search-status-row" role="status"><h2>{label}</h2>{counts ? <p className="discovery-search-counts">{controller.countsStale ? <span>Last recorded:</span> : null}<span>{counts.newJobs} new jobs</span><span>{counts.observedJobs} observed</span></p> : null}</div>
       {active ? <Progress value={null} aria-label="Job search progress" className="discovery-search-progress" /> : null}
     </div>
+    {controller.cooldowns.map((wait) => <p key={wait.board}>{boardLabel(wait.board)} paused this search. {controller.linkedInPaused ? "You can continue in" : "JobCtrl will check again in"} {Math.ceil(wait.retryAfterSeconds)} seconds. Saved jobs can still be assessed.</p>)}
+    {controller.postings && controller.postings.received > 0 ? <p>{controller.postings.received} received · {controller.postings.duplicate} already saved · {controller.postings.excluded} excluded · {controller.postings.pending} pending</p> : null}
     {assessedJobs !== null ? <p>{assessmentProgress?.unavailable && !controller.assessment ? "Last recorded: " : ""}{assessmentProgress?.totalJobs != null ? `${assessedJobs} of ${assessmentProgress.totalJobs} jobs assessed` : `${assessedJobs} jobs assessed`}{failedJobs !== null ? ` · ${failedJobs} failed` : ""}{skippedJobs !== null && skippedJobs > 0 ? ` · ${skippedJobs} skipped` : ""}</p> : null}
     {checkpoint && assessmentProgress?.totalJobs != null ? <p aria-label="Fit preparation progress">
       {checkpoint.postingsChecked !== null ? `${checkpoint.postingsChecked} of ${assessmentProgress.totalJobs} postings checked. ` : ""}

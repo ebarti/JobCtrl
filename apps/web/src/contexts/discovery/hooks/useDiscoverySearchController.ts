@@ -29,6 +29,8 @@ const RunListSchema = z.object({ ok: z.literal(true), runs: z.array(z.object({
   runId: z.string().min(1), status: z.string(), newJobs: z.number().int().nonnegative(),
   failures: z.array(SourceFailureSchema).optional(), observedJobs: z.number().int().nonnegative(), failureCode: z.string().nullable(), createdAt: z.string(), updatedAt: z.string(),
   continuedByRunId: z.string().min(1).nullish(),
+  cooldowns: z.array(z.object({ board: z.string(), retryAfterSeconds: z.number().nonnegative() })).optional(),
+  postings: z.object({ received: z.number(), duplicate: z.number(), excluded: z.number(), pending: z.number() }).optional(),
 }).passthrough()) });
 const ResultSchema = z.object({ failures: z.array(SourceFailureSchema).optional(), status: z.string().optional(), acquisitionStatus: z.string().optional(),
   preparationAvailable: z.boolean().optional(), preparation: z.object({ status: z.string(), assessedJobs: z.number().int().nonnegative(), failedJobs: z.number().int().nonnegative(),
@@ -96,7 +98,7 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
     queryFn: async () => {
       const workspace = await requestWorkspace(http);
       return { ...RunListSchema.parse(await http.json<unknown>("GET", "/v1/discovery/runs", { expectedDatabaseInstanceId: workspace.databaseInstanceId })), workspace };
-    }, refetchInterval: actions.data?.active.length || recovery.record ? 3000 : false,
+    }, refetchInterval: (query) => actions.data?.active.length || recovery.record || query.state.data?.runs[0]?.cooldowns?.length ? 3000 : false,
     meta: { suppressGlobalErrorToast: true } });
   const recordMatchesWorkspace = Boolean(recovery.record && actions.data && sameWorkspace(recovery.record, actions.data.workspace));
   const recoverySourceRunId = recovery.record?.resumeFromRunId;
@@ -242,7 +244,9 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
   const resumeFromRunId = recovery.record
     ? recordMatchesWorkspace && recovery.canRetry ? recoverySourceRunId : undefined
     : linkedInPaused && action?.runId === latest?.runId && action?.runId !== admittedParent && !recorded?.continuedByRunId ? action?.runId : undefined;
-  const canContinue = Boolean(resumeFromRunId && actions.data && !continuationBlocked && !start.isPending);
+  const cooldowns = recorded?.cooldowns ?? [];
+  const canContinue = Boolean(resumeFromRunId && actions.data && !continuationBlocked && !start.isPending
+    && !cooldowns.some((wait) => wait.board === "linkedin" && wait.retryAfterSeconds > 0));
   const statusUnavailable = Boolean(actions.error || detail.error || outcomeUnavailable || (recovery.record && recovery.statusError && !recovery.canRetry) || reconcileError);
   const status = memory?.busy ? "queueing" : statusUnavailable ? "status-unavailable" : action
     ? action.cancellationRequested && active(action.status) ? "cancel-requested" : action.status === "succeeded" ? terminalOutcome ?? "completed" : action.status
@@ -253,7 +257,7 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
     assessmentAvailable: result.success ? result.data.preparationAvailable : undefined,
     assessment: result.success ? result.data.preparation : undefined,
     acquisitionStatus: result.success ? result.data.acquisitionStatus : undefined,
-    action, counts, status, sourceFailures, statusUnavailable, countsStale: Boolean(runs.error || statusUnavailable),
+    action, counts, status, cooldowns, postings: recorded?.postings, sourceFailures, statusUnavailable, countsStale: Boolean(runs.error || statusUnavailable),
     blockedReason, canStart: !blockedReason && !start.isPending && !recoverySourceRunId, isPending: Boolean(memory?.busy || start.isPending),
     linkedInPaused, resumeFromRunId, canContinue, recoveringContinuation: Boolean(recoverySourceRunId),
     pendingBody: pending && !("resumeFromRunId" in pending.body) ? pending.body : undefined,

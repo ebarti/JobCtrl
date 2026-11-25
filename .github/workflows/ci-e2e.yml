@@ -49,20 +49,11 @@ jobs:
         run: |
           corepack pnpm install --frozen-lockfile
           uv --project workers/automation sync --locked --all-extras
-      - name: Install the verified real Temporal server
-        timeout-minutes: 3
-        shell: bash
+      - name: Install PostgreSQL runtime
         run: |
-          set -euo pipefail
-          archive="$RUNNER_TEMP/temporal.tar.gz"
-          executable_dir="$RUNNER_TEMP/temporal"
-          curl --fail --location --silent --show-error --connect-timeout 15 --max-time 120 \
-            --output "$archive" https://github.com/temporalio/cli/releases/download/v1.7.3/temporal_cli_1.7.3_linux_amd64.tar.gz
-          printf '%s  %s\n' 32a4320080342bccab37633b8777f548aa0b413c3d37fdbc7cb9d861c5fa11d0 "$archive" | sha256sum --check
-          mkdir -p "$executable_dir"
-          tar -xOf "$archive" temporal > "$executable_dir/temporal"
-          chmod 700 "$executable_dir/temporal"
-          echo "JOBCTRL_TEMPORAL_CLI_PATH=$executable_dir/temporal" >> "$GITHUB_ENV"
+          bash scripts/ci-apt-timeouts.sh
+          sudo apt-get install --yes postgresql-16
+          echo "JOBCTRL_POSTGRES_BIN_DIR=/usr/lib/postgresql/16/bin" >> "$GITHUB_ENV"
       - name: Prepare real browser and PDF tools
         timeout-minutes: 8
         run: |
@@ -102,7 +93,7 @@ jobs:
             /tmp/jobctrl-transform-1428/e2e-*/playwright/
             /tmp/jobctrl-transform-1428/e2e-*/application-*/api*.log
             /tmp/jobctrl-transform-1428/e2e-*/application-*/worker-*.log
-            /tmp/jobctrl-transform-1428/e2e-*/temporal-*/temporal.log
+            /tmp/jobctrl-transform-1428/e2e-*/postgres-*/postgres.log
           retention-days: 7
           if-no-files-found: warn
   journeys:

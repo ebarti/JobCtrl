@@ -16,7 +16,7 @@ import { useRuntimeHealth } from "../runtime/index.js";
 
 const actionRunSchema = z.object({
   runId: z.string(), action: z.string(), status: z.string(), workflowId: z.string(),
-  temporalRunId: z.string().nullable(), result: z.unknown(), errorCode: z.string().nullable(),
+  result: z.unknown(), errorCode: z.string().nullable(),
   createdAt: z.string(), updatedAt: z.string(), cancellationRequested: z.boolean(),
   cancellationDelivery: cancellationDeliverySchema,
 });
@@ -114,7 +114,6 @@ export function ActionRunDetail({ runId, renderFeatureDetail }: { readonly runId
       { body: {}, ...(databaseInstanceId ? { expectedDatabaseInstanceId: databaseInstanceId } : {}) }), selectedRunId),
     onSettled: () => invalidateQueriesWithOptimisticOwnership(client, actionRunKeys.all(tenantId)) });
   const run = query.data;
-  const temporalUrl = run && health.data?.temporal ? workflowUrl(health.data.temporal.uiBaseUrl, health.data.temporal.namespace, run.workflowId) : null;
   const active = run && ["pending", "start_failed", "queued", "running"].includes(run.status);
   const canCancel = active && canRequestStop(run);
   const featureDetail = run ? renderFeatureDetail?.(run) : null;
@@ -128,26 +127,15 @@ export function ActionRunDetail({ runId, renderFeatureDetail }: { readonly runId
         <p>{run.cancellationDelivery === "pending" ? "The workflow service has not confirmed receipt. Retry stop when it is available." : "Waiting for this run to settle."}</p>
       </div> : null}
       <dl className="operational-metadata"><div><dt>Run</dt><dd>{run.runId}</dd></div><div><dt>Workflow</dt><dd>{run.workflowId}</dd></div><div><dt>Created</dt><dd>{run.createdAt}</dd></div><div><dt>Updated</dt><dd>{run.updatedAt}</dd></div>{run.errorCode ? <div><dt>Error code</dt><dd>{run.errorCode}</dd></div> : null}</dl>
-      {temporalUrl || canCancel ? <div className="operational-actions">
-      {temporalUrl ? <a href={temporalUrl} target="_blank" rel="noopener noreferrer">View workflow in Temporal</a> : null}
-      {canCancel ? <Button type="button" variant="outline" disabled={cancel.isPending || query.isError}
+      {canCancel ? <div className="operational-actions">
+      <Button type="button" variant="outline" disabled={cancel.isPending || query.isError}
         onClick={() => cancel.mutate({ selectedRunId: run.runId, databaseInstanceId: health.data?.databaseInstanceId })}>
         {run.cancellationDelivery === "pending" ? "Retry stop" : "Request stop"}
-      </Button> : null}
+      </Button>
       </div> : null}
       {cancel.error ? <p role="alert">{cancel.error.message} Check the current run state before retrying.</p> : null}
       {run.result !== null && run.result !== undefined ? <details><summary>Recorded result</summary><pre>{JSON.stringify(run.result, null, 2)}</pre></details> : null}
       {featureDetail ? <div className="operational-feature-detail">{featureDetail}</div> : null}
     </section> : null}
   </div>;
-}
-
-function workflowUrl(base: string | null, namespace: string, workflowId: string): string | null {
-  if (!base) return null;
-  try {
-    const url = new URL(base);
-    if (!(["http:", "https:"].includes(url.protocol)) || url.username || url.password || url.search || url.hash) return null;
-    url.pathname = `${url.pathname.replace(/\/$/, "")}/namespaces/${encodeURIComponent(namespace)}/workflows/${encodeURIComponent(workflowId)}`;
-    return url.href;
-  } catch { return null; }
 }

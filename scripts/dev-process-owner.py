@@ -28,7 +28,7 @@ from jobctrl.process_ownership import (  # noqa: E402
     terminate_owned_process,
 )
 
-NAMES = {"temporal", "api", "web", "worker", "docs", "demo-api", "demo-web"}
+NAMES = {"postgres", "api", "web", "worker", "docs", "demo-api", "demo-web"}
 
 
 class Unverified(RuntimeError):

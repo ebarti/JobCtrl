@@ -16,7 +16,7 @@ jobs:
           - shard: 1
             suite: custody
     runs-on: macos-15
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       UV_PYTHON: '3.14.4'
       UV_LOCKED: '1'
@@ -25,6 +25,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Set up pinned Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
@@ -48,26 +49,10 @@ jobs:
           corepack pnpm install --frozen-lockfile
           uv python install 3.14.4
           uv --project workers/automation sync --locked --all-extras --python 3.14.4 --managed-python
-      - name: Install the candidate's verified native Temporal runtime
-        run: |
-          node --input-type=module <<'NODE'
-          import { createHash } from 'node:crypto';
-          import fs from 'node:fs/promises';
-          import path from 'node:path';
-          const lock = JSON.parse(await fs.readFile('packaging/distribution/components.lock.json', 'utf8'));
-          const input = lock.inputs.find(entry => entry.id === 'temporal-runtime-archive');
-          if (process.platform !== 'darwin' || process.arch !== 'arm64' || lock.platform !== 'darwin-arm64' || !input) throw Error('No verified native runtime for this runner');
-          const response = await fetch(input.url, {signal:AbortSignal.timeout(120000)});
-          if (!response.ok) throw Error('Temporal acquisition failed: '+response.status);
-          const data = Buffer.from(await response.arrayBuffer());
-          if (createHash('sha256').update(data).digest('hex') !== input.sha256) throw Error('Temporal digest mismatch');
-          await fs.writeFile(path.join(process.env.RUNNER_TEMP,'temporal.tar.gz'), data);
-          NODE
-          mkdir -p "$RUNNER_TEMP/temporal"
-          tar -xOf "$RUNNER_TEMP/temporal.tar.gz" temporal > "$RUNNER_TEMP/temporal/temporal"
-          chmod 700 "$RUNNER_TEMP/temporal/temporal"
-      - name: Exercise real install, update, rollback, receipts and process cleanup
-        run: node scripts/qa/native-lifecycle-e2e.mjs --python "$PWD/workers/automation/.venv/bin/python" --temporal "$RUNNER_TEMP/temporal/temporal" --output-parent "$RUNNER_TEMP" --suite "${{ matrix.suite }}"
+      - name: Build the verified PostgreSQL runtime
+        run: bash scripts/install-postgres-runtime.sh "$RUNNER_TEMP/postgres"
+      - name: Exercise installed PostgreSQL migration, rollback, receipts and process cleanup
+        run: node scripts/qa/native-lifecycle-e2e.mjs --python "$PWD/workers/automation/.venv/bin/python" --postgres-bin "$RUNNER_TEMP/postgres/bin" --output-parent "$RUNNER_TEMP" --suite "${{ matrix.suite }}"
       - name: Require unchanged dependency locks
         if: always()
         run: git diff --exit-code -- pnpm-lock.yaml workers/automation/uv.lock

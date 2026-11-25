@@ -48,7 +48,7 @@
         "jobctrl-release-metadata",
         "node-runtime",
         "python-runtime",
-        "temporal-runtime",
+        "postgres-runtime",
         "pdfjs-renderer",
         "playwright-python",
         "chromium-core",

@@ -1,32 +1,24 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "launcherProtocol": 2,
   "ports": {
-    "temporalGrpc": 7233,
-    "temporalUi": 8233,
     "api": 8766
   },
   "components": [
     {
-      "name": "temporal",
-      "executable": "temporal/temporal",
+      "name": "postgres",
+      "executable": "postgres/bin/postgres",
       "arguments": [
-        "server",
-        "start-dev",
-        "--ip",
-        "127.0.0.1",
-        "--port",
-        "${TEMPORAL_GRPC_PORT}",
-        "--ui-ip",
-        "127.0.0.1",
-        "--ui-port",
-        "${TEMPORAL_UI_PORT}",
-        "--db-filename",
-        "${TEMPORAL_DB}",
-        "--log-level",
-        "error",
-        "--disable-config-file",
-        "--disable-config-env"
+        "-D",
+        "${PGDATA}",
+        "-c",
+        "listen_addresses=",
+        "-c",
+        "unix_socket_directories=${PGSOCKET}",
+        "-c",
+        "unix_socket_permissions=0700",
+        "-p",
+        "5432"
       ]
     },
     {
@@ -61,20 +53,20 @@
     }
   ],
   "health": {
-    "temporal": {
-      "component": "temporal",
+    "postgres": {
+      "executable": "postgres/bin/psql",
       "arguments": [
-        "operator",
-        "cluster",
-        "health",
-        "--address",
-        "127.0.0.1:${TEMPORAL_GRPC_PORT}",
-        "--command-timeout",
-        "2s",
-        "--output",
-        "json",
-        "--disable-config-file",
-        "--disable-config-env"
+        "-XAtw",
+        "-h",
+        "${PGSOCKET}",
+        "-p",
+        "5432",
+        "-U",
+        "jobctrl",
+        "-d",
+        "postgres",
+        "-c",
+        "SHOW data_directory"
       ]
     },
     "api": {

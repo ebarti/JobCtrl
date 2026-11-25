@@ -24,7 +24,7 @@ required notice is denied by default. Update both this review and
 | `font-geist` | `core-runtime` | `OFL-1.1` | `bundle` | Embedded in `jobctrl-web`; ship the OFL text and Geist Project/Fontsource attribution. |
 | `node-runtime` | `core-runtime` | `MIT` | `bundle` | Verify the pinned upstream archive and ship Node.js license and notices. |
 | `python-runtime` | `core-runtime` | `PSF-2.0` | `bundle` | Verify the pinned python-build-standalone archive and ship CPython plus included-library notices. |
-| `temporal-runtime` | `core-runtime` | `MIT` | `bundle` | Use the pinned upstream source/artifact built for the declared target; ship Temporal notices. |
+| `postgres-runtime` | `core-runtime` | `PostgreSQL` | `bundle` | Build from the pinned official source for the declared target and ship the source release copyright and license. |
 | `pdfjs-renderer` | `core-runtime` | `Apache-2.0` | `bundle` | Ship Apache-2.0 and required PDF.js notices. Poppler is not part of this component. |
 | `playwright-python` | `core-runtime` | `Apache-2.0` | `bundle` | Resolve the exact locked package and ship Playwright notices. |
 | `chromium-core` | `core-runtime` | `BSD-3-Clause` | `bundle` | Ship the pinned Playwright headless-shell artifact and Chromium's complete third-party notices. The full Chrome-for-Testing bundle is excluded because its Widevine CDM has separate commercial redistribution terms. |
@@ -47,6 +47,11 @@ production and release builders own the transitive proof.
 - The protected P6 release job reruns that policy on the exact signed artifact
   and blocks stable promotion when the SBOM, attribution set, pinned-source
   evidence, or this top-level decision is incomplete.
+- The macOS Psycopg binary wheel stays intact. The builder binds the explicit
+  CPython 3.12 arm64 wheel and all its native library hashes to
+  `psycopg-binary-notices.lock.json`. It ships the upstream notices for the
+  PostgreSQL client, OpenSSL, MIT Kerberos, and OpenLDAP alongside the wheel's
+  LGPL license. The same records identify Psycopg's corresponding source.
 - Provider terms are checked independently of an open-source package label.
   Ambiguity resolves to `official-download` or `exclude`, never implicit
   republication.

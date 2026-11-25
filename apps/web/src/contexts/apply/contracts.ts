@@ -243,7 +243,6 @@ export const actionRunSchema = actionReceiptSchema
     updatedAt: z.string(),
     cancellationRequested: z.boolean(),
     cancellationDelivery: cancellationDeliverySchema,
-    temporalRunId: z.string().nullable(),
   })
   .passthrough();
 

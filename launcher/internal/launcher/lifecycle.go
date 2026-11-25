@@ -89,6 +89,7 @@ type databaseFile struct {
 	SQLiteApplicationID int64  `json:"sqliteApplicationId,omitempty"`
 }
 type databasePair struct {
+	WorkspaceID    string          `json:"workspaceId,omitempty"`
 	SchemaVersion  int             `json:"schemaVersion"`
 	ID             string          `json:"id"`
 	ReleaseReceipt release.Receipt `json:"releaseReceipt"`
@@ -807,6 +808,9 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	if err := admitPythonApplicationLifecycle(ctx, activeVerified); err != nil {
 		return err
 	}
+	if targetVerified.runtime.SchemaVersion != 2 {
+		return errors.New("PostgreSQL rollback requires a PostgreSQL target; preserve the original SQLite source and newer PostgreSQL writes")
+	}
 	if err := readPythonApplicationSchemaContract(targetVerified); err != nil {
 		return fmt.Errorf("rollback cannot select a legacy application: %w", err)
 	}
@@ -817,8 +821,27 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	if err := verifyPythonApplicationPair(ctx, targetPair); err != nil {
 		return fmt.Errorf("verify rollback pair before changing the live workspace: %w", err)
 	}
-	if err := refuseUnresolvedPythonSpendRecovery(ctx); err != nil {
+	if targetPair.SchemaVersion != 2 {
+		return errors.New("rollback requires a native PostgreSQL backup")
+	}
+	check := func() error {
+		if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
+			return err
+		}
+		return preflightPostgresRestore(ctx, targetPair)
+	}
+	if err := check(); err != nil {
 		return err
+	}
+	wasRunning, err := registeredRuntimeRunning(ctx)
+	if err != nil {
+		return err
+	}
+	if err := stop(ctx); err != nil {
+		return err
+	}
+	if err := check(); err != nil {
+		return restartAfterRefusal(ctx, selection, wasRunning, err)
 	}
 	journal, err := store.Begin("rollback", &active.Receipt, &target, target.DescriptorSHA256)
 	if err != nil {
@@ -831,17 +854,6 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	// Keep the compatible current selector: immutable older launchers may not
 	// support journal-authorized startup or the current recovery protocol.
 	if err := advance(store, &journal, release.Quiescing); err != nil {
-		return err
-	}
-	if err := stopForRecoveryCommand(ctx); err != nil {
-		_ = store.Advance(&journal, release.Failed, err)
-		return err
-	}
-	if err := refuseUnresolvedPythonSpendRecovery(ctx); err != nil {
-		return err
-	}
-	if err := refuseUnresolvedSpendRecovery(ctx.Instance.StateDir); err != nil {
-		_ = store.Advance(&journal, release.Failed, err)
 		return err
 	}
 	currentPair, err := snapshotPair(ctx, active.Receipt)
@@ -904,7 +916,7 @@ func retainedPairForReceipt(stateDir string, target release.Receipt) (databasePa
 			continue
 		}
 		var pair databasePair
-		if err := decodeStrictRegular(filepath.Join(stateDir, "backups", entry.Name(), "pair.json"), &pair); err == nil && pair.SchemaVersion == 1 && pair.ReleaseReceipt == target && len(pair.Files) == 2 {
+		if err := decodeStrictRegular(filepath.Join(stateDir, "backups", entry.Name(), "pair.json"), &pair); err == nil && pair.ReleaseReceipt == target && (pair.SchemaVersion == 1 || pair.SchemaVersion == 2) {
 			matches = append(matches, pair)
 		}
 	}
@@ -1218,6 +1230,9 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 	if err := admitPythonApplicationLifecycle(ctx, verified); err != nil {
 		return err
 	}
+	if err := validateBackupDestination(ctx, directory); err != nil {
+		return err
+	}
 	if err := ensureSafeDirectory(directory); err != nil {
 		return err
 	}
@@ -1256,6 +1271,30 @@ func backup(ctx launchContext, args []string, output io.Writer) error {
 	return err
 }
 
+func registeredRuntimeRunning(ctx launchContext) (bool, error) {
+	state, err := readState(ctx.Instance.StatePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := validateStateIdentity(ctx, state); err != nil {
+		return false, err
+	}
+	return stateHasLiveProcesses(state), nil
+}
+
+func restartAfterRefusal(ctx launchContext, selection *release.Lock, wasRunning bool, cause error) error {
+	if !wasRunning {
+		return cause
+	}
+	if err := selection.Close(); err != nil {
+		return errors.Join(cause, err)
+	}
+	return errors.Join(cause, startSelectedRelease(ctx))
+}
+
 func startSelectedRelease(ctx launchContext) error {
 	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {
 		return err
@@ -1277,6 +1316,12 @@ func snapshotPair(ctx launchContext, receipt release.Receipt) (databasePair, err
 	return snapshotPairTo(ctx, receipt, filepath.Join(ctx.Instance.StateDir, "backups"))
 }
 func snapshotPairTo(ctx launchContext, receipt release.Receipt, parent string) (databasePair, error) {
+	if selected, err := readPostgresSelection(ctx, "active.json"); err == nil {
+		return snapshotPostgres(ctx, selected, receipt, parent)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return databasePair{}, err
+	}
+
 	if !usesPythonApplication(ctx.Manifest) {
 		return databasePair{}, errors.New("native paired backup requires the Python application; preserve legacy data for explicit Profile-only transfer")
 	}
@@ -1356,11 +1401,14 @@ func sqliteOnlineBackup(python, source, destination string, environment ...[]str
 	}
 	code := `import os,sqlite3,sys
 src,dst=sys.argv[1:3]
-c=sqlite3.connect(src, timeout=30)
+from pathlib import Path
+c=sqlite3.connect(Path(src).as_uri()+"?mode=ro", uri=True, timeout=30)
 try:
  r=c.execute("PRAGMA integrity_check").fetchone()
  if not r or r[0] != "ok": raise RuntimeError("source integrity_check failed")
- c.execute("VACUUM INTO ?", (dst,))
+ d=sqlite3.connect(dst)
+ try: c.backup(d)
+ finally: d.close()
 finally: c.close()
 d=sqlite3.connect(dst)
 try:
@@ -1416,6 +1464,13 @@ func describeDatabase(path, name string, version int64) (databaseFile, error) {
 }
 
 func restorePair(ctx launchContext, pair databasePair) error {
+	if pair.SchemaVersion == 2 {
+		return restorePostgres(ctx, pair)
+	}
+	if _, err := readPostgresSelection(ctx, "active.json"); !errors.Is(err, os.ErrNotExist) {
+		return errors.New("SQLite rollback cannot overwrite an active PostgreSQL workspace")
+	}
+
 	if err := refusePendingSourceMigration(ctx); err != nil {
 		return err
 	}
@@ -2071,12 +2126,12 @@ func collectBackupReleaseReferences(authority *retentionReferenceAuthority, stat
 			}
 			return fmt.Errorf("read backup reference %s: %w", entry.Name(), err)
 		}
-		if pair.SchemaVersion != 1 || !filepath.IsLocal(pair.ID) || pair.CreatedAt.IsZero() || !pair.ReleaseReceipt.Valid() || !buildIDPattern.MatchString(pair.ReleaseReceipt.BuildID) || len(pair.Files) != 2 {
+		if (pair.SchemaVersion != 1 && !validPostgresPair(pair)) || !filepath.IsLocal(pair.ID) || pair.CreatedAt.IsZero() || !pair.ReleaseReceipt.Valid() || !buildIDPattern.MatchString(pair.ReleaseReceipt.BuildID) || len(pair.Files) != 2 {
 			return fmt.Errorf("invalid backup reference %s", entry.Name())
 		}
 		files := map[string]bool{}
 		for _, file := range pair.Files {
-			if (file.Name != "jobctrl.db" && file.Name != "temporal.db") || files[file.Name] || !sha256Pattern.MatchString(file.SHA256) || file.SizeBytes <= 0 || file.SQLiteUserVer < 0 {
+			if (pair.SchemaVersion == 1 && file.Name != "jobctrl.db" && file.Name != "temporal.db") || files[file.Name] || !sha256Pattern.MatchString(file.SHA256) || file.SizeBytes <= 0 || file.SQLiteUserVer < 0 {
 				return fmt.Errorf("invalid backup reference %s", entry.Name())
 			}
 			files[file.Name] = true

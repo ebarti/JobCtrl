@@ -39,7 +39,7 @@ var (
 	buildIDPattern       = regexp.MustCompile(`^[0-9A-Za-z][0-9A-Za-z._-]{7,127}$`)
 	semverPattern        = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$`)
 	minimumOSPattern     = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){1,2}$`)
-	requiredComponentIDs = []string{"jobctrl-launcher", "jobctrl-web", "jobctrl-worker", "node-runtime", "python-runtime", "temporal-runtime"}
+	requiredComponentIDs = []string{"jobctrl-launcher", "jobctrl-web", "jobctrl-worker", "node-runtime", "python-runtime"}
 )
 
 const (
@@ -47,21 +47,24 @@ const (
 	stateSchemaVersion       = 1
 	logLineLimit             = 200
 	startupTimeout           = 30 * time.Second
-	temporalProbeTimeout     = 3 * time.Second
-	temporalProbeOutputLimit = 16 << 10
+	postgresProbeTimeout     = 3 * time.Second
+	postgresProbeOutputLimit = 16 << 10
 	// Detached start spans two sequential supervisor health phases: Temporal,
 	// then API/worker. The parent must not kill a supervisor that is still
 	// within those valid phase deadlines.
-	detachedStartupTimeout = 2*startupTimeout + 5*time.Second
+	detachedStartupTimeout = 2 * time.Hour // Initial verified imports can exceed ordinary service startup deadlines.
 	shutdownTimeout        = 5 * time.Second
 	// API shutdown may spend up to 30 seconds closing requests and another 30
 	// seconds draining RPC children. Allow that sequence to complete before
 	// falling back to the recorded-group termination policy.
 	cooperativeShutdownTimeout = 65 * time.Second
-	// The supervisor drains API and worker sequentially, then Temporal. Do not
+	// The supervisor drains API and worker sequentially, then PostgreSQL. Do not
 	// race that cleanup by signaling the components from another controller.
 	supervisorShutdownTimeout = 3 * time.Minute
 )
+
+// Overridden only by an explicitly compiled local qualification binary.
+var manifestAPIPort = "8766"
 
 var (
 	errUntrackedOwnership  = errors.New("this legacy runtime has no durable child-ownership record; recorded processes were checked, but cleanup cannot certify already-detached children. Automatic recovery is unavailable; keep the runtime registry and workspace intact and seek support")
@@ -88,7 +91,8 @@ type runtimeManifest struct {
 	} `json:"ports"`
 	Components []commandSpec `json:"components"`
 	Health     struct {
-		Temporal struct {
+		PostgreSQL commandSpec `json:"postgres"`
+		Temporal   struct {
 			Component string   `json:"component"`
 			Arguments []string `json:"arguments"`
 		} `json:"temporal"`
@@ -276,6 +280,7 @@ type launchContext struct {
 	Environment  []string
 	selection    *release.Lock
 	SourcePython string
+	PostgresData string
 }
 type readyMessage struct {
 	Error string `json:"error,omitempty"`
@@ -287,7 +292,7 @@ var readProcessIdentity processIdentityReader = processStartIdentity
 var readProcessExecutable processIdentityReader = processExecutable
 var signalProcessGroup groupSignaler = func(pgid int, signal syscall.Signal) error { return syscall.Kill(-pgid, signal) }
 var openBrowser = func(url string) error { return exec.Command("/usr/bin/open", url).Run() }
-var temporalHealthProbe = probeTemporal
+var postgresHealthProbe = probePostgres
 var startCommand = executeStart
 var ownedExecutionRunner = runInOwnedExecution
 var stopCompletionCheckpoint func(string) error
@@ -518,7 +523,7 @@ func dispatchCommand(ctx launchContext, args []string, stdout, stderr io.Writer)
 }
 
 func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
-	if !usesPythonApplication(ctx.Manifest) {
+	if !usesPythonApplication(ctx.Manifest) || ctx.Manifest.SchemaVersion != 2 {
 		return errors.New("the retired application runtime cannot be started by this launcher")
 	}
 	foreground, noOpen, err := parseStartArgs(args)
@@ -553,7 +558,7 @@ func executeStart(ctx launchContext, args []string, stdout io.Writer) error {
 // An installed build must explain a version mismatch before a worker exit can
 // hide its cause. Normal release updates perform the migration before start.
 func checkStartSchemaVersion(ctx launchContext) error {
-	if !usesPythonApplication(ctx.Manifest) {
+	if !usesPythonApplication(ctx.Manifest) || ctx.Manifest.SchemaVersion != 2 {
 		return errors.New("the selected payload does not implement the Python application")
 	}
 	return checkPythonApplicationWorkspace(ctx)
@@ -593,7 +598,7 @@ func ExitCodeForCommand(err error, args []string) int {
 	return ExitCode(err)
 }
 func printHelp(out io.Writer) {
-	fmt.Fprint(out, "JobCtrl bundled launcher\n\nUsage:\n  jobctrl start [--no-open] [--foreground]\n  jobctrl dev [--no-open] [--foreground]  (deprecated alias for start)\n  jobctrl stop\n  jobctrl status [--pipeline] [--json]\n  jobctrl logs [temporal|worker|api]\n  jobctrl open\n  jobctrl version [--json]\n  jobctrl update\n  jobctrl rollback [--to BUILD_ID]\n  jobctrl backup [--output DIRECTORY]\n  jobctrl uninstall [--remove-data]\n  jobctrl pipeline-status\n  jobctrl <Python domain command>\n")
+	fmt.Fprint(out, "JobCtrl bundled launcher\n\nUsage:\n  jobctrl start [--no-open] [--foreground]\n  jobctrl dev [--no-open] [--foreground]  (deprecated alias for start)\n  jobctrl stop\n  jobctrl status [--pipeline] [--json]\n  jobctrl logs [postgres|worker|api]\n  jobctrl open\n  jobctrl version [--json]\n  jobctrl update\n  jobctrl rollback [--to BUILD_ID]\n  jobctrl backup [--output DIRECTORY]\n  jobctrl uninstall [--remove-data]\n  jobctrl pipeline-status\n  jobctrl <Python domain command>\n")
 }
 func parseStartArgs(args []string) (foreground, noOpen bool, err error) {
 	for _, arg := range args {
@@ -982,22 +987,25 @@ func loadRuntimeManifestShape(path string) (runtimeManifest, error) {
 	if err := decodeStrict(path, &manifest); err != nil {
 		return manifest, err
 	}
-	if manifest.SchemaVersion != 1 || manifest.LauncherProtocol < 1 {
-		return manifest, errors.New("unsupported runtime manifest protocol")
+	if manifest.LauncherProtocol < 1 || (manifest.SchemaVersion != 1 && manifest.SchemaVersion != 2) || strconv.Itoa(manifest.Ports.API) != manifestAPIPort || len(manifest.Components) != 3 {
+		return manifest, errors.New("invalid runtime manifest version, API port or component count")
 	}
-	if manifest.Ports.TemporalGRPC != 7233 || manifest.Ports.TemporalUI != 8233 || manifest.Ports.API != 8766 {
-		return manifest, errors.New("runtime manifest must use JobCtrl fixed loopback ports 7233, 8233, and 8766")
+	databaseService := "postgres"
+	if manifest.SchemaVersion == 1 {
+		databaseService = "temporal"
+		if manifest.Ports.TemporalGRPC != 7233 || manifest.Ports.TemporalUI != 8233 || manifest.Health.Temporal.Component != databaseService {
+			return manifest, errors.New("invalid predecessor manifest")
+		}
+	} else if manifest.Components[0].Executable != "postgres/bin/postgres" || manifest.Health.PostgreSQL.Executable != "postgres/bin/psql" || manifest.Ports.TemporalGRPC != 0 || manifest.Ports.TemporalUI != 0 {
+		return manifest, errors.New("invalid PostgreSQL runtime manifest")
 	}
-	if len(manifest.Components) != 3 {
-		return manifest, errors.New("runtime manifest must define exactly temporal, worker, and api")
-	}
-	for i, expected := range []string{"temporal", "worker", "api"} {
+	for i, expected := range []string{databaseService, "worker", "api"} {
 		component := manifest.Components[i]
 		if component.Name != expected || !safeRelativePath(component.Executable) {
 			return manifest, fmt.Errorf("invalid runtime component %q", component.Name)
 		}
 	}
-	if manifest.Health.Temporal.Component != "temporal" || manifest.Health.API.Path != "/v1/health" || !manifest.Health.API.RequireWorkerHealthy || !manifest.Health.API.RequireWorkerPID {
+	if manifest.Health.API.Path != "/v1/health" || !manifest.Health.API.RequireWorkerHealthy || !manifest.Health.API.RequireWorkerPID {
 		return manifest, errors.New("runtime manifest health contract is invalid")
 	}
 	return manifest, nil
@@ -1101,6 +1109,11 @@ func validateDistributionManifestShape(raw []byte, manifest distributionManifest
 		if _, exists := componentByID[required]; !exists {
 			return fmt.Errorf("distribution manifest is missing runtime component %q", required)
 		}
+	}
+	_, postgres := componentByID["postgres-runtime"]
+	_, legacy := componentByID["temporal-runtime"]
+	if postgres == legacy {
+		return errors.New("exactly one database runtime component is required")
 	}
 	for left := range manifest.Components {
 		for right := left + 1; right < len(manifest.Components); right++ {
@@ -1540,7 +1553,7 @@ func childEnvironment(inherited []string, payloadRoot, stateDir string, manifest
 	values := make(map[string]string, len(inherited))
 	for _, pair := range inherited {
 		key, value, ok := strings.Cut(pair, "=")
-		if !ok || blocked[key] || strings.HasPrefix(key, "PYTHON") {
+		if !ok || blocked[key] || strings.HasPrefix(key, "PYTHON") || strings.HasPrefix(key, "PG") || strings.HasPrefix(key, "DBOS_") || key == "JOBCTRL_DATABASE_URL" || key == "JOBCTRL_POSTGRES_BIN_DIR" {
 			continue
 		}
 		values[key] = value
@@ -1552,14 +1565,10 @@ func childEnvironment(inherited []string, payloadRoot, stateDir string, manifest
 	values["JOBCTRL_WEB_DIR"] = filepath.Join(payloadRoot, "web")
 	values["PLAYWRIGHT_BROWSERS_PATH"] = filepath.Join(payloadRoot, "chromium")
 	values["JOBCTRL_PYTHON_EXECUTABLE"] = filepath.Join(payloadRoot, "python", "bin", "python3")
-	values["TEMPORAL_ADDRESS"] = fmt.Sprintf("127.0.0.1:%d", manifest.Ports.TemporalGRPC)
-	values["TEMPORAL_NAMESPACE"] = "default"
-	values["JOBCTRL_TEMPORAL_ADDRESS"] = values["TEMPORAL_ADDRESS"]
-	values["JOBCTRL_TEMPORAL_NAMESPACE"] = "default"
-	values["JOBCTRL_TEMPORAL_UI_URL"] = fmt.Sprintf("http://127.0.0.1:%d", manifest.Ports.TemporalUI)
+	values["JOBCTRL_DATABASE_URL"] = postgresURL(stateDir)
+	values["JOBCTRL_POSTGRES_BIN_DIR"] = filepath.Join(payloadRoot, "postgres", "bin")
 	values["JOBCTRL_API_HOST"] = "127.0.0.1"
 	values["JOBCTRL_API_PORT"] = strconv.Itoa(manifest.Ports.API)
-	values["JOBCTRL_TEMPORAL_DB"] = filepath.Join(stateDir, "temporal.db")
 	values["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
 	values["PYTHONNOUSERSITE"] = "1"
 	keys := make([]string, 0, len(values))
@@ -1574,15 +1583,7 @@ func childEnvironment(inherited []string, payloadRoot, stateDir string, manifest
 	return result
 }
 func substitute(argument string, ctx launchContext) (string, error) {
-	temporal := ""
-	if strings.Contains(argument, "${TEMPORAL_DB}") {
-		var err error
-		temporal, err = temporalHistoryPath(ctx.Instance.StateDir)
-		if err != nil {
-			return "", err
-		}
-	}
-	return strings.NewReplacer("${PAYLOAD_ROOT}", ctx.PayloadRoot, "${STATE_DIR}", ctx.Instance.StateDir, "${API_PORT}", strconv.Itoa(ctx.Manifest.Ports.API), "${TEMPORAL_GRPC_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalGRPC), "${TEMPORAL_UI_PORT}", strconv.Itoa(ctx.Manifest.Ports.TemporalUI), "${TEMPORAL_DB}", temporal).Replace(argument), nil
+	return strings.NewReplacer("${PAYLOAD_ROOT}", ctx.PayloadRoot, "${STATE_DIR}", ctx.Instance.StateDir, "${API_PORT}", strconv.Itoa(ctx.Manifest.Ports.API), "${PGDATA}", ctx.PostgresData, "${PGSOCKET}", postgresSocket(ctx.Instance.StateDir)).Replace(argument), nil
 }
 func componentByName(manifest runtimeManifest, name string) (commandSpec, error) {
 	for _, component := range manifest.Components {
@@ -1769,7 +1770,7 @@ func sameExecutable(actual, expected string) bool {
 	return actualErr == nil && expectedErr == nil && actualResolved == expectedResolved
 }
 func ensureFixedPortsAvailable(manifest runtimeManifest) error {
-	for _, port := range []int{manifest.Ports.TemporalGRPC, manifest.Ports.TemporalUI, manifest.Ports.API} {
+	for _, port := range []int{manifest.Ports.API} {
 		listener, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 		if err != nil {
 			return fmt.Errorf("%w: 127.0.0.1:%d (%v)", ErrPortInUse, port, err)
@@ -1898,7 +1899,7 @@ func sendReady(writer io.Writer, err error) {
 }
 
 func supervise(ctx launchContext, ready io.Writer) (result error) {
-	if !usesPythonApplication(ctx.Manifest) {
+	if !usesPythonApplication(ctx.Manifest) || ctx.Manifest.SchemaVersion != 2 {
 		err := errors.New("the retired application runtime cannot be supervised")
 		sendReady(ready, err)
 		return err
@@ -1918,13 +1919,6 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 			sendReady(ready, err)
 			return err
 		}
-	}
-	// Resolve after claiming the workspace: source and installed releases must
-	// operate on the same existing history, or refuse an ambiguous workspace.
-	ctx, err = withTemporalHistory(ctx)
-	if err != nil {
-		sendReady(ready, err)
-		return err
 	}
 	// startDetached validates before it forks. Repeat under the instance lock so
 	// a supervisor killed between that check and this re-exec cannot have its
@@ -1983,18 +1977,26 @@ func supervise(ctx launchContext, ready io.Writer) (result error) {
 	if err := ensureFixedPortsAvailable(ctx.Manifest); err != nil {
 		return err
 	}
-	if children["temporal"], err = startComponent(ctx, &state, "temporal"); err != nil {
+	selection, err := preparePostgres(ctx)
+	if err != nil {
 		return err
 	}
-	go waitComponent("temporal", children["temporal"], exits)
+	ctx.PostgresData = selection.path(ctx)
+	if children["postgres"], err = startComponent(ctx, &state, "postgres"); err != nil {
+		return err
+	}
+	go waitComponent("postgres", children["postgres"], exits)
 	if err := writeState(ctx.Instance.StatePath, state); err != nil {
 		return err
 	}
-	if err := waitForTemporal(ctx, ctx, children["temporal"], exits, signals); err != nil {
+	if err := waitForPostgres(ctx, ctx, children["postgres"], exits, signals); err != nil {
 		if errors.Is(err, errStartupInterrupted) {
 			return nil
 		}
 		markStartupComponentExit(&state, err)
+		return err
+	}
+	if err := admitPostgres(ctx, selection, children["postgres"].Process.Pid); err != nil {
 		return err
 	}
 	if children["worker"], err = startComponent(ctx, &state, "worker"); err != nil {
@@ -2093,10 +2095,6 @@ builtin exec 3<&-
 builtin exec "$@"`
 
 func startComponent(ctx launchContext, state *instanceState, name string) (*exec.Cmd, error) {
-	ctx, err := withTemporalHistory(ctx)
-	if err != nil {
-		return nil, err
-	}
 	spec, err := componentByName(ctx.Manifest, name)
 	if err != nil {
 		return nil, err
@@ -2130,7 +2128,7 @@ func startComponent(ctx launchContext, state *instanceState, name string) (*exec
 	}
 	argv := append([]string{"-p", "-c", gatedComponentScript, "jobctrl-component", executable}, arguments...)
 	command := payloadCommand(ctx.Environment, "/bin/bash", argv...)
-	command.Env, command.Dir, command.Stdout, command.Stderr = temporalGateEnvironment(ownedProcessEnvironment(ctx)), ctx.Instance.StateDir, logFile, logFile
+	command.Env, command.Dir, command.Stdout, command.Stderr = ownedProcessEnvironment(ctx), ctx.Instance.StateDir, logFile, logFile
 	command.ExtraFiles = []*os.File{gateRead}
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := command.Start(); err != nil {
@@ -2167,7 +2165,7 @@ func startComponent(ctx launchContext, state *instanceState, name string) (*exec
 	}
 	return command, nil
 }
-func waitForTemporal(ctx, controller launchContext, temporal *exec.Cmd, exits <-chan componentExit, signals <-chan os.Signal) error {
+func waitForPostgres(ctx, controller launchContext, postgres *exec.Cmd, exits <-chan componentExit, signals <-chan os.Signal) error {
 	startup, cancelStartup := context.WithTimeout(context.Background(), startupTimeout)
 	defer cancelStartup()
 	var last error
@@ -2178,15 +2176,15 @@ func waitForTemporal(ctx, controller launchContext, temporal *exec.Cmd, exits <-
 		case exit := <-exits:
 			return startupComponentExitError{exit}
 		case <-startup.Done():
-			return temporalStartupTimeout(last)
+			return postgresStartupTimeout(last)
 		default:
 		}
-		if !processPIDAlive(temporal.Process.Pid) {
-			return errors.New("Temporal exited before becoming healthy")
+		if !processPIDAlive(postgres.Process.Pid) {
+			return errors.New("PostgreSQL exited before becoming healthy")
 		}
 		probeCtx, cancelProbe := context.WithCancel(startup)
 		result := make(chan error, 1)
-		go func() { result <- temporalHealthProbe(probeCtx, ctx, controller) }()
+		go func() { result <- postgresHealthProbe(probeCtx, ctx, controller) }()
 		var cause error
 		select {
 		case last = <-result:
@@ -2200,12 +2198,12 @@ func waitForTemporal(ctx, controller launchContext, temporal *exec.Cmd, exits <-
 		if cause != nil {
 			cancelProbe()
 			last = <-result
-			var cleanupErr *temporalProbeCleanupError
+			var cleanupErr *postgresProbeCleanupError
 			if errors.As(last, &cleanupErr) {
-				return fmt.Errorf("Temporal probe cleanup failed: %w", last)
+				return fmt.Errorf("PostgreSQL probe cleanup failed: %w", last)
 			}
 			if errors.Is(cause, context.DeadlineExceeded) {
-				return temporalStartupTimeout(last)
+				return postgresStartupTimeout(last)
 			}
 			return cause
 		}
@@ -2217,14 +2215,14 @@ func waitForTemporal(ctx, controller launchContext, temporal *exec.Cmd, exits <-
 			case exit := <-exits:
 				return startupComponentExitError{exit}
 			case <-startup.Done():
-				return temporalStartupTimeout(nil)
+				return postgresStartupTimeout(nil)
 			default:
 			}
 			return nil
 		}
-		var cleanupErr *temporalProbeCleanupError
+		var cleanupErr *postgresProbeCleanupError
 		if errors.As(last, &cleanupErr) {
-			return fmt.Errorf("Temporal probe cleanup failed: %w", last)
+			return fmt.Errorf("PostgreSQL probe cleanup failed: %w", last)
 		}
 		timer := time.NewTimer(150 * time.Millisecond)
 		select {
@@ -2236,23 +2234,23 @@ func waitForTemporal(ctx, controller launchContext, temporal *exec.Cmd, exits <-
 			return startupComponentExitError{exit}
 		case <-startup.Done():
 			timer.Stop()
-			return temporalStartupTimeout(last)
+			return postgresStartupTimeout(last)
 		case <-timer.C:
 		}
 	}
 }
 
-func temporalStartupTimeout(last error) error {
+func postgresStartupTimeout(last error) error {
 	if last == nil {
 		last = context.DeadlineExceeded
 	}
-	return fmt.Errorf("embedded Temporal did not become healthy before startup deadline: %w", last)
+	return fmt.Errorf("embedded PostgreSQL did not become healthy before startup deadline: %w", last)
 }
 
-type temporalProbeCleanupError struct{ err error }
+type postgresProbeCleanupError struct{ err error }
 
-func (e *temporalProbeCleanupError) Error() string { return e.err.Error() }
-func (e *temporalProbeCleanupError) Unwrap() error { return e.err }
+func (e *postgresProbeCleanupError) Error() string { return e.err.Error() }
+func (e *postgresProbeCleanupError) Unwrap() error { return e.err }
 
 type boundedProbeOutput struct {
 	mu        sync.Mutex
@@ -2264,7 +2262,7 @@ func (b *boundedProbeOutput) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	n := len(p)
-	remaining := temporalProbeOutputLimit - len(b.data)
+	remaining := postgresProbeOutputLimit - len(b.data)
 	if remaining < len(p) {
 		b.truncated = true
 		p = p[:remaining]
@@ -2283,43 +2281,48 @@ func (b *boundedProbeOutput) String() string {
 	return value
 }
 
-func probeTemporal(parent context.Context, ctx, controller launchContext) error {
-	probeCtx, cancel := context.WithTimeout(parent, temporalProbeTimeout)
+func probePostgres(parent context.Context, ctx, controller launchContext) error {
+	probeCtx, cancel := context.WithTimeout(parent, postgresProbeTimeout)
 	defer cancel()
 	if controller.Instance != ctx.Instance {
-		return errors.New("Temporal probe controller belongs to a different instance")
+		return errors.New("PostgreSQL probe controller belongs to a different instance")
 	}
-	ctx, err := withTemporalHistory(ctx)
-	if err != nil {
-		return err
-	}
-	spec, err := componentByName(ctx.Manifest, ctx.Manifest.Health.Temporal.Component)
-	if err != nil {
-		return err
-	}
-	executable := filepath.Join(ctx.PayloadRoot, spec.Executable)
-	arguments := make([]string, len(ctx.Manifest.Health.Temporal.Arguments))
-	for i, argument := range ctx.Manifest.Health.Temporal.Arguments {
-		arguments[i], err = substitute(argument, ctx)
+	if ctx.PostgresData == "" {
+		selection, err := readPostgresSelection(ctx, "active.json")
 		if err != nil {
 			return err
 		}
+		ctx.PostgresData = selection.path(ctx)
+	}
+	spec := ctx.Manifest.Health.PostgreSQL
+	executable := filepath.Join(ctx.PayloadRoot, spec.Executable)
+	arguments := make([]string, len(spec.Arguments))
+	for i, arg := range spec.Arguments {
+		value, err := substitute(arg, ctx)
+		if err != nil {
+			return err
+		}
+		arguments[i] = value
 	}
 	output := &boundedProbeOutput{}
 	// The executable and arguments belong to the service's verified payload.
 	// The helper belongs to the independently authenticated current controller.
 	controller.PayloadRoot = ctx.PayloadRoot
 	controller.Environment = ctx.Environment
-	if err := runTemporalProbeInOwnedExecution(probeCtx, controller, executable, arguments, output); err != nil {
+	if err := runPostgresProbeInOwnedExecution(probeCtx, controller, executable, arguments, output); err != nil {
 		if diagnostic := output.String(); diagnostic != "" {
-			return fmt.Errorf("Temporal health probe: %w: %s", err, diagnostic)
+			return fmt.Errorf("PostgreSQL health probe: %w: %s", err, diagnostic)
 		}
-		return fmt.Errorf("Temporal health probe: %w", err)
+		return fmt.Errorf("PostgreSQL health probe: %w", err)
+	}
+	if strings.TrimSpace(output.String()) != ctx.PostgresData {
+		return errors.New("PostgreSQL service reports another data directory")
 	}
 	return nil
 }
 func waitForAPIWorker(ctx launchContext, api, worker *exec.Cmd, exits <-chan componentExit, signals <-chan os.Signal) error {
-	deadline := time.Now().Add(startupTimeout)
+	// Cold Python imports, schema admission and DBOS registration precede HTTP readiness.
+	deadline := time.Now().Add(2 * time.Minute)
 	var last error
 	for time.Now().Before(deadline) {
 		select {
@@ -2357,6 +2360,15 @@ func probeAPIWorker(ctx launchContext, expectedWorkerPID int) error {
 		return fmt.Errorf("API health returned HTTP %d", response.StatusCode)
 	}
 	var health struct {
+		SchemaVersion int `json:"schemaVersion"`
+		Storage       struct {
+			Engine string `json:"engine"`
+			Status string `json:"status"`
+		} `json:"storage"`
+		DBOS struct {
+			Available bool   `json:"available"`
+			Engine    string `json:"engine"`
+		} `json:"dbos"`
 		Application string `json:"application"`
 		WorkspaceID string `json:"workspaceId"`
 		Worker      struct {
@@ -2374,7 +2386,7 @@ func probeAPIWorker(ctx launchContext, expectedWorkerPID int) error {
 		return fmt.Errorf("worker health is %q", health.Worker.Status)
 	}
 	if usesPythonApplication(ctx.Manifest) {
-		if health.Application != "jobctrl-python" || health.WorkspaceID != ctx.Instance.ID || health.Worker.PID != expectedWorkerPID {
+		if health.SchemaVersion != 2 || health.Storage.Engine != "postgresql" || health.Storage.Status != "ready" || !health.DBOS.Available || health.DBOS.Engine != "dbos" || health.Application != "jobctrl-python" || health.WorkspaceID != ctx.Instance.ID || health.Worker.PID != expectedWorkerPID {
 			return errors.New("Python application health does not identify this workspace and owned worker")
 		}
 	} else if health.Worker.Heartbeat == nil || health.Worker.Heartbeat.PID != expectedWorkerPID {
@@ -2493,7 +2505,11 @@ func terminateScopedLeader(name string, record componentRecord) error {
 	if !recordMatchesLiveProcess(record) {
 		return errors.New("component leader identity is unresolved")
 	}
-	if err := syscall.Kill(record.PID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+	signal := syscall.SIGTERM
+	if name == "postgres" {
+		signal = syscall.SIGINT
+	}
+	if err := syscall.Kill(record.PID, signal); err != nil && !errors.Is(err, syscall.ESRCH) {
 		return err
 	}
 	grace := shutdownTimeout
@@ -2528,7 +2544,7 @@ func terminateComponentRecord(name string, record componentRecord) error {
 }
 
 func shutdownComponents(state *instanceState, children map[string]*exec.Cmd, statePath string) {
-	for _, name := range []string{"api", "worker", "temporal"} {
+	for _, name := range []string{"api", "worker", "postgres", "temporal"} {
 		record, exists := state.Components[name]
 		if !exists || !componentMayBeLive(record) {
 			continue
@@ -2673,7 +2689,7 @@ func stopInstance(ctx launchContext) error {
 		return errors.New("runtime generation changed during stop; refusing to signal or overwrite its registry")
 	}
 	failed := make([]string, 0)
-	for _, name := range []string{"api", "worker", "temporal"} {
+	for _, name := range []string{"api", "worker", "postgres", "temporal"} {
 		if record, exists := state.Components[name]; exists && componentMayBeLive(record) {
 			var cleanupErr error
 			if durableOwnership {
@@ -2808,21 +2824,21 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	if !differentRelease && recordMatchesLiveProcess(apiRecord) && recordMatchesLiveProcess(workerRecord) {
 		apiWorkerHealth = probeAPIWorker(ctx, workerRecord.PID)
 	}
-	for _, name := range []string{"temporal", "worker", "api"} {
+	for _, name := range []string{"postgres", "worker", "api"} {
 		record, found := state.Components[name]
 		live := found && recordMatchesLiveProcess(record)
 		stateName := "stopped"
 		var healthError string
 		if live {
 			stateName = "running"
-			if !differentRelease && name == "temporal" {
-				if probeErr := temporalHealthProbe(context.Background(), ctx, ctx); probeErr != nil {
+			if !differentRelease && name == "postgres" {
+				if probeErr := postgresHealthProbe(context.Background(), ctx, ctx); probeErr != nil {
 					stateName = "unhealthy"
 					allReady = false
 					healthError = probeErr.Error()
-					var cleanupErr *temporalProbeCleanupError
+					var cleanupErr *postgresProbeCleanupError
 					if errors.As(probeErr, &cleanupErr) {
-						probeCleanupErr = fmt.Errorf("Temporal health probe cleanup incomplete; preserve its receipt and run jobctrl stop: %w", probeErr)
+						probeCleanupErr = fmt.Errorf("PostgreSQL health probe cleanup incomplete; preserve its receipt and run jobctrl stop: %w", probeErr)
 						healthError = probeCleanupErr.Error()
 					}
 				}
@@ -2893,7 +2909,7 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	if _, err := fmt.Fprintf(output, "JobCtrl: %s\n", overall); err != nil {
 		return errors.Join(err, probeCleanupErr)
 	}
-	for _, name := range []string{"temporal", "worker", "api"} {
+	for _, name := range []string{"postgres", "worker", "api"} {
 		item := components[name]
 		if _, err := fmt.Fprintf(output, "%-9s %-8s pid=%d\n", name, item.State, item.PID); err != nil {
 			return errors.Join(err, probeCleanupErr)
@@ -2908,10 +2924,10 @@ func status(ctx launchContext, output io.Writer, jsonOutput bool) error {
 }
 func logs(ctx launchContext, args []string, output io.Writer) error {
 	if len(args) > 1 || (len(args) == 1 && args[0] == "--follow") {
-		return errors.New("usage: jobctrl logs [temporal|worker|api]; logs are bounded to the last 200 lines")
+		return errors.New("usage: jobctrl logs [postgres|worker|api]; logs are bounded to the last 200 lines")
 	}
 	if len(args) == 0 {
-		for _, name := range []string{"temporal", "worker", "api"} {
+		for _, name := range []string{"postgres", "worker", "api"} {
 			fmt.Fprintf(output, "== %s ==\n", name)
 			if err := tailFile(filepath.Join(ctx.Instance.LogDir, name+".log"), logLineLimit, output); err != nil {
 				return err
@@ -2920,7 +2936,7 @@ func logs(ctx launchContext, args []string, output io.Writer) error {
 		return nil
 	}
 	name := args[0]
-	if name != "temporal" && name != "worker" && name != "api" {
+	if name != "postgres" && name != "worker" && name != "api" {
 		return fmt.Errorf("unknown component %q", name)
 	}
 	return tailFile(filepath.Join(ctx.Instance.LogDir, name+".log"), logLineLimit, output)
@@ -2985,7 +3001,7 @@ func version(ctx launchContext, output io.Writer, jsonOutput bool) error {
 	return err
 }
 func dispatchPython(ctx launchContext, args []string) error {
-	if !usesPythonApplication(ctx.Manifest) {
+	if !usesPythonApplication(ctx.Manifest) || ctx.Manifest.SchemaVersion != 2 {
 		return errors.New("the selected payload does not implement the canonical Python application CLI")
 	}
 	if err := checkDatabasePublication(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); err != nil {

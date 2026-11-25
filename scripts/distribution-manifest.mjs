@@ -33,7 +33,7 @@ const SAFE_FILE_MODES = new Set(["0644", "0755"]);
 const EXPECTED_LOCK_INPUTS = new Map([
   ["node-runtime-archive", "node-runtime"],
   ["python-runtime-archive", "python-runtime"],
-  ["temporal-runtime-archive", "temporal-runtime"],
+  ["postgres-runtime-source", "postgres-runtime"],
   ["chromium-core-headless-archive", "chromium-core"],
   ["playwright-mcp-archive", "playwright-mcp"],
 ]);
@@ -559,6 +559,11 @@ export function validateComponentLocks(lockValue, inventoryById) {
     invariant(input.url.startsWith("https://"), `${id}.url must use HTTPS`);
     invariant(SHA256_PATTERN.test(input.sha256), `${id}.sha256 must be lowercase SHA-256`);
     invariant(["tar.gz", "zip"].includes(input.archiveType), `${id}: unsupported archiveType`);
+    if (id === "postgres-runtime-source") {
+      invariant(/^17\.\d+$/.test(input.version) && input.version === component.version, "PostgreSQL source version does not match the inventory");
+      invariant(input.archiveType === "tar.gz" && input.url === `https://ftp.postgresql.org/pub/source/v${input.version}/postgresql-${input.version}.tar.gz`,
+        "PostgreSQL source must be the official versioned upstream archive");
+    }
     assertString(input.license, `${id}.license`);
     invariant(input.license === component.license, `${id}: license does not match component inventory`);
   }

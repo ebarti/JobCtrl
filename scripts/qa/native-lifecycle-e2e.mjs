@@ -1,12 +1,11 @@
 #!/usr/bin/env node
-// Real compiled installer/selector + Python HTTP/worker + Temporal, with private
+// Real compiled installer/selector + Python HTTP/worker + PostgreSQL/DBOS, with private
 // synthetic state. The private interpreter adds one synthetic orphan at its
 // executable boundary; no application action/repository is mocked.
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {watch} from 'node:fs';
 import {spawn} from 'node:child_process';
-import {chmod, cp, mkdir, mkdtemp, readFile, readlink, readdir, rm, stat, symlink, writeFile} from 'node:fs/promises';
+import {chmod, cp, mkdir, mkdtemp, readFile, readlink, readdir, rename, rm, stat, symlink, writeFile} from 'node:fs/promises';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,7 +30,9 @@ const root=await mkdtemp(path.join(taskParent,'jobctrl-native-lifecycle-'));
 const home=path.join(root,'home'), workspace=path.join(root,'workspace'), runtime=path.join(root,'runtime');
 for(const dir of [home,workspace,path.join(root,'tmp'),path.join(root,'bin')]) await mkdir(dir,{recursive:true,mode:0o700});
 const python=path.resolve(args.get('python') ?? path.join(repo,'workers/automation/.venv/bin/python'));
-const temporal=path.resolve(args.get('temporal') ?? '/opt/homebrew/bin/temporal');
+const postgresBin=path.resolve(args.get('postgres-bin') ?? process.env.JOBCTRL_POSTGRES_BIN_DIR ?? path.join(repo,'.dev/postgres-runtime/bin'));
+const apiPort=Number(args.get('api-port') ?? '8766');
+assert(Number.isInteger(apiPort) && apiPort>1023 && apiPort<=65535);
 const launcher=path.resolve(args.get('launcher') ?? path.join(root,'bin/jobctrl'));
 const installer=path.resolve(args.get('installer') ?? path.join(root,'bin/jobctrl-installer'));
 const env={HOME:home,PATH:'/usr/bin:/bin:/usr/sbin:/sbin',TMPDIR:path.join(root,'tmp'),
@@ -45,7 +46,7 @@ const scriptSha256=digest(await readFile(fileURLToPath(import.meta.url)));
 const quote=value=>"'"+value.replaceAll("'","'\\''")+"'";
 const json=async file=>JSON.parse(await readFile(file,'utf8'));
 async function put(file,data,mode=0o644){await mkdir(path.dirname(file),{recursive:true,mode:0o700});await writeFile(file,data,{mode});await chmod(file,mode);}
-async function run(command,argv,{commandEnv=env,cwd=repo,acceptFailure=false,timeout=110000}={}){
+async function run(command,argv,{commandEnv=env,cwd=repo,acceptFailure=false,timeout=300000}={}){
   const child=spawn(command,argv,{env:commandEnv,cwd,stdio:['ignore','pipe','pipe']});
   let stdout='',stderr='';
   child.stdout.on('data',data=>{stdout+=data;if(stdout.length>2e6)child.kill('SIGTERM');});
@@ -56,7 +57,7 @@ async function run(command,argv,{commandEnv=env,cwd=repo,acceptFailure=false,tim
   return {code,stdout,stderr};
 }
 async function api(route,method='GET',value){
- const result=await fetch('http://127.0.0.1:8766'+route,{method,headers:{origin:'http://127.0.0.1:8766','content-type':'application/json'},body:value===undefined?undefined:JSON.stringify(value),signal:AbortSignal.timeout(5000)});
+ const result=await fetch(`http://127.0.0.1:${apiPort}`+route,{method,headers:{origin:`http://127.0.0.1:${apiPort}`,'content-type':'application/json'},body:value===undefined?undefined:JSON.stringify(value),signal:AbortSignal.timeout(5000)});
  const body=await result.json();assert(result.ok,JSON.stringify(body));return body;
 }
 async function freePort(port){await new Promise((resolve,reject)=>{const server=net.createServer();server.once('error',reject);server.listen(port,'127.0.0.1',()=>server.close(resolve));});}
@@ -67,6 +68,9 @@ async function childPids(){try{return (await readFile(path.join(workspace,'qa-or
 const observer=String.raw`import os,pathlib,signal,sys
 args=sys.orig_argv
 root=pathlib.Path(os.environ['JOBCTRL_DIR'])
+if 'jobctrl.app.server' in args or 'jobctrl.app.worker' in args:
+    import faulthandler
+    faulthandler.dump_traceback_later(75, repeat=False)
 if 'jobctrl.app.server' in args and (root/'.qa-block-api').exists():
     os._exit(73)
 if 'jobctrl.app.worker' in args and (root/'.qa-custody').is_file():
@@ -81,6 +85,9 @@ async function payload(sequence){
  await mkdir(payload,{recursive:true});
  for(const name of ['jobctrl','jobctrl-installer']){const source=name==='jobctrl'?launcher:installer;await put(path.join(payload,'launcher',name),await readFile(source),0o755);}
  for(const name of ['runtime-manifest.json','application-schema.json','update-protocol.json'])await put(path.join(payload,'launcher',name),await readFile(path.join(repo,'launcher',name)));
+ const manifestPath=path.join(payload,'launcher','runtime-manifest.json');
+ const runtimeManifest=await json(manifestPath);runtimeManifest.ports.api=apiPort;
+ await put(manifestPath,JSON.stringify(runtimeManifest));
  await put(path.join(payload,'launcher','restore-observer.py'),observer);
  await put(path.join(payload,'python/bin/python3'),await readFile(pythonInfo.executable),0o755);
  await put(path.join(payload,'python/lib',`libpython${pythonInfo.version}.dylib`),await readFile(path.join(pythonInfo.base_prefix,'lib',`libpython${pythonInfo.version}.dylib`)),0o755);
@@ -91,11 +98,11 @@ async function payload(sequence){
  // in the immutable release so shared-checkout edits cannot change its schema.
  await cp(path.join(root,'application-source'),path.join(payload,'worker/site-packages/jobctrl'),{recursive:true});
  await put(path.join(site,'native-e2e.pth'),`${pythonInfo.purelib}\nimport sys; sys.path.insert(0, ${JSON.stringify(path.join(installedPayload,'worker/site-packages'))})\nimport runpy; runpy.run_path(${JSON.stringify(path.join(runtime,'releases',`local-native-e2e-${String(sequence).padStart(4,'0')}`,'payload/launcher/restore-observer.py'))})\n`);
- await put(path.join(payload,'temporal/temporal'),await readFile(temporal),0o755);
+ await cp(path.dirname(postgresBin),path.join(payload,'postgres'),{recursive:true,verbatimSymlinks:true});
  await put(path.join(payload,'node/bin/node'),`#!/bin/sh\nexec ${quote(process.execPath)} "$@"\n`,0o755);
  await put(path.join(payload,'web/index.html'),'<!doctype html><title>Owned native lifecycle E2E</title>');
  const files=await buildFileInventory(payload), components=[];
- for(const [id,owned] of [['jobctrl-launcher','launcher'],['jobctrl-web','web'],['jobctrl-worker','worker'],['node-runtime','node'],['python-runtime','python'],['temporal-runtime','temporal']]){
+ for(const [id,owned] of [['jobctrl-launcher','launcher'],['jobctrl-web','web'],['jobctrl-worker','worker'],['node-runtime','node'],['postgres-runtime','postgres'],['python-runtime','python']]){
   const summary=summarizeComponentFiles(owned,files);
   components.push({id,classification:'core-runtime',version:'2.0.0',owner:'JobCtrl native E2E',source:'https://example.invalid/owned-native-e2e',license:'AGPL-3.0-only',redistribution:'bundle',path:owned,sha256:summary.sha256,sizeBytes:summary.sizeBytes,required:true});
  }
@@ -105,7 +112,7 @@ async function payload(sequence){
  await put(path.join(payload,'manifest.json'),manifestRaw);
  await put(path.join(payload,'manifest.sig'),JSON.stringify({schemaVersion:1,status:'unsigned-local',manifestAlgorithm:'ed25519',manifestKeyId:'local-development',signature:null,promotable:false})+'\n');
  const archive=path.join(out,'payload.zip');
- await run('/usr/bin/zip',['-q','-X','-r',archive,'.'],{cwd:payload});
+ await run('/usr/bin/zip',['-q','-X','-y','-r',archive,'.'],{cwd:payload});
  const archiveBytes=await readFile(archive);
  const descriptor={schemaVersion:1,channel:'local',sequence,minimumSafeSequence:1,revokedBuildIds:[],buildId,appVersion:'2.0.0',platform:{id:'darwin-arm64',os:'darwin',arch:'arm64'},artifact:{url:pathToFileURL(archive).href,sha256:digest(archiveBytes),sizeBytes:archiveBytes.length,archiveType:'zip',manifestSha256:digest(manifestRaw)}};
  await put(path.join(out,'descriptor.json'),JSON.stringify(descriptor)+'\n');
@@ -152,7 +159,7 @@ async function verifyCurlReinstall(candidate) {
 async function stop(){const result=await run(selector,['stop'],{acceptFailure:true});assert.equal(result.code,0,result.stderr);for(const pid of await childPids())await dead(pid);}
 
 async function liveAuthority(){
- const files=['jobctrl.db','temporal.db'].map(name=>path.join(workspace,name)).concat([path.join(runtime,'active.json'),path.join(runtime,'transition.json'),selector]);
+ const files=['postgres/active.json','.jobctrl-postgres-identity'].map(name=>path.join(workspace,name)).concat([path.join(runtime,'active.json'),path.join(runtime,'transition.json'),selector]);
  return Object.fromEntries(await Promise.all(files.map(async name=>[name,digest(await readFile(name))])));
 }
 async function refuseRollback(target,label){
@@ -162,47 +169,95 @@ async function refuseRollback(target,label){
  assert(await alive(control.pid),'Refusal affected unrelated process control');
 }
 
+function workspaceSql(sql) {
+ const socket=path.join('/private/tmp',`jobctrl-pg-${process.getuid()}-${digest(workspace).slice(0,24)}`);
+ return run(path.join(postgresBin,'psql'),['-v','ON_ERROR_STOP=1','-XAtw','-h',socket,'-p','5432','-U','jobctrl','-d','jobctrl','-c',sql]);
+}
+
+async function acceptedArtifactFixture() {
+ const socket=path.join('/private/tmp',`jobctrl-pg-${process.getuid()}-${digest(workspace).slice(0,24)}`);
+ const result=await run(python,['-I','-B','-c',`from pathlib import Path
+import hashlib,json,sys,uuid,psycopg
+root=Path(sys.argv[1])/'resumes-artifacts'; aid=str(uuid.uuid4()); file=root/(aid+'.pdf')
+body=b'%PDF-1.4\\n% native cold restore ownership proof\\n%%EOF\\n';file.write_bytes(body); file.chmod(0o600)
+def identity(path):
+    info=path.stat();return {'device':info.st_dev,'inode':info.st_ino}
+artifact={'artifact_id':aid,'filename':file.name,'path':str(file),'size_bytes':len(body),'sha256':hashlib.sha256(body).hexdigest(),'file_identity':identity(file),'root_identity':identity(root),'resume_id':'qa-resume','revision_id':'qa-revision'}
+state={'acceptances':[{'pdf':artifact}],'revisions':[{'renders':[artifact]}],'locales':[]}
+with psycopg.connect(host=sys.argv[2],port=5432,user='jobctrl',dbname='jobctrl') as c:
+    c.execute("INSERT INTO resumes_documents(resume_id,job_id,version,state_json,updated_at) VALUES('qa-resume','qa-job',1,%s,'2026-11-25T00:00:00Z')",(json.dumps(state),))
+    c.execute("INSERT INTO resumes_artifact_retirements(artifact_id,job_id,artifact_json,status,reason,created_at,updated_at) VALUES(%s,'qa-job',%s,'registered','registered_render','2026-11-25T00:00:00Z','2026-11-25T00:00:00Z')",(aid,json.dumps(artifact)))
+print(file)`,workspace,socket]);
+ return result.stdout.trim();
+}
+
 async function lifecycle(first,second){
+ const artifact=await acceptedArtifactFixture();
  await run(selector,['backup']);
  const backups=(await readdir(path.join(workspace,'backups'))).filter(name=>name.startsWith('pair-'));
  assert.equal(backups.length,1);
  const backup=await json(path.join(workspace,'backups',backups[0],'pair.json'));
- const appFile=backup.files.find(file=>file.name==='jobctrl.db');assert.equal(appFile.sqliteApplicationId,1245926228);assert.equal(appFile.sqliteUserVersion,1);
+ assert.equal(backup.schemaVersion,2);assert.deepEqual(backup.files.map(f=>f.name).sort(),['.jobctrl-postgres-identity','postgres.tar']);
  for(const file of backup.files)assert.equal(digest(await readFile(path.join(workspace,'backups',backup.id,file.name))),file.sha256);
  assert.equal((await api('/v1/settings')).targetCriteria,'native-original');
  passed('coherent-paired-backup-readback-and-restart');
  await install(second,{stage:true});
+ const stateBefore=await liveAuthority();
+ const workerBefore=(await api('/v1/health')).worker.pid;
+ await workspaceSql("INSERT INTO app_action_runs(run_id,action,request_id,input_hash,payload_json,status,workflow_id,created_at,updated_at) VALUES('qa-incompatible','removed.synthetic-action','qa-request','hash','{}','pending','qa-workflow','2026-11-25T00:00:00Z','2026-11-25T00:00:00Z')");
+ try{
+  const refusal=await run(selector,['update','--to',second.buildId],{acceptFailure:true});
+  assert.notEqual(refusal.code,0);
+  assert.deepEqual(await liveAuthority(),stateBefore);
+  assert.equal((await api('/v1/health')).worker.pid,workerBefore);
+ }finally{await workspaceSql("DELETE FROM app_action_runs WHERE run_id='qa-incompatible'");}
+ passed('incompatible-durable-command-refuses-update-while-predecessor-serves');
  await run(selector,['update','--to',second.buildId]);
  assert.equal((await json(path.join(runtime,'active.json'))).receipt.buildId,second.buildId);
  assert.equal((await api('/v1/settings')).targetCriteria,'native-original');
  const settings=await api('/v1/settings');await api('/v1/settings','PATCH',{expectedRevision:settings.revision,targetCriteria:'native-after-update'});
  passed('target-update-preserves-accepted-application-state');
+ await workspaceSql("INSERT INTO app_model_calls(receipt_id,operation,provider,model,lane,prompt_version,input_fingerprint,created_at,status,owner_pid,provider_started,input_tokens,output_tokens,cost_usd,cost_source) VALUES('qa-settled','native.qa','synthetic','synthetic','interactive','1','hash','2026-11-25T00:00:00Z','completed',0,1,10,10,0.1,'usage')");
+ const runningWorker=(await api('/v1/health')).worker.pid;
+ try{
+  await refuseRollback(first,'settled charged call after retained backup');
+  assert.equal((await api('/v1/health')).worker.pid,runningWorker);
+ }finally{await workspaceSql("DELETE FROM app_model_calls WHERE receipt_id='qa-settled'");}
+ passed('settled-charge-since-backup-refuses-rollback-while-current-release-serves');
  await stop();
  const completed=await json(path.join(runtime,'transition.json'));
  const pairPath=path.join(workspace,'backups',completed.backupId,'pair.json');
  const originalRaw=await readFile(pairPath),original=JSON.parse(originalRaw);
- const appBackup=path.join(workspace,'backups',original.id,'jobctrl.db'),savedBackup=await readFile(appBackup);
+ const appBackup=path.join(workspace,'backups',original.id,'postgres.tar'),savedBackup=await readFile(appBackup);
  await writeFile(appBackup,Buffer.concat([savedBackup,Buffer.from('owned changed backup')]));
  try{await refuseRollback(first,'changed paired backup');}finally{await writeFile(appBackup,savedBackup);}
- for(const change of [pair=>{pair.files.find(f=>f.name==='jobctrl.db').sqliteApplicationId=0;},pair=>{pair.id='../unowned';},pair=>{pair.files[1]={...pair.files[0]};}]){
+ for(const change of [pair=>{pair.workspaceId='0'.repeat(64);},pair=>{pair.id='../unowned';},pair=>{pair.files[1]={...pair.files[0]};}]){
   const changed=JSON.parse(originalRaw);change(changed);await writeFile(pairPath,JSON.stringify(changed));
   try{await refuseRollback(first,'invalid pair authority');}finally{await writeFile(pairPath,originalRaw);}
  }
  passed('changed-legacy-duplicate-unsafe-pairs-refuse-before-live-or-journal-mutation');
- // Observe actual public rollback replacement before newly started writers.
- let finishProof,proofSeen=false;
- const proof=new Promise(resolve=>{finishProof=resolve;});
- async function inspectRestoredPair(){try{const got=await Promise.all(original.files.map(async file=>[file.name,digest(await readFile(path.join(workspace,file.name)))]));if(got.every(([name,hash])=>original.files.find(file=>file.name===name).sha256===hash)){proofSeen=true;finishProof(Object.fromEntries(got));}}catch{}}
- const watcher=watch(workspace,()=>{void inspectRestoredPair();});
+ const retained=artifact+'.qa-preserved';
+ await rename(artifact,retained);
  try{
-  await run(selector,['rollback','--to',first.buildId]);
-  const bytes=await Promise.race([proof,new Promise((_,reject)=>setTimeout(()=>reject(Error('Did not observe exact paired restore before writers')),2000))]);
-  await put(path.join(root,'restored-pair-proof.json'),JSON.stringify(bytes,null,2));assert(proofSeen);
- }finally{watcher.close();}
+  await refuseRollback(first,'retired accepted PDF');
+  await cp(retained,artifact);
+  await refuseRollback(first,'replaced PDF inode with identical bytes');
+ }finally{
+  await rm(artifact,{force:true});
+  await rename(retained,artifact);
+ }
+ passed('rollback-rejects-missing-and-replaced-accepted-pdf-before-selection');
+ const prior=await json(path.join(workspace,'postgres/active.json'));
+ await run(selector,['rollback','--to',first.buildId]);
+ const restored=await json(path.join(workspace,'postgres/active.json'));
+ assert.notEqual(restored.generation,prior.generation);
+ assert.equal(await readFile(path.join(workspace,'postgres',prior.generation,'PG_VERSION'),'utf8'),'17\n');
  assert.equal((await api('/v1/settings')).targetCriteria,'native-original');
- passed('explicit-rollback-restores-both-exact-files-before-writers');
+ assert.equal((await api('/v1/health')).dbos.available,true);
+ passed('explicit-rollback-restores-postgres-and-dbos-with-previous-generation-preserved');
  await stop();
  await legacyAdmission(first,second);
+ await upgradeCurrentWorkspace();
 }
 
 async function legacyAdmission(first,candidate){
@@ -228,17 +283,40 @@ c=sqlite3.connect(p/'temporal.db');c.execute('CREATE TABLE legacy_history(value 
  await run(selector,['stop'],{commandEnv:legacyEnv});assert.deepEqual(await tree(legacy),before);
  passed('legacy-start-backup-update-rollback-refuse-with-exact-source-preservation');
 
- const current = path.join(workspace,'jobctrl.db');
+ const current = path.join(workspace,'postgres','active.json');
  const currentMode = (await stat(current)).mode & 0o777;
  await chmod(current,0o644);
  try {
   const result = await run(selector,['start','--no-open'],{acceptFailure:true});
   assert.notEqual(result.code,0);
-  assert.match(result.stderr,/cannot inspect Python application database/);
+  assert.match(result.stderr,/private owned regular path/);
  } finally {
   await chmod(current,currentMode);
  }
  passed('nonprivate-python-database-cannot-start');
+}
+
+async function upgradeCurrentWorkspace(){
+ const predecessor=path.join(root,'sqlite-predecessor');
+ const sourceWorkspace=path.join(root,'current-python-workspace');
+ const archive=path.join(root,'sqlite-predecessor.tar');
+ await mkdir(predecessor,{mode:0o700});
+ await run('/usr/bin/git',['archive','--format=tar','--output',archive,'f8e329d2dda0ac44599c9a4f281cff459d0b7868','workers/automation/src/jobctrl']);
+ await run('/usr/bin/tar',['-xf',archive,'-C',predecessor]);
+ await run(python,[path.join(repo,'workers/automation/scripts/qa_postgres_upgrade_source.py'),'--checkout',predecessor,'--workspace',sourceWorkspace]);
+ const before=digest(await readFile(path.join(sourceWorkspace,'jobctrl.db')));
+ const targetEnv={...env,JOBCTRL_DIR:sourceWorkspace};
+ try{
+  await run(selector,['start','--no-open'],{commandEnv:targetEnv});
+  assert.equal((await api('/v1/settings')).revision,3);
+  assert.equal((await api('/v1/health')).dbos.available,true);
+  const socket=path.join('/private/tmp',`jobctrl-pg-${process.getuid()}-${digest(sourceWorkspace).slice(0,24)}`);
+  const result=await run(path.join(postgresBin,'psql'),['-XAtw','-h',socket,'-p','5432','-U','jobctrl','-d','jobctrl','-c',"SELECT count(*) FROM app_events WHERE event_type='SyntheticUpgrade' AND event_id=1"]);
+  assert.equal(result.stdout.trim(),'1');
+ }finally{await run(selector,['stop'],{commandEnv:targetEnv});}
+ assert.equal(digest(await readFile(path.join(sourceWorkspace,'jobctrl.db'))),before);
+ assert.equal((await stat(path.join(sourceWorkspace,'jobctrl.db'))).mode & 0o777,0o400);
+ passed('current-python-import-keeps-original-and-verifies-source-event-through-postgres');
 }
 
 async function receiptRefusals(){
@@ -285,7 +363,7 @@ async function custody(first,candidate){
  await install(candidate,{stage:true});
  await put(path.join(workspace,'.qa-block-api'),'owned startup failure',0o600);
  const failed=await run(selector,['update','--to',candidate.buildId],{acceptFailure:true});assert.notEqual(failed.code,0);
- const failedJournal=await json(path.join(runtime,'transition.json'));assert.equal(failedJournal.preserveLiveOnFailure,true);assert.equal(failedJournal.sourceSchemaVersion,1);
+ const failedJournal=await json(path.join(runtime,'transition.json'));assert.equal(failedJournal.preserveLiveOnFailure,true);assert.equal(failedJournal.sourceSchemaVersion,2);
  // Finish owned cleanup before asserting stable exact database/journal bytes.
  await stop();await refuseRollback(first,'unfinished candidate preservation fence');
  await rm(path.join(workspace,'.qa-block-api'));
@@ -298,12 +376,11 @@ async function custody(first,candidate){
  await put(path.join(root,'recovery-pair-proof.json'),JSON.stringify({journalId:recovered.id,predecessor:originalPair.releaseReceipt.buildId,recovery:recoveryPair.releaseReceipt.buildId},null,2));
  assert.equal((await api('/v1/settings')).targetCriteria,'native-original');
  passed('failed-start-preserves-live-state-and-resumes-forward-with-correct-pair-receipts');
- await stop();
- await run(python,['-I','-B','-c',`import sqlite3,sys
-c=sqlite3.connect(sys.argv[1]);c.execute("INSERT INTO app_model_calls(receipt_id,operation,provider,model,lane,prompt_version,input_fingerprint,created_at,status,owner_pid,provider_started) VALUES('native-owned-uncertain','native.qa','codex','synthetic','interactive','1',?,'2026-11-06T00:00:00Z','uncertain',0,1)",('a'*64,));c.commit();c.close()`,path.join(workspace,'jobctrl.db')]);
+ const socket=path.join('/private/tmp',`jobctrl-pg-${process.getuid()}-${digest(workspace).slice(0,24)}`);
+ const psql=sql=>run(path.join(postgresBin,'psql'),['-XAtw','-h',socket,'-p','5432','-U','jobctrl','-d','jobctrl','-c',sql]);
+ await psql("INSERT INTO app_model_calls(receipt_id,operation,provider,model,lane,prompt_version,input_fingerprint,created_at,status,owner_pid,provider_started) VALUES('native-owned-uncertain','native.qa','codex','synthetic','interactive','1',repeat('a',64),'2026-11-06T00:00:00Z','uncertain',0,1)");
  try{await refuseRollback(first,'unresolved provider accounting');}finally{
-  await run(python,['-I','-B','-c',`import sqlite3,sys
-c=sqlite3.connect(sys.argv[1]);c.execute("DELETE FROM app_model_calls WHERE receipt_id='native-owned-uncertain'");c.commit();c.close()`,path.join(workspace,'jobctrl.db')]);
+  await psql("DELETE FROM app_model_calls WHERE receipt_id='native-owned-uncertain'");
  }
  passed('unresolved-provider-receipts-block-rollback-with-exact-live-preservation');
 }
@@ -318,9 +395,9 @@ async function verifyCleanup(){
   try{const state=await json(path.join(dir,'state.json'));assert(state.ownershipVerified&&state.stoppedAt);stoppedRegistries++;}catch(error){if(error.code!=='ENOENT')throw error;}
   try{assert.equal((await readdir(path.join(dir,'executions'))).length,0,`Execution receipts remain for ${id}`);executionRegistries++;}catch(error){if(error.code!=='ENOENT')throw error;}
  }
- for(const port of [7233,8233,8766])await freePort(port);
+ for(const port of [apiPort])await freePort(port);
  assert(await alive(control.pid),'Native cleanup affected unrelated process control');
- const cleanup={status:'passed',suite,stoppedRegistries,executionRegistries,remainingExecutionReceipts:0,orphanPidsVerifiedAbsent:pids,ports:[7233,8233,8766]};
+ const cleanup={status:'passed',suite,stoppedRegistries,executionRegistries,remainingExecutionReceipts:0,orphanPidsVerifiedAbsent:pids,ports:[apiPort]};
  await put(path.join(root,'cleanup-proof.json'),JSON.stringify(cleanup,null,2)+'\n',0o600);
  passed('selected-suite-cleanup-retired-owned-receipts-and-released-fixed-ports');
  return cleanup;
@@ -328,10 +405,10 @@ async function verifyCleanup(){
 
 const started=Date.now();let installed=false,control;
 try{
- for(const port of [7233,8233,8766])await freePort(port);
+ for(const port of [apiPort])await freePort(port);
  if(!args.has('launcher')||!args.has('installer')){
   const compileEnv={...process.env,GOCACHE:path.join(root,'go-cache')};
-  await run(args.get('go')??'go',['build','-buildvcs=false','-o',path.join(root,'bin')+'/', './cmd/jobctrl','./cmd/jobctrl-installer'],{commandEnv:compileEnv,cwd:path.join(repo,'launcher'),timeout:60000});
+  await run(args.get('go')??'go',['build','-buildvcs=false','-ldflags',`-X github.com/ebarti/jobctrl/launcher/internal/launcher.manifestAPIPort=${apiPort}`,'-o',path.join(root,'bin')+'/', './cmd/jobctrl','./cmd/jobctrl-installer'],{commandEnv:compileEnv,cwd:path.join(repo,'launcher'),timeout:60000});
  }
  pythonInfo=JSON.parse((await run(python,['-I','-B','-c','import json,sys,sysconfig,pathlib,jobctrl.app.server,jobctrl.app.worker; print(json.dumps({"executable":str(pathlib.Path(sys.executable).resolve()),"base_prefix":sys.base_prefix,"purelib":sysconfig.get_path("purelib"),"version":f"{sys.version_info.major}.{sys.version_info.minor}"}))'])).stdout);
  await cp(path.join(repo,'workers/automation/src/jobctrl'),path.join(root,'application-source'),{recursive:true,filter:source=>!source.split(path.sep).includes('__pycache__')&&!source.endsWith('.pyc')});
@@ -344,18 +421,18 @@ try{
  const health=await api('/v1/health');assert.equal(health.application,'jobctrl-python');assert.equal(health.worker.status,'healthy');
  const actions=JSON.parse((await run(selector,['actions'])).stdout);assert(Array.isArray(actions.actions)&&actions.actions.length>0,'Installed CLI did not dispatch canonical application actions');
  const state=JSON.parse((await run(selector,['status','--json'])).stdout);await put(path.join(root,'initial-status.json'),JSON.stringify(state,null,2));assert.equal(state.status,'running');
- for(const component of ['temporal','worker','api'])assert.equal(state.components[component].state,'running');
+ for(const component of ['postgres','worker','api'])assert.equal(state.components[component].state,'running');
  if(custodySelected){const initialOrphans=await childPids();assert(initialOrphans.length>0,'The owned orphan control never started');for(const pid of initialOrphans)assert(await alive(pid));}
  const settings=await api('/v1/settings');
  await api('/v1/settings','PATCH',{expectedRevision:settings.revision,targetCriteria:'native-original',aiExecutionPolicy:{enabled:false},applyAutomationEnabled:false,compensationAutomationEnabled:false});
- passed('compiled-installer-start-real-python-worker-temporal-and-canonical-cli');
+ passed('compiled-installer-start-real-python-worker-postgres-dbos-and-canonical-cli');
  if(lifecycleSelected)await lifecycle(first,await payload(2));
  if(custodySelected)await custody(first,await payload(lifecycleSelected?3:2));
  const cleanup=await verifyCleanup();
- const required=lifecycleSelected?['coherent-paired-backup-readback-and-restart','explicit-rollback-restores-both-exact-files-before-writers','legacy-start-backup-update-rollback-refuse-with-exact-source-preservation']:[];
+ const required=lifecycleSelected?['coherent-paired-backup-readback-and-restart','explicit-rollback-restores-postgres-and-dbos-with-previous-generation-preserved','legacy-start-backup-update-rollback-refuse-with-exact-source-preservation']:[];
  if(custodySelected)required.push('malformed-linked-wrong-boot-receipts-refuse-before-process-or-registry-mutation','owned-new-session-term-ignoring-children-cleaned-after-parents-exit-peer-preserved','failed-start-preserves-live-state-and-resumes-forward-with-correct-pair-receipts');
  for(const name of required)assert(cases.includes(name),`Selected ${suite} suite did not execute ${name}`);
- const report={status:'passed',suite,scriptSha256,root,cases,cleanup,nativeBinaries:{launcherSha256:digest(await readFile(launcher)),installerSha256:digest(await readFile(installer))},databaseIdentity:{applicationId:1245926228,userVersion:1},orphanCount:cleanup.orphanPidsVerifiedAbsent.length,elapsedSeconds:(Date.now()-started)/1000,qualification:'local synthetic payload, real application/runtime; signed/notarized published predecessor remains a distinct release gate'};
+ const report={status:'passed',suite,scriptSha256,root,cases,cleanup,nativeBinaries:{launcherSha256:digest(await readFile(launcher)),installerSha256:digest(await readFile(installer))},databaseIdentity:{engine:'postgresql',schemaVersion:2,workflow:'dbos'},orphanCount:cleanup.orphanPidsVerifiedAbsent.length,elapsedSeconds:(Date.now()-started)/1000,qualification:'local synthetic payload, real application/runtime; signed/notarized published predecessor remains a distinct release gate'};
  await put(path.join(root,'result.json'),JSON.stringify(report,null,2)+'\n',0o600);console.log(JSON.stringify(report,null,2));
 }finally{
  if(installed)await run(selector,['stop'],{acceptFailure:true}).catch(()=>{});

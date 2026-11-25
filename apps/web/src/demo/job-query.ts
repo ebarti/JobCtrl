@@ -274,7 +274,7 @@ export interface CompareJobsOptions {
   normalizeSqlText?: boolean;
 }
 
-/** Scalar summary contract used by the rebuildable SQLite query index. */
+/** Scalar summary contract used by the rebuildable job query index. */
 export type JobQueryScalars = Pick<
   JobSummary,
   | "jobKey"

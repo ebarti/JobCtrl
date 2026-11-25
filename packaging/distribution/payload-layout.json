@@ -27,8 +27,8 @@
       "path": "python"
     },
     {
-      "id": "temporal-runtime",
-      "path": "temporal"
+      "id": "postgres-runtime",
+      "path": "postgres"
     },
     {
       "id": "pdfjs-renderer",

@@ -1,0 +1,80 @@
+{
+  "version": "3.3.9",
+  "wheelSha256": "08689018e9169ca8e6769f5b3f2ce748442bda95b5f1ec260995a8ff63e6d6a4",
+  "wheel": "psycopg_binary-3.3.9-cp312-cp312-macosx_11_0_arm64.whl",
+  "source": "https://github.com/psycopg/psycopg/archive/refs/tags/3.3.9.tar.gz",
+  "sourceSha256": "d22836c3db05a20f19755d21188746c9289bc439abb14d8b103241b47c57f017",
+  "libraries": [
+    {
+      "name": "libpq",
+      "version": "18.6",
+      "license": "PostgreSQL",
+      "files": {
+        "libpq.5.dylib": "1ea8caf53acd564665c9bc12342c654549b2833011eaac6aa7595fc11b034d51"
+      },
+      "notices": [
+        {
+          "file": "postgresql.txt",
+          "sha256": "3d6af92ff8a4c2cdf69afb1cf44edea727922f5cd0cf8b5f72b11cdecac8fdfd",
+          "source": "https://raw.githubusercontent.com/postgres/postgres/REL_18_6/COPYRIGHT"
+        }
+      ]
+    },
+    {
+      "name": "openssl",
+      "version": "3.5.9",
+      "license": "Apache-2.0",
+      "files": {
+        "libssl.3.dylib": "8cdfbaf88dfa678dd466270ca42dbea94649aba57ddf7a5c3859ec58f5cb473c",
+        "libcrypto.3.dylib": "724f6be354486862a5eabfb2c06e8ebe646fa3393969dc63e0f3e440529aaba9"
+      },
+      "notices": [
+        {
+          "file": "openssl.txt",
+          "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+          "source": "https://raw.githubusercontent.com/openssl/openssl/openssl-3.5.9/LICENSE.txt"
+        }
+      ]
+    },
+    {
+      "name": "mit-kerberos",
+      "version": "1.22.2",
+      "license": "LicenseRef-MIT-Kerberos",
+      "files": {
+        "libcom_err.3.0.dylib": "c10818168c44cf1ea2f5fb627d45f156319be5b953baa956ce1a236698760250",
+        "libgssapi_krb5.2.2.dylib": "352c0001c724e09190300a185f54f9fbbf1bcfe17be3123cf6ce0dfab7f26078",
+        "libkrb5.3.3.dylib": "4470e3e8e22cc84dc4258bbd4870c303dfe8ba1d5bdf23d0a2de56224f7636a3",
+        "libkrb5support.1.1.dylib": "d95d0b9d649c92ae8c989e0d8c4be5b9ae354bfef6f18e7f944eea1d2760513d",
+        "libk5crypto.3.1.dylib": "2fb82320d5b3c673aa2667586e464bc8d6cfecb4fb03692ff39001e892432537"
+      },
+      "notices": [
+        {
+          "file": "krb5.txt",
+          "sha256": "d37fcb886de2ad1c602f61c99c6893bcbd9a1949f54d9a6bb40d191204eb605e",
+          "source": "https://raw.githubusercontent.com/krb5/krb5/krb5-1.22.2-final/NOTICE"
+        }
+      ]
+    },
+    {
+      "name": "openldap",
+      "version": "2.6.16",
+      "license": "OLDAP-2.8",
+      "files": {
+        "libldap.2.dylib": "feed19e1adb68b99013b65dd683aa5ce1356deaac349a2a6b29f6b7e7c04264a",
+        "liblber.2.dylib": "fe1e09314f9feba4028fd3ed299db22db604cd61c309092f6d0f798a47cd6e60"
+      },
+      "notices": [
+        {
+          "file": "openldap.txt",
+          "sha256": "310fe25c858a9515fc8c8d7d1f24a67c9496f84a91e0a0e41ea9975b1371e569",
+          "source": "https://git.openldap.org/openldap/openldap/-/raw/OPENLDAP_REL_ENG_2_6_16/LICENSE"
+        },
+        {
+          "file": "openldap-copyright.txt",
+          "sha256": "5b4dfc20608c4d5d75573e899569b8ee0e06658ebcf14fa14566e309bcbab14c",
+          "source": "https://git.openldap.org/openldap/openldap/-/raw/OPENLDAP_REL_ENG_2_6_16/COPYRIGHT"
+        }
+      ]
+    }
+  ]
+}

@@ -14,12 +14,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
-	"time"
 )
 
 const (
@@ -38,18 +35,12 @@ const (
 var (
 	errInitializationNotAdmitted     = errors.New("database initialization cannot be safely admitted")
 	errUnresolvedDatabasePublication = errInitializationNotAdmitted
-	temporalQuiescenceProof          = proveStoppedTemporalQuiescence
+
 	// These seam names are retained for the existing lifecycle fault-injection
 	// matrix. Production builds and installs the current exact-v15 candidate.
 	sealedV7CandidateBuilder   = buildSealedV15Candidate
 	sealedV7CandidateInstaller = installSealedV15Candidate
 )
-
-type temporalQuiescenceReceipt struct {
-	RunningExecutionCount int    `json:"running_execution_count"`
-	SchemaVersion         int    `json:"schema_version"`
-	Status                string `json:"status"`
-}
 
 func verifiedReleaseContext(base launchContext, verified verifiedRelease) launchContext {
 	return launchContext{
@@ -138,243 +129,6 @@ finally: c.close()`
 		return 0, errors.New("SQLite schema version is invalid")
 	}
 	return version, nil
-}
-
-// proveStoppedTemporalQuiescence reopens only the old Temporal service after
-// the managed tree has stopped. With API and worker absent, no new workflow can
-// be admitted between the visibility proof and the paired snapshot.
-func proveStoppedTemporalQuiescence(active, candidate, controller launchContext) error {
-	state, err := temporalProofState(active)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(active.Instance.LogDir, 0o700); err != nil {
-		return err
-	}
-	temporal, err := startGatedTemporal(active)
-	if err != nil {
-		return fmt.Errorf("start Temporal quiescence service: %w", err)
-	}
-	record := temporal.record
-	state.Components = map[string]componentRecord{"temporal": record}
-	state.StoppedAt = nil
-	if err := writeState(active.Instance.StatePath, state); err != nil {
-		temporal.abandon()
-		return fmt.Errorf("record Temporal quiescence service: %w", err)
-	}
-	if err := temporal.release(); err != nil {
-		_ = terminateRecord(record)
-		return fmt.Errorf("release Temporal quiescence service: %w", err)
-	}
-	cleanup := func() error {
-		var stopErr error
-		if recordMatchesLiveProcess(record) {
-			stopErr = terminateRecord(record)
-		} else if processPIDAlive(record.PID) {
-			stopErr = errors.New("Temporal quiescence service identity changed before stop")
-		}
-		now := time.Now().UTC()
-		record.ExitedAt = &now
-		if stopErr != nil {
-			record.ExitError = stopErr.Error()
-			state.StoppedAt = nil
-		} else {
-			state.StoppedAt = &now
-		}
-		state.Components["temporal"] = record
-		if writeErr := writeState(active.Instance.StatePath, state); writeErr != nil && stopErr == nil {
-			stopErr = writeErr
-		}
-		return stopErr
-	}
-
-	signals := make(chan os.Signal)
-	proofErr := waitForTemporal(active, controller, temporal.command, temporal.exits, signals)
-	if proofErr == nil {
-		proofErr = runTemporalQuiescenceModule(candidate)
-	}
-	if cleanupErr := cleanup(); cleanupErr != nil {
-		if proofErr != nil {
-			return fmt.Errorf("%v; stop Temporal quiescence service: %w", proofErr, cleanupErr)
-		}
-		return fmt.Errorf("stop Temporal quiescence service: %w", cleanupErr)
-	}
-	return proofErr
-}
-
-const gatedTemporalScript = `IFS= read -r gate <&3 || exit 75
-[ "$gate" = "start" ] || exit 75
-"$@" & child=$!
-trap 'kill -TERM "$child" 2>/dev/null; wait "$child" 2>/dev/null' INT TERM HUP EXIT
-wait "$child"
-status=$?
-trap - EXIT
-exit "$status"`
-
-type gatedTemporalProcess struct {
-	command *exec.Cmd
-	record  componentRecord
-	gate    *os.File
-	exits   chan componentExit
-}
-
-func startGatedTemporal(ctx launchContext) (*gatedTemporalProcess, error) {
-	ctx, err := withTemporalHistory(ctx)
-	if err != nil {
-		return nil, err
-	}
-	spec, err := componentByName(ctx.Manifest, "temporal")
-	if err != nil {
-		return nil, err
-	}
-	executable := filepath.Join(ctx.PayloadRoot, spec.Executable)
-	if !safeRelativePath(spec.Executable) || !strings.HasPrefix(filepath.Clean(executable), filepath.Clean(ctx.PayloadRoot)+string(filepath.Separator)) {
-		return nil, errors.New("unsafe Temporal component executable")
-	}
-	arguments := make([]string, len(spec.Arguments))
-	for index, argument := range spec.Arguments {
-		arguments[index], err = substitute(argument, ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-	logPath := filepath.Join(ctx.Instance.LogDir, "temporal.log")
-	if info, err := os.Stat(logPath); err == nil && info.Size() > 0 {
-		_ = os.Remove(logPath + ".1")
-		if err := os.Rename(logPath, logPath+".1"); err != nil {
-			return nil, fmt.Errorf("rotate temporal log: %w", err)
-		}
-	}
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	gateRead, gateWrite, err := os.Pipe()
-	if err != nil {
-		_ = logFile.Close()
-		return nil, err
-	}
-	argv := []string{"-c", gatedTemporalScript, "jobctrl-temporal-quiescence", executable}
-	argv = append(argv, arguments...)
-	command := payloadCommand(ctx.Environment, "/bin/bash", argv...)
-	command.Env, command.Dir, command.Stdout, command.Stderr = temporalGateEnvironment(ctx.Environment), ctx.Instance.StateDir, logFile, logFile
-	command.ExtraFiles = []*os.File{gateRead}
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := command.Start(); err != nil {
-		_ = gateRead.Close()
-		_ = gateWrite.Close()
-		_ = logFile.Close()
-		return nil, err
-	}
-	_ = gateRead.Close()
-	_ = logFile.Close()
-	exits := make(chan componentExit, 1)
-	go waitComponent("temporal", command, exits)
-	record, err := recordForProcess(command.Process.Pid, logPath, "/bin/bash")
-	if err != nil {
-		_ = gateWrite.Close()
-		return nil, err
-	}
-	return &gatedTemporalProcess{command: command, record: record, gate: gateWrite, exits: exits}, nil
-}
-
-func temporalGateEnvironment(environment []string) []string {
-	filtered := make([]string, 0, len(environment))
-	for _, pair := range environment {
-		key, _, found := strings.Cut(pair, "=")
-		if found && key == "BASH_ENV" {
-			continue
-		}
-		filtered = append(filtered, pair)
-	}
-	return filtered
-}
-
-func (process *gatedTemporalProcess) release() error {
-	if process == nil || process.gate == nil {
-		return errors.New("Temporal quiescence gate is unavailable")
-	}
-	_, writeErr := io.WriteString(process.gate, "start\n")
-	closeErr := process.gate.Close()
-	process.gate = nil
-	if writeErr != nil {
-		return writeErr
-	}
-	return closeErr
-}
-
-func (process *gatedTemporalProcess) abandon() {
-	if process == nil {
-		return
-	}
-	if process.gate != nil {
-		_ = process.gate.Close()
-		process.gate = nil
-	}
-	select {
-	case <-process.exits:
-	case <-time.After(shutdownTimeout):
-		if recordMatchesLiveProcess(process.record) {
-			_ = terminateRecord(process.record)
-		}
-	}
-}
-
-func temporalProofState(ctx launchContext) (instanceState, error) {
-	if current, err := readState(ctx.Instance.StatePath); err == nil {
-		if err := validateStateIdentity(ctx, current); err != nil {
-			return instanceState{}, err
-		}
-		if stateHasLiveProcesses(current) {
-			return instanceState{}, errors.New("managed runtime is still live before Temporal quiescence proof")
-		}
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return instanceState{}, err
-	}
-	digest, err := manifestDigest(ctx.PayloadRoot)
-	if err != nil {
-		return instanceState{}, err
-	}
-	now := time.Now().UTC()
-	return instanceState{
-		SchemaVersion:     stateSchemaVersion,
-		InstanceID:        ctx.Instance.ID,
-		CanonicalStateDir: ctx.Instance.StateDir,
-		PayloadRoot:       ctx.PayloadRoot,
-		BuildID:           ctx.Distribution.BuildID,
-		ManifestSHA256:    digest,
-		Ports: runtimePorts{
-			TemporalGRPC: ctx.Manifest.Ports.TemporalGRPC,
-			TemporalUI:   ctx.Manifest.Ports.TemporalUI,
-			API:          ctx.Manifest.Ports.API,
-		},
-		StartedAt:  now,
-		StoppedAt:  &now,
-		Components: map[string]componentRecord{},
-	}, nil
-}
-
-func runTemporalQuiescenceModule(candidate launchContext) error {
-	python := filepath.Join(candidate.PayloadRoot, "python", "bin", "python3")
-	command := payloadCommand(
-		candidate.Environment, python,
-		"-I",
-		"-B",
-		"-m",
-		"jobctrl.infrastructure.migrations.v6_to_v7_quiescence",
-	)
-	command.Env = candidate.Environment
-	command.Dir = candidate.Instance.StateDir
-	output, err := command.Output()
-	if err != nil || len(output) > 1024 {
-		return errors.New("Temporal quiescence preflight failed")
-	}
-	var receipt temporalQuiescenceReceipt
-	if err := decodeSingleJSON(output, &receipt); err != nil ||
-		receipt.SchemaVersion != 1 || receipt.Status != "quiescent" || receipt.RunningExecutionCount != 0 {
-		return errors.New("Temporal quiescence preflight returned invalid evidence")
-	}
-	return nil
 }
 
 func pairedDatabasePath(stateDir string, pair databasePair, name string, version int64) (string, error) {
