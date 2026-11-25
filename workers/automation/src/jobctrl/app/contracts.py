@@ -28,11 +28,15 @@ ActionHandler = Callable[[ActionContext, dict], Awaitable[Any]]
 
 
 @dataclass(frozen=True)
-class Runtime:
+class WorkspaceStorage:
     workspace: Path
     database: Database
     settings: Settings
     events: EventStore
+
+
+@dataclass(frozen=True)
+class Runtime(WorkspaceStorage):
     model: ModelGateway
 
 

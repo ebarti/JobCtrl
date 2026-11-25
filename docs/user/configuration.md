@@ -160,18 +160,21 @@ never truncated. Migration refuses such a value and preserves its source.
 
 ### Migrating legacy plaintext secrets
 
-Migration is an explicit one-time operation. Stop JobCtrl before running it and
-restart after completion: already running services can retain values inherited
-from their old launch environment. Startup and status reads do not migrate
-files silently.
+Start JobCtrl once to initialize the selected workspace. Stop it before
+migrating, since running services can retain credentials inherited from their
+launch environment. The migration temporarily starts the workspace's private
+PostgreSQL server to record the credential change. The API, worker, and
+scheduled jobs stay stopped. PostgreSQL shuts down when the command finishes.
+Restart JobCtrl after migration completes.
 
-For the installed app, migrate the active JobCtrl-owned environment file:
+Use the installed launcher to migrate the selected workspace's environment file.
 
 ```bash
+jobctrl stop
 jobctrl credentials migrate
 ```
 
-The installed command defaults to the active runtime's owned `.env` file and
+The installed command defaults to the selected workspace's `.env` file and
 does not search the current directory. To include another persistent file,
 repeat `--env-file /absolute/path/to/file` in the intended precedence order;
 later assignments win. Select the complete source set on the first run. The
@@ -191,13 +194,17 @@ interrupted and leaves its lock behind, confirm that it has stopped and inspect
 the recovery state before removing only that stale migration lock; elapsed
 time alone does not establish that a migration is inactive.
 
-From a source checkout, use `uv --project workers/automation run --locked
---all-extras jobctrl credentials migrate` with the same workspace selection as
-the development stack. Without explicit `--env-file` arguments, it considers the
-workspace-owned environment file, the checkout's `.env`, and the configured
-user environment file. Select the complete intended set explicitly when those
-defaults differ from your launch configuration. The [source guide](../local-development.md#native-credential-migration)
-describes the credential context and QA isolation boundary.
+From a source checkout, use the same `JOBCTRL_DIR` as the development stack.
+
+```bash
+scripts/dev stop
+scripts/dev migrate-credentials
+```
+
+The source command considers the workspace `.env`, the checkout `.env`, then
+the file selected by `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`). Later
+assignments win. Use the same checkout and environment as the development
+stack. [Source credential configuration](../local-development.md#native-credential-migration)
 
 Only the guided secret allowlist moves: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
 `GEMINI_API_KEY`, and `CAPSOLVER_API_KEY`. Other settings and secret families,

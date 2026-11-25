@@ -758,7 +758,8 @@ cmd_migrate_credentials() {
   local user_env="${JOBCTRL_USER_ENV_PATH:-$HOME/JobCtrl/.env}"
   (
     cd "$ROOT"
-    uv --project workers/automation run --no-sync python -m jobctrl credentials migrate \
+    unset JOBCTRL_DATABASE_URL
+    go -C "$ROOT/launcher" run ./cmd/jobctrl-source migrate-credentials "$ROOT" \
       --env-file "$app_dir/.env" \
       --env-file "$ROOT/.env" \
       --env-file "$user_env" \

@@ -475,6 +475,11 @@ func dispatchCommand(ctx launchContext, args []string, stdout, stderr io.Writer)
 		return nil
 	}
 	switch args[0] {
+	case "credentials":
+		if len(args) >= 2 && args[1] == "migrate" && !(len(args) == 3 && args[2] == "--help") {
+			return migrateStoppedCredentials(ctx, args[2:], stdout, stderr)
+		}
+		return dispatchPython(ctx, args)
 	case "start":
 		return startCommand(ctx, args[1:], stdout)
 	case "dev":

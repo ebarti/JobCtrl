@@ -19,7 +19,7 @@ for(let i=2;i<process.argv.length;i+=2) {
   args.set(process.argv[i].slice(2),process.argv[i+1]);
 }
 const suite=args.get('suite') ?? 'all';
-assert(['all','lifecycle','custody','reduced'].includes(suite),'--suite must be all, lifecycle, custody or reduced');
+assert(['all','lifecycle','custody','reduced','credentials'].includes(suite),'--suite must be all, lifecycle, custody, reduced or credentials');
 const lifecycleSelected=suite==='all'||suite==='lifecycle';
 const custodySelected=suite==='all'||suite==='custody';
 assert.equal(process.platform,'darwin','Native lifecycle qualification requires Darwin launchd');
@@ -312,6 +312,61 @@ async function reducedLifecycle(first,second) {
  passed('reduced-feature-backup-and-rollback-restores-postgres-and-dbos');
 }
 
+async function stoppedCredentialMigration(){
+ const token=digest(root+' credential helper'),secret=digest(root+' synthetic value');
+ const file=path.join(workspace,'migration-input.env'),marker=path.join(workspace,'.native-credentials-migrated.json');
+ const store=path.join(workspace,'synthetic-key-store.json'),helper=path.join(workspace,'credential-helper.py');
+ const stable='QA_NON_SECRET=preserved\n';
+ await put(path.join(workspace,'.jobctrl-e2e-owned.json'),JSON.stringify({version:1,workspace,token}),0o600);
+ await put(file,stable+'ANTHROPIC_API_KEY='+secret+'\n',0o600);
+ await put(helper,`import json,os,pathlib,sys
+path=pathlib.Path(__file__).with_name('synthetic-key-store.json')
+op,key=sys.argv[1:]
+entries=json.loads(path.read_text()) if path.exists() else {}
+if op in ('inspect','read'):
+    if key not in entries: raise SystemExit(44)
+    if op=='read': sys.stdout.write(entries[key])
+    raise SystemExit(0)
+if op=='set': entries[key]=sys.stdin.read()
+elif op=='delete': entries.pop(key,None)
+else: raise SystemExit(72)
+with os.fdopen(os.open(path,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600),'w') as writer: json.dump(entries,writer)
+`,0o700);
+ const commandEnv={...env,JOBCTRL_SYNTHETIC_BOUNDARIES:'1',JOBCTRL_E2E_TOKEN:token,JOBCTRL_E2E_CREDENTIAL_HELPER:helper};
+ const args=['credentials','migrate','--env-file',file,'--marker',marker];
+ const before=await api('/v1/settings');
+ const refusal=await run(selector,args,{commandEnv,acceptFailure:true});
+ assert.notEqual(refusal.code,0);assert.match(refusal.stderr,/stop the JobCtrl workspace/);
+ await assert.rejects(stat(marker),{code:'ENOENT'}); await assert.rejects(stat(store),{code:'ENOENT'});
+ await stop();
+ const selection=await json(path.join(workspace,'postgres/active.json'));
+ const socket=path.join('/private/tmp',`jobctrl-pg-${process.getuid()}-${digest(workspace).slice(0,24)}`);
+ async function stopped(){
+  assert.equal(JSON.parse((await run(selector,['status','--json'])).stdout).status,'stopped');
+  await assert.rejects(stat(path.join(workspace,'postgres',selection.generation,'postmaster.pid')),{code:'ENOENT'});
+  await assert.rejects(stat(path.join(socket,'.s.PGSQL.5432')),{code:'ENOENT'});
+  await freePort(apiPort);
+ }
+ await put(marker,'malformed synthetic marker\n',0o600);
+ const invalid=await run(selector,args,{commandEnv,acceptFailure:true});
+ assert.notEqual(invalid.code,0);await stopped();
+ assert.equal(await readFile(marker,'utf8'),'malformed synthetic marker\n');
+ await assert.rejects(stat(store),{code:'ENOENT'});await rm(marker);
+ await run(selector,args,{commandEnv});
+ await stopped();assert.equal(await readFile(file,'utf8'),stable);
+ assert.equal((await json(store)).ANTHROPIC_API_KEY,secret);assert(!(await readFile(marker,'utf8')).includes(secret));
+ const snapshot=async()=>Promise.all([file,marker,store].map(async f=>[digest(await readFile(f)),(await stat(f)).mtimeMs]));
+ const first=await snapshot();
+ const second=await run(selector,args,{commandEnv});
+ assert.match(second.stdout,/already completed/i);assert.deepEqual(await snapshot(),first);
+ await stopped();
+ await run(selector,['start','--no-open']);
+ assert.equal((await api('/v1/settings')).revision,before.revision+1);
+ assert.equal((await workspaceSql("SELECT count(*) FROM app_events WHERE event_type='CredentialsUpdated'")).stdout.trim(),'1');
+ await stop();
+ passed('stopped-credential-migration-records-one-revision-and-event-and-retries-with-all-services-stopped');
+}
+
 async function legacyAdmission(first,candidate){
  const legacy=path.join(root,'legacy');await mkdir(legacy,{mode:0o700});
  await run(python,['-I','-B','-c',`import pathlib,sqlite3,sys
@@ -482,6 +537,7 @@ try{
  if(lifecycleSelected)await lifecycle(first,second);
  if(suite==='reduced')await reducedLifecycle(first,await payload(2));
  if(custodySelected)await custody(first,await payload(lifecycleSelected?3:2));
+ if(suite==='credentials'||suite==='reduced'||suite==='all')await stoppedCredentialMigration();
  if(lifecycleSelected){
   // Deliberately refused legacy instances have no published runtime state.
   // Run this negative fixture after successful release-retention scenarios.

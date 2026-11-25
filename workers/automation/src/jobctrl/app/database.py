@@ -157,8 +157,8 @@ def _require_state(state, staging):
 
 
 class Database:
-    def _configure(self, workspace: Path | str, url, *, staging: bool, read_only: bool):
-        self.workspace = workspace_path(workspace, create=not read_only)
+    def _configure(self, workspace: Path | str, url, *, staging: bool, read_only: bool, create: bool):
+        self.workspace = workspace_path(workspace, create=create)
         self.database_url = url.render_as_string(hide_password=False)
         self.libpq_url = url.set(drivername='postgresql').render_as_string(hide_password=False)
         self._staging = staging
@@ -170,7 +170,7 @@ class Database:
 
     def __init__(self, workspace: Path | str, *, database_url: str | None = None, staging: bool = False):
         url = endpoint(database_url)
-        self._configure(workspace, url, staging=staging, read_only=False)
+        self._configure(workspace, url, staging=staging, read_only=False, create=True)
         try:
             if not staging and has_source(self.workspace) and read_marker(self.workspace) is None:
                 raise AppError('database_migration_required', 'Import the existing SQLite workspace before starting JobCtrl.', 409)
@@ -231,9 +231,10 @@ class Database:
             engine.dispose()
 
     @classmethod
-    def open_existing(cls, workspace: Path | str, *, database_url: str | None = None) -> Database:
+    def open_existing(cls, workspace: Path | str, *, database_url: str | None = None,
+                      read_only: bool = True) -> Database:
         database = cls.__new__(cls)
-        database._configure(workspace, endpoint(database_url), staging=False, read_only=True)
+        database._configure(workspace, endpoint(database_url), staging=False, read_only=read_only, create=False)
         try:
             marker = read_marker(database.workspace)
             with _begin(database.engine, writable=False) as connection:
