@@ -11,7 +11,7 @@ from .model_custody import current_owner, may_replace_settled
 
 SCHEMA = """
 CREATE TABLE app_shared_model_work (
- binding_key TEXT PRIMARY KEY, receipt_id TEXT NOT NULL REFERENCES app_model_calls(receipt_id)
+ binding_key TEXT PRIMARY KEY, receipt_id TEXT NOT NULL REFERENCES app_model_calls(receipt_id), validation_error TEXT
 );
 CREATE INDEX app_shared_model_work_receipt ON app_shared_model_work(receipt_id);
 """
@@ -43,10 +43,11 @@ async def coordinate_work(database, keys, cancelled):
 class SharedReceipt:
     keys: tuple[str, ...]
     receipt_id: str | None = None
+    validation_error: str | None = None
 
     def prior(self, connection, operation, digest):
         records = connection.execute(
-            "SELECT DISTINCT c.receipt_id,c.operation,c.input_fingerprint,c.status FROM app_shared_model_work s "
+            "SELECT DISTINCT c.receipt_id,c.operation,c.input_fingerprint,c.status,s.validation_error FROM app_shared_model_work s "
             "JOIN app_model_calls c ON c.receipt_id=s.receipt_id WHERE s.binding_key=ANY(?::text[]) "
             "ORDER BY c.receipt_id", (list(self.keys),),
         ).fetchall()
@@ -54,7 +55,8 @@ class SharedReceipt:
             return None
         row = records[0]
         compatible = len(records) == 1 and row["input_fingerprint"] == digest and row["operation"] == operation
-        if compatible and (row["status"] != "failed" or not may_replace_settled()):
+        refused = row["status"] == "failed" or row["validation_error"] is not None
+        if compatible and (not refused or not may_replace_settled()):
             return row
         if may_replace_settled() and all(item["status"] in {"succeeded", "failed"} for item in records):
             # A fresh, explicitly admitted owner may replace a known result
@@ -75,12 +77,22 @@ class SharedReceipt:
     def used(self, receipt_id):
         self.receipt_id = receipt_id
 
+    def reject(self, error_code):
+        self.validation_error = error_code
+
 
 _receipt = ContextVar("model_shared_receipt", default=None)
 
 
 def active_shared_receipt():
     return _receipt.get()
+
+
+def reject_shared_result(receipt_id, error_code):
+    work = active_shared_receipt()
+    if work is not None:
+        work.used(receipt_id)
+        work.reject(error_code)
 
 
 @contextmanager
@@ -91,20 +103,20 @@ def share_receipt(database, keys):
         return
     work = SharedReceipt(tuple(sorted(set(keys))))
     token = _receipt.set(work)
-    settled_boundary = False
+    published = False
     try:
-        yield work.used
-        settled_boundary = True
-    except AppError:
-        # A known domain refusal may be retried explicitly.
-        settled_boundary = True
-        raise
+        yield work
+        published = True
     finally:
         _receipt.reset(token)
-        if settled_boundary and work.receipt_id:
+        if work.receipt_id and (published or work.validation_error):
             with database.transaction() as connection:
-                connection.execute(
-                    "DELETE FROM app_shared_model_work s USING app_model_calls c "
-                    "WHERE s.binding_key=ANY(?::text[]) AND s.receipt_id=? AND c.receipt_id=s.receipt_id "
-                    "AND c.status IN ('succeeded','failed')", (list(work.keys), work.receipt_id),
-                )
+                if work.validation_error:
+                    connection.execute(
+                        "UPDATE app_shared_model_work s SET validation_error=? FROM app_model_calls c "
+                        "WHERE s.binding_key=ANY(?::text[]) AND s.receipt_id=? AND c.receipt_id=s.receipt_id "
+                        "AND c.status IN ('succeeded','failed')", (work.validation_error, list(work.keys), work.receipt_id),
+                    )
+                else:
+                    connection.execute("DELETE FROM app_shared_model_work WHERE binding_key=ANY(?::text[]) AND receipt_id=?",
+                                       (list(work.keys), work.receipt_id))

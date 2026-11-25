@@ -646,7 +646,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
                 if extraction_keys and current_owner() is None:
                     stack.enter_context(model_call_scope(f"requirements.extract:{attempt_id}", allow_settled_replacement=True))
                 await stack.enter_async_context(self.model.coordinate_work(extraction_keys, cancelled))
-                used = stack.enter_context(self.model.share_receipt(extraction_keys))
+                work = stack.enter_context(self.model.share_receipt(extraction_keys))
                 selection, extraction_receipt = await self.model.determine(
                     kind="requirements.extract", schema=schema, prompt_version=version,
                     instruction=instruction, sources=sources,
@@ -654,8 +654,8 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
                     validate=lambda result: validate_extraction_selection(result, source_id=source_id, text=source_text),
                     budget=budget, publication_posting=self._publication_identity(posting), source_binding=source_binding,
                 )
-                if used is not None:
-                    used(extraction_receipt["receipt_id"])
+                if work is not None:
+                    work.used(extraction_receipt["receipt_id"])
             extraction = bind_extraction(selection, source_id=source_id, text=source_text)
             catalog_keys = ["requirements.catalog"] if extraction.requirements else []
             async with self.model.coordinate_work(catalog_keys, cancelled):

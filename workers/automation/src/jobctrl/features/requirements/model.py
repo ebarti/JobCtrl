@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import ValidationError
 
 from jobctrl.app.errors import AppError
+from jobctrl.app.model_shared_work import reject_shared_result
 
 from .domain import CONTRACT_VERSION, RequirementError, fingerprint
 
@@ -127,8 +128,10 @@ class RequirementModelAdapter:
             raise
         try:
             parsed = checked_value(result.value)
-        except (ValueError, RequirementError):
+        except (ValueError, RequirementError) as failure:
             receipt_id = result.provenance.get("receipt_id")
+            if receipt_id:
+                reject_shared_result(receipt_id, getattr(failure, "code", "schema_violation"))
             if pin_refusal and receipt_id and result.provenance.get("input_fingerprint") == input_fingerprint:
                 pin_refusal(receipt_id)
             raise

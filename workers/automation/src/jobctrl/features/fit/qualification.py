@@ -94,8 +94,13 @@ class Qualification:
             if missing:
                 if cancelled():
                     raise asyncio.CancelledError()
-                with self.model.share_receipt(keys(missing)):
-                    candidates = await self.candidates(profile_snapshot, missing)
+                with self.model.share_receipt(keys(missing)) as work:
+                    try:
+                        candidates = await self.candidates(profile_snapshot, missing)
+                    except AppError as failure:
+                        if work is not None:
+                            work.reject(failure.code)
+                        raise
                     published = self.store.publish_assessments(candidates, facts, profile_snapshot, requirements_snapshot,
                         {qualification_key(row): None for row in missing}, expected_prior_assessment_ids=prior_heads,
                         initial_job_id=requirements_snapshot["job_id"] if initial_assessment else None, cancelled=cancelled)
