@@ -52,7 +52,8 @@ def migrate_credentials(
                 paths.append(configured_path)
     marker_path = marker or (selected_workspace / ".native-credentials-migrated.json")
     try:
-        result = CredentialService(_application().runtime).migrate_persistent_env(paths, marker_path)
+        with _application() as application:
+            result = CredentialService(application.runtime).migrate_persistent_env(paths, marker_path)
     except (NativeCredentialMigrationError, NativeCredentialError, AppError) as exc:
         console.print(f"[red]Credential migration failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc

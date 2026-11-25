@@ -861,7 +861,9 @@ class PreparationService:
                         inputs = self.checkpoints.start_step(context.run_id, job_id, stage, inputs)
                         context.heartbeat({"jobId": job_id, "stage": stage})
                         scoped = request.get("_acquired_posting") is not None or request.get("search_retry")
-                        custody = model_call_scope(_operation(context.run_id, job_id, stage)) if scoped else nullcontext()
+                        custody = (model_call_scope(_operation(context.run_id, job_id, stage),
+                                                    allow_settled_replacement=bool(request.get("search_retry")))
+                                   if scoped else nullcontext())
                         with custody, self._capacity_wait(context, job_id, stage):
                             result = await self._execute_stage(context, job_id, stage, inputs, request)
                         status = "warning" if stage == "review" and result.get("review_status") not in {None, "pass", "not_applicable"} else "succeeded"

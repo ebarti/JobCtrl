@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from sqlalchemy import create_engine
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 
 from .errors import AppError
 from .postgres_connection import Connection
@@ -81,11 +82,11 @@ def _begin(engine, *, writable: bool) -> Connection:
         raise AppError('database_unavailable', 'The local PostgreSQL database is unavailable.', 503) from None
 
 
-def _engine(url, *, read_only=False):
+def _engine(url, *, read_only=False, **pool_options):
     arguments = {'client_encoding': 'utf8'}
     if read_only:
         arguments['options'] = '-c default_transaction_read_only=on'
-    return create_engine(url, hide_parameters=True, connect_args=arguments, pool_pre_ping=True)
+    return create_engine(url, hide_parameters=True, connect_args=arguments, pool_pre_ping=True, **pool_options)
 
 
 def _catalog(connection):
@@ -163,6 +164,9 @@ class Database:
         self._staging = staging
         self.read_only = read_only
         self.engine = _engine(url, read_only=read_only)
+        # Model I/O can outlive a normal transaction. Keep the entire application
+        # pool available for settlement, heartbeat, cancellation and other features.
+        self._coordination_engine = _engine(url, read_only=True, pool_size=8, max_overflow=0, pool_timeout=0)
 
     def __init__(self, workspace: Path | str, *, database_url: str | None = None, staging: bool = False):
         url = endpoint(database_url)
@@ -247,10 +251,10 @@ class Database:
             database.close()
             raise
 
-    def _connection(self, *, writable) -> Connection:
+    def _connection(self, *, writable, engine=None) -> Connection:
         if writable and self.read_only:
             raise AppError('database_read_only', 'Workspace inspection requires a read-only transaction.', 409)
-        connection = _begin(self.engine, writable=writable)
+        connection = _begin(engine if engine is not None else self.engine, writable=writable)
         try:
             marker = read_marker(self.workspace)
             if marker is None or marker != self._marker:
@@ -268,6 +272,12 @@ class Database:
 
     def connect(self) -> Connection:
         return self._connection(writable=False)
+
+    def try_coordination_connection(self) -> Connection | None:
+        try:
+            return self._connection(writable=False, engine=self._coordination_engine)
+        except PoolTimeout:
+            return None
 
     @contextmanager
     def transaction(self) -> Iterator[Connection]:
@@ -299,4 +309,5 @@ class Database:
             raise AppError('database_import_state', 'The staged database changed before activation.', 409)
 
     def close(self) -> None:
+        self._coordination_engine.dispose()
         self.engine.dispose()
