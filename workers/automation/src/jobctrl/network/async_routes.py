@@ -2,10 +2,16 @@
 
 import asyncio
 from contextlib import suppress
+from contextvars import copy_context
 import socket
 import threading
 
 from .url_safety import PublicHttpUrlRouteGuard, _fetch_public_route_request
+
+
+def start_blocking(function, *args):
+    # An executor Future remains joinable when a worker stops every asyncio Task.
+    return asyncio.get_running_loop().run_in_executor(None, copy_context().run, function, *args)
 
 
 async def await_owned(awaitable, *, cancel_on_stop=False):
@@ -68,11 +74,14 @@ class AsyncPublicHttpUrlRouteGuard(PublicHttpUrlRouteGuard):
                 action = "abort"
                 if not self._closing:
                     values = self.request_values(request)
-                    action = await await_owned(asyncio.to_thread(self.resolve_route, *values))
+                    action = await await_owned(start_blocking(self.resolve_route, *values))
                 if self._closing or isinstance(action, str):
                     await route.abort("blockedbyclient")
                 else:
                     await route.fulfill(status=action.status, headers=action.headers, body=action.body)
+        except Exception:
+            if not self._closing or not self._page.is_closed():
+                raise
         finally:
             self._pending.discard(completed)
             completed.set_result(None)
@@ -102,3 +111,6 @@ class AsyncPublicHttpUrlRouteGuard(PublicHttpUrlRouteGuard):
             # Unrouting a live page would briefly permit an unguarded request.
             await self._page.close()
             self._handler = None
+        # A final callback can be registered while Page.close is in flight.
+        while self._pending:
+            await asyncio.gather(*self._pending)

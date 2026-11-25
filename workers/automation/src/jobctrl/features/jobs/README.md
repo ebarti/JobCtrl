@@ -6,11 +6,13 @@ employer-side role context. It has no dependency on the optional Discovery or
 Companies packages. Requirements, Fit, documents and applications use public
 snapshots and guards; they do not read Jobs tables.
 
-`bootstrap.build_feature` composes the SQLite adapter and source-bound page/model
+`bootstrap.build_feature` composes the PostgreSQL adapter and source-bound page/model
 adapters. `JobsService` uses owned repository/acquisition ports. The neutral
 `jobctrl.network` boundary supplies public-address pinning, request limits,
 read-only browser guards, host pacing and Retry-After handling without loading
-legacy configuration or opening a legacy database.
+legacy configuration or opening a legacy database. Each posting capture owns its
+browser and pinned connections. Stopping it closes those connections and releases
+its host slot before the action settles. Other concurrent captures can finish.
 
 ## Public owner contract
 
@@ -143,4 +145,4 @@ authority.
 synthetic-workspace marker/token. Its authenticated page protocol replaces the
 external page boundary, not Jobs internals. Production uses the public browser
 acquirer. Target recurring tests are E2E-only; focused development proofs use the
-real HTTP application and SQLite with controlled page/model endpoints.
+real HTTP application and PostgreSQL with controlled page/model endpoints.

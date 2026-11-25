@@ -18,7 +18,9 @@ use case is responsible for persistence via ``EnrichmentRepository``.
 from __future__ import annotations
 
 import asyncio
-from contextlib import asynccontextmanager
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import asynccontextmanager, suppress
+from contextvars import copy_context
 import json
 import hashlib
 import logging
@@ -30,7 +32,7 @@ from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup, Comment
 
-from jobctrl.network.async_routes import AsyncPublicHttpUrlRouteGuard, await_owned
+from jobctrl.network.async_routes import AsyncPublicHttpUrlRouteGuard, await_owned, start_blocking
 from jobctrl.network.policy import ENRICHMENT_CRAWL_POLICY
 from jobctrl.network.ports import default_honest_user_agent
 from jobctrl.features.jobs.domain.capture import DetailPage
@@ -54,6 +56,9 @@ _DCL_TIMEOUT_MS = 15000
 _IDLE_TIMEOUT_MS = 10000
 _MAIN_CONTENT_HTML_LIMIT = 50000
 _EMBEDDED_PAGE_LIMIT = 8
+# Waiting for a paced host must leave the ordinary executor available for
+# already-admitted captures to resolve their final URLs or read pinned sockets.
+_HOST_ADMISSIONS = ThreadPoolExecutor(max_workers=8, thread_name_prefix="posting-host")
 
 
 class DetailPageFetchBlocked(RuntimeError):
@@ -89,11 +94,14 @@ def _partial_resource_failure(guard: PublicHttpUrlRouteGuard) -> bool:
 async def _host_slot(session, url):
     stop = threading.Event()
     guard = session.guard(url, cancel_event=stop)
-    acquiring = asyncio.create_task(asyncio.to_thread(guard.__enter__))
+    admission = _HOST_ADMISSIONS.submit(copy_context().run, guard.__enter__)
+    acquiring = asyncio.wrap_future(admission)
     try:
         decision = await asyncio.shield(acquiring)
     except asyncio.CancelledError:
         stop.set()
+        if admission.cancel():
+            raise
         # A simultaneous grant still belongs to this request. Join the gate
         # and release it before allowing cancellation to leave the capture.
         async def release_when_ready():
@@ -112,7 +120,60 @@ async def _host_slot(session, url):
 
 
 async def _public_destination(url):
-    return await await_owned(asyncio.to_thread(validate_public_http_url, url))
+    return await await_owned(start_blocking(validate_public_http_url, url))
+
+
+@asynccontextmanager
+async def _browser_driver():
+    from playwright.async_api import async_playwright
+
+    # Playwright starts its driver process before start() returns a handle.
+    # Finish the handshake even if Stop arrives, then close that exact handle.
+    starting = asyncio.create_task(async_playwright().start())
+    try:
+        yield await await_owned(starting)
+    finally:
+        if starting.done() and not starting.cancelled() and starting.exception() is None:
+            await await_owned(starting.result().stop())
+
+
+async def _run_browser(capture, *args, **kwargs):
+    """Give this browser's driver and transport a loop with one cancellation owner."""
+    ready, settled = Future(), Future()
+
+    def render():
+        try:
+            with asyncio.Runner() as runner:
+                loop = runner.get_loop()
+                task = loop.create_task(capture(*args, **kwargs))
+                ready.set_result((loop, task))
+                value = loop.run_until_complete(task)
+        except BaseException as error:
+            settled.set_exception(error)
+        else:
+            settled.set_result(value)
+
+    # Start only after the host gate admits the capture. DBOS shuts down its
+    # loop by cancelling all Tasks; the browser driver must remain available to
+    # close its subprocess after a concurrent Stop or an interrupted handshake.
+    worker = threading.Thread(target=copy_context().run, args=(render,), name="posting-browser", daemon=True)
+    worker.start()
+    result = asyncio.wrap_future(settled)
+    try:
+        return await asyncio.shield(result)
+    except asyncio.CancelledError:
+        def interrupt(started):
+            loop, task = started.result()
+            with suppress(RuntimeError):  # The capture may have already finished.
+                loop.call_soon_threadsafe(task.cancel)
+
+        ready.add_done_callback(interrupt)
+        with suppress(asyncio.CancelledError, Exception):
+            await await_owned(result)
+        raise
+    finally:
+        if settled.done():
+            worker.join()
 
 
 class PlaywrightDetailPageFetcher:
@@ -209,8 +270,8 @@ class PlaywrightDetailPageFetcher:
                     fetched_at=fetched_at,
                 )
             # Carry the same selected identity and client hints into the browser.
-            return await self._fetch_page(
-                url,
+            return await _run_browser(
+                self._fetch_page, url,
                 fetched_at,
                 user_agent=decision.user_agent,
                 request_headers=dict(decision.request_headers),
@@ -226,11 +287,7 @@ class PlaywrightDetailPageFetcher:
         request_headers: dict[str, str],
         session: PolitenessSession | None = None,
     ) -> DetailPage:
-        # Imported lazily because Playwright is heavyweight + optional
-        # in some test environments (see workers/automation/pyproject).
-        from playwright.async_api import async_playwright
-
-        async with async_playwright() as p:
+        async with _browser_driver() as p:
             launch_opts: dict[str, Any] = {"headless": self._headless}
             if self._proxy is not None:
                 launch_opts["proxy"] = self._proxy.playwright
