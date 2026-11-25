@@ -17,16 +17,20 @@ use case is responsible for persistence via ``EnrichmentRepository``.
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import asynccontextmanager
 import json
 import hashlib
 import logging
 import re
+import threading
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup, Comment
 
+from jobctrl.network.async_routes import AsyncPublicHttpUrlRouteGuard, await_owned
 from jobctrl.network.policy import ENRICHMENT_CRAWL_POLICY
 from jobctrl.network.ports import default_honest_user_agent
 from jobctrl.features.jobs.domain.capture import DetailPage
@@ -81,6 +85,36 @@ def _partial_resource_failure(guard: PublicHttpUrlRouteGuard) -> bool:
     )
 
 
+@asynccontextmanager
+async def _host_slot(session, url):
+    stop = threading.Event()
+    guard = session.guard(url, cancel_event=stop)
+    acquiring = asyncio.create_task(asyncio.to_thread(guard.__enter__))
+    try:
+        decision = await asyncio.shield(acquiring)
+    except asyncio.CancelledError:
+        stop.set()
+        # A simultaneous grant still belongs to this request. Join the gate
+        # and release it before allowing cancellation to leave the capture.
+        async def release_when_ready():
+            try:
+                await acquiring
+            except Exception:
+                return
+            guard.__exit__(None, None, None)
+
+        await await_owned(release_when_ready())
+        raise
+    try:
+        yield decision
+    finally:
+        guard.__exit__(None, None, None)
+
+
+async def _public_destination(url):
+    return await await_owned(asyncio.to_thread(validate_public_http_url, url))
+
+
 class PlaywrightDetailPageFetcher:
     """Local-mode ``DetailPageFetcherPort`` implementation.
 
@@ -129,8 +163,16 @@ class PlaywrightDetailPageFetcher:
     # ------------------------------------------------------------------
 
     def fetch(self, url: str) -> DetailPage:
+        return asyncio.run(self.fetch_async(url))
+
+    async def fetch_async(self, url: str) -> DetailPage:
+        # Deliver one interrupt to the driver. Later cancellation signals must
+        # wait for its pinned sockets, browser and host slot to be released.
+        return await await_owned(self._capture(url), cancel_on_stop=True)
+
+    async def _capture(self, url: str) -> DetailPage:
         fetched_at = datetime.now(timezone.utc).isoformat()
-        initial_safety = validate_public_http_url(url)
+        initial_safety = await _public_destination(url)
         if not initial_safety.allowed:
             log.warning("PlaywrightDetailPageFetcher: unsafe navigation skipped %s: %s", url, initial_safety.reason)
             return DetailPage(
@@ -145,7 +187,7 @@ class PlaywrightDetailPageFetcher:
         # R10 pre-navigation gate: a robots-deny / budget-exhaustion performs
         # zero navigation and returns an empty page rather than fetching.
         session = self._politeness_session()
-        with session.guard(url) as decision:
+        async with _host_slot(session, url) as decision:
             if not decision.allowed:
                 log.warning(
                     "PlaywrightDetailPageFetcher: navigation skipped by politeness gate %s: %s",
@@ -167,7 +209,7 @@ class PlaywrightDetailPageFetcher:
                     fetched_at=fetched_at,
                 )
             # Carry the same selected identity and client hints into the browser.
-            return self._fetch_page(
+            return await self._fetch_page(
                 url,
                 fetched_at,
                 user_agent=decision.user_agent,
@@ -175,7 +217,7 @@ class PlaywrightDetailPageFetcher:
                 session=session,
             )
 
-    def _fetch_page(
+    async def _fetch_page(
         self,
         url: str,
         fetched_at: str,
@@ -186,27 +228,27 @@ class PlaywrightDetailPageFetcher:
     ) -> DetailPage:
         # Imported lazily because Playwright is heavyweight + optional
         # in some test environments (see workers/automation/pyproject).
-        from playwright.sync_api import sync_playwright
+        from playwright.async_api import async_playwright
 
-        with sync_playwright() as p:
+        async with async_playwright() as p:
             launch_opts: dict[str, Any] = {"headless": self._headless}
             if self._proxy is not None:
                 launch_opts["proxy"] = self._proxy.playwright
-            browser = p.chromium.launch(**launch_opts)
+            browser = await p.chromium.launch(**launch_opts)
             try:
-                context = browser.new_context(user_agent=user_agent, extra_http_headers=request_headers)
-                page = context.new_page()
-                route_guard = PublicHttpUrlRouteGuard(page, fetch_public_requests=True).install()
+                context = await browser.new_context(user_agent=user_agent, extra_http_headers=request_headers)
+                page = await context.new_page()
+                route_guard = await AsyncPublicHttpUrlRouteGuard(page).install_async()
                 status: int | None = None
                 resp = None
                 try:
                     try:
-                        resp = page.goto(url, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT_MS)
+                        resp = await page.goto(url, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT_MS)
                         if resp is not None:
                             status = resp.status
-                        page.wait_for_load_state("domcontentloaded", timeout=_DCL_TIMEOUT_MS)
+                        await page.wait_for_load_state("domcontentloaded", timeout=_DCL_TIMEOUT_MS)
                         try:
-                            page.wait_for_load_state("networkidle", timeout=_IDLE_TIMEOUT_MS)
+                            await page.wait_for_load_state("networkidle", timeout=_IDLE_TIMEOUT_MS)
                         except Exception:
                             # networkidle is best-effort; many pages keep
                             # a long-poll connection open and that's fine
@@ -265,7 +307,7 @@ class PlaywrightDetailPageFetcher:
                         )
 
                     final_url = page.url
-                    final_safety = validate_public_http_url(final_url)
+                    final_safety = await _public_destination(final_url)
                     if not final_safety.allowed:
                         log.warning(
                             "PlaywrightDetailPageFetcher: unsafe final URL skipped %s: %s",
@@ -307,18 +349,18 @@ class PlaywrightDetailPageFetcher:
                             status=status,
                             fetched_at=fetched_at,
                         )
-                    _dismiss_optional_linkedin_dialog(page)
+                    await _dismiss_optional_linkedin_dialog(page)
                     page_title = ""
                     try:
-                        page_title = page.title() or ""
+                        page_title = await page.title() or ""
                     except Exception:
                         pass
 
-                    json_ld_payloads = _collect_json_ld(page)
-                    html = _collect_main_content(page)
+                    json_ld_payloads = await _collect_json_ld(page)
+                    html = await _collect_main_content(page)
                     visibility = []
-                    status_html, status_complete, raw_hash = _collect_status_html(page, visibility_out=visibility)
-                    embedded_pages, embedded_complete = _collect_embedded_pages(page, fetched_at=fetched_at)
+                    status_html, status_complete, raw_hash = await _collect_status_html(page, visibility_out=visibility)
+                    embedded_pages, embedded_complete = await _collect_embedded_pages(page, fetched_at=fetched_at)
 
                     if route_guard.blocked and not _partial_resource_failure(route_guard):
                         log.warning(
@@ -381,9 +423,9 @@ class PlaywrightDetailPageFetcher:
                         embedded_pages=embedded_pages,
                     )
                 finally:
-                    route_guard.close()
+                    await route_guard.close_async()
             finally:
-                browser.close()
+                await browser.close()
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +433,7 @@ class PlaywrightDetailPageFetcher:
 # ---------------------------------------------------------------------------
 
 
-def _collect_embedded_pages(page: Any, *, fetched_at: str) -> tuple[tuple[DetailPage, ...], bool]:
+async def _collect_embedded_pages(page: Any, *, fetched_at: str) -> tuple[tuple[DetailPage, ...], bool]:
     """Capture bounded public child documents already loaded under the route guard."""
     frames = getattr(page, "frames", ())
     main = getattr(page, "main_frame", None)
@@ -405,12 +447,12 @@ def _collect_embedded_pages(page: Any, *, fetched_at: str) -> tuple[tuple[Detail
             continue
         try:
             element = getattr(frame, "frame_element", None)
-            if callable(element) and not element().is_visible():
+            if callable(element) and not await (await element()).is_visible():
                 continue
         except Exception:
             complete = False
             continue
-        if not validate_public_http_url(url).allowed:
+        if not (await _public_destination(url)).allowed:
             complete = False
             continue
         if len(captured) >= _EMBEDDED_PAGE_LIMIT:
@@ -418,14 +460,14 @@ def _collect_embedded_pages(page: Any, *, fetched_at: str) -> tuple[tuple[Detail
             break
         try:
             visibility = []
-            status_html, status_complete, raw_hash = _collect_status_html(frame, visibility_out=visibility)
+            status_html, status_complete, raw_hash = await _collect_status_html(frame, visibility_out=visibility)
             captured.append(
                 DetailPage(
                     url=url,
                     final_url=url,
-                    page_title=frame.title(),
-                    html=_collect_main_content(frame),
-                    json_ld=tuple(_collect_json_ld(frame)),
+                    page_title=await frame.title(),
+                    html=await _collect_main_content(frame),
+                    json_ld=tuple(await _collect_json_ld(frame)),
                     fetched_at=fetched_at,
                     status_html=status_html,
                     status_evidence_complete=status_complete,
@@ -439,7 +481,7 @@ def _collect_embedded_pages(page: Any, *, fetched_at: str) -> tuple[tuple[Detail
     return tuple(captured), complete
 
 
-def _dismiss_optional_linkedin_dialog(page: Any) -> bool:
+async def _dismiss_optional_linkedin_dialog(page: Any) -> bool:
     """Use only LinkedIn's offered guest-dialog dismiss control before capture."""
     initial_url = None
     dismissed = False
@@ -454,8 +496,8 @@ def _dismiss_optional_linkedin_dialog(page: Any) -> bool:
         ):
             return False
         dismiss = None
-        for candidate in page.locator("button.contextual-sign-in-modal__modal-dismiss:visible").all():
-            allowed = candidate.evaluate("""button => {
+        for candidate in await page.locator("button.contextual-sign-in-modal__modal-dismiss:visible").all():
+            allowed = await candidate.evaluate("""button => {
                 if (button.matches(':disabled') || button.type === 'reset'
                     || (button.form !== null && button.type === 'submit')) return false;
                 if (getComputedStyle(button).visibility !== 'visible') return false;
@@ -471,8 +513,8 @@ def _dismiss_optional_linkedin_dialog(page: Any) -> bool:
                 break
         if dismiss is None:
             return False
-        dismiss.click(timeout=2000, no_wait_after=True)
-        dismiss.wait_for(state="hidden", timeout=2000)
+        await dismiss.click(timeout=2000, no_wait_after=True)
+        await dismiss.wait_for(state="hidden", timeout=2000)
         dismissed = True
     except Exception as exc:  # Optional dismissal failure retains the actual page.
         log.debug("Optional LinkedIn guest dialog remained open: %s", type(exc).__name__)
@@ -486,13 +528,13 @@ def _assert_capture_url(page: Any, expected_url: str) -> None:
         raise DetailPageFetchUnavailable("The posting changed while its capture was being collected.")
 
 
-def _collect_json_ld(page: Any) -> list[Any]:
+async def _collect_json_ld(page: Any) -> list[Any]:
     """Parse ``<script type="application/ld+json">`` payloads on the page."""
     payloads: list[Any] = []
     try:
-        for el in page.query_selector_all('script[type="application/ld+json"]'):
+        for el in await page.query_selector_all('script[type="application/ld+json"]'):
             try:
-                payloads.append(json.loads(el.inner_text()))
+                payloads.append(json.loads(await el.inner_text()))
             except Exception:
                 continue
     except Exception:
@@ -500,15 +542,15 @@ def _collect_json_ld(page: Any) -> list[Any]:
     return payloads
 
 
-def _collect_status_html(page: Any, *, visibility_out: list[bool] | None = None) -> tuple[str, bool, str]:
+async def _collect_status_html(page: Any, *, visibility_out: list[bool] | None = None) -> tuple[str, bool, str]:
     """Keep current controls outside main and raw evidence within a fixed budget."""
     try:
-        raw = page.content()
+        raw = await page.content()
         if not isinstance(raw, str):
             return "", False, ""
         status = raw
         try:
-            computed = page.evaluate("""() => {
+            computed = await page.evaluate("""() => {
                 const clone = document.documentElement.cloneNode(true);
                 const originals = [document.documentElement, ...document.documentElement.querySelectorAll('*')];
                 const copies = [clone, ...clone.querySelectorAll('*')];
@@ -579,13 +621,13 @@ _VISIBLE_CONTENT_CLEANUP = """
 """
 
 
-def _visible_inner_html(element: Any) -> str:
+async def _visible_inner_html(element: Any) -> str:
     """Copy rendered content without letting hidden subtrees consume its cap."""
     if not callable(getattr(element, "evaluate", None)):
         # Static DOM ports have no computed style; the cleaner still removes
         # explicit hidden/aria-hidden markup before applying the cap.
-        return element.inner_html()
-    return element.evaluate(
+        return await element.inner_html()
+    return await element.evaluate(
         """element => {
         const clone = element.cloneNode(true);
         const originalRoot = element;
@@ -598,24 +640,24 @@ def _visible_inner_html(element: Any) -> str:
     )
 
 
-def _collect_main_content(page: Any) -> str:
+async def _collect_main_content(page: Any) -> str:
     """Select plausible main content, then bound its cleaned HTML."""
     for sel in ("main", "article", '[role="main"]', "#content", ".content"):
         try:
-            el = page.query_selector(sel)
+            el = await page.query_selector(sel)
             if not el:
                 continue
-            text_len = len((el.inner_text() or "").strip())
+            text_len = len(((await el.inner_text()) or "").strip())
             if text_len > 200:
                 # Raw attributes and page chrome must not displace posting text
                 # that fits within the cleaned-content budget.
-                html = _clean_content_html(_visible_inner_html(el))[:_MAIN_CONTENT_HTML_LIMIT]
+                html = _clean_content_html(await _visible_inner_html(el))[:_MAIN_CONTENT_HTML_LIMIT]
                 if html.strip():
                     return html
         except Exception:
             continue
     try:
-        html = page.evaluate(
+        html = await page.evaluate(
             """
             () => {
                 const clone = document.body.cloneNode(true);

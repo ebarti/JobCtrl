@@ -1,5 +1,6 @@
 """Controlled external posting-page protocol in an authenticated owned workspace."""
 
+import asyncio
 import json
 
 import httpx
@@ -7,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, Strict
 
 from jobctrl.app.errors import AppError
 from jobctrl.app.synthetic import synthetic_boundary
+from jobctrl.network.async_routes import await_owned
 from jobctrl.features.jobs.domain.capture import DetailPage
 from jobctrl.features.jobs.domain.postings import posting_url, utc_now
 from jobctrl.features.jobs.adapters.page_fetcher import DetailPageFetchBlocked, DetailPageFetchUnavailable
@@ -31,8 +33,14 @@ class HttpPostingFetcher:
         self.endpoint, self.token = endpoint, owner["token"]
 
     def fetch(self, url):
-        with httpx.Client(timeout=30, trust_env=False, follow_redirects=False) as client:
-            with client.stream(
+        return asyncio.run(self.fetch_async(url))
+
+    async def fetch_async(self, url):
+        return await await_owned(self._capture(url), cancel_on_stop=True)
+
+    async def _capture(self, url):
+        async with httpx.AsyncClient(timeout=30, trust_env=False, follow_redirects=False) as client:
+            async with client.stream(
                 "POST", self.endpoint, json={"url": posting_url(url)}, headers={"Authorization": "Bearer " + self.token}
             ) as response:
                 # These statuses describe the page provider's transport outcome,
@@ -44,7 +52,7 @@ class HttpPostingFetcher:
                 if response.status_code != 200:
                     raise AppError("posting_provider_unavailable", "The posting page provider is unavailable.", 502)
                 content = bytearray()
-                for chunk in response.iter_bytes():
+                async for chunk in response.aiter_bytes():
                     content.extend(chunk)
                     if len(content) > 2_100_000:
                         raise AppError(

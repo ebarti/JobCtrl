@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from pydantic import ValidationError
 
 from jobctrl.app.errors import AppError
+from jobctrl.network.async_routes import await_owned
 from jobctrl.network.fetch_failures import PublicFetchFailureKind
 from jobctrl.network.ports import PolitenessOutcome
 from jobctrl.semantic import Citation, DeterminationFailure, Source, validate_citations
@@ -72,7 +73,11 @@ class SourceBoundPostingAcquirer:
 
     async def _fetch_page(self, url, *, session=None):
         try:
-            return await asyncio.to_thread(self._request_fetcher(session).fetch, url)
+            fetcher = self._request_fetcher(session)
+            if hasattr(fetcher, "fetch_async"):
+                return await fetcher.fetch_async(url)
+            # An injected synchronous port still owns its call until it returns.
+            return await await_owned(asyncio.to_thread(fetcher.fetch, url))
         except AppError:
             raise
         except DetailPageFetchBlocked as error:
