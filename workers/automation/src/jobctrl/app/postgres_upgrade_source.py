@@ -98,7 +98,11 @@ def exclude_source_writers(source):
     # releases classic record locks. Isolate the SQLite lock from header,
     # backup and file-custody reads, including rollback-journal databases.
     identity = regular_private(source)
-    with subprocess.Popen([sys.executable, "-m", "jobctrl.app.postgres_upgrade_source", str(source)],
+    # Interpreter flags are not inherited across exec. Match the launcher's
+    # isolated imports and keep the signed package free of unmanifested .pyc.
+    # Source checkouts still use their caller-selected Python import path.
+    flags = ["-I", "-B"] if sys.flags.isolated else ["-B"]
+    with subprocess.Popen([sys.executable, *flags, "-m", "jobctrl.app.postgres_upgrade_source", str(source)],
                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as holder:
         try:
             message = holder.stdout.readline()
