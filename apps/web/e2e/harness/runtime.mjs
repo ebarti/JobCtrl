@@ -96,7 +96,7 @@ function environment(home) {
   return result;
 }
 
-async function removeAllocated(directory, identity) {
+export async function removeAllocated(directory, identity) {
   const current = await lstat(directory, { bigint: true });
   if (
     current.isSymbolicLink() ||
