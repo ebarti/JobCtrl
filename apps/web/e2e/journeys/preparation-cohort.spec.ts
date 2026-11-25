@@ -1,15 +1,15 @@
+import type { APIRequestContext } from "@playwright/test";
 import { indeedPage } from "./indeed-data.js";
 import { createHash } from "node:crypto";
-import { realpath } from "node:fs/promises";
-import path from "node:path";
 import { test, expect, json, action, completed, modelCall, terminal, type ApplicationStack } from "../harness/fixtures.js";
+import { acceptReuseRequirements, captureReusePosting, type CapturedPosting } from "./reuse-data.js";
 import { createBaseline, type Profile } from "./core-data.js";
 import { createScoredFit, type FitState } from "./fit-data.js";
 import { servePostingAssessment } from "./search-assessment-data.js";
-import { authoredPartition, readCatalog, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
-import { catalogMatching, memberRoots, modelSources, normalizationFingerprint, typedExtraction, type CatalogContext } from "./requirements-data.js";
-import { COMMON_DEMAND, posting, respondProducer, untilNormalization, type CohortPosting } from "./preparation-cohort-data.js";
-import { cohortCitationSelection, qualificationBatchDecision, qualificationBindings } from "./qualification-data.js";
+import { readCatalog, type NormalizedSnapshot } from "./consolidation-data.js";
+import { catalogContext, catalogMatching, memberRoots, normalizationFingerprint, typedExtraction } from "./requirements-data.js";
+import { COMMON_DEMAND, posting, respondProducer, type CohortPosting } from "./preparation-cohort-data.js";
+import { qualificationBatchDecision, qualificationBindings } from "./qualification-data.js";
 
 test.describe("accepted posting and run history migration", () => {
   test.use({ sqlitePredecessor: true });
@@ -80,302 +80,190 @@ test.describe("accepted posting and run history migration", () => {
   });
 });
 
-async function requirementAttempts(app: ApplicationStack, runId: string) {
-  const owner = JSON.parse((await app.file(".jobctrl-e2e-owned.json")).toString());
-  expect(owner.workspace).toBe(app.workspace);
-  const file = path.join(app.workspace, "jobctrl.db");
-  expect(await realpath(file)).toBe(file);
-  const { DatabaseSync } = await import("node:sqlite");
-  const db = new DatabaseSync(file, { readOnly: true });
-  try {
-    return db.prepare(`SELECT a.job_id, a.attempt_id, a.state, a.failure_code, a.completed_at,
-      json_extract(o.state_json,'$.model_request.input_fingerprint') AS extraction_fingerprint,
-      g.receipt_id AS refused_receipt_id, g.status AS refused_receipt_status FROM preparation_steps s
-      JOIN requirements_attempts a ON a.job_id=s.job_id AND a.attempt_id=json_extract(s.input_json,'$._operation_id')
-      JOIN requirements_cohort_operations o ON o.operation_id=a.attempt_id
-      LEFT JOIN app_model_calls g ON g.receipt_id=json_extract(o.state_json,'$.refused_extraction_receipt_id')
-        AND g.input_fingerprint=json_extract(o.state_json,'$.model_request.input_fingerprint')
-      WHERE s.run_id=? AND s.stage='requirements_extract' ORDER BY a.started_at, a.attempt_id`).all(runId);
-  } finally {
-    db.close();
-  }
-}
+const refreshJob = (api: APIRequestContext, job: CapturedPosting) => action(api, "requirements.refresh", {
+  job_id: job.job_id, expected_posting_revision: job.revision, expected_revision: 0,
+});
+const requirementsAttempt = (api: APIRequestContext, jobId: string) =>
+  json(api, "get", `/v1/jobs/${jobId}/requirements/attempts/latest`);
+const firstFit = (api: APIRequestContext, jobId: string) =>
+  api.post(`/v1/jobs/${jobId}/fit/assess`, { data: { expected_revision: 0, prepare_wording: false, prepare_coverage: false } });
+const modelCount = (app: ApplicationStack, operation: string) =>
+  app.external.calls.filter(call => call.body["operation"] === operation).length;
 
-test("a refused cohort extraction and an explicit cancellation settle only the corresponding Requirements attempts", async ({ api, app }) => {
+test("a refused extraction and cancellation settle only the corresponding Requirements attempts", async ({ api, app }) => {
   await createBaseline(api);
-  const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 3 });
-  const started = await action(api, "discovery.search", { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }] });
-  const source = await app.external.next();
-  expect(source.path).toBe("/jobstreaming/indeed");
-  const first = posting(101);
-  const postings = [first, { ...posting(102), description: first.description }, posting(103)];
-  source.respond(indeedPage({ jobs: postings, cursor: null, complete: true }));
-  let extracted = 0;
-  let current = first;
-  for (;;) {
-    const call = await app.external.next();
-    if (call.path === "/posting-page") {
-      const page = postings.find((row) => row.url === call.body["url"]);
-      expect(page).toBeDefined();
-      current = page!;
-    }
-    if (call.body?.["operation"] === "requirements.extract") {
-      extracted++;
-      if (extracted === 3) break;
-      if (extracted === 1) {
-        const response = typedExtraction(call, { requirements: [{ localId: "r1", text: COMMON_DEMAND }] });
-        response.requirements[0]!.evidence_refs = ["not-in-the-quote-inventory"];
-        call.reply(response);
-        continue;
-      }
-    }
-    respondProducer(call, [current]);
-  }
-  const run = await json<{ jobIds: string[]; steps: { jobId: string; stage: string; status: string; errorCode: string | null }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-  expect(run.steps.find((step) => step.jobId === run.jobIds[0] && step.stage === "requirements_extract"))
-    .toMatchObject({ status: "failed", errorCode: "foreign_or_duplicate_evidence_id" });
-  const refused = { job_id: run.jobIds[0], state: "blocked", failure_code: "foreign_or_duplicate_evidence_id",
-    completed_at: expect.any(String), refused_receipt_id: expect.any(String), refused_receipt_status: "succeeded" };
-  const running = (job_id: string) => ({ job_id, state: "running", failure_code: null, completed_at: null });
-  const attempts = await requirementAttempts(app, started.runId);
-  expect(attempts).toMatchObject([refused, running(run.jobIds[1]!), running(run.jobIds[2]!)]);
-  expect(attempts[0]!["extraction_fingerprint"]).toEqual(expect.any(String));
-  expect(attempts[1]!["extraction_fingerprint"]).toBe(attempts[0]!["extraction_fingerprint"]);
-  await json(api, "post", `/v1/action-runs/${started.runId}/cancel`, {});
-  expect(await terminal(api, started.runId)).toMatchObject({ status: "cancelled" });
-  const cancelled = (job_id: string) => ({ job_id, state: "cancelled", failure_code: "action_cancelled", completed_at: expect.any(String) });
-  expect(await requirementAttempts(app, started.runId)).toMatchObject([refused, cancelled(run.jobIds[1]!), cancelled(run.jobIds[2]!)]);
-  for (const id of run.jobIds) expect(await json(api, "get", `/v1/jobs/${id}/requirements`)).toBeNull();
-  expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.extract")).toHaveLength(3);
-  expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.match_catalog")).toHaveLength(0);
+  const rejectedJob = await captureReusePosting(api, "refused-extraction", COMMON_DEMAND);
+  const rejected = await refreshJob(api, rejectedJob);
+  const extraction = await modelCall(app, "requirements.extract");
+  const decision = typedExtraction(extraction, { requirements: [{ localId: "r1", text: COMMON_DEMAND }] });
+  decision.requirements[0]!.evidence_refs = ["not-in-the-quote-inventory"];
+  extraction.reply(decision);
+  expect(await terminal(api, rejected.runId)).toMatchObject({ status: "failed", errorCode: "foreign_or_duplicate_evidence_id" });
+  const refusal = await requirementsAttempt(api, rejectedJob.job_id);
+  expect(refusal).toMatchObject({ attempt_id: rejected.runId, job_id: rejectedJob.job_id, state: "blocked",
+    failure_code: "foreign_or_duplicate_evidence_id", completed_at: expect.any(String) });
 
-  // The retry revalidates the exact refused receipt and reuses the staged
-  // sibling. The unresolved provider spend still prevents normalization.
-  const retry = await action(api, "preparation.retry", { run_id: started.runId });
-  expect(await terminal(api, retry.runId)).toMatchObject({ status: "failed", errorCode: "preparation_partial", cancellationRequested: false });
-  const after = await requirementAttempts(app, retry.runId);
-  expect(after).toMatchObject([{ ...refused, refused_receipt_id: attempts[0]!["refused_receipt_id"] },
-    { job_id: run.jobIds[1], state: "blocked", failure_code: "spend_accounting_unresolved", completed_at: expect.any(String) },
-    { job_id: run.jobIds[2], state: "blocked", failure_code: "requirements_cohort_interrupted", completed_at: expect.any(String), refused_receipt_id: null }]);
-  expect(after.map((row) => row["attempt_id"])).toEqual(attempts.map((row) => row["attempt_id"]));
-  expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.extract")).toHaveLength(3);
-  expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.match_catalog")).toHaveLength(0);
+  const acceptedJob = await captureReusePosting(api, "accepted-extraction-sibling", `${COMMON_DEMAND}\nReview the saved record monthly.`);
+  const { snapshot } = await acceptReuseRequirements(api, app, acceptedJob,
+    [{ localId: "r1", text: COMMON_DEMAND }], { r1: { verdict: "new" } });
+  const accepted = await json(api, "get", `/v1/jobs/${acceptedJob.job_id}/requirements`);
+
+  const cancelledJob = await captureReusePosting(api, "cancelled-extraction", "Run controlled operational reviews.");
+  const stopped = await refreshJob(api, cancelledJob);
+  const held = await modelCall(app, "requirements.extract");
+  expect(await requirementsAttempt(api, cancelledJob.job_id)).toMatchObject({ attempt_id: stopped.runId,
+    state: "running", failure_code: null, completed_at: null });
+  await json(api, "post", `/v1/action-runs/${stopped.runId}/cancel`, {});
+  expect(await terminal(api, stopped.runId)).toMatchObject({ status: "cancelled" });
+  await expect.poll(() => held.closed).toBe(true);
+  expect(await requirementsAttempt(api, cancelledJob.job_id)).toMatchObject({ attempt_id: stopped.runId, state: "cancelled",
+    failure_code: "cancelled", completed_at: expect.any(String) });
+  expect(await requirementsAttempt(api, rejectedJob.job_id)).toEqual(refusal);
+  for (const job of [rejectedJob, cancelledJob]) expect(await json(api, "get", `/v1/jobs/${job.job_id}/requirements`)).toBeNull();
+  expect(await json(api, "get", `/v1/jobs/${acceptedJob.job_id}/requirements`)).toEqual(accepted);
+  const paid = await app.requirementsExtractionReceipts();
+  expect(paid).toHaveLength(3);
+  expect(paid).toEqual(expect.arrayContaining([
+    expect.objectContaining({ status: "succeeded", inputFingerprint: normalizationFingerprint(extraction.body) }),
+    expect.objectContaining({ status: "succeeded", receiptId: snapshot.requirements[0]!.extraction_determination_id }),
+    expect.objectContaining({ status: "uncertain", inputFingerprint: normalizationFingerprint(held.body), costUsd: null }),
+  ]));
+  expect(modelCount(app, "requirements.extract")).toBe(3);
+  expect(modelCount(app, "requirements.match_catalog")).toBe(1);
 });
 
-test("a new search normalizes repeated local IDs together and shares one qualification before reusing it exactly", async ({ api, app }) => {
+test("independent postings keep distinct occurrence IDs and share the canonical qualification receipt", async ({ api, app }) => {
   const { library } = await createBaseline(api);
-  const modelSettings = await json<{ revision: number }>(api, "get", "/v1/settings");
-  await json(api, "patch", "/v1/settings", { expectedRevision: modelSettings.revision, dailyBudgetUsd: 0 });
-  const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 2 });
-  const payload = { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }] };
-  const first = [posting(1), posting(2)];
-  const started = await action(api, "discovery.search", payload);
-  const source = await app.external.next();
-  expect(source.path).toBe("/jobstreaming/indeed");
-  source.respond(indeedPage({ jobs: first, cursor: null, complete: true }));
-  const matching = await untilNormalization(app, first, { proveOverlap: true });
-  const frozen = await json<{ cohortFrozen: boolean; jobIds: string[]; jobConcurrency: number; executionPolicy: unknown; steps: { jobId: string | null; stage: string; status: string }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-  expect(frozen).toMatchObject({ cohortFrozen: true, jobConcurrency: 3, executionPolicy: { version: "search-cohort-v1", producer_mode: "cross_lane" } });
-  expect(frozen.jobIds).toHaveLength(2);
-  const input = matching.body["context"] as CatalogContext;
-  expect(input.incoming).toHaveLength(2);
-  expect(input.incoming.map((row) => row.local_id)).toEqual(["r1", "r1"]);
-  expect(new Set(input.incoming.map((row) => row.member_id)).size).toBe(2);
-  expect(input.incoming.map((row) => row.job_id).sort()).toEqual([...frozen.jobIds].sort());
-  expect(frozen.steps.filter((step) => step.stage === "requirements_extract" && step.status === "succeeded")).toHaveLength(2);
-  expect(frozen.steps.filter((step) => step.stage === "fit" && step.status === "succeeded")).toHaveLength(0);
-  expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(0);
-  matching.reply(authoredPartition(matching, [{ groupId: "shared-recovery", memberIds: input.incoming.map((row) => row.member_id),
-    category: "professional_experience", name: COMMON_DEMAND, definition: COMMON_DEMAND }],
-  [{ groupId: "shared-recovery", definition: COMMON_DEMAND, jobIds: frozen.jobIds }]));
-
-  const qualification = await app.external.next();
-  expect(qualification.path).toBe("/model");
-  expect(qualification.body["operation"]).toBe("fit.qualification-batch");
-  const requirements = await Promise.all(frozen.jobIds.map((id) => json<NormalizedSnapshot>(api, "get", `/v1/jobs/${id}/requirements`)));
-  for (const snapshot of requirements) expect(snapshot.requirements).toHaveLength(1);
-  const requirement = requirements[0]!.requirements[0]!;
-  const sibling = requirements[1]!.requirements[0]!;
-  for (const occurrence of [requirement, sibling])
-    expect((occurrence.provenance as { matching_local_id?: string }).matching_local_id).toBe("r1");
-  expect(sibling.requirement_id).toBe(requirement.requirement_id);
-  expect(sibling.occurrence_id).not.toBe(requirement.occurrence_id);
-  expect(sibling.normalized_demand.demand_fingerprint).toBe(requirement.normalized_demand.demand_fingerprint);
-  expect(qualificationBindings(qualification)).toMatchObject([{ requirement_id: requirement.requirement_id,
-    demand_fingerprint: requirement.normalized_demand.demand_fingerprint }]);
   const achievement = library.roles[0]!.achievements[0]!;
-  const literal = qualificationBatchDecision(qualification, () => ({ achievementIds: [achievement.achievement_id],
-    evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] }));
-  const evidence = literal.requirements[0]!.evidence[0]!;
-  const requirementCitation = literal.requirements[0]!.requirement_citations[0]!;
-  const raw = { requirements: literal.requirements.map((row) => ({ ...row,
-    evidence: [cohortCitationSelection(qualification, evidence.source_id, 1)],
-    requirement_citations: [cohortCitationSelection(qualification, requirementCitation.source_id, null)] })) };
-  const expanded = structuredClone(literal);
-  expanded.requirements[0]!.evidence[0]!.quote = modelSources(qualification).find((row) => row.source_id === evidence.source_id)!.text.split(/\r?\n/)[0]!;
-  expanded.requirements[0]!.requirement_citations[0]!.quote = modelSources(qualification).find((row) => row.source_id === requirementCitation.source_id)!.text;
-  qualification.reply(raw);
-  const firstOutcome = await completed(api, started.runId);
-  expect(firstOutcome["result"]).toMatchObject({ ok: true, status: "completed", newJobIds: frozen.jobIds,
-    preparation: { status: "succeeded", assessedJobs: 2, failedJobs: 0 } });
-  const scores = await Promise.all(frozen.jobIds.map((id) => json<FitState>(api, "get", `/v1/jobs/${id}/fit`)));
-  for (const score of scores) expect(score).toMatchObject({ current: true, stale_reasons: [], score: { score: 10 } });
-  expect(scores[0]!.score.assessments[0]!.assessment_id).toBe(scores[1]!.score.assessments[0]!.assessment_id);
-  const provenance = scores[0]!.score.assessments[0]!.provenance as unknown as { cohort_citation_binding: Record<string, unknown> };
-  expect(provenance.cohort_citation_binding).toMatchObject({ version: "fit-qualification-citation-refs-v1",
-    raw_batch_fingerprint: normalizationFingerprint(raw), expanded_batch_fingerprint: normalizationFingerprint(expanded) });
-
-  // A third independently acquired posting establishes the same demand. The
-  // model explicitly retains the accepted capability and demand identity.
-  const next = await action(api, "discovery.search", { ...payload, newJobLimit: 1 });
-  const nextSource = await app.external.next();
-  expect(nextSource.path).toBe("/jobstreaming/indeed");
-  const third = posting(3);
-  nextSource.respond(indeedPage({ jobs: [third], cursor: null, complete: true }));
-  const nextMatching = await untilNormalization(app, [third]);
-  const nextRun = await json<{ jobIds: string[] }>(api, "get", `/v1/preparation/runs/${next.runId}`);
-  expect(nextRun.jobIds).toHaveLength(1);
-  const context = nextMatching.body["context"] as CatalogContext;
-  const retained = retainedCapability(nextMatching, requirement.requirement_id, "shared-recovery");
-  retained.memberIds.push(...context.incoming.map((row) => row.member_id));
-  const full = authoredPartition(nextMatching, [retained], [{ groupId: "shared-recovery", definition: COMMON_DEMAND,
-    jobIds: [...frozen.jobIds, ...nextRun.jobIds], reuseDemandFingerprint: requirement.normalized_demand.demand_fingerprint }]);
-  // Explicit reuse selects the offered retained definitions; assignments and
-  // source-bound citations remain the complete independently authored graph.
-  const compact = { ...full,
-    capability_groups: Object.fromEntries(Object.entries(full.capability_groups).map(([id, slot]) => [id,
-      slot === null ? null : { kind: "reuse", reuse_requirement_id: slot.reuse_requirement_id, reason: slot.reason, citations: slot.citations }])),
-    demand_groups: Object.fromEntries(Object.entries(full.demand_groups).map(([id, slot]) => [id,
-      slot === null ? null : { kind: "reuse", reuse_demand_fingerprint: slot.reuse_demand_fingerprint, citations: slot.citations }])),
-  };
-  nextMatching.reply(compact);
-  expect((await completed(api, next.runId))["result"]).toMatchObject({ ok: true, status: "completed",
-    preparation: { status: "succeeded", assessedJobs: 1, failedJobs: 0 } });
-  const reused = await json<FitState>(api, "get", `/v1/jobs/${nextRun.jobIds[0]}/fit`);
-  expect(reused).toMatchObject({ current: true, stale_reasons: [], score: { score: 10 } });
-  expect(reused.score.assessments[0]!.assessment_id).toBe(scores[0]!.score.assessments[0]!.assessment_id);
-  const nextRecorded = await json<{ steps: { stage: string; result: { operation_id?: string } | null }[] }>(api, "get", `/v1/preparation/runs/${next.runId}`);
-  const reconciliationId = nextRecorded.steps.find((step) => step.stage === "requirements_normalize")?.result?.operation_id;
-  expect(reconciliationId).toBeTruthy();
-  const audit = await app.requirementsReconciliation(reconciliationId!);
-  expect(audit.selection).toEqual(compact);
-  expect(audit.authority_receipt.value).toEqual(compact);
-  expect(audit.stored_report.partition_binding).toMatchObject({ raw_selection_fingerprint: normalizationFingerprint(compact) });
-  for (const [index, id] of frozen.jobIds.entries()) expect((await json<FitState>(api, "get", `/v1/jobs/${id}/fit`)).score).toEqual(scores[index]!.score);
-  expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.match_catalog")).toHaveLength(2);
-  expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
+  const scores: FitState["score"][] = [];
+  const requirements: NormalizedSnapshot["requirements"][number][] = [];
+  for (const index of [1, 2, 3]) {
+    const job = await captureReusePosting(api, `independent-demand-${index}`, posting(index).description);
+    const started = await refreshJob(api, job);
+    const extraction = await modelCall(app, "requirements.extract");
+    extraction.reply(typedExtraction(extraction, { requirements: [{ localId: "r1", text: COMMON_DEMAND }] }));
+    const matching = await modelCall(app, "requirements.match_catalog");
+    const input = catalogContext(matching);
+    expect(input.incoming).toHaveLength(1);
+    expect(input.incoming[0]).toMatchObject({ job_id: job.job_id, local_id: "r1" });
+    const retained = requirements[0];
+    const decision = catalogMatching(matching, {
+      r1: retained ? { verdict: "equivalent", requirementId: retained.requirement_id } : { verdict: "new" },
+    });
+    matching.reply(decision);
+    await completed(api, started.runId);
+    const snapshot = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${job.job_id}/requirements`);
+    const occurrence = snapshot.requirements[0]!;
+    expect(snapshot.requirements).toHaveLength(1);
+    expect(occurrence).toMatchObject({ local_id: "r1", job_id: job.job_id, source_hash: job.source_hash });
+    if (retained) expect(occurrence).toMatchObject({ requirement_id: retained.requirement_id,
+      normalized_demand: { demand_fingerprint: retained.normalized_demand.demand_fingerprint } });
+    requirements.push(occurrence);
+    const audit = await app.requirementsReconciliation(started.runId);
+    expect(audit.selection).toEqual(decision);
+    expect(audit.authority_receipt.value).toEqual(decision);
+    expect(audit.stored_report.partition_binding).toMatchObject({ raw_selection_fingerprint: normalizationFingerprint(decision) });
+    const pending = firstFit(api, job.job_id);
+    if (!retained) {
+      const qualification = await modelCall(app, "fit.qualification-batch");
+      expect(qualificationBindings(qualification)).toMatchObject([{ requirement_id: occurrence.requirement_id,
+        demand_fingerprint: occurrence.normalized_demand.demand_fingerprint }]);
+      qualification.reply(qualificationBatchDecision(qualification, () => ({
+        achievementIds: [achievement.achievement_id], evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`],
+      })));
+    }
+    const response = await pending;
+    expect(response.status(), await response.text()).toBe(200);
+    const fit = await json<FitState>(api, "get", `/v1/jobs/${job.job_id}/fit`);
+    expect(fit).toMatchObject({ current: true, stale_reasons: [], score: { score: 10 } });
+    scores.push(fit.score);
+  }
+  expect(new Set(requirements.map(row => row.occurrence_id)).size).toBe(3);
+  expect(new Set(scores.map(row => row.assessments[0]!.assessment_id)).size).toBe(1);
+  const receipts = await app.fitProviderReceipts();
+  expect(receipts).toMatchObject([{ receiptId: scores[0]!.assessments[0]!.provenance.receipt_id, status: "succeeded" }]);
+  for (const [index, row] of requirements.entries()) {
+    expect((await json<FitState>(api, "get", `/v1/jobs/${row.job_id}/fit`)).score).toEqual(scores[index]);
+  }
+  expect(modelCount(app, "requirements.match_catalog")).toBe(3);
+  expect(modelCount(app, "fit.qualification-batch")).toBe(1);
 });
 
 for (const fault of ["missing member", "foreign member", "foreign citation", "worker interruption"] as const) {
-  const title = fault === "worker interruption" ? "worker interruption during cohort normalization preserves accepted authority"
-    : `cohort normalization refuses a ${fault} without publishing partial authority`;
+  const title = fault === "worker interruption" ? "worker interruption during normalization preserves accepted authority"
+    : `per-job normalization refuses a ${fault} without publishing partial authority`;
   test(title, async ({ api, app }) => {
-    const seed = await createScoredFit(api, app, `cohort-normalization-${fault.replaceAll(" ", "-")}`);
+    const seed = await createScoredFit(api, app, `normalization-${fault.replaceAll(" ", "-")}`);
     const accepted = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${seed.posting.job_id}/requirements`);
-    const priorScore = await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`);
     const catalogBefore = await readCatalog(api);
-    const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-    await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 2 });
-    const started = await action(api, "discovery.search", { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }] });
-    const source = await app.external.next();
-    expect(source.path).toBe("/jobstreaming/indeed");
-    const incoming = [posting(21), posting(22)];
-    source.respond(indeedPage({ jobs: incoming, cursor: null, complete: true }));
-    const matching = await untilNormalization(app, incoming);
-    const run = await json<{ jobIds: string[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-    expect(run.jobIds).toHaveLength(2);
-    const context = matching.body["context"] as CatalogContext;
-    const old = accepted.requirements[0]!;
-    const retained = retainedCapability(matching, old.requirement_id, "retained");
-    const invalid = authoredPartition(matching, [retained, { groupId: "incoming", memberIds: context.incoming.map((row) => row.member_id),
-      category: "professional_experience", name: COMMON_DEMAND, definition: COMMON_DEMAND }], [
-      { groupId: "retained", definition: old.normalized_demand.definition, jobIds: [seed.posting.job_id], reuseDemandFingerprint: old.normalized_demand.demand_fingerprint },
-      { groupId: "incoming", definition: COMMON_DEMAND, jobIds: run.jobIds },
-    ]);
-    if (fault === "missing member") delete invalid.member_slots[context.incoming[0]!.member_id];
-    if (fault === "foreign member") invalid.member_slots["incoming:foreign-job:r1"] = structuredClone(invalid.member_slots[context.incoming[0]!.member_id]!);
+    const job = await captureReusePosting(api, "normalization-refusal", COMMON_DEMAND);
+    const started = await refreshJob(api, job);
+    const extraction = await modelCall(app, "requirements.extract");
+    extraction.reply(typedExtraction(extraction, { requirements: [{ localId: "r1", text: COMMON_DEMAND }] }));
+    const matching = await modelCall(app, "requirements.match_catalog");
+    const input = catalogContext(matching);
+    expect(input.incoming).toHaveLength(1);
+    expect(input.members).toEqual(expect.arrayContaining([expect.objectContaining({ requirement_id: accepted.requirements[0]!.requirement_id })]));
+    const incoming = input.incoming[0]!.member_id;
+    const invalid = catalogMatching(matching, { r1: { verdict: "new" } });
+    if (fault === "missing member") delete invalid.member_slots[incoming];
+    if (fault === "foreign member") invalid.member_slots["incoming:foreign-job:r1"] = structuredClone(invalid.member_slots[incoming]!);
     if (fault === "foreign citation") memberRoots(invalid)[0]!.slot.citations.push({ source_id: "foreign-source", segment_id: "foreign-segment" });
-    const refusal = fault === "worker interruption" ? "requirements_cohort_interrupted" : "model_schema_violation";
-    const calls = app.external.calls.filter((call) => call.body?.["operation"] === "requirements.match_catalog").length;
+    const refusal = fault === "worker interruption" ? "requirements_consolidation_call_unsettled" : "model_schema_violation";
     if (fault === "worker interruption") {
-      expect(await requirementAttempts(app, started.runId)).toMatchObject(run.jobIds.map((job_id) => ({
-        job_id, state: "running", failure_code: null, completed_at: null,
-      })));
+      expect(await requirementsAttempt(api, job.job_id)).toMatchObject({ attempt_id: started.runId, state: "running" });
       const replacement = await app.restartWorker();
       expect(replacement.current).not.toBe(replacement.previous);
+      await expect.poll(() => matching.closed).toBe(true);
     } else matching.reply(invalid);
-    const outcome = await completed(api, started.runId);
-    expect(outcome["cancellationRequested"]).toBe(false);
-    expect(outcome["result"]).toMatchObject({ ok: false, status: "partial",
-      preparation: { status: "partial", assessedJobs: 0, failedJobs: 2 } });
-    const recorded = await json<{ steps: { jobId: string | null; stage: string; status: string; errorCode: string | null }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-    expect(recorded.steps.find((step) => step.stage === "requirements_normalize")).toMatchObject({ status: "failed", errorCode: refusal });
-    expect(recorded.steps.filter((step) => step.stage === "requirements" && step.status === "failed")).toHaveLength(2);
-    expect(await requirementAttempts(app, started.runId)).toMatchObject(run.jobIds.map((job_id) => ({
-      job_id, state: "blocked", failure_code: refusal, completed_at: expect.any(String),
-    })));
-    for (const id of run.jobIds) expect((await json<{ score: null }>(api, "get", `/v1/jobs/${id}/fit`)).score).toBeNull();
+    expect(await terminal(api, started.runId)).toMatchObject({ status: "failed", errorCode: refusal, cancellationRequested: false });
+    expect(await requirementsAttempt(api, job.job_id)).toMatchObject({ attempt_id: started.runId, state: "blocked",
+      failure_code: refusal, completed_at: expect.any(String) });
+    expect(await json(api, "get", `/v1/jobs/${job.job_id}/requirements`)).toBeNull();
+    expect((await json<{ score: null }>(api, "get", `/v1/jobs/${job.job_id}/fit`)).score).toBeNull();
     expect(await readCatalog(api)).toEqual(catalogBefore);
     expect(await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${seed.posting.job_id}/requirements`)).toEqual(accepted);
-    expect((await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).score).toEqual(priorScore.score);
-    expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.match_catalog")).toHaveLength(calls);
-    expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
+    expect((await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).score).toEqual(seed.fit.score);
+    expect(modelCount(app, "requirements.match_catalog")).toBe(2);
+    expect(modelCount(app, "fit.qualification-batch")).toBe(1);
   });
 }
 
 for (const fault of ["missing row", "foreign requirement", "foreign citation"] as const) {
-  test(`cohort qualification refuses a ${fault} without publishing partial scores`, async ({ api, app }) => {
-    const seed = await createScoredFit(api, app, `cohort-qualification-${fault.replaceAll(" ", "-")}`);
-    const accepted = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${seed.posting.job_id}/requirements`);
-    const priorScore = await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`);
-    const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-    await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 2 });
-    const started = await action(api, "discovery.search", { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }] });
-    const source = await app.external.next();
-    expect(source.path).toBe("/jobstreaming/indeed");
-    const incoming = [posting(31), posting(32)];
-    source.respond(indeedPage({ jobs: incoming, cursor: null, complete: true }));
-    const matching = await untilNormalization(app, incoming);
-    const run = await json<{ jobIds: string[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-    const context = matching.body["context"] as CatalogContext;
-    const old = accepted.requirements[0]!;
-    const retained = retainedCapability(matching, old.requirement_id, "retained");
-    matching.reply(authoredPartition(matching, [retained, { groupId: "incoming", memberIds: context.incoming.map((row) => row.member_id),
-      category: "professional_experience", name: COMMON_DEMAND, definition: COMMON_DEMAND }], [
-      { groupId: "retained", definition: old.normalized_demand.definition, jobIds: [seed.posting.job_id], reuseDemandFingerprint: old.normalized_demand.demand_fingerprint },
-      { groupId: "incoming", definition: COMMON_DEMAND, jobIds: run.jobIds },
-    ]));
-    const batch = await app.external.next();
-    expect(batch.body["operation"]).toBe("fit.qualification-batch");
-    const normalized = await Promise.all(run.jobIds.map((id) => json<NormalizedSnapshot>(api, "get", `/v1/jobs/${id}/requirements`)));
-    for (const snapshot of normalized) expect(snapshot.requirements).toHaveLength(1);
+  test(`qualification refuses a ${fault} without publishing a partial score`, async ({ api, app }) => {
+    const seed = await createScoredFit(api, app, `qualification-${fault.replaceAll(" ", "-")}`);
+    const secondDemand = "Check the assigned reviewer before authorizing a change.";
+    const job = await captureReusePosting(api, "qualification-refusal", `${COMMON_DEMAND}\n${secondDemand}`);
+    await acceptReuseRequirements(api, app, job,
+      [{ localId: "r1", text: COMMON_DEMAND }, { localId: "r2", text: secondDemand }],
+      { r1: { verdict: "new" }, r2: { verdict: "new" } });
+    const normalized = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${job.job_id}/requirements`);
+    expect(normalized.requirements).toHaveLength(2);
+    const pending = firstFit(api, job.job_id);
+    const batch = await modelCall(app, "fit.qualification-batch");
     const achievement = seed.library.roles[0]!.achievements[0]!;
     const invalid = qualificationBatchDecision(batch, () => ({ achievementIds: [achievement.achievement_id],
       evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] }));
-    expect(invalid.requirements).toHaveLength(1);
+    expect(invalid.requirements).toHaveLength(2);
     if (fault === "missing row") invalid.requirements.pop();
-    if (fault === "foreign requirement") invalid.requirements[0]!.requirement_id = "unrequested-canonical-requirement";
-    if (fault === "foreign citation") invalid.requirements[0]!.evidence = [{ source_id: "foreign-unowned-evidence", quote: "A source that was never supplied." }];
+    if (fault === "foreign requirement") invalid.requirements[1]!.requirement_id = "unrequested-canonical-requirement";
+    if (fault === "foreign citation") invalid.requirements[1]!.evidence = [{ source_id: "foreign-unowned-evidence", quote: "A source that was never supplied." }];
+    const errors = {
+      "missing row": "fit_qualification_partition_invalid", "foreign requirement": "fit_qualification_partition_invalid",
+      "foreign citation": "fit_foreign_source_id",
+    };
     batch.reply(invalid);
-    expect((await completed(api, started.runId))["result"]).toMatchObject({ ok: false, status: "partial",
-      preparation: { status: "partial", assessedJobs: 0, failedJobs: 2 } });
-    const recorded = await json<{ steps: { stage: string; status: string; errorCode: string | null }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-    expect(recorded.steps.find((step) => step.stage === "fit_qualify")).toMatchObject({ status: "failed", errorCode: {
-      "missing row": "model_schema_violation", "foreign requirement": "fit_qualification_partition_invalid", "foreign citation": "fit_foreign_source_id",
-    }[fault] });
-    expect(recorded.steps.filter((step) => step.stage === "fit" && step.status === "failed")).toHaveLength(2);
-    for (const [index, id] of run.jobIds.entries()) {
-      expect(await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${id}/requirements`)).toEqual(normalized[index]);
-      expect((await json<{ score: null }>(api, "get", `/v1/jobs/${id}/fit`)).score).toBeNull();
-    }
-    expect((await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).score).toEqual(priorScore.score);
-    expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(2);
+    const result = await pending;
+    expect(result.ok(), await result.text()).toBe(false);
+    expect(await result.json()).toMatchObject({ error: { code: errors[fault] } });
+    expect(await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${job.job_id}/requirements`)).toEqual(normalized);
+    expect((await json<{ score: null }>(api, "get", `/v1/jobs/${job.job_id}/fit`)).score).toBeNull();
+    expect((await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).score).toEqual(seed.fit.score);
+    expect(modelCount(app, "fit.qualification-batch")).toBe(2);
   });
 }
 
-test("an unsupported-language posting is skipped while its English cohort sibling is assessed", async ({ api, app, page }) => {
+test("an unsupported-language posting is skipped while its English sibling is assessed", async ({ api, app, page }) => {
   const { library } = await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
   await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 2 });
@@ -386,27 +274,23 @@ test("an unsupported-language posting is skipped while its English cohort siblin
   const spanish: CohortPosting = { ...posting(42), description: "Mantener la recuperación de los flujos de trabajo.", unsupported: true };
   const { unsupported: _fixtureOnly, ...spanishSource } = spanish;
   source.respond(indeedPage({ jobs: [english, spanishSource], cursor: null, complete: true }));
-  const matching = await untilNormalization(app, [english, spanish]);
-  const run = await json<{ jobIds: string[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-  expect(run.jobIds).toHaveLength(2);
-  const context = matching.body["context"] as CatalogContext;
-  expect(context.incoming).toHaveLength(1);
-  expect(context.incoming[0]).toMatchObject({ job_id: run.jobIds[0] });
-  matching.reply(authoredPartition(matching, [{ groupId: "english", memberIds: [context.incoming[0]!.member_id],
-    category: "professional_experience", name: COMMON_DEMAND, definition: COMMON_DEMAND }],
-  [{ groupId: "english", definition: COMMON_DEMAND, jobIds: [run.jobIds[0]!] }]));
-  const batch = await app.external.next();
-  expect(batch.body["operation"]).toBe("fit.qualification-batch");
-  const achievement = library.roles[0]!.achievements[0]!;
-  batch.reply(qualificationBatchDecision(batch, () => ({ achievementIds: [achievement.achievement_id],
-    evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] })));
+  const spanishPage = await app.external.next({ match: call => call.path === "/posting-page" && call.body["url"] === spanish.url });
+  await servePostingAssessment(app, library, english);
+  respondProducer(spanishPage, [spanish]);
+  for (const operation of ["page_interpretation", "posting_extraction", "description_quality", "jobs.role_analysis", "requirements.extract"]) {
+    respondProducer(await modelCall(app, operation), [spanish]);
+  }
+  const { jobs } = await json<{ jobs: { job_id: string; url: string }[] }>(api, "get", "/v1/jobs");
+  expect(jobs).toHaveLength(2);
+  const englishId = jobs.find(job => job.url === english.url)!.job_id;
+  const spanishId = jobs.find(job => job.url === spanish.url)!.job_id;
   expect((await completed(api, started.runId))["result"]).toMatchObject({ ok: true, status: "completed", preparation: {
     status: "succeeded", assessedJobs: 1, failedJobs: 0, skippedJobs: 1,
-    skipped: [{ jobId: run.jobIds[1], reason: "unsupported_posting_language" }],
+    skipped: [{ jobId: spanishId, reason: "unsupported_posting_language" }],
   } });
-  expect((await json<FitState>(api, "get", `/v1/jobs/${run.jobIds[0]}/fit`)).current).toBe(true);
-  expect((await json<{ score: null }>(api, "get", `/v1/jobs/${run.jobIds[1]}/fit`)).score).toBeNull();
-  expect(await json(api, "get", `/v1/jobs/${run.jobIds[1]}/requirements`)).toMatchObject({ status: "unsupported_language" });
+  expect((await json<FitState>(api, "get", `/v1/jobs/${englishId}/fit`)).current).toBe(true);
+  expect((await json<{ score: null }>(api, "get", `/v1/jobs/${spanishId}/fit`)).score).toBeNull();
+  expect(await json(api, "get", `/v1/jobs/${spanishId}/requirements`)).toMatchObject({ status: "unsupported_language" });
   await page.goto("/jobs?fit_state=unassessed");
   const row = page.getByRole("row").filter({ hasText: spanish.title });
   await expect(row.getByRole("link", { name: "Skipped · non-English posting" })).toHaveAttribute("href", `/runs/${started.runId}`);
@@ -417,7 +301,7 @@ test("an unsupported-language posting is skipped while its English cohort siblin
   const updated = await json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
     url: spanish.url, title: spanish.title, company: spanish.company, description: "A new English-language posting describes a different position.",
   });
-  expect(updated.job_id).toBe(run.jobIds[1]);
+  expect(updated.job_id).toBe(spanishId);
   await expect(fitPanel).toContainText("No person-fit assessment has been recorded yet.");
   await page.goto("/jobs?fit_state=unassessed");
   await expect(row.getByRole("cell", { name: "Not assessed", exact: true })).toBeVisible();
@@ -425,51 +309,48 @@ test("an unsupported-language posting is skipped while its English cohort siblin
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
 });
 
-test("cancelling an unsettled cohort qualification preserves its manifest and cannot spend a new retry allowance", async ({ api, app }) => {
-  await createBaseline(api);
-  const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 2 });
-  const started = await action(api, "discovery.search", { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }] });
+test("cancelling unsettled initial Fit preserves the preparation manifest and spends no retry allowance", async ({ api, app }) => {
+  const { library } = await createBaseline(api);
+  const posted = posting(51);
+  const started = await action(api, "discovery.search", {
+    boards: ["indeed"], newJobLimit: 1, hoursOld: 0,
+    queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }],
+  });
   const source = await app.external.next();
   expect(source.path).toBe("/jobstreaming/indeed");
-  const postings = [posting(51), posting(52)];
-  source.respond(indeedPage({ jobs: postings, cursor: null, complete: true }));
-  const matching = await untilNormalization(app, postings);
-  const run = await json<{ jobIds: string[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-  expect(run.jobIds).toHaveLength(2);
-  const input = matching.body["context"] as CatalogContext;
-  matching.reply(authoredPartition(matching, [{ groupId: "recovery", memberIds: input.incoming.map((row) => row.member_id),
-    category: "professional_experience", name: COMMON_DEMAND, definition: COMMON_DEMAND }],
-  [{ groupId: "recovery", definition: COMMON_DEMAND, jobIds: run.jobIds }]));
-  const held = await app.external.next();
-  expect(held.path).toBe("/model");
-  expect(held.body["operation"]).toBe("fit.qualification-batch");
-  const accepted = await Promise.all(run.jobIds.map((id) => json<NormalizedSnapshot>(api, "get", `/v1/jobs/${id}/requirements`)));
+  source.respond(indeedPage({ jobs: [posted], cursor: null, complete: true }));
+  await servePostingAssessment(app, library, posted, { qualificationExpected: false });
+  const held = await modelCall(app, "fit.qualification-batch");
+  const { jobs } = await json<{ jobs: { job_id: string }[] }>(api, "get", "/v1/jobs");
+  expect(jobs).toHaveLength(1);
+  const jobId = jobs[0]!.job_id;
+  const requirements = () => json<NormalizedSnapshot>(api, "get", `/v1/jobs/${jobId}/requirements`);
+  const accepted = await requirements();
+  expect(accepted.requirements).toHaveLength(1);
   expect(await json(api, "post", `/v1/action-runs/${started.runId}/cancel`, {})).toMatchObject({ cancellationRequested: true });
   expect(await terminal(api, started.runId)).toMatchObject({ status: "cancelled" });
   await expect.poll(() => held.closed).toBe(true);
-  const cancelled = await json<{ status: string; jobIds: string[]; steps: { stage: string; status: string }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-  expect(cancelled.status).toBe("cancelled");
-  expect(cancelled.jobIds).toEqual(run.jobIds);
-  expect(cancelled.steps.filter((step) => step.status === "pending" || step.status === "running")).toEqual([]);
-  for (const [index, id] of run.jobIds.entries()) {
-    expect(await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${id}/requirements`)).toEqual(accepted[index]);
-    expect((await json<{ score: null }>(api, "get", `/v1/jobs/${id}/fit`)).score).toBeNull();
-  }
-  const beforeRetry = app.external.calls.filter((call) => call.path !== "/catalog").length;
-  const retryRows = await json(api, "get", "/v1/action-runs?action=preparation.retry");
-  const narrowed = await api.post("/v1/actions/preparation.retry", { data: { run_id: started.runId, job_ids: [run.jobIds[0]] } });
-  expect(narrowed.status()).toBe(409);
-  expect(await narrowed.json()).toMatchObject({ error: { code: "preparation_cohort_retry_scope_required" } });
-  expect(await json(api, "get", "/v1/action-runs?action=preparation.retry")).toEqual(retryRows);
+  const cancelled = await json<{ status: string; jobIds: string[]; steps: { stage: string; status: string }[] }>(
+    api, "get", `/v1/preparation/runs/${started.runId}`);
+  expect(cancelled).toMatchObject({ status: "cancelled", jobIds: [jobId] });
+  expect(cancelled.steps.filter(step => step.status === "pending" || step.status === "running")).toEqual([]);
+  expect(await requirements()).toEqual(accepted);
+  const paid = await app.fitProviderReceipts();
+  expect(paid).toMatchObject([{ status: "uncertain", inputFingerprint: normalizationFingerprint(held.body), costUsd: null }]);
+  const beforeRetry = app.external.calls.filter(call => call.path !== "/catalog").length;
+
   const retry = await action(api, "preparation.retry", { run_id: started.runId });
   expect(await terminal(api, retry.runId)).toMatchObject({ status: "failed", errorCode: "preparation_partial" });
-  const replay = await json<{ parentRunId: string; jobIds: string[]; steps: { stage: string; status: string; errorCode: string | null }[] }>(api, "get", `/v1/preparation/runs/${retry.runId}`);
-  expect(replay.parentRunId).toBe(started.runId);
-  expect(replay.jobIds).toEqual(run.jobIds);
-  expect(replay.steps.find((step) => step.stage === "fit_qualify")).toMatchObject({ status: "failed", errorCode: "fit_cohort_interrupted" });
-  expect(app.external.calls.filter((call) => call.path !== "/catalog")).toHaveLength(beforeRetry);
-  expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
+  const replay = await json<{ parentRunId: string; jobIds: string[]; steps: { stage: string; status: string; errorCode: string }[] }>(
+    api, "get", `/v1/preparation/runs/${retry.runId}`);
+  expect(replay).toMatchObject({ parentRunId: started.runId, jobIds: [jobId] });
+  expect(replay.steps.find(step => step.stage === "fit")).toMatchObject({ status: "failed",
+    errorCode: expect.stringMatching(/^(model_operation_unsettled|spend_accounting_unresolved)$/) });
+  expect(await app.fitProviderReceipts()).toEqual(paid);
+  expect(await requirements()).toEqual(accepted);
+  expect((await json<{ score: null }>(api, "get", `/v1/jobs/${jobId}/fit`)).score).toBeNull();
+  expect(app.external.calls.filter(call => call.path !== "/catalog")).toHaveLength(beforeRetry);
+  expect(modelCount(app, "fit.qualification-batch")).toBe(1);
 });
 
 for (const firstFailed of [false, true]) {
@@ -625,31 +506,14 @@ test.describe("per-job Fit receipt recovery", () => {
   });
 });
 
-test("a Profile edit during shared qualification refuses stale authority and preserves prior scores", async ({ api, app }) => {
-  const seed = await createScoredFit(api, app, "cohort-profile-race");
-  const previous = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${seed.posting.job_id}/requirements`);
-  const priorScore = await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`);
-  const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
-  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 2 });
-  const started = await action(api, "discovery.search", { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }] });
-  const source = await app.external.next();
-  expect(source.path).toBe("/jobstreaming/indeed");
-  const postings = [posting(71), posting(72)];
-  source.respond(indeedPage({ jobs: postings, cursor: null, complete: true }));
-  const matching = await untilNormalization(app, postings);
-  const run = await json<{ jobIds: string[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-  expect(run.jobIds).toHaveLength(2);
-  const input = matching.body["context"] as CatalogContext;
-  const prior = previous.requirements[0]!;
-  const retained = retainedCapability(matching, prior.requirement_id, "retained");
-  matching.reply(authoredPartition(matching, [retained, { groupId: "incoming", memberIds: input.incoming.map((row) => row.member_id),
-    category: "professional_experience", name: COMMON_DEMAND, definition: COMMON_DEMAND }], [
-    { groupId: "retained", definition: prior.normalized_demand.definition, jobIds: [seed.posting.job_id], reuseDemandFingerprint: prior.normalized_demand.demand_fingerprint },
-    { groupId: "incoming", definition: COMMON_DEMAND, jobIds: run.jobIds },
-  ]));
-  const batch = await app.external.next();
-  expect(batch.body["operation"]).toBe("fit.qualification-batch");
-  const requirements = await Promise.all(run.jobIds.map((id) => json<NormalizedSnapshot>(api, "get", `/v1/jobs/${id}/requirements`)));
+test("a Profile edit during qualification refuses stale authority and preserves prior scores", async ({ api, app }) => {
+  const seed = await createScoredFit(api, app, "initial-fit-profile-race");
+  const job = await captureReusePosting(api, "new-job-profile-race", COMMON_DEMAND);
+  await acceptReuseRequirements(api, app, job, [{ localId: "r1", text: COMMON_DEMAND }], { r1: { verdict: "new" } });
+  const requirements = () => json<NormalizedSnapshot>(api, "get", `/v1/jobs/${job.job_id}/requirements`);
+  const accepted = await requirements();
+  const pending = firstFit(api, job.job_id);
+  const batch = await modelCall(app, "fit.qualification-batch");
   const profile = await json<Profile>(api, "get", "/v1/profile");
   await json(api, "patch", "/v1/profile", { expectedProfileVersion: profile.profileVersion, profile: { ...profile.profile,
     resume: { ...profile.profile.resume, experience_entries: profile.profile.resume.experience_entries.map((row, index) => index ? row
@@ -657,14 +521,11 @@ test("a Profile edit during shared qualification refuses stale authority and pre
   const achievement = seed.library.roles[0]!.achievements[0]!;
   batch.reply(qualificationBatchDecision(batch, () => ({ achievementIds: [achievement.achievement_id],
     evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] })));
-  expect((await completed(api, started.runId))["result"]).toMatchObject({ ok: false, status: "partial",
-    preparation: { status: "partial", assessedJobs: 0, failedJobs: 2 } });
-  const recorded = await json<{ steps: { stage: string; status: string; errorCode: string | null }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-  expect(recorded.steps.find((step) => step.stage === "fit_qualify")).toMatchObject({ status: "failed", errorCode: "revision_conflict" });
-  for (const [index, id] of run.jobIds.entries()) {
-    expect(await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${id}/requirements`)).toEqual(requirements[index]);
-    expect((await json<{ score: null }>(api, "get", `/v1/jobs/${id}/fit`)).score).toBeNull();
-  }
-  expect((await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).score).toEqual(priorScore.score);
-  expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(2);
+  const refused = await pending;
+  expect(refused.status(), await refused.text()).toBe(409);
+  expect(await refused.json()).toMatchObject({ error: { code: "revision_conflict" } });
+  expect(await requirements()).toEqual(accepted);
+  expect((await json<{ score: null }>(api, "get", `/v1/jobs/${job.job_id}/fit`)).score).toBeNull();
+  expect((await json<FitState>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).score).toEqual(seed.fit.score);
+  expect(modelCount(app, "fit.qualification-batch")).toBe(2);
 });

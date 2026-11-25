@@ -526,6 +526,24 @@ export async function applicationStack(
       }, "live Python worker registration");
     }
     if (!preflight) await disableCompensationAutomation();
+    async function inspectProviderReceipts(operation) {
+      const inspected = await execFile(pythonExecutable, ["-c", `
+import json, os, pathlib, sys
+import psycopg
+root = pathlib.Path(sys.argv[1])
+marker = root / ".jobctrl-e2e-owned.json"
+assert root.resolve() == root and not marker.is_symlink()
+owner = json.loads(marker.read_text())
+assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
+with psycopg.connect(os.environ["JOBCTRL_DATABASE_URL"], options="-c default_transaction_read_only=on") as conn:
+    rows = conn.execute("""SELECT m.receipt_id,c.owner_key,m.status,m.input_fingerprint,m.cost_usd
+                           FROM app_model_calls m LEFT JOIN app_model_operation_receipts c
+                             ON c.receipt_id=m.receipt_id
+                           WHERE m.operation=%s ORDER BY m.receipt_id""", (sys.argv[2],)).fetchall()
+print(json.dumps([dict(zip(("receiptId","ownerKey","status","inputFingerprint","costUsd"), row)) for row in rows]))
+`, workspace, operation], { env, timeout: 5_000, maxBuffer: 100_000 });
+      return JSON.parse(inspected.stdout);
+    }
     return {
       baseURL,
       workspace,
@@ -602,24 +620,8 @@ export async function applicationStack(
         }, "owned model receipt pause");
         return receiptId;
       },
-      async fitProviderReceipts() {
-        const inspected = await execFile(pythonExecutable, ["-c", `
-import json, os, pathlib, sys
-import psycopg
-root = pathlib.Path(sys.argv[1])
-marker = root / ".jobctrl-e2e-owned.json"
-assert root.resolve() == root and not marker.is_symlink()
-owner = json.loads(marker.read_text())
-assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
-with psycopg.connect(os.environ["JOBCTRL_DATABASE_URL"], options="-c default_transaction_read_only=on") as conn:
-    rows = conn.execute("""SELECT m.receipt_id,c.owner_key,m.status,m.input_fingerprint,m.cost_usd
-                           FROM app_model_calls m LEFT JOIN app_model_operation_receipts c
-                             ON c.receipt_id=m.receipt_id
-                           WHERE m.operation='fit.qualification-batch' ORDER BY m.receipt_id""").fetchall()
-print(json.dumps([dict(zip(("receiptId","ownerKey","status","inputFingerprint","costUsd"), row)) for row in rows]))
-`, workspace], { env, timeout: 5_000, maxBuffer: 100_000 });
-        return JSON.parse(inspected.stdout);
-      },
+      fitProviderReceipts: () => inspectProviderReceipts("fit.qualification-batch"),
+      requirementsExtractionReceipts: () => inspectProviderReceipts("requirements.extract"),
       async armFitRecoveryPause(operation) {
         if (!recoveryDebuggerEnabled || !["fit.catalog-impact", "fit.qualification-batch"].includes(operation))
           throw new Error("Only the declared predecessor external-call gap can be armed.");

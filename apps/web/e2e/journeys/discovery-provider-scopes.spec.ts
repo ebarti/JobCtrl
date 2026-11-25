@@ -221,13 +221,11 @@ test("Remote posting-age search uses the pinned SDK, isolates auth and unsupport
   const priorCalls = app.external.calls.length;
   const multi = await action(api, "discovery.search", { queries: queries.map((query) => ({ query, source_scope: ["broad_boards"] })), locations });
   const combinations = queries.flatMap((query) => locations.map(({ location }) => ({ query, location })));
-  for (const [index, { query, location }] of combinations.entries()) {
-    const provider = await app.external.next();
-    expect(provider.path).toBe("/jobstreaming/indeed");
-    expect(String(provider.body["query"])).toContain(`what: "${query}"`);
-    expect(String(provider.body["query"])).toContain(`where: "${location}"`);
+  await Promise.all(combinations.map(async ({ query, location }, index) => {
+    const provider = await app.external.next({ match: (call) => call.path === "/jobstreaming/indeed"
+      && String(call.body["query"]).includes(`what: "${query}"`) && String(call.body["query"]).includes(`where: "${location}"`) });
     provider.respond(pageOf([posting(`Compact${index}`, Date.now())]));
-  }
+  }));
   const multiResult = await runResult(api, multi.runId);
   expect(app.external.calls.slice(priorCalls).filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(combinations.length);
   expect(multiResult).toMatchObject({ status: "partial", newJobs: 4, observedJobs: 4 });

@@ -59,8 +59,14 @@ test("board queries share new-job slots and backfill an exhausted query after wo
   expect(before.received.filter((row) => row.unitId === firstUnit)).toHaveLength(7);
 
   await app.restartWorker();
-  (await requestFor(app, queries[1]!, 45_000)).respond(searchPage(["A1", "B1"]));
-  (await requestFor(app, queries[2]!)).respond(searchPage(["A1", "C1", "C2", "C3", "C4"]));
+  await Promise.all([
+    { query: queries[1]!, jobs: ["A1", "B1"] },
+    { query: queries[2]!, jobs: ["A1", "C1", "C2", "C3", "C4"] },
+  ].map(async ({ query, jobs }) => {
+    const call = await app.external.next({ timeout: 45_000, match: (call) =>
+      call.path === "/jobstreaming/indeed" && String(call.body["query"]).includes(`what: "${query}"`) });
+    call.respond(searchPage(jobs));
+  }));
 
   const result = (await completed(api, started.runId)).result as { newJobIds: string[] };
   expect(result).toMatchObject({ status: "completed", failures: [], newJobs: 6, observedJobs: 8 });
