@@ -309,7 +309,7 @@ test("an unsupported-language posting is skipped while its English sibling is as
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
 });
 
-test("cancelling unsettled initial Fit preserves the preparation manifest and spends no retry allowance", async ({ api, app }) => {
+test("cancelling unsettled initial Fit preserves the preparation manifest and spends no retry allowance", async ({ api, app }, testInfo) => {
   const { library } = await createBaseline(api);
   const posted = posting(51);
   const started = await action(api, "discovery.search", {
@@ -328,7 +328,8 @@ test("cancelling unsettled initial Fit preserves the preparation manifest and sp
   const accepted = await requirements();
   expect(accepted.requirements).toHaveLength(1);
   expect(await json(api, "post", `/v1/action-runs/${started.runId}/cancel`, {})).toMatchObject({ cancellationRequested: true });
-  expect(await terminal(api, started.runId)).toMatchObject({ status: "cancelled" });
+  const stopped = await terminal(api, started.runId);
+  expect(stopped).toMatchObject({ status: "cancelled" });
   await expect.poll(() => held.closed).toBe(true);
   const cancelled = await json<{ status: string; jobIds: string[]; steps: { stage: string; status: string }[] }>(
     api, "get", `/v1/preparation/runs/${started.runId}`);
@@ -339,18 +340,23 @@ test("cancelling unsettled initial Fit preserves the preparation manifest and sp
   expect(paid).toMatchObject([{ status: "uncertain", inputFingerprint: normalizationFingerprint(held.body), costUsd: null }]);
   const beforeRetry = app.external.calls.filter(call => call.path !== "/catalog").length;
 
-  const retry = await action(api, "preparation.retry", { run_id: started.runId });
-  expect(await terminal(api, retry.runId)).toMatchObject({ status: "failed", errorCode: "preparation_partial" });
-  const replay = await json<{ parentRunId: string; jobIds: string[]; steps: { stage: string; status: string; errorCode: string }[] }>(
-    api, "get", `/v1/preparation/runs/${retry.runId}`);
-  expect(replay).toMatchObject({ parentRunId: started.runId, jobIds: [jobId] });
-  expect(replay.steps.find(step => step.stage === "fit")).toMatchObject({ status: "failed",
-    errorCode: expect.stringMatching(/^(model_operation_unsettled|spend_accounting_unresolved)$/) });
+  const retryRuns = () => json(api, "get", "/v1/action-runs?action=preparation.retry");
+  const beforeAdmission = await retryRuns();
+  const retry = await api.post("/v1/actions/preparation.retry", { data: { run_id: started.runId } });
+  expect(retry.status(), await retry.text()).toBe(409);
+  const refusal = await retry.json();
+  expect(refusal).toMatchObject({ error: { code: "model_operation_unsettled" } });
+  expect(await retryRuns()).toEqual(beforeAdmission);
   expect(await app.fitProviderReceipts()).toEqual(paid);
   expect(await requirements()).toEqual(accepted);
   expect((await json<{ score: null }>(api, "get", `/v1/jobs/${jobId}/fit`)).score).toBeNull();
   expect(app.external.calls.filter(call => call.path !== "/catalog")).toHaveLength(beforeRetry);
   expect(modelCount(app, "fit.qualification-batch")).toBe(1);
+  expect(await json(api, "get", `/v1/action-runs/${started.runId}`)).toEqual(stopped);
+  await testInfo.attach("cancelled-search-fit-receipt", { contentType: "application/json", body: JSON.stringify({
+    searchId: started.runId, status: stopped.status, disconnected: held.closed, receipt: paid[0],
+    retryStatus: retry.status(), retryError: refusal.error.code, providerCalls: modelCount(app, "fit.qualification-batch"),
+  }) });
 });
 
 for (const firstFailed of [false, true]) {
