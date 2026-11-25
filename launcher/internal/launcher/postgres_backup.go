@@ -6,11 +6,9 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -284,57 +282,26 @@ func verifyPostgresPair(ctx launchContext, pair databasePair) error {
 	return nil
 }
 
-var pgEffectDigest = regexp.MustCompile(`jobctrl_effects_([a-f0-9]{64})`)
-
-// SQL emits only a fingerprint. Refuse rollback across outstanding workflow
-// activity, ambiguous effects, or a change to recorded submissions/charges.
+// Compare approvals, submissions and charges without returning their contents.
+// A live generation is read in one snapshot. Archived generations stay offline.
 func postgresEffects(ctx launchContext, data string) (string, error) {
-	// A restored approval or an already consumed user override must not become
-	// available again. Preserve these records even when the provider settled.
-	relations := []string{"app_model_calls", "applications_state", "applications_payloads", "applications_decisions", "applications_runs", "applications_repeat_overrides", "applications_submit_intents", "applications_submit_receipts", "extension_browser_tasks", "extension_capture_receipts", "outreach_action_receipts"}
-	parts := make([]string, 0, len(relations))
-	for _, name := range relations {
-		parts = append(parts, "SELECT '"+name+":' || encode(sha256(convert_to(row_to_json(t)::text,'UTF8')),'hex') AS hash FROM public."+name+" t")
-	}
-	sql := `SELECT 'jobctrl_effects_' || encode(sha256(convert_to(COALESCE(string_agg(hash, '' ORDER BY hash), ''), 'UTF8')), 'hex')
- FROM (` + strings.Join(parts, " UNION ALL ") + `) effects
- HAVING NOT EXISTS (SELECT 1 FROM public.app_model_calls WHERE (provider_started IS NULL OR provider_started<>0)
-   AND (status IN ('running','uncertain') OR cost_usd IS NULL OR input_tokens IS NULL OR output_tokens IS NULL OR cost_source IS NULL))
- AND NOT EXISTS (SELECT 1 FROM public.applications_submit_intents i LEFT JOIN public.applications_submit_receipts r USING(tenant_id,intent_id) WHERE r.intent_id IS NULL)
- AND NOT EXISTS (SELECT 1 FROM public.app_action_runs WHERE status IN ('pending','queued','running','start_failed'))
- AND NOT EXISTS (SELECT 1 FROM public.extension_browser_tasks WHERE state NOT IN ('succeeded','failed'))
- AND NOT EXISTS (SELECT 1 FROM public.extension_capture_receipts WHERE state='importing')
- AND NOT EXISTS (SELECT 1 FROM dbos.workflow_status WHERE status NOT IN ('SUCCESS','ERROR','CANCELLED','MAX_RECOVERY_ATTEMPTS_EXCEEDED'));`
-	sql = strings.Join(strings.Fields(sql), " ")
-	var output string
+	operation := "effects"
 	if _, err := os.Lstat(filepath.Join(data, "postmaster.pid")); err == nil {
 		ctx.PostgresData = data
 		if err := verifyPostmaster(ctx); err != nil {
 			return "", err
 		}
-		result, err := postgresCommand(ctx, "psql", "-XAtw", "-h", postgresSocket(ctx.Instance.StateDir), "-p", "5432", "-U", "jobctrl", "-d", "jobctrl", "-c", sql)
-		if err != nil {
-			return "", errors.New("cannot verify PostgreSQL effect ledger")
-		}
-		output = result
-	} else {
-		if err := coldPostgres(data); err != nil {
-			return "", err
-		}
-		cmd := localCommand(ctx, postgresTool(ctx, "postgres"), "--single", "-D", data, "-c", "default_transaction_read_only=on", "jobctrl")
-		cmd.Stdin = strings.NewReader(sql + "\n")
-		buf := &boundedProbeOutput{}
-		cmd.Stdout = buf
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("inspect stopped PostgreSQL effect ledger: %w", err)
-		}
-		output = buf.String()
+		operation = "effects-live"
+	} else if err := coldPostgres(data); err != nil {
+		return "", err
 	}
-	match := pgEffectDigest.FindStringSubmatch(output)
-	if len(match) != 2 {
+	cmd := localCommand(ctx, migrationPython(ctx), "-I", "-B", "-c", postgresFileProof, postgresTool(ctx, "postgres"), data, ctx.Instance.StateDir, operation)
+	out := &boundedProbeOutput{}
+	cmd.Stdout = out
+	if err := cmd.Run(); err != nil || !validSHA256(strings.TrimSpace(out.String())) {
 		return "", errors.New("outstanding workflows, unresolved external effects or unverifiable PostgreSQL accounting prevent rollback")
 	}
-	return match[1], nil
+	return strings.TrimSpace(out.String()), nil
 }
 
 //go:embed postgres_file_proof.py

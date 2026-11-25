@@ -19,7 +19,7 @@ for(let i=2;i<process.argv.length;i+=2) {
   args.set(process.argv[i].slice(2),process.argv[i+1]);
 }
 const suite=args.get('suite') ?? 'all';
-assert(['all','lifecycle','custody'].includes(suite),'--suite must be all, lifecycle or custody');
+assert(['all','lifecycle','custody','reduced'].includes(suite),'--suite must be all, lifecycle, custody or reduced');
 const lifecycleSelected=suite==='all'||suite==='lifecycle';
 const custodySelected=suite==='all'||suite==='custody';
 assert.equal(process.platform,'darwin','Native lifecycle qualification requires Darwin launchd');
@@ -38,6 +38,7 @@ const installer=path.resolve(args.get('installer') ?? path.join(root,'bin/jobctr
 const env={HOME:home,PATH:'/usr/bin:/bin:/usr/sbin:/sbin',TMPDIR:path.join(root,'tmp'),
   JOBCTRL_RUNTIME_HOME:runtime,JOBCTRL_DIR:workspace,
   JOBCTRL_EXECUTION_QA_SANDBOX:'loopback-only-v1',PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1'};
+if(suite==='reduced')env.JOBCTRL_FEATURES='jobs,contacts,companies';
 const selector=path.join(runtime,'bin/jobctrl'), cases=[];
 function passed(name){cases.push(name);console.log(JSON.stringify({suite,case:name,status:'passed'}));}
 let pythonInfo;
@@ -283,8 +284,32 @@ async function lifecycle(first,second){
  assert.equal((await api('/v1/health')).dbos.available,true);
  passed('explicit-rollback-restores-postgres-and-dbos-with-previous-generation-preserved');
  await stop();
- await legacyAdmission(first,second);
- await upgradeCurrentWorkspace();
+}
+
+async function reducedLifecycle(first,second) {
+ const absent=await workspaceSql("SELECT count(*) FROM app_feature_schemas WHERE name IN ('applications','outreach','resumes')");
+ assert.equal(absent.stdout.trim(),'0');
+ await run(selector,['backup']);
+ await install(second,{stage:true});
+ await run(selector,['update','--to',second.buildId]);
+ const settings=await api('/v1/settings');
+ await api('/v1/settings','PATCH',{expectedRevision:settings.revision,targetCriteria:'after-reduced-update'});
+ const worker=(await api('/v1/health')).worker.pid;
+ for(const [seed,cleanup] of [
+  ["INSERT INTO app_feature_schemas VALUES ('applications','invalid')","DELETE FROM app_feature_schemas WHERE name='applications'"],
+  ["CREATE TABLE resumes_documents (id INTEGER)","DROP TABLE resumes_documents"],
+ ]){
+  await workspaceSql(seed);
+  try{
+   await refuseRollback(first,'incomplete optional feature owner',/unverifiable PostgreSQL accounting/);
+   assert.equal((await api('/v1/health')).worker.pid,worker);
+  }finally{await workspaceSql(cleanup);}
+ }
+ passed('reduced-feature-rollback-refuses-incomplete-and-unregistered-owners');
+ await run(selector,['rollback','--to',first.buildId]);
+ assert.equal((await api('/v1/settings')).targetCriteria,'native-original');
+ assert.equal((await api('/v1/health')).dbos.available,true);
+ passed('reduced-feature-backup-and-rollback-restores-postgres-and-dbos');
 }
 
 async function legacyAdmission(first,candidate){
@@ -453,8 +478,17 @@ try{
  const settings=await api('/v1/settings');
  await api('/v1/settings','PATCH',{expectedRevision:settings.revision,targetCriteria:'native-original',aiExecutionPolicy:{enabled:false},applyAutomationEnabled:false,compensationAutomationEnabled:false});
  passed('compiled-installer-start-real-python-worker-postgres-dbos-and-canonical-cli');
- if(lifecycleSelected)await lifecycle(first,await payload(2));
+ const second=lifecycleSelected?await payload(2):null;
+ if(lifecycleSelected)await lifecycle(first,second);
+ if(suite==='reduced')await reducedLifecycle(first,await payload(2));
  if(custodySelected)await custody(first,await payload(lifecycleSelected?3:2));
+ if(lifecycleSelected){
+  // Deliberately refused legacy instances have no published runtime state.
+  // Run this negative fixture after successful release-retention scenarios.
+  await stop();
+  await legacyAdmission(first,second);
+  await upgradeCurrentWorkspace();
+ }
  const cleanup=await verifyCleanup();
  const required=lifecycleSelected?['coherent-paired-backup-readback-and-restart','explicit-rollback-restores-postgres-and-dbos-with-previous-generation-preserved','legacy-start-backup-update-rollback-refuse-with-exact-source-preservation']:[];
  if(custodySelected)required.push('malformed-linked-wrong-boot-receipts-refuse-before-process-or-registry-mutation','owned-new-session-term-ignoring-children-cleaned-after-parents-exit-peer-preserved','failed-start-preserves-live-state-and-resumes-forward-with-correct-pair-receipts');
