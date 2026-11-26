@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import nullcontext
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Callable
 import unicodedata
+from uuid import uuid4
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
+from jobctrl.app.model_custody import current_owner, model_call_scope
 from jobctrl.features.requirements import job_demand_fingerprints
 
 from .contract import (CONTRACT_VERSION, assessment_fields, current_contract, current_qualification,
@@ -221,10 +224,15 @@ class FitService(InitialCohortService):
                         not current_qualification(previous) or previous["source_fingerprint"] != source_hash
                         or str(previous["requirement_revision"]) != str(requirement["requirement_revision"]))):
                     raise AppError("fit_refresh_required", "Saved inputs changed. Start a manual Fit refresh to update existing assessments.", 409)
-        records, reused = await self.qualification.resolve_many(
-            profile_snapshot, rows, requirements_snapshot, force=force,
-            initial_assessment=initial_assessment, cancelled=cancelled,
-        )
+        # Direct initial Fit and saved-job Preparation share the same qualification
+        # authorities as Search. Keep an existing Search stage's original receipt owner.
+        custody = (model_call_scope(f"fit.qualification:{operation_id or uuid4()}", allow_settled_replacement=True)
+                   if initial_assessment and current_owner() is None else nullcontext())
+        with custody:
+            records, reused = await self.qualification.resolve_many(
+                profile_snapshot, rows, requirements_snapshot, force=force,
+                initial_assessment=initial_assessment, cancelled=cancelled,
+            )
         qualifications = []
         for requirement, record in zip(rows, records, strict=True):
             self._check_cancelled(cancelled)

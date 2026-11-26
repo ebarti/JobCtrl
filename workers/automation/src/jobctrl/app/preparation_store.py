@@ -99,6 +99,12 @@ class PreparationStore:
         with self.database.connect() as conn:
             return conn.execute("SELECT 1 FROM preparation_search_jobs WHERE search_id=? AND status='pending' LIMIT 1", (run_id,)).fetchone() is not None
 
+    def pending_child_actions(self, run_id, connection):
+        return [row[0] for row in connection.execute(
+            "SELECT action_run_id FROM preparation_search_jobs WHERE search_id=? AND status='pending' ORDER BY action_run_id",
+            (run_id,),
+        )]
+
     def _event(self, conn, run_id, status, *, job_id=None, stage=None):
         payload = {"runId": run_id, "status": status}
         if job_id is not None:

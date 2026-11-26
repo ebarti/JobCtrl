@@ -19,7 +19,7 @@ for(let i=2;i<process.argv.length;i+=2) {
   args.set(process.argv[i].slice(2),process.argv[i+1]);
 }
 const suite=args.get('suite') ?? 'all';
-assert(['all','lifecycle','custody'].includes(suite),'--suite must be all, lifecycle or custody');
+assert(['all','lifecycle','custody','reduced','credentials'].includes(suite),'--suite must be all, lifecycle, custody, reduced or credentials');
 const lifecycleSelected=suite==='all'||suite==='lifecycle';
 const custodySelected=suite==='all'||suite==='custody';
 assert.equal(process.platform,'darwin','Native lifecycle qualification requires Darwin launchd');
@@ -38,6 +38,7 @@ const installer=path.resolve(args.get('installer') ?? path.join(root,'bin/jobctr
 const env={HOME:home,PATH:'/usr/bin:/bin:/usr/sbin:/sbin',TMPDIR:path.join(root,'tmp'),
   JOBCTRL_RUNTIME_HOME:runtime,JOBCTRL_DIR:workspace,
   JOBCTRL_EXECUTION_QA_SANDBOX:'loopback-only-v1',PYTHONNOUSERSITE:'1',PYTHONDONTWRITEBYTECODE:'1'};
+if(suite==='reduced')env.JOBCTRL_FEATURES='jobs,contacts,companies';
 const selector=path.join(runtime,'bin/jobctrl'), cases=[];
 function passed(name){cases.push(name);console.log(JSON.stringify({suite,case:name,status:'passed'}));}
 let pythonInfo;
@@ -68,9 +69,6 @@ async function childPids(){try{return (await readFile(path.join(workspace,'qa-or
 const observer=String.raw`import os,pathlib,signal,sys
 args=sys.orig_argv
 root=pathlib.Path(os.environ['JOBCTRL_DIR'])
-if 'jobctrl.app.server' in args or 'jobctrl.app.worker' in args:
-    import faulthandler
-    faulthandler.dump_traceback_later(75, repeat=False)
 if 'jobctrl.app.server' in args and (root/'.qa-block-api').exists():
     os._exit(73)
 if 'jobctrl.app.worker' in args and (root/'.qa-custody').is_file():
@@ -162,10 +160,10 @@ async function liveAuthority(){
  const files=['postgres/active.json','.jobctrl-postgres-identity'].map(name=>path.join(workspace,name)).concat([path.join(runtime,'active.json'),path.join(runtime,'transition.json'),selector]);
  return Object.fromEntries(await Promise.all(files.map(async name=>[name,digest(await readFile(name))])));
 }
-async function refuseRollback(target,label){
+async function refuseRollback(target,label,reason){
  const before=await liveAuthority();
  const result=await run(selector,['rollback','--to',target.buildId],{acceptFailure:true});
- assert.notEqual(result.code,0,label);assert.deepEqual(await liveAuthority(),before,label);
+ assert.notEqual(result.code,0,label);if(reason)assert.match(result.stderr,reason);assert.deepEqual(await liveAuthority(),before,label);
  assert(await alive(control.pid),'Refusal affected unrelated process control');
 }
 
@@ -191,6 +189,35 @@ print(file)`,workspace,socket]);
  return result.stdout.trim();
 }
 
+async function raceRollbackWithSettledCall(first){
+ await put(path.join(root,'.jobctrl-release-qa'),'jobctrl-release-qa-v1\n',0o600);
+ const before=await liveAuthority();
+ const oldWorker=(await api('/v1/health')).worker.pid;
+ const pause='rollback_prechecked';
+ const child=spawn(selector,['rollback','--to',first.buildId],{
+  env:{...env,TMPDIR:path.dirname(taskParent),JOBCTRL_RELEASE_QA_ROOT:root,JOBCTRL_RELEASE_QA_PAUSE:pause},
+  stdio:['ignore','ignore','pipe'],
+ });
+ let diagnostics='';
+ const ready=new Promise((resolve,reject)=>{
+  child.stderr.on('data',bytes=>{diagnostics+=bytes;if(diagnostics.includes('jobctrl-release-qa-checkpoint:'+pause))resolve();});
+  child.once('exit',()=>reject(Error('Missing guarded checkpoint: '+diagnostics)));child.once('error',reject);
+ });
+ const ended=new Promise((resolve,reject)=>{child.once('exit',resolve);child.once('error',reject);});
+ const timeout=setTimeout(()=>{child.kill('SIGCONT');child.kill('SIGTERM');},300000);
+ try{
+  await ready;
+  await workspaceSql("INSERT INTO app_model_calls(receipt_id,operation,provider,model,lane,prompt_version,input_fingerprint,created_at,status,owner_pid,provider_started,input_tokens,output_tokens,cost_usd,cost_source) VALUES('qa-late','native.qa','synthetic','synthetic','interactive','1','hash','2026-11-25T00:00:00Z','completed',0,1,10,10,0.2,'usage')");
+  child.kill('SIGCONT');
+  assert.notEqual(await ended,0);assert.match(diagnostics,/revert approvals, submission or provider receipts/);
+  assert.deepEqual(await liveAuthority(),before);
+  const restored=await api('/v1/health');assert.equal(restored.worker.status,'healthy');assert.notEqual(restored.worker.pid,oldWorker);
+  const kept=await workspaceSql("SELECT count(*) FROM app_model_calls WHERE receipt_id='qa-late'");assert.equal(kept.stdout.trim(),'1');
+  await workspaceSql("DELETE FROM app_model_calls WHERE receipt_id='qa-late'");
+ }finally{clearTimeout(timeout);if(child.exitCode===null && child.signalCode===null){child.kill('SIGCONT');child.kill('SIGTERM');await ended;}}
+ passed('settlement-between-precheck-and-drain-restarts-previous-release-and-preserves-receipt');
+}
+
 async function lifecycle(first,second){
  const artifact=await acceptedArtifactFixture();
  await run(selector,['backup']);
@@ -207,7 +234,7 @@ async function lifecycle(first,second){
  await workspaceSql("INSERT INTO app_action_runs(run_id,action,request_id,input_hash,payload_json,status,workflow_id,created_at,updated_at) VALUES('qa-incompatible','removed.synthetic-action','qa-request','hash','{}','pending','qa-workflow','2026-11-25T00:00:00Z','2026-11-25T00:00:00Z')");
  try{
   const refusal=await run(selector,['update','--to',second.buildId],{acceptFailure:true});
-  assert.notEqual(refusal.code,0);
+  assert.notEqual(refusal.code,0);assert.match(refusal.stderr,/cannot resume all pending workflows/);
   assert.deepEqual(await liveAuthority(),stateBefore);
   assert.equal((await api('/v1/health')).worker.pid,workerBefore);
  }finally{await workspaceSql("DELETE FROM app_action_runs WHERE run_id='qa-incompatible'");}
@@ -220,10 +247,11 @@ async function lifecycle(first,second){
  await workspaceSql("INSERT INTO app_model_calls(receipt_id,operation,provider,model,lane,prompt_version,input_fingerprint,created_at,status,owner_pid,provider_started,input_tokens,output_tokens,cost_usd,cost_source) VALUES('qa-settled','native.qa','synthetic','synthetic','interactive','1','hash','2026-11-25T00:00:00Z','completed',0,1,10,10,0.1,'usage')");
  const runningWorker=(await api('/v1/health')).worker.pid;
  try{
-  await refuseRollback(first,'settled charged call after retained backup');
+  await refuseRollback(first,'settled charged call after retained backup',/revert approvals, submission or provider receipts/);
   assert.equal((await api('/v1/health')).worker.pid,runningWorker);
  }finally{await workspaceSql("DELETE FROM app_model_calls WHERE receipt_id='qa-settled'");}
  passed('settled-charge-since-backup-refuses-rollback-while-current-release-serves');
+ await raceRollbackWithSettledCall(first);
  await stop();
  const completed=await json(path.join(runtime,'transition.json'));
  const pairPath=path.join(workspace,'backups',completed.backupId,'pair.json');
@@ -239,9 +267,9 @@ async function lifecycle(first,second){
  const retained=artifact+'.qa-preserved';
  await rename(artifact,retained);
  try{
-  await refuseRollback(first,'retired accepted PDF');
+  await refuseRollback(first,'retired accepted PDF',/missing, changed or unverified resume artifacts/);
   await cp(retained,artifact);
-  await refuseRollback(first,'replaced PDF inode with identical bytes');
+  await refuseRollback(first,'replaced PDF inode with identical bytes',/missing, changed or unverified resume artifacts/);
  }finally{
   await rm(artifact,{force:true});
   await rename(retained,artifact);
@@ -256,8 +284,87 @@ async function lifecycle(first,second){
  assert.equal((await api('/v1/health')).dbos.available,true);
  passed('explicit-rollback-restores-postgres-and-dbos-with-previous-generation-preserved');
  await stop();
- await legacyAdmission(first,second);
- await upgradeCurrentWorkspace();
+}
+
+async function reducedLifecycle(first,second) {
+ const absent=await workspaceSql("SELECT count(*) FROM app_feature_schemas WHERE name IN ('applications','outreach','resumes')");
+ assert.equal(absent.stdout.trim(),'0');
+ await run(selector,['backup']);
+ await install(second,{stage:true});
+ await run(selector,['update','--to',second.buildId]);
+ const settings=await api('/v1/settings');
+ await api('/v1/settings','PATCH',{expectedRevision:settings.revision,targetCriteria:'after-reduced-update'});
+ const worker=(await api('/v1/health')).worker.pid;
+ for(const [seed,cleanup] of [
+  ["INSERT INTO app_feature_schemas VALUES ('applications','invalid')","DELETE FROM app_feature_schemas WHERE name='applications'"],
+  ["CREATE TABLE resumes_documents (id INTEGER)","DROP TABLE resumes_documents"],
+ ]){
+  await workspaceSql(seed);
+  try{
+   await refuseRollback(first,'incomplete optional feature owner',/unverifiable PostgreSQL accounting/);
+   assert.equal((await api('/v1/health')).worker.pid,worker);
+  }finally{await workspaceSql(cleanup);}
+ }
+ passed('reduced-feature-rollback-refuses-incomplete-and-unregistered-owners');
+ await run(selector,['rollback','--to',first.buildId]);
+ assert.equal((await api('/v1/settings')).targetCriteria,'native-original');
+ assert.equal((await api('/v1/health')).dbos.available,true);
+ passed('reduced-feature-backup-and-rollback-restores-postgres-and-dbos');
+}
+
+async function stoppedCredentialMigration(){
+ const token=digest(root+' credential helper'),secret=digest(root+' synthetic value');
+ const file=path.join(workspace,'migration-input.env'),marker=path.join(workspace,'.native-credentials-migrated.json');
+ const store=path.join(workspace,'synthetic-key-store.json'),helper=path.join(workspace,'credential-helper.py');
+ const stable='QA_NON_SECRET=preserved\n';
+ await put(path.join(workspace,'.jobctrl-e2e-owned.json'),JSON.stringify({version:1,workspace,token}),0o600);
+ await put(file,stable+'ANTHROPIC_API_KEY='+secret+'\n',0o600);
+ await put(helper,`import json,os,pathlib,sys
+path=pathlib.Path(__file__).with_name('synthetic-key-store.json')
+op,key=sys.argv[1:]
+entries=json.loads(path.read_text()) if path.exists() else {}
+if op in ('inspect','read'):
+    if key not in entries: raise SystemExit(44)
+    if op=='read': sys.stdout.write(entries[key])
+    raise SystemExit(0)
+if op=='set': entries[key]=sys.stdin.read()
+elif op=='delete': entries.pop(key,None)
+else: raise SystemExit(72)
+with os.fdopen(os.open(path,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600),'w') as writer: json.dump(entries,writer)
+`,0o700);
+ const commandEnv={...env,JOBCTRL_SYNTHETIC_BOUNDARIES:'1',JOBCTRL_E2E_TOKEN:token,JOBCTRL_E2E_CREDENTIAL_HELPER:helper};
+ const args=['credentials','migrate','--env-file',file,'--marker',marker];
+ const before=await api('/v1/settings');
+ const refusal=await run(selector,args,{commandEnv,acceptFailure:true});
+ assert.notEqual(refusal.code,0);assert.match(refusal.stderr,/stop the JobCtrl workspace/);
+ await assert.rejects(stat(marker),{code:'ENOENT'}); await assert.rejects(stat(store),{code:'ENOENT'});
+ await stop();
+ const selection=await json(path.join(workspace,'postgres/active.json'));
+ const socket=path.join('/private/tmp',`jobctrl-pg-${process.getuid()}-${digest(workspace).slice(0,24)}`);
+ async function stopped(){
+  assert.equal(JSON.parse((await run(selector,['status','--json'])).stdout).status,'stopped');
+  await assert.rejects(stat(path.join(workspace,'postgres',selection.generation,'postmaster.pid')),{code:'ENOENT'});
+  await assert.rejects(stat(path.join(socket,'.s.PGSQL.5432')),{code:'ENOENT'});
+  await freePort(apiPort);
+ }
+ await put(marker,'malformed synthetic marker\n',0o600);
+ const invalid=await run(selector,args,{commandEnv,acceptFailure:true});
+ assert.notEqual(invalid.code,0);await stopped();
+ assert.equal(await readFile(marker,'utf8'),'malformed synthetic marker\n');
+ await assert.rejects(stat(store),{code:'ENOENT'});await rm(marker);
+ await run(selector,args,{commandEnv});
+ await stopped();assert.equal(await readFile(file,'utf8'),stable);
+ assert.equal((await json(store)).ANTHROPIC_API_KEY,secret);assert(!(await readFile(marker,'utf8')).includes(secret));
+ const snapshot=async()=>Promise.all([file,marker,store].map(async f=>[digest(await readFile(f)),(await stat(f)).mtimeMs]));
+ const first=await snapshot();
+ const second=await run(selector,args,{commandEnv});
+ assert.match(second.stdout,/already completed/i);assert.deepEqual(await snapshot(),first);
+ await stopped();
+ await run(selector,['start','--no-open']);
+ assert.equal((await api('/v1/settings')).revision,before.revision+1);
+ assert.equal((await workspaceSql("SELECT count(*) FROM app_events WHERE event_type='CredentialsUpdated'")).stdout.trim(),'1');
+ await stop();
+ passed('stopped-credential-migration-records-one-revision-and-event-and-retries-with-all-services-stopped');
 }
 
 async function legacyAdmission(first,candidate){
@@ -298,7 +405,7 @@ c=sqlite3.connect(p/'temporal.db');c.execute('CREATE TABLE legacy_history(value 
 
 async function upgradeCurrentWorkspace(){
  const predecessor=path.join(root,'sqlite-predecessor');
- const sourceWorkspace=path.join(root,'current-python-workspace');
+ const sourceWorkspace=path.join(env.TMPDIR,'current-python-workspace');
  const archive=path.join(root,'sqlite-predecessor.tar');
  await mkdir(predecessor,{mode:0o700});
  await run('/usr/bin/git',['archive','--format=tar','--output',archive,'f8e329d2dda0ac44599c9a4f281cff459d0b7868','workers/automation/src/jobctrl']);
@@ -426,8 +533,18 @@ try{
  const settings=await api('/v1/settings');
  await api('/v1/settings','PATCH',{expectedRevision:settings.revision,targetCriteria:'native-original',aiExecutionPolicy:{enabled:false},applyAutomationEnabled:false,compensationAutomationEnabled:false});
  passed('compiled-installer-start-real-python-worker-postgres-dbos-and-canonical-cli');
- if(lifecycleSelected)await lifecycle(first,await payload(2));
+ const second=lifecycleSelected?await payload(2):null;
+ if(lifecycleSelected)await lifecycle(first,second);
+ if(suite==='reduced')await reducedLifecycle(first,await payload(2));
  if(custodySelected)await custody(first,await payload(lifecycleSelected?3:2));
+ if(suite==='credentials'||suite==='reduced'||suite==='all')await stoppedCredentialMigration();
+ if(lifecycleSelected){
+  // Deliberately refused legacy instances have no published runtime state.
+  // Run this negative fixture after successful release-retention scenarios.
+  await stop();
+  await legacyAdmission(first,second);
+  await upgradeCurrentWorkspace();
+ }
  const cleanup=await verifyCleanup();
  const required=lifecycleSelected?['coherent-paired-backup-readback-and-restart','explicit-rollback-restores-postgres-and-dbos-with-previous-generation-preserved','legacy-start-backup-update-rollback-refuse-with-exact-source-preservation']:[];
  if(custodySelected)required.push('malformed-linked-wrong-boot-receipts-refuse-before-process-or-registry-mutation','owned-new-session-term-ignoring-children-cleaned-after-parents-exit-peer-preserved','failed-start-preserves-live-state-and-resumes-forward-with-correct-pair-receipts');

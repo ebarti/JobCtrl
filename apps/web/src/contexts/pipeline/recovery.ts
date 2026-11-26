@@ -1,5 +1,5 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsMutating, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { lookupSessionAction, requestWorkspace, useSessionRequestIdentity, type SessionRequestIdentity } from "../../shared/lib/useSessionRequestIdentity.js";
@@ -23,6 +23,8 @@ const requestSummary = {
   cancelled: "The previous request was cancelled.",
 };
 
+export const preparationAdmissionKey = (tenantId: string) => ["tenant", tenantId, "preparation", "admission"] as const;
+
 /** A single tab may reconcile one unresolved preparation admission at a time. */
 export function usePreparationRecovery() {
   const tenantId = useTenantId();
@@ -36,8 +38,9 @@ export function usePreparationRecovery() {
   const multiple = Boolean(run.record && retry.record);
   const ready = run.ready && retry.ready && !multiple;
   const statusKey = ["tenant", tenantId, "preparation", "request-status", record?.operation ?? "", record?.requestId ?? ""] as const;
+  const submitting = useIsMutating({ mutationKey: preparationAdmissionKey(tenantId) }) > 0;
   const status = useQuery({
-    queryKey: statusKey, enabled: ready && Boolean(record), retry: false,
+    queryKey: statusKey, enabled: ready && Boolean(record) && !submitting, retry: false,
     queryFn: () => {
       if (!record) throw new Error("No earlier preparation request is recorded.");
       return lookupSessionAction(http, record);
@@ -48,7 +51,7 @@ export function usePreparationRecovery() {
   });
   const notRecorded = status.error instanceof JobCtrlApiError && status.error.status === 404;
   const awaitingStart = ["pending", "start_failed"].includes(status.data?.status ?? "");
-  const canRetry = Boolean(record && !checkingManual && !status.data?.cancellationRequested
+  const canRetry = Boolean(record && !submitting && !checkingManual && !status.data?.cancellationRequested
     && (notRecorded || (!status.error && awaitingStart)));
   let summary = "Checking whether the previous request started…";
   if (notRecorded) summary = "JobCtrl has no record of the previous request yet.";

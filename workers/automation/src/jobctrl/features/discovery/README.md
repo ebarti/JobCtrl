@@ -169,6 +169,9 @@ tables.
 
 Saved searches freeze literal role titles and location/work-arrangement filters.
 Model admission and accounting apply to source-bound role matching and Fit.
+A new saved-role search checks the selected model's monetary accounting before
+creating an acquisition run. The gateway checks the live policy again before
+dispatching each model call.
 LinkedIn listings and targeted details share a persisted four-second request
 interval across runs. A server-supplied retry time stays in PostgreSQL, including
 delays longer than the SDK's internal sleep limit. A DBOS timer releases the

@@ -15,7 +15,7 @@ from jobctrl.app.worker_identity import (
     SEARCH_WORKFLOW, WORKFLOW_VERSION, search_workflow,
 )
 
-TERMINAL = "('SUCCESS','ERROR','CANCELLED','MAX_RECOVERY_ATTEMPTS_EXCEEDED')"
+ENGINE_UNFINISHED = "(status IS NULL OR status NOT IN ('SUCCESS','ERROR','CANCELLED','MAX_RECOVERY_ATTEMPTS_EXCEEDED'))"
 ACTIVE_ACTIONS = "('pending','start_failed','queued','running')"
 
 
@@ -23,13 +23,13 @@ def inspect_pending(application, connection):
     """All action and engine types must be supported by the selected candidate."""
     engine = connection.execute("SELECT to_regclass('dbos.workflow_status') IS NOT NULL").fetchone()[0]
     workflows = connection.execute(
-        f"SELECT workflow_uuid,name,application_version,queue_name,application_name,schedule_name FROM dbos.workflow_status "
-        f"WHERE status NOT IN {TERMINAL}"
+        f"SELECT workflow_uuid,name,status,application_version,queue_name,application_name,schedule_name FROM dbos.workflow_status "
+        f"WHERE {ENGINE_UNFINISHED}"
     ).fetchall() if engine else []
     active_sql = f"SELECT action,input_hash,payload_json,workflow_id FROM app_action_runs WHERE status IN {ACTIVE_ACTIONS}"
     if engine:
         # A worker may die after a product commit but before the DBOS checkpoint.
-        active_sql += f" OR workflow_id IN (SELECT workflow_uuid FROM dbos.workflow_status WHERE status NOT IN {TERMINAL})"
+        active_sql += f" OR workflow_id IN (SELECT workflow_uuid FROM dbos.workflow_status WHERE {ENGINE_UNFINISHED})"
     owned = {}
     bad_actions = 0
     for row in connection.execute(active_sql):
@@ -47,7 +47,7 @@ def inspect_pending(application, connection):
     bad_workflows = 0
     for flow in workflows:
         name = flow["name"]
-        if (name not in queues or flow["queue_name"] != queues.get(name)
+        if (flow["status"] not in {"ENQUEUED", "DELAYED", "PENDING"} or name not in queues or flow["queue_name"] != queues.get(name)
                 or flow["application_name"] != DBOS_APPLICATION
                 or (flow["application_version"] != WORKFLOW_VERSION
                     and not (name == SCHEDULE_WORKFLOW and flow["application_version"] is None))

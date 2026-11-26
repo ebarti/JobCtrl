@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 import json
+from datetime import datetime
 from math import ceil
 import os
 import time
@@ -843,7 +844,8 @@ class DiscoveryRepository:
     def reserve_board_request(self, lease, board, interval):
         """Enforce source pacing across page turns, other runs and worker replacement."""
         with self.database.transaction() as conn:
-            self.guard_run(conn, lease)
+            if lease is not None:
+                self.guard_run(conn, lease)
             row = conn.execute("SELECT retry_at,next_request_at FROM discovery_provider_cooldowns WHERE board=?", (board,)).fetchone()
             clock = time.time()
             if row:
@@ -855,20 +857,47 @@ class DiscoveryRepository:
                          "ON CONFLICT(board) DO UPDATE SET next_request_at=excluded.next_request_at", (board, clock + interval))
         return {"cooldown": 0, "pace": 0}
 
-    def record_rate_limit_response(self, lease, observation):
-        board = observation["board"]
+    def provider_response(self, lease, board, unit_id, phase, status, received, delay, interval):
+        """Commit source pacing and cumulative response counts before the SDK consumes the response."""
         with self.database.transaction() as conn:
+            run = self.guard_run(conn, lease)
+            if interval:
+                conn.execute("UPDATE discovery_provider_cooldowns SET next_request_at=GREATEST(next_request_at,?) WHERE board=?",
+                             (received.timestamp() + interval, board))
+            operation = f"board-responses:{lease['run_id']}:{board}"
+            row = conn.execute("SELECT result_json FROM discovery_operations WHERE operation_id=?", (operation,)).fetchone()
+            counts = json.loads(row[0]) if row else {"listing": 0, "detail": 0, "other": 0}
+            counts[phase] += 1
+            conn.execute("INSERT INTO discovery_operations VALUES(?,'board_responses',?,?,?) ON CONFLICT(operation_id) "
+                         "DO UPDATE SET result_json=excluded.result_json", (operation, run["request_hash"], json.dumps(counts), now()))
+            if status == 429:
+                started = datetime.fromisoformat(run["created_at"])
+                self.record_rate_limit_response(lease, {
+                    "board": board, "unitId": unit_id, "phase": phase, "httpStatus": status,
+                    "leaseEpoch": lease["epoch"], "responses": counts, "elapsedMs": max(0, round((received - started).total_seconds() * 1000)),
+                    "receivedAt": received.isoformat(timespec="milliseconds"), "retryAfterSeconds": delay,
+                }, connection=conn)
+
+    def record_rate_limit_response(self, lease, observation, connection=None):
+        board = observation["board"]
+        with nullcontext(connection) if connection is not None else self.database.transaction() as conn:
             self.guard_run(conn, lease)
             row = conn.execute("SELECT consecutive_limits FROM discovery_provider_cooldowns WHERE board=?", (board,)).fetchone()
             count = (row[0] if row else 0) + 1
             advertised = observation.get("retryAfterSeconds")
-            wait = float(advertised) if advertised is not None else min(900, 4 * 2 ** min(8, count - 1))
+            wait = float(advertised) if advertised else min(900, 4 * 2 ** min(8, count - 1))
             conn.execute("INSERT INTO discovery_provider_cooldowns(board,retry_at,consecutive_limits,retry_advertised) VALUES(?,?,?,?) "
                          "ON CONFLICT(board) DO UPDATE SET retry_at=GREATEST(discovery_provider_cooldowns.retry_at,excluded.retry_at), "
                          "consecutive_limits=excluded.consecutive_limits,retry_advertised=excluded.retry_advertised",
-                         (board, time.time() + max(1, wait), count, int(advertised is not None)))
+                         (board, time.time() + max(1, wait), count, int(bool(advertised))))
             self.events.append(conn, "DiscoverySourceRateLimited", observation, feature="discovery",
                                aggregate_id=lease["run_id"], level="warn", stage="board_search")
+
+    def defer_transient(self, lease, unit, recorded, board, delay):
+        with self.database.transaction() as conn:
+            self.save_unit(lease, unit, status="waiting_for_source", result=recorded, connection=conn)
+            conn.execute("INSERT INTO discovery_provider_cooldowns(board,retry_at) VALUES(?,?) ON CONFLICT(board) "
+                         "DO UPDATE SET retry_at=GREATEST(discovery_provider_cooldowns.retry_at,excluded.retry_at)", (board,time.time() + delay))
 
     def source_recovered(self, lease, board):
         with self.database.transaction() as conn:

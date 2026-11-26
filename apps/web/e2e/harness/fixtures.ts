@@ -41,6 +41,7 @@ export type ApplicationStack = {
   };
   discoveryCheckpoint(runId: string): Promise<{
     adapters: { unitId: string; site: string; state: Record<string, unknown>; emittedCount: number; completed: boolean; requestFingerprint: string; acknowledgedKeys: string[] }[];
+    received: { unitId: string; site: string; jobKey: string; status: string }[];
     receipts: Record<string, number>;
     receiptKeys: { unitId: string; site: string; jobKey: string; isNew: boolean }[];
     request: { fingerprint: string; sourceFetchPolicy?: string; settings: { resultsPerSite: number; newJobLimit: number } };
@@ -58,6 +59,7 @@ export type ApplicationStack = {
   armModelReceiptPause(): Promise<void>;
   waitForModelReceiptPause(): Promise<string>;
   fitProviderReceipts(): Promise<{ receiptId: string; ownerKey: string | null; status: string; inputFingerprint: string; costUsd: number | null }[]>;
+  requirementsExtractionReceipts(): ReturnType<ApplicationStack["fitProviderReceipts"]>;
   fitRefreshCheckpoint(operationId: string): Promise<{ calls: Record<string, { kind: string; status: string; result?: { value: unknown; provenance: Record<string, unknown> } }>; checkpoints: Record<string, unknown>; impact_selection_scope_version?: string; qualification_transport_version?: string }>;
   databaseSchemaFingerprint(): Promise<string>;
   databaseSchemaInventory(): Promise<{ type: string; name: string; table: string; sql: string | null }[]>;

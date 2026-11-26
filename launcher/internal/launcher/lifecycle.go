@@ -833,6 +833,9 @@ func rollbackExisting(ctx launchContext, store *release.Store, active release.Ac
 	if err := check(); err != nil {
 		return err
 	}
+	if err := releaseQACheckpoint(store, release.State("rollback_prechecked")); err != nil {
+		return err
+	}
 	wasRunning, err := registeredRuntimeRunning(ctx)
 	if err != nil {
 		return err

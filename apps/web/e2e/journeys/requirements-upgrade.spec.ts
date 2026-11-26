@@ -12,7 +12,12 @@ test("a new posting demand keeps prior Fit and accepted PDF history until an exp
   const history = () => json<{ versions: FitState["score"][] }>(api, "get", `${fitPath(jobId)}/history`);
   const original = await json<NormalizedSnapshot>(api, "get", requirementsPath(jobId));
   const originalId = original.requirements[0]!.requirement_id;
-  const originalMeaning = await json(api, "get", `/v1/requirements/${originalId}?revision=1`);
+  const meaningPath = `/v1/requirements/${originalId}`;
+  const { active_in_library, occurrences, ...originalMeaning } = await json<
+    Record<string, unknown> & { active_in_library: boolean; occurrences: NormalizedSnapshot["requirements"] }
+  >(api, "get", `${meaningPath}?revision=1`);
+  expect(active_in_library).toBe(true);
+  expect(occurrences).toEqual(original.requirements);
   const oldFit = await fit();
   expect(oldFit).toMatchObject({ current: true, score: { score: 10 } });
   const oldHistory = await history();
@@ -42,12 +47,20 @@ test("a new posting demand keeps prior Fit and accepted PDF history until an exp
     posting_revision: edited.revision, posting_hash: edited.source_hash, stale: false });
   const catalog = await readCatalog(api);
   expect(catalog.requirements.map(row => row.requirement_id)).toEqual([requirementId]);
-  const historical = await json(api, "get", `/v1/requirements/${originalId}?revision=1`);
-  expect(historical).toMatchObject(originalMeaning);
+  const historical = await json(api, "get", `${meaningPath}?revision=1`);
+  expect(historical).toEqual({ ...originalMeaning, active_in_library: false, occurrences: [] });
+  const occurrenceHistory = await json<{ rows: unknown[] }>(api, "get", `${meaningPath}/history?kind=occurrences`);
+  expect(occurrenceHistory.rows).toMatchObject([{ ...occurrences[0], accepted: false, current: false,
+    stale_reasons: expect.arrayContaining(["snapshot_superseded", "posting_changed_or_unavailable"]) }]);
   expect(await fit()).toMatchObject({ current: false, stale_reasons: ["requirements_changed"], score: oldFit.score });
   expect(await history()).toEqual(oldHistory);
   expect(await json(api, "get", "/v1/digest")).toMatchObject({ staleScores: { count: 1 } });
-  expect(await json(api, "get", "/v1/jobs/query?minFitScore=1")).toMatchObject({ total: 0, rows: [] });
+  expect(await json(api, "get", "/v1/jobs/query?minFitScore=1&fit_state=current")).toMatchObject({ total: 0, rows: [] });
+  expect(await json(api, "get", "/v1/jobs/query?minFitScore=1&fit_state=stale")).toMatchObject({ total: 1, rows: [{
+    fit: { job_id: jobId, current: false, score: { revision: oldFit.score.revision, score: oldFit.score.score },
+      stale_reasons: ["requirements_changed"] },
+    scalars: { fit_score: oldFit.score.score },
+  }] });
   const pending = await json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending");
   expect(pending.stale_job_ids).toContain(jobId);
   expect((await json<{ runs: unknown[] }>(api, "get", "/v1/action-runs?action=fit.refresh")).runs).toEqual([]);
@@ -79,7 +92,10 @@ test("a new posting demand keeps prior Fit and accepted PDF history until an exp
 
   const replacement = await app.restartWorker();
   expect(replacement.current).not.toBe(replacement.previous);
-  expect(await startRefresh(api, refresh, key)).toEqual(completedRun);
+  expect(await startRefresh(api, refresh, key)).toEqual({
+    runId: run.runId, status: "succeeded", workflowId: completedRun.workflowId,
+  });
+  expect(await json(api, "get", `/v1/action-runs/${run.runId}`)).toEqual(completedRun);
   expect((await json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending")).latest_operation).toEqual(operation);
   expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/action-runs?action=fit.refresh")).runs.map(row => row.runId)).toEqual([run.runId]);
   const retained = await getResume(api, resume.resume_id);

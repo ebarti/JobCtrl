@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import Callable
+from contextlib import AsyncExitStack
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
+from jobctrl.app.model_custody import current_owner, model_call_scope
 
 from .domain import (
     CONTRACT_VERSION, EXTRACTION_INSTRUCTION, MEANING_KEYS,
@@ -639,18 +641,28 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
             self._check_cancel(cancelled)
             budget = ModelCallBudget(fingerprint({"action": action_fingerprint, "posting": self._posting_identity(posting)}),
                                      MAX_NEW_MODEL_CALLS_PER_REFRESH)
-            selection, extraction_receipt = await self.model.determine(
-                kind="requirements.extract", schema=schema, prompt_version=version,
-                instruction=instruction, sources=sources,
-                context={"contract_version": CONTRACT_VERSION, "posting_content": source_binding, "refresh_binding": refresh_binding}, entity_id=None,
-                validate=lambda result: validate_extraction_selection(result, source_id=source_id, text=source_text),
-                budget=budget, publication_posting=self._publication_identity(posting), source_binding=source_binding,
-            )
+            extraction_keys = [f"requirements.extract:{version}:{source_id}"] if not force else []
+            async with AsyncExitStack() as stack:
+                if extraction_keys and current_owner() is None:
+                    stack.enter_context(model_call_scope(f"requirements.extract:{attempt_id}", allow_settled_replacement=True))
+                await stack.enter_async_context(self.model.coordinate_work(extraction_keys, cancelled))
+                work = stack.enter_context(self.model.share_receipt(extraction_keys))
+                selection, extraction_receipt = await self.model.determine(
+                    kind="requirements.extract", schema=schema, prompt_version=version,
+                    instruction=instruction, sources=sources,
+                    context={"contract_version": CONTRACT_VERSION, "posting_content": source_binding, "refresh_binding": refresh_binding}, entity_id=None,
+                    validate=lambda result: validate_extraction_selection(result, source_id=source_id, text=source_text),
+                    budget=budget, publication_posting=self._publication_identity(posting), source_binding=source_binding,
+                )
+                if work is not None:
+                    work.used(extraction_receipt["receipt_id"])
             extraction = bind_extraction(selection, source_id=source_id, text=source_text)
-            await self._normalize_extraction(extraction, posting=posting, expected_revision=expected_revision,
-                extraction_receipt=extraction_receipt, source_binding=source_binding, operation_id=attempt_id,
-                action_fingerprint=action_fingerprint, budget=budget, cancelled=cancelled, heartbeat=heartbeat,
-                prompt_version=catalog_prompt_version)
+            catalog_keys = ["requirements.catalog"] if extraction.requirements else []
+            async with self.model.coordinate_work(catalog_keys, cancelled):
+                await self._normalize_extraction(extraction, posting=posting, expected_revision=expected_revision,
+                    extraction_receipt=extraction_receipt, source_binding=source_binding, operation_id=attempt_id,
+                    action_fingerprint=action_fingerprint, budget=budget, cancelled=cancelled, heartbeat=heartbeat,
+                    prompt_version=catalog_prompt_version)
             return self.get_job_requirements(job_id)
         except asyncio.CancelledError:
             self.store.finish_attempt(attempt_id, "cancelled", "cancelled")

@@ -90,7 +90,10 @@ recorded as a listing observation. The search keeps the saved revision and
 skips the detail request and role check. Use the job's manual checks to refresh it.
 
 Saved role titles are sent to the board as written. Model-backed role checks
-begin when the search receives candidate postings.
+begin when the search receives candidate postings. Before starting a new search
+from saved roles, JobCtrl checks that the selected model can account for monetary
+cost under a positive daily budget. If a pricing quote is missing, review
+**Budgets** from the search feedback and start again after saving.
 Remote and posting age remain valid search preferences. Each board runs with
 its own supported request and checkpoint. Indeed Remote requests retain Remote
 and apply the age cutoff locally using the provider's reported publication date;

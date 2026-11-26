@@ -7,12 +7,14 @@ import json
 import os
 from pathlib import Path
 import socket
+import shutil
 import sqlite3
 import stat
 import subprocess
 import sys
 import tempfile
 import time
+import venv
 
 import psycopg
 
@@ -139,6 +141,57 @@ def native_cutover(source, url):
         assert conn.execute("SELECT count(*) FROM app_events").fetchone()[0] == 0
 
 
+def installed_fence(directory, source):
+    # An isolated launcher imports its package from its venv. Exercise that
+    # actual lookup without trusting an editable checkout or a PYTHONPATH.
+    install = directory / "fence-venv"
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(install)
+    python = install / "bin/python"
+    site = subprocess.check_output([python, "-I", "-B", "-c",
+                                    "import sysconfig; print(sysconfig.get_path('purelib'))"], text=True).strip()
+    package = Path(site) / "jobctrl"
+    shutil.copytree(SOURCE / "jobctrl", package, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shadow = directory / "shadow"
+    shadow.mkdir()
+    (shadow / "jobctrl.py").write_text("# This directory must be ignored by the isolated helper.\n", encoding="utf-8")
+    def manifest():
+        return {p.relative_to(package): (stat.S_IMODE(p.stat().st_mode), hashlib.sha256(p.read_bytes()).digest() if
+                                         p.is_file() else None) for p in [package, *package.rglob("*")]}
+    code = ("import sys\nfrom pathlib import Path\nfrom jobctrl.app.postgres_upgrade_source import exclude_source_writers\n"
+            "with exclude_source_writers(Path(sys.argv[1])) as fence:\n"
+            "    fence.verify()\n    print('held',flush=True)\n    sys.stdin.buffer.read()\n")
+    for read_only in (False, True):
+        if read_only:
+            for path in [*package.rglob("*"), package]:
+                path.chmod(0o555 if path.is_dir() else 0o444)
+        before = manifest()
+        try:
+            with subprocess.Popen([python, "-I", "-B", "-c", code, source], cwd=shadow,
+                                  env={**os.environ, "PYTHONPATH": str(shadow)}, stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE) as guard:
+                try:
+                    assert guard.stdout.readline() == b"held\n"
+                    with closing(sqlite3.connect(source, timeout=0.1)) as writer:
+                        try:
+                            writer.execute("BEGIN IMMEDIATE")
+                        except sqlite3.OperationalError as error:
+                            assert error.sqlite_errorcode == sqlite3.SQLITE_BUSY
+                        else:
+                            raise AssertionError("Installed migration child lost its SQLite writer fence.")
+                finally:
+                    guard.stdin.close()
+                    assert guard.wait(timeout=15) == 0
+            with closing(sqlite3.connect(source, timeout=0.1)) as writer:
+                writer.execute("BEGIN IMMEDIATE")
+                writer.rollback()
+            assert manifest() == before, "Importing introduced or changed installed package files."
+        finally:
+            if read_only:
+                for path in [package, *package.rglob("*")]:
+                    if path.is_dir():
+                        path.chmod(0o755)
+
+
 def run(checkout, binaries):
     with tempfile.TemporaryDirectory(prefix="jc-migrate-", dir="/tmp") as temporary:
         directory = Path(temporary).resolve()
@@ -146,6 +199,7 @@ def run(checkout, binaries):
         subprocess.run([sys.executable, SCRIPTS / "qa_postgres_upgrade_source.py", "--checkout", checkout,
                         "--workspace", root, "--migration-edges"], check=True)
         source = root / "jobctrl.db"
+        installed_fence(directory, source)
         with cluster(directory, binaries) as (rehearsal, live):
             rehearse(source, directory / "stage", rehearsal)
             digest = hashlib.sha256(source.read_bytes()).digest()

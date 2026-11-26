@@ -39,7 +39,7 @@ known_process_names() { echo "$(process_names) docs demo-api demo-web"; }
 
 process_command() {
   case "$1" in
-    postgres) echo 'go -C "$ROOT/launcher" run ./cmd/jobctrl-source postgres "$ROOT"' ;;
+    postgres) echo '"${JOBCTRL_SOURCE_LAUNCHER:?source controller required}" postgres "$ROOT"' ;;
     api)      echo 'uv --project workers/automation run --no-sync python -m jobctrl.app.server --workspace "$JOBCTRL_DIR" --host "$JOBCTRL_API_HOST" --port "$JOBCTRL_API_PORT"' ;;
     web)      echo 'corepack pnpm --filter @jobctrl/web exec vite --host 127.0.0.1 --port "$JOBCTRL_WEB_PORT"' ;;
     worker)   echo 'uv --project workers/automation run --no-sync python -m jobctrl.app.worker --workspace "$JOBCTRL_DIR"' ;;
@@ -758,7 +758,8 @@ cmd_migrate_credentials() {
   local user_env="${JOBCTRL_USER_ENV_PATH:-$HOME/JobCtrl/.env}"
   (
     cd "$ROOT"
-    uv --project workers/automation run --no-sync python -m jobctrl credentials migrate \
+    unset JOBCTRL_DATABASE_URL
+    go -C "$ROOT/launcher" run ./cmd/jobctrl-source migrate-credentials "$ROOT" \
       --env-file "$app_dir/.env" \
       --env-file "$ROOT/.env" \
       --env-file "$user_env" \

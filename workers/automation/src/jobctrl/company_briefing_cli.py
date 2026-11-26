@@ -13,8 +13,8 @@ def _call(operation, json_output):
     from jobctrl.cli import _application, _run
 
     async def execute():
-        application = _application()
-        return operation(application.services["companies"])
+        with _application() as application:
+            return operation(application.services["companies"])
     output(_run(execute()), json_output)
 
 

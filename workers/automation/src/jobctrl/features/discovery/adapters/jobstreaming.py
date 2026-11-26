@@ -231,19 +231,40 @@ class JobStreamingGateway:
     """Build and consume the pinned JobStreaming event contract."""
 
     @staticmethod
-    def configure_linkedin_transport(registry, send):
+    def configure_transport(registry, site, requests):
+        """Preserve SDK-owned sessions and observe unmodified response deadlines."""
         source = registry or default_registry()
+        if site not in {adapter.value for adapter in source.sites}:
+            return source
         observed = source.copy()
 
         def factory(**kwargs):
-            adapter = source.create(Site.LINKEDIN, **kwargs)
-            for transport in set(adapter.session.adapters.values()):
-                transport.send = partial(send, transport.send)
+            adapter = source.create(site, **kwargs)
+            # Some SDK adapters sleep between pages inside one stream. A resumed
+            # page still honors the longest configured native interval.
+            requests.interval = max(requests.interval, getattr(adapter, "delay", 0) + getattr(adapter, "band_delay", 0))
+            installed = set()
+
+            def observe(session):
+                transports = tuple(session.adapters.values()) if hasattr(session, "adapters") else (session,)
+                for transport in transports:
+                    if id(transport) in installed:
+                        continue
+                    method = "send" if hasattr(transport, "send") else "execute_request"
+                    if hasattr(transport, method):
+                        setattr(transport, method, partial(requests.send, getattr(transport, method)))
+                        installed.add(id(transport))
+                return session
+
+            if getattr(adapter, "session", None) is not None:
+                observe(adapter.session)
+            register = adapter.track_transport
+            adapter.track_transport = lambda session: observe(register(session))
             return adapter
 
-        cursor_version = source.cursor_schema_version(Site.LINKEDIN)
+        cursor_version = source.cursor_schema_version(site)
         options = {"cursor_schema_version": cursor_version} if cursor_version != 1 else {}
-        observed.register(Site.LINKEDIN, factory, replace=True, **options)
+        observed.register(site, factory, replace=True, **options)
         return observed
 
     @staticmethod

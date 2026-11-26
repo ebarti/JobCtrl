@@ -117,6 +117,13 @@ for credential sources and precedence. The launcher may inherit environment
 values, so a separate workspace directory alone does not isolate credentials;
 never use personal credentials for QA.
 
+To migrate persistent provider secrets for an initialized source workspace, run
+`scripts/dev stop` and `scripts/dev migrate-credentials` with the same
+`JOBCTRL_DIR` used for development. The launcher opens only that workspace's
+PostgreSQL database for the duration of credential maintenance. It leaves the
+API, worker, and schedules stopped. Source order and marker behavior are covered
+in [Migrating legacy plaintext secrets](user/configuration.md#migrating-legacy-plaintext-secrets).
+
 ### Start the development stack
 
 ```bash

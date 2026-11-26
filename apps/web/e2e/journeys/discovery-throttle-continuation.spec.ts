@@ -1,4 +1,4 @@
-import type { APIRequestContext, Page } from "@playwright/test";
+import type { APIRequestContext, Page, Response } from "@playwright/test";
 
 import { action, completed, expect, json, terminal, test, type ApplicationStack, type ExternalCall } from "../harness/fixtures.js";
 import { baseline, createBaseline } from "./core-data.js";
@@ -184,7 +184,7 @@ test("LinkedIn continuation skips already checked postings within an interrupted
   expect(app.external.calls.filter((call) => call.path === "/model" && call.body?.["operation"] === "discovery.role_target_match")).toHaveLength(3);
 });
 
-test("a long source cooldown survives worker replacement while one failed Fit can be retried from Jobs", async ({ api, app, page }) => {
+test("a long source cooldown survives worker replacement while one failed Fit can be retried from Jobs", async ({ api, app, page, allowResponseError }) => {
   const { profile, library } = await configureSearch(api, 2);
   const search = await action(api, "discovery.search", { queries: [], locations: [], expectedProfileVersion: profile.profileVersion });
   (await listingAt(app, 0)).raw(listingCards([7641, 7642]));
@@ -205,11 +205,23 @@ test("a long source cooldown survives worker replacement while one failed Fit ca
   await expect(page.getByRole("button", { name: "Continue LinkedIn search", exact: true })).toHaveCount(0);
   expect((await recorded()).status).toBe("running");
   await page.goto(`/jobs/${failed}`);
+  const missingLookups: Response[] = [];
+  page.on("response", (response) => {
+    const url = new URL(response.url());
+    if (response.status() === 404 && url.origin === app.baseURL && url.pathname === "/v1/action-runs/by-idempotency-key"
+      && url.search === "?action=preparation.retry") missingLookups.push(response);
+  });
   const retry = page.waitForResponse((r) => new URL(r.url()).pathname === "/v1/actions/preparation.retry" && r.request().method() === "POST");
   await page.getByRole("button", { name: "Retry fit assessment for this job", exact: true }).click();
   const receipt = await retry;
   expect(receipt.status()).toBe(202);
   expect(receipt.request().postDataJSON()).toEqual({ run_id: search.runId, job_ids: [failed] });
+  const retryHeaders = await receipt.request().allHeaders();
+  expect(missingLookups.length).toBeLessThanOrEqual(1);
+  for (const lookup of missingLookups) {
+    await allowResponseError(lookup, { method: "GET", status: 404, code: "not_found", action: "preparation.retry",
+      idempotencyKey: retryHeaders["idempotency-key"]!, databaseInstanceId: retryHeaders["expected-database-instance-id"]! });
+  }
   await serveQualification(assessmentModel(app), library);
   await completed(api, (await receipt.json() as { runId: string }).runId);
   const accepted = await json<FitState>(api, "get", `/v1/jobs/${failed}/fit`);

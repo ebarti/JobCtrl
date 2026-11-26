@@ -71,37 +71,34 @@ test.describe("local TLS failure", () => {
   });
 });
 
-test.describe("historical board failures", () => {
-  test.use({ sourceRevision: "17f9ce5be1de2f21735fb27d5dfe8f6d1b7c8118" });
+test.describe("retained board failures", () => {
 
-  test("board rate limits explain historical partial searches and current LinkedIn detail failures", async ({ api, app, page }) => {
+  test("board rate limits retain partial search outcomes across restart and explain LinkedIn detail failures", async ({ api, app, page }) => {
     const code = "discovery_provider_rate_limited";
     const message = "The board rate-limited this search. Wait before running another search on this board.";
-    const legacyMessage = "The source could not complete its search; review its connection before retrying.";
     const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
     await json(api, "patch", "/v1/discovery/settings", {
       expectedRevision: settings.revision, boards: ["indeed", "linkedin"],
     });
-    const legacy = await action(api, "discovery.search", { ...search, queries: ["Completed query", "Limited query"], boards: ["indeed"] });
+    const previous = await action(api, "discovery.search", { ...search, queries: ["Completed query", "Limited query"], boards: ["indeed"] });
     const empty = await app.external.next();
     expect(empty.path).toBe("/jobstreaming/indeed");
     expect(empty.body["query"]).toContain('what: "Completed query"');
     empty.respond({ data: { jobSearch: { pageInfo: { nextCursor: null }, results: [] } } });
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const call = await app.external.next({ timeout: 20_000 });
-      expect(call.path).toBe("/jobstreaming/indeed");
-      expect(call.body["query"]).toContain('what: "Limited query"');
-      call.respond({ errors: [{ message: "Too many requests" }] });
-    }
-    const receipt = await terminal(api, legacy.runId);
-    expect(receipt).toMatchObject({ status: "succeeded", result: { status: "partial", failures: [{ code, message: legacyMessage }] } });
+    const limited = await app.external.next({ timeout: 20_000 });
+    expect(limited.path).toBe("/jobstreaming/indeed");
+    expect(limited.body["query"]).toContain('what: "Limited query"');
+    limited.respond({ errors: [{ message: "Too many requests" }] });
+    const receipt = await terminal(api, previous.runId);
+    expect(receipt).toMatchObject({ status: "succeeded", result: { status: "partial", failures: [{ code, message }] } });
 
-    await app.upgradeSource();
+    await app.restartWorker();
+    await app.restartApi();
     const { runs } = await json<{ runs: { runId: string; failures: BoardFailure[] }[] }>(api, "get", "/v1/discovery/runs");
-    expect(runs.find((run) => run.runId === legacy.runId)?.failures).toEqual([
+    expect(runs.find((run) => run.runId === previous.runId)?.failures).toEqual([
       expect.objectContaining({ boards: ["indeed"], code, diagnostic: "rate_limited", message }),
     ]);
-    expect((await terminal(api, legacy.runId)).result).toEqual(receipt.result);
+    expect((await terminal(api, previous.runId)).result).toEqual(receipt.result);
     await page.goto("/jobs");
     const notice = page.getByRole("list", { name: "Search source failures" });
     await expect(notice).toContainText(`Indeed: ${message}`);

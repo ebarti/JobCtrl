@@ -29,7 +29,10 @@ func postgresSocket(workspace string) string {
 	return filepath.Join("/private/tmp", fmt.Sprintf("jobctrl-pg-%d-%x", os.Getuid(), sum[:12]))
 }
 func postgresURL(workspace string) string {
-	query := url.Values{"host": {postgresSocket(workspace)}, "port": {"5432"}}
+	return postgresSocketURL(postgresSocket(workspace))
+}
+func postgresSocketURL(socket string) string {
+	query := url.Values{"host": {socket}, "port": {"5432"}}
 	return "postgresql://jobctrl@/jobctrl?" + query.Encode()
 }
 func privatePostgresPath(path string, dir bool) error {
@@ -276,12 +279,15 @@ func postgresPID(ctx launchContext) (int, error) {
 	return postgresPIDForData(ctx, active.path(ctx))
 }
 func postgresPIDForData(ctx launchContext, data string) (int, error) {
+	return postgresPIDForSocket(data, postgresSocket(ctx.Instance.StateDir))
+}
+func postgresPIDForSocket(data, socket string) (int, error) {
 	raw, err := os.ReadFile(filepath.Join(data, "postmaster.pid"))
 	if err != nil {
 		return 0, err
 	}
 	fields := strings.Split(string(raw), "\n")
-	if len(fields) < 6 || fields[1] != data || fields[4] != postgresSocket(ctx.Instance.StateDir) {
+	if len(fields) < 6 || fields[1] != data || fields[4] != socket {
 		return 0, errors.New("postmaster identity does not match workspace")
 	}
 	return strconv.Atoi(fields[0])

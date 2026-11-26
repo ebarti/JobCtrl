@@ -36,7 +36,7 @@ func RunSource(executable string, args, env []string, stdout, stderr io.Writer) 
 	if handled, err := ownedExecutionHelper(args); handled {
 		return err
 	}
-	if len(args) < 2 || (args[0] != "run" && args[0] != "stop" && args[0] != "switch" && args[0] != "verify" && args[0] != "postgres" && args[0] != "__source-run") {
+	if len(args) < 2 || (args[0] != "run" && args[0] != "stop" && args[0] != "switch" && args[0] != "verify" && args[0] != "postgres" && args[0] != "__source-run" && args[0] != "migrate-credentials") {
 		return errors.New("usage: jobctrl-source run|stop SOURCE_ROOT [component...]")
 	}
 	root, err := filepath.EvalSymlinks(args[1])
@@ -49,6 +49,9 @@ func RunSource(executable string, args, env []string, stdout, stderr io.Writer) 
 		return errors.New("source development launcher is not a regular file")
 	}
 	for _, name := range args[2:] {
+		if args[0] == "migrate-credentials" {
+			break
+		}
 		switch name {
 		case "postgres", "api", "web", "worker", "docs", "demo-api", "demo-web":
 		default:
@@ -60,6 +63,9 @@ func RunSource(executable string, args, env []string, stdout, stderr io.Writer) 
 		return err
 	}
 	ctx := launchContext{Executable: executable, Instance: inst, Environment: env}
+	if args[0] == "migrate-credentials" {
+		return sourceMigrateCredentials(ctx, root, args, stdout, stderr)
+	}
 	if args[0] == "postgres" {
 		if len(args) != 2 {
 			return errors.New("usage: jobctrl-source postgres SOURCE_ROOT")
@@ -196,13 +202,15 @@ func runSourceInsideScope(ctx launchContext, script string, targets []string, st
 	arguments := append([]string{script, "run"}, targets...)
 	child := payloadCommand(ctx.Environment, "/bin/bash", arguments...)
 	child.Dir = filepath.Dir(filepath.Dir(script))
-	child.Env = make([]string, 0, len(ctx.Environment)+2)
+	child.Env = make([]string, 0, len(ctx.Environment)+3)
 	for _, pair := range ctx.Environment {
-		if !strings.HasPrefix(pair, "JOBCTRL_DEV_INNER=") && !strings.HasPrefix(pair, "JOBCTRL_DIR=") {
+		if !strings.HasPrefix(pair, "JOBCTRL_DEV_INNER=") && !strings.HasPrefix(pair, "JOBCTRL_DIR=") && !strings.HasPrefix(pair, "JOBCTRL_SOURCE_LAUNCHER=") {
 			child.Env = append(child.Env, pair)
 		}
 	}
-	child.Env = append(child.Env, "JOBCTRL_DEV_INNER=1", "JOBCTRL_DIR="+ctx.Instance.StateDir)
+	// The service owner must retain the process that forwards TERM to the
+	// postmaster. A go-run wrapper can exit before its compiled child drains.
+	child.Env = append(child.Env, "JOBCTRL_DEV_INNER=1", "JOBCTRL_DIR="+ctx.Instance.StateDir, "JOBCTRL_SOURCE_LAUNCHER="+ctx.Executable)
 	readyRead, readyWrite, err := os.Pipe()
 	if err != nil {
 		return err
@@ -373,20 +381,63 @@ func validateSourceWorkspacePaths(ctx launchContext) error {
 	return nil
 }
 
-func sourcePostgres(ctx launchContext, root string) error {
-	owned, err := authenticatedOwnedExecution(ctx)
-	if err != nil || !owned {
-		return errors.Join(errors.New("source PostgreSQL requires its workspace execution scope"), err)
-	}
+func sourcePostgresContext(ctx launchContext, root string) (launchContext, error) {
 	ctx.SourcePython = filepath.Join(root, "workers", "automation", ".venv", "bin", "python")
 	dir := environmentMap(ctx.Environment)["JOBCTRL_POSTGRES_BIN_DIR"]
 	if dir == "" {
 		dir = filepath.Join(root, ".dev", "postgres-runtime", "bin")
 	}
 	if !filepath.IsAbs(dir) {
-		return errors.New("PostgreSQL binaries require an absolute directory")
+		return ctx, errors.New("PostgreSQL binaries require an absolute directory")
 	}
 	ctx.Environment = append(ctx.Environment, "JOBCTRL_POSTGRES_BIN_DIR="+dir, "JOBCTRL_DATABASE_URL="+postgresURL(ctx.Instance.StateDir))
+	return ctx, nil
+}
+
+func sourceMigrateCredentials(ctx launchContext, root string, args []string, stdout, stderr io.Writer) error {
+	store, err := release.Open(ctx.Instance.RuntimeHome)
+	if err != nil {
+		return err
+	}
+	selection, err := store.SelectionLock(false)
+	if err != nil {
+		return err
+	}
+	defer selection.Close()
+	if err := refusePendingBridgeHandoff(store.Home); err != nil {
+		return err
+	}
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
+	if journal, err := store.ReadJournal(); err == nil && journal.Resumable() {
+		return errors.New("complete the pending release transition before credential migration")
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	owned, err := authenticatedOwnedExecution(ctx)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return runInOwnedExecution(ctx, args, stdout, stderr)
+	}
+	ctx, err = sourcePostgresContext(ctx, root)
+	if err != nil {
+		return err
+	}
+	return migrateStoppedCredentials(ctx, args[2:], stdout, stderr)
+}
+
+func sourcePostgres(ctx launchContext, root string) error {
+	owned, err := authenticatedOwnedExecution(ctx)
+	if err != nil || !owned {
+		return errors.Join(errors.New("source PostgreSQL requires its workspace execution scope"), err)
+	}
+	ctx, err = sourcePostgresContext(ctx, root)
+	if err != nil {
+		return err
+	}
 	if err := checkPythonApplicationWorkspace(ctx); err != nil {
 		return err
 	}

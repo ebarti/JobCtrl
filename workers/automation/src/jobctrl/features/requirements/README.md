@@ -325,7 +325,14 @@ uses a narrow extraction-authorized snapshot publication instead: it makes no
 canonical, alias or certificate changes and no normalization call. Its original
 posting and accepted-head fences still apply.
 
-## Initial Search cohort
+## Initial Search
+
+Each eligible posting enters Requirements independently. Its full accepted
+text binds extraction reuse. Catalog normalization sees the retained catalog
+and the incoming occurrences for that posting. Fit receives its accepted
+snapshot, including exact posting, demand and receipt identities.
+
+### Retained cohort operations
 
 Durable Requirements refresh and Preparation wait through temporary model
 capacity contention. The gateway transaction records an extraction or

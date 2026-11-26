@@ -380,7 +380,7 @@ the owned runtime and resume forward with `jobctrl update`. See
 | `pipeline-status` / `runs` | Read application/worker readiness or list canonical durable action runs. Use `run-status RUN_ID` for one durable run. |
 | `digest` | Print the local daily digest; it sends no notifications. Incomplete spend is shown as unknown. Only `--acknowledge` marks it reviewed (`--json`, `--min-fit-score`). |
 | `capability list` / `enable` / `disable` | Inspect or change optional browser capabilities, for example `capability enable auto-apply-browser --browser-path <path>`. |
-| `credentials migrate` | Move allowlisted provider secrets from legacy `.env` files into the native credential store. |
+| `credentials migrate` | Move allowlisted legacy `.env` secrets into the native store while JobCtrl is stopped. See [credential migration](configuration.md#migrating-legacy-plaintext-secrets). |
 | `gmail-auth` | Connect Gmail for verification codes, outcome lookup, and approved email applications. |
 | `material-export RESUME_ID --output FILE --format docx --accepted` | Export the actual accepted Resumes document; an optional `--revision-id` pins a saved revision. The old generated-material migration command is retired with the explicit fresh-state cutover. |
 

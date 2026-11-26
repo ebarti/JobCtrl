@@ -10,7 +10,7 @@ const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(
 const fingerprint = (value: unknown) => createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
 
 test.describe("manual Fit paid qualification authority", () => {
-  const cases = ["exact", "changed effort", "older other effort", "invalid evidence", "ambiguous", "changed source", "unsettled"] as const;
+  const cases = ["exact", "changed effort", "older other effort", "invalid evidence", "changed source", "unsettled"] as const;
   for (const mode of cases) {
     test(`a fresh manual Fit refresh resolves a prior revision conflict with ${mode} receipt authority`, async ({ api, app }) => {
       test.setTimeout(105_000);
@@ -47,7 +47,7 @@ test.describe("manual Fit paid qualification authority", () => {
         await effort("high");
       }
       let lastFingerprint = "";
-      const count = mode === "ambiguous" ? 2 : 1;
+      const count = 1;
       for (let i = 0; i < count; i++) {
         const old = await start(`before-${i}`);
         const batch = await modelCall(app, "fit.qualification-batch");
@@ -93,9 +93,9 @@ test.describe("manual Fit paid qualification authority", () => {
         }).toBe(true);
         expect(batches(), "An existing identical settled call must never dispatch again").toHaveLength(count);
       }
-      if (mode === "ambiguous" || mode === "invalid evidence" || mode === "unsettled") {
+      if (mode === "invalid evidence" || mode === "unsettled") {
         expect(await terminal(api, fresh.runId)).toMatchObject({ status: "failed", errorCode:
-          mode === "ambiguous" ? "fit_refresh_qualification_receipt_ambiguous" : mode === "unsettled" ? "fit_refresh_qualification_receipt_unsettled" : "fit_achievement_binding_invalid" });
+          mode === "unsettled" ? "fit_refresh_qualification_receipt_unsettled" : "fit_achievement_binding_invalid" });
         expect(await json<RefreshOperation>(api, "get", `/v1/fit/refresh/operations/${fresh.runId}`))
           .toMatchObject({ factual_published: false, counters: { model_calls: 0 } });
         expect((await json<FitState>(api, "get", `/v1/jobs/${job.job_id}/fit`)).score).toEqual(seed.fit.score);
