@@ -1,6 +1,6 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
 import { Link } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRef, useState, type ReactNode } from "react";
 import { z } from "zod";
 
@@ -95,8 +95,9 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
   const { http, featureFlags, requestIdentity, sessionStorage } = usePorts();
   const client = useQueryClient();
   const identity = useSessionRequestIdentity("affected-matches", ACTION);
+  const admissionKey = ["tenant", tenantId, "fit", "refresh", "admission"] as const;
+  const submissionPending = useIsMutating({ mutationKey: admissionKey }) > 0;
   const availability = getApiCapabilityAvailability(featureFlags, "updateAffectedMatches");
-  const [submissionPending, setSubmissionPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [fallbackBusy, setFallbackBusy] = useState<z.infer<typeof busyIdentitySchema> | null>(null);
   const [wordingSelection, setWordingSelection] = useState<{ inventory: string; ids: ReadonlySet<string> } | null>(null);
@@ -239,6 +240,7 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
     && !requestStatus.data?.cancellationRequested && (notRecorded || ["pending", "start_failed"].includes(requestStatus.data?.status ?? "")));
 
   const start = useMutation({
+    mutationKey: admissionKey,
     mutationFn: async ({ kind, proposalIds }: { kind: StartKind; proposalIds: readonly string[] }) => {
       if (identity.record && operationQuery.data?.current === false) throw new Error("The earlier update belongs to a historical requirements contract and cannot be retried. Review its recorded result before starting a new update.");
       if (!identity.ready || !archive.isSuccess || !busyIdentity.isSuccess || !pendingReady || pending.isError) throw new Error("Refresh the saved match state and recovery storage before starting an update.");
@@ -268,7 +270,6 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
       if (latestIdentity && (!previous || latestIdentity.requestId !== previous.requestId)) throw new Error("Another update request needs review.");
       const saved = previous ?? { version: 1 as const, requestId: requestIdentity.create(), operation: ACTION, fingerprint, ...workspace };
       const path = `/v1/actions/${ACTION}`;
-      setSubmissionPending(true);
       try {
         identity.save(saved);
         const parsed = receiptSchema.safeParse(await http.json<unknown>("POST", path, {
@@ -293,8 +294,6 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
           try { identity.clear(saved.requestId); } catch { /* Keep an uncertain identity for reconciliation. */ }
         }
         throw error;
-      } finally {
-        setSubmissionPending(false);
       }
     },
     onSettled: () => { void client.invalidateQueries({ queryKey: ["tenant", tenantId, "fit", "refresh"] }); },
