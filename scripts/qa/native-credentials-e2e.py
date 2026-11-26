@@ -117,8 +117,11 @@ class PostgresFixture:
         executable = self.tools / (name + (".exe" if os.name == "nt" else ""))
         # An unset locale can start a macOS system thread before PostgreSQL forks.
         # initdb --no-locale sets database collation, not the postmaster environment.
-        return subprocess.run([executable, *arguments], env={**os.environ, "LC_ALL": "C"},
-                              capture_output=True, text=True, check=True, timeout=timeout)
+        # On Windows the postmaster can inherit pg_ctl's output handles. Pipes
+        # would keep communicate() waiting for the server to exit after startup.
+        subprocess.run([executable, *arguments], env={**os.environ, "LC_ALL": "C"},
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       check=True, timeout=timeout)
 
     def url(self, database):
         return f"postgresql://jobctrl:{self.password}@127.0.0.1:{self.port}/{database}?connect_timeout=3"
