@@ -113,6 +113,13 @@ combinations.
 
 New workspaces start with LinkedIn selected. To use Indeed or ZipRecruiter,
 select them under **Search preferences → Job boards**.
+New workspaces select LinkedIn and Lenny’s Jobs. Existing workspaces keep
+their saved boards. Select **Lenny’s Jobs** in **Search preferences → Job boards**
+to add it to an existing selection. Set `JOBSTREAMING_LENNYSJOBS_LISTINGS_URL`
+in the worker environment to your listing connection and restart the worker.
+Each role query and location is sent separately. The connection accepts the
+[JobStreaming listing format](https://github.com/ebarti/jobstreaming/blob/v0.0.7/README.md#connecting-lennys-jobs).
+
 Indeed uses the worker environment variable `JOBSTREAMING_INDEED_API_KEY`.
 ZipRecruiter uses `JOBSTREAMING_ZIPRECRUITER_AUTHORIZATION`. If Search reports
 a missing credential, configure that variable and restart the worker. An HTTP

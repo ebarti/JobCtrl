@@ -107,7 +107,7 @@ type Fixtures = {
   api: APIRequestContext;
   consoleErrors: string[];
   features: string | undefined;
-  discoveryTransport: "jobstreaming" | "jobstreaming-indeed-missing" | "jobstreaming-tls-failure";
+  discoveryTransport: "jobstreaming" | "jobstreaming-indeed-missing" | "jobstreaming-lennys-missing" | "jobstreaming-tls-failure";
   nativeAccountingPreflight: boolean;
   sourceRevision: string | undefined;
   sqlitePredecessor: boolean;

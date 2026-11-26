@@ -14,6 +14,20 @@ def board_rate_limit_error():
     return AppError(BOARD_RATE_LIMIT_CODE, BOARD_RATE_LIMIT_MESSAGE, 502, {"diagnostic": "rate_limited"})
 
 
+def board_search_error(event):
+    message = "The source could not complete its search."
+    if event.site.value == "lennysjobs" and event.error_type == "AdapterFailureError":
+        public_messages = {
+            "Lenny's Jobs listing connection did not confirm the hours_old filter": "The Lenny’s Jobs connection did not confirm the requested posting age. Check the lookback filter on the listing connection.",
+            "Lenny's Jobs listing connection did not confirm the is_remote filter": "The Lenny’s Jobs connection did not confirm the remote-work filter. Check the listing connection.",
+            "Lenny's Jobs returned results for a different query": "The Lenny’s Jobs connection returned results for a different search. Check that it forwards the requested query.",
+            "Lenny's Jobs returned invalid listing or pagination metadata": "The Lenny’s Jobs connection returned an unexpected listing page. Check that it supports the requested page number.",
+            "Lenny's Jobs returned an unreadable listing page": "The Lenny’s Jobs connection returned a page without readable listing data. Check the configured listing URL.",
+        }
+        message = public_messages.get(event.message, message)
+    return AppError("discovery_provider_" + event.code.value, message, 502)
+
+
 def board_access_error(event):
     board = event.site.value
     name, credential = _BOARD_CREDENTIALS.get(board, (board, None))
@@ -27,6 +41,9 @@ def board_access_error(event):
             and event.message == "Custom CA files are not supported by tls-client adapters"):
         kind = "tls_configuration"
         message = "The worker could not establish a secure connection to the board. Check its TLS configuration and certificate trust."
+    elif board == "lennysjobs" and event.error_type == "AuthenticationConfigurationError" and event.message == "Lenny's Jobs requires JOBSTREAMING_LENNYSJOBS_LISTINGS_URL":
+        kind = "missing_connection"
+        message = "Connect Lenny’s Jobs by setting JOBSTREAMING_LENNYSJOBS_LISTINGS_URL in the worker environment, then restart the worker."
     elif event.error_type == "AuthenticationConfigurationError" and credential:
         if event.message == f"{name} requires {credential}":
             kind = "missing_credential"

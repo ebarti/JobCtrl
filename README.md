@@ -96,9 +96,10 @@ its guidance is a research draft, and personal prep remains in beta.
   estimate of the day's spend reaches it.
 - The local API binds to 127.0.0.1 by default. Don't expose it to a network:
   it serves your profile, jobs, and documents.
-- Discover queries Indeed, LinkedIn, and ZipRecruiter by default and does not
-  check robots.txt. Automated access can violate a site's terms; disable any
-  source you are not allowed to query automatically.
+- Discovery selects LinkedIn and Lenny’s Jobs by default in a new workspace.
+  Lenny’s Jobs uses the worker’s configured listing connection. Indeed and
+  ZipRecruiter are opt-in. Discovery does not check robots.txt. Automated access
+  can violate a site's terms; disable any source you are not allowed to query automatically.
 
 ## What Leaves Your Machine
 

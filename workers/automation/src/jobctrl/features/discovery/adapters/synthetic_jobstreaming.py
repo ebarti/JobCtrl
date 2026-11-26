@@ -19,6 +19,7 @@ def controlled_registry(workspace):
         raise AppError("synthetic_boundary_unowned", "The SDK transport requires an owned synthetic workspace.", 503)
     from jobstreaming import AdapterRegistry
     from jobstreaming.indeed import Indeed
+    from jobstreaming.lennysjobs import LennysJobs
     from jobstreaming.linkedin import LinkedIn
     from jobstreaming.ziprecruiter import ZipRecruiter
     from requests.adapters import HTTPAdapter
@@ -66,8 +67,16 @@ def controlled_registry(workspace):
         adapter.session.headers.update({"Authorization": "Bearer " + owner["token"]})
         return adapter
 
+    def lennysjobs(**kwargs):
+        adapter = LennysJobs(listings_url=endpoint + "/lennysjobs", **kwargs)
+        adapter.session.headers["Authorization"] = "Bearer " + owner["token"]
+        if access == "jobstreaming-lennys-missing":
+            adapter.listings_url = None
+        return adapter
+
     registry = AdapterRegistry()
     registry.register("indeed", indeed)
     registry.register("linkedin", linkedin)
+    registry.register("lennysjobs", lennysjobs)
     registry.register("zip_recruiter", zip_recruiter)
     return registry

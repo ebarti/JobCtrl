@@ -28,7 +28,7 @@ DEFAULT_SETTINGS = {
     "minFitScore": 7,
     "autoApply": False,
     "applyApprovalRequired": True,
-    "boards": ["linkedin"],
+    "boards": ["linkedin", "lennysjobs"],
     "resultsPerSite": 50,
     "hoursOld": 72,
     "schedulingEnabled": False,

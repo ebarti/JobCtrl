@@ -20,6 +20,7 @@ from jobstreaming import (
     AckMode,
     AdapterRegistry,
     CheckpointStore,
+    DetailFetchUnsupportedError,
     Scraper,
     InvalidRequestError,
     JobEvent,
@@ -389,12 +390,15 @@ class JobStreamingGateway:
         acknowledgement identity when the caller reprojects the result.
         """
 
-        return fetch_job_detail(
-            event.site,
-            event.job,
-            proxies=proxies,
-            user_agent=user_agent,
-            description_format="markdown",
-            request_timeout=request_timeout,
-            registry=_normalize_tls_adapter_timeouts(registry),
-        )
+        try:
+            return fetch_job_detail(
+                event.site,
+                event.job,
+                proxies=proxies,
+                user_agent=user_agent,
+                description_format="markdown",
+                request_timeout=request_timeout,
+                registry=_normalize_tls_adapter_timeouts(registry),
+            )
+        except DetailFetchUnsupportedError:
+            return None

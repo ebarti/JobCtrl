@@ -32,13 +32,15 @@ type PreferencesProfile = Omit<Profile, "profile"> & {
 
 test("Indeed and ZipRecruiter are opt-in job boards in a new workspace", async ({ api, page }, testInfo) => {
   const savedBoards = async () => (await json<{ settings: { boards: string[] } }>(api, "get", "/v1/discovery/settings")).settings.boards;
-  expect(await savedBoards()).toEqual(["linkedin"]);
+  expect(await savedBoards()).toEqual(["linkedin", "lennysjobs"]);
 
   await page.goto("/preferences");
   const linkedIn = page.getByRole("checkbox", { name: "LinkedIn", exact: true });
+  const lennysJobs = page.getByRole("checkbox", { name: "Lenny’s Jobs", exact: true });
   const indeed = page.getByRole("checkbox", { name: "Indeed", exact: true });
   const zipRecruiter = page.getByRole("checkbox", { name: "ZipRecruiter", exact: true });
   await expect(linkedIn).toBeChecked();
+  await expect(lennysJobs).toBeChecked();
   await expect(indeed).toBeVisible();
   await expect(indeed).not.toBeChecked();
   await expect(zipRecruiter).toBeVisible();
@@ -48,8 +50,10 @@ test("Indeed and ZipRecruiter are opt-in job boards in a new workspace", async (
 
   await indeed.check();
   await zipRecruiter.check();
+  await lennysJobs.uncheck();
   await expect.poll(async () => (await savedBoards()).sort()).toEqual(["indeed", "linkedin", "zip_recruiter"]);
   await page.reload();
+  await expect(lennysJobs).not.toBeChecked();
   await expect(indeed).toBeChecked();
   await expect(zipRecruiter).toBeChecked();
 });

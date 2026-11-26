@@ -12,7 +12,7 @@ import threading
 from urllib.parse import urlsplit
 
 from jobctrl.app.errors import AppError
-from jobctrl.features.discovery.adapters.board_diagnostics import board_access_error, board_rate_limit_error
+from jobctrl.features.discovery.adapters.board_diagnostics import board_access_error, board_rate_limit_error, board_search_error
 from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, fingerprint
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY
 from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
@@ -208,7 +208,7 @@ class DiscoveryExecutionAdapter:
                         raise error
                     if event.code.value == "authentication_configuration":
                         raise board_access_error(event)
-                    raise AppError("discovery_provider_" + event.code.value, "The source could not complete its search.", 502)
+                    raise board_search_error(event)
                 if isinstance(event, SiteCompleteEvent):
                     reason = event.reason.value if event.reason else "unknown"
                     recorded.setdefault("sourceTerminations", {})[event.site.value] = reason

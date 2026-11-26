@@ -146,14 +146,14 @@ filters from the pinned Profile revision. `discovery.refresh_targets` records
 those literal inputs for inspection. Role matching uses the saved preferences
 when a posting is returned.
 
-`GET /v1/discovery/settings` defaults to `boards: ["linkedin"]` when a workspace
+`GET /v1/discovery/settings` defaults to `boards: ["linkedin", "lennysjobs"]` when a workspace
 has no saved board selection. Saved selections and explicit per-run overrides
 can include Indeed and ZipRecruiter.
 
 `GET /v1/discovery/runs` includes the canonical run's `failures` list alongside
 its counts and status. Board failures identify `sourceFamily`, `unitId`, `boards`, `code` and a safe actionable `message`. Historical records retain their original source identifiers. The action result carries the same recorded failures.
 New SDK board access failures keep the code `discovery_provider_authentication_configuration`.
-Their optional `diagnostic` is `missing_credential`, `provider_access_denied`,
+Their optional `diagnostic` is `missing_credential`, `missing_connection`, `provider_access_denied`,
 `tls_configuration`, `proxy_configuration`, or `authentication_or_configuration`.
 An identified HTTP denial includes `httpStatus` (401 or 403). A committed
 `DiscoveryRunUpdated` warning at stage `board_search` includes the same

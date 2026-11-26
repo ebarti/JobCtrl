@@ -18,7 +18,7 @@ resolution-markers = [
 [options.exclude-newer-package]
 claude-agent-sdk = "2026-11-19T23:02:00Z"
 google-antigravity = "2026-11-19T15:45:00Z"
-jobstreaming = "2026-11-18T08:43:00Z"
+jobstreaming = "2026-11-26T19:36:33Z"
 
 [[package]]
 name = "absl-py"
@@ -696,7 +696,7 @@ requires-dist = [
     { name = "google-auth", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "hatchling", marker = "extra == 'dev'", specifier = "==1.32.4" },
     { name = "httpx", specifier = ">=0.24" },
-    { name = "jobstreaming", specifier = "==0.0.6" },
+    { name = "jobstreaming", specifier = "==0.0.7" },
     { name = "jsonschema", specifier = ">=4.26,<5" },
     { name = "mcp", marker = "extra == 'providers'", specifier = ">=1.28.1" },
     { name = "openai-codex", marker = "extra == 'providers'", specifier = "==0.171.0" },
@@ -740,7 +740,7 @@ release-build = [
 
 [[package]]
 name = "jobstreaming"
-version = "0.0.6"
+version = "0.0.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -749,9 +749,9 @@ dependencies = [
     { name = "requests" },
     { name = "tls-client" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5a/42/fa834f33e106895671f35ab3a353e70670c12b215b22ec8f3f180aab7a76/jobstreaming-0.0.6.tar.gz", hash = "sha256:ee1cb876f3c8c387a043aaca8539a8055e3618c1aceb3f2203d82d6f3e724dfc", size = 105581, upload-time = "2026-11-18T08:42:44.051Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c5/69/775175d137fef9ab15ca3e2524fba437872e6e43331345095f82861977bd/jobstreaming-0.0.7.tar.gz", hash = "sha256:a6b096eb6d3e71e848399f85f4cb78ca34574d3f0a01fbf61493ad10ca46d423", size = 109289, upload-time = "2026-11-26T19:36:32.749Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/25/ed/f4f5f9edc1132a91abb30456b332763740905f0a8c835694b34209be7cd8/jobstreaming-0.0.6-py3-none-any.whl", hash = "sha256:80a86440f08f91b3c007af060697b007d4eeb1db38bcd7d42ad64ed719dbdf0a", size = 110446, upload-time = "2026-11-18T08:42:42.198Z" },
+    { url = "https://files.pythonhosted.org/packages/ee/d1/47c583b2eca1c32a2e882013a980f673bf76df14c80c068bbc2af98754d5/jobstreaming-0.0.7-py3-none-any.whl", hash = "sha256:69164d17e46601dbb014a53770286ad0ecad60051f3eb0f0c85393a5fcf82a7f", size = 114208, upload-time = "2026-11-26T19:36:31.599Z" },
 ]
 
 [[package]]
