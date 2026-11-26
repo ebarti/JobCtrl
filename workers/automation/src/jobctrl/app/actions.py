@@ -20,8 +20,8 @@ from jobctrl.app.errors import AppError, ConflictError, NotFoundError
 from jobctrl.app.events import now
 from jobctrl.app.execution import ExecutionCustody
 from jobctrl.app.worker_identity import (
-    ACTION_WORKFLOW, DBOS_APPLICATION, DBOS_SCHEMA, SEARCH_WORKFLOW, STOP_TOPIC, WORKFLOW_VERSION,
-    SCHEMA as WORKER_IDENTITY_SCHEMA, process_identity, search_workflow,
+    ASSESSMENT_ACTION, DBOS_APPLICATION, DBOS_SCHEMA, SEARCH_WORKFLOW, STOP_TOPIC, WORKER_QUEUES, WORKFLOW_VERSION,
+    SCHEMA as WORKER_IDENTITY_SCHEMA, action_route, process_identity, search_workflow,
 )
 
 
@@ -153,12 +153,12 @@ class Application:
         )
         if admission := self.action_admissions.get(action):
             admission(run_id, payload, connection)
-        search = search_workflow(action, payload)
+        workflow_name, queue = action_route(action, payload)
         self.dbos.enqueue_in_transaction(
             connection.sa_connection, {
-                "workflow_name": SEARCH_WORKFLOW if search else ACTION_WORKFLOW,
+                "workflow_name": workflow_name,
                 "workflow_id": workflow_id, "workflow_id_reuse_policy": "reject",
-                "queue_name": self.identity["searchQueue" if search else "taskQueue"],
+                "queue_name": self.identity[queue],
                 "app_version": self.identity["workflowVersion"],
             }, run_id,
         )
@@ -255,7 +255,7 @@ class Application:
 
     async def submit(self, action: str, payload: dict, *, idempotency_key: str | None = None,
                      request_id: str | None = None) -> dict:
-        if action == "preparation.assess_discovered":
+        if action == ASSESSMENT_ACTION:
             raise NotFoundError("This action requires an admitted Discovery handoff.")
         encoded = self._require_action(action, payload)
         key = uuid.uuid4().hex if idempotency_key is None else idempotency_key
@@ -556,7 +556,7 @@ class Application:
             # Confirm each queue and the executor version against the same system
             # database that the transactional enqueue will use.
             queues = {queue.name for queue in self.dbos.list_queues(application_name=DBOS_APPLICATION)}
-            expected = {self.identity[name] for name in ("taskQueue", "searchQueue", "scheduleQueue")}
+            expected = {self.identity[name] for name in WORKER_QUEUES}
             latest = self.dbos.get_latest_application_version()
             if expected.issubset(queues) and latest["version_name"] == self.identity["workflowVersion"]:
                 return worker

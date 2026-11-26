@@ -11,8 +11,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from jobctrl.app.errors import AppError
 from jobctrl.app.worker_identity import (
-    ACTION_WORKFLOW, DBOS_APPLICATION, READY_WORKFLOW, SCHEDULE_ACTIONS, SCHEDULE_WORKFLOW,
-    SEARCH_WORKFLOW, WORKFLOW_VERSION, search_workflow,
+    ACTION_WORKFLOW, ASSESSMENT_ACTION, DBOS_APPLICATION, READY_WORKFLOW, SCHEDULE_ACTIONS, SCHEDULE_WORKFLOW,
+    SEARCH_WORKFLOW, WORKFLOW_VERSION, action_route,
 )
 
 ENGINE_UNFINISHED = "(status IS NULL OR status NOT IN ('SUCCESS','ERROR','CANCELLED','MAX_RECOVERY_ATTEMPTS_EXCEEDED'))"
@@ -35,24 +35,27 @@ def inspect_pending(application, connection):
     for row in connection.execute(active_sql):
         action = row["action"]
         payload = json.loads(row["payload_json"])
-        owned[row["workflow_id"]] = SEARCH_WORKFLOW if search_workflow(action, payload) else ACTION_WORKFLOW
+        name, queue = action_route(action, payload)
+        routes = {(name, application.identity[queue])}
+        if action == ASSESSMENT_ACTION:
+            # Already-enrolled assessments from the original general queue
+            # run the same workflow instructions and retain their identity.
+            routes.add((name, application.identity["taskQueue"]))
+        owned[row["workflow_id"]] = routes
         if action not in application.actions or application._input_digest(action, payload) != row["input_hash"]:
             bad_actions += 1
-    queues = {
-        ACTION_WORKFLOW: application.identity["taskQueue"], SEARCH_WORKFLOW: application.identity["searchQueue"],
-        SCHEDULE_WORKFLOW: application.identity["scheduleQueue"], READY_WORKFLOW: application.identity["scheduleQueue"],
-    }
+    control_routes = {(name, application.identity["scheduleQueue"]) for name in (SCHEDULE_WORKFLOW, READY_WORKFLOW)}
     schedules = {f"{application.identity['taskQueue']}-{kind}" for kind, action in SCHEDULE_ACTIONS.items()
                  if action in application.actions}
     bad_workflows = 0
     for flow in workflows:
         name = flow["name"]
-        if (flow["status"] not in {"ENQUEUED", "DELAYED", "PENDING"} or name not in queues or flow["queue_name"] != queues.get(name)
+        routes = owned.get(flow["workflow_uuid"], ()) if name in (ACTION_WORKFLOW, SEARCH_WORKFLOW) else control_routes
+        if (flow["status"] not in {"ENQUEUED", "DELAYED", "PENDING"} or (name, flow["queue_name"]) not in routes
                 or flow["application_name"] != DBOS_APPLICATION
                 or (flow["application_version"] != WORKFLOW_VERSION
                     and not (name == SCHEDULE_WORKFLOW and flow["application_version"] is None))
-                or (name == SCHEDULE_WORKFLOW and flow["schedule_name"] not in schedules)
-                or (name in (ACTION_WORKFLOW, SEARCH_WORKFLOW) and owned.get(flow["workflow_uuid"]) != name)):
+                or (name == SCHEDULE_WORKFLOW and flow["schedule_name"] not in schedules)):
             bad_workflows += 1
     if owned:
         # Missing history or an engine success without the required domain
