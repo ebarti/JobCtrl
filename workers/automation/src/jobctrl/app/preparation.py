@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import time
 from contextlib import nullcontext
 
 from jobctrl.app.contracts import ActionContext
@@ -1089,7 +1090,7 @@ class PreparationService:
             discovered = settled["result"]
         targets, _ = self.checkpoints.save_targets(context.run_id, self._search_targets(request, discovered), route="per_job")
         if self.checkpoints.handoffs_pending(context.run_id):
-            return {"done": False, "waitSeconds": 1.0}
+            return {"done": False, "wakeAt": time.time() + 1.0}
         failed = self.checkpoints.settle_search(context.run_id, bool(discovered.get("failures")),
                      lambda conn: self._verify_search_fit(context, targets, connection=conn))
         run = self.get_run(context.run_id)
@@ -1106,7 +1107,7 @@ class PreparationService:
             turn = await self.search_turn(context, payload)
             if turn["done"]:
                 return turn["result"]
-            await asyncio.sleep(turn["waitSeconds"])
+            await asyncio.sleep(max(0.0, turn["wakeAt"] - time.time()))
 
     @staticmethod
     def _search_result(run, discovered):

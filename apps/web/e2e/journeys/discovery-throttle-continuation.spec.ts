@@ -70,7 +70,20 @@ function description(text: string) {
   return `<div class="show-more-less-html__markup"><p>${text}</p></div>`;
 }
 
-test("LinkedIn automatically resumes a throttled page with the original exclusions and remaining job limit", async ({ api, app, page }) => {
+type Throttle = { receivedAt: string; retryAtEpochSeconds: number; retryAfterSeconds: number | null; phase: string };
+
+async function throttleEvents(api: APIRequestContext, runId: string) {
+  const { events } = await json<{ events: { payload: Throttle }[] }>(api, "get",
+    `/v1/events?aggregateId=${runId}&type=DiscoverySourceRateLimited`);
+  // Activity history is newest first. Compare waits in request order.
+  return events.reverse().map((event) => event.payload);
+}
+
+function plannedWaitMs(throttle: Throttle) {
+  return Math.trunc(throttle.retryAtEpochSeconds * 1000) - Date.parse(throttle.receivedAt);
+}
+
+test("LinkedIn automatically resumes a throttled page with the original exclusions and remaining job limit", async ({ api, app, context, page }) => {
   const { library } = await configureSearch(api, 2);
   await page.goto("/jobs");
   const original = await startSearch(page);
@@ -99,6 +112,7 @@ test("LinkedIn automatically resumes a throttled page with the original exclusio
   const progress = page.getByRole("region", { name: "Job search progress" });
   await expect(progress.getByRole("button", { name: "Request stop", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue LinkedIn search", exact: true })).toHaveCount(0);
+  await page.close();
 
   // The provider repeats both rows from the prior page. Its excluded row was
   // never saved to Jobs, so deduplicating only the Jobs table cannot skip it.
@@ -124,9 +138,10 @@ test("LinkedIn automatically resumes a throttled page with the original exclusio
   expect(requests.filter((call) => call.path.startsWith(listingPath)).map((call) => Number(new URL(call.path, "http://localhost").searchParams.get("start")))).toEqual([0, 10, 10]);
   expect(requests.filter((call) => call.path.includes("/jobs/view/")).map((call) => call.path.split("/").at(-1))).toEqual(["7611", "7612", "7613"]);
   expect(app.external.calls.filter((call) => call.path === "/model" && call.body?.["operation"] === "discovery.role_target_match")).toHaveLength(3);
-  await page.reload();
-  await expect(progress.getByRole("heading", { name: "Search completed", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Continue LinkedIn search", exact: true })).toHaveCount(0);
+  const reopened = await context.newPage();
+  await reopened.goto("/jobs");
+  await expect(reopened.getByRole("heading", { name: "Search completed", exact: true })).toBeVisible();
+  await expect(reopened.getByRole("button", { name: "Continue LinkedIn search", exact: true })).toHaveCount(0);
 });
 
 test("a short positive LinkedIn Retry-After resumes the same detail automatically", async ({ api, app }) => {
@@ -184,9 +199,14 @@ test("repeated LinkedIn detail throttles back off across worker replacement and 
   const finished = (await completed(api, first.runId)).result as { newJobIds: string[] };
   expect(finished).toMatchObject({ status: "completed", failures: [], newJobs: 2, preparation: { status: "succeeded", assessedJobs: 2 } });
   expect(new Set(finished.newJobIds).size).toBe(2);
-  const throttle = await json<{ events: { payload: { phase: string; retryAfterSeconds: number | null } }[] }>(api, "get",
-    `/v1/events?aggregateId=${first.runId}&type=DiscoverySourceRateLimited`);
-  expect(throttle.events.map(event => [event.payload.phase, event.payload.retryAfterSeconds])).toEqual([["detail", null], ["detail", null]]);
+  const throttles = await throttleEvents(api, first.runId);
+  expect(throttles.map(event => [event.phase, event.retryAfterSeconds])).toEqual([["detail", null], ["detail", null]]);
+  const waits = throttles.map(plannedWaitMs);
+  expect(waits[0]).toBeGreaterThanOrEqual(4_000);
+  expect(waits[0]).toBeLessThanOrEqual(8_000);
+  expect(waits[1]).toBeGreaterThanOrEqual(8_000);
+  expect(waits[1]).toBeLessThanOrEqual(16_000);
+  await test.info().attach("fallback-waits", { contentType: "application/json", body: JSON.stringify({ waitsMs: waits }) });
   expect(app.external.calls.filter((call) => call.path.includes("/jobstreaming/linkedin/jobs/view/")).map((call) => call.path.split("/").at(-1)))
     .toEqual(["7631", "7632", "7633", "7633", "7633"]);
   expect(app.external.calls.filter((call) => call.path === "/model" && call.body?.["operation"] === "discovery.role_target_match")).toHaveLength(3);
@@ -205,11 +225,15 @@ test("a long source cooldown survives worker replacement while one failed Fit ca
   await expect.poll(async () => (await recorded()).retryableJobIds.length).toBe(1);
   const failed = (await recorded()).retryableJobIds[0]!;
   const preRestart = await app.discoveryCheckpoint(search.runId);
+  const [throttle] = await throttleEvents(api, search.runId);
+  expect(plannedWaitMs(throttle!)).toBe(601_000);
   const before = app.external.calls.map((call) => call.body?.["operation"]);
   const pids = await app.restartWorker();
   expect(pids.current).not.toBe(pids.previous);
   await page.goto("/jobs");
-  await expect(page.getByRole("region", { name: "Job search progress" })).toContainText("LinkedIn paused this search");
+  const progress = page.getByRole("region", { name: "Job search progress" });
+  await expect(progress).toContainText("LinkedIn paused this search");
+  await expect(progress.locator("time")).toHaveAttribute("datetime", new Date(throttle!.retryAtEpochSeconds * 1000).toISOString());
   await expect(page.getByRole("button", { name: "Continue LinkedIn search", exact: true })).toHaveCount(0);
   expect((await recorded()).status).toBe("running");
   await page.goto(`/jobs/${failed}`);
@@ -244,4 +268,78 @@ test("a long source cooldown survives worker replacement while one failed Fit ca
   expect((await app.discoveryCheckpoint(search.runId)).adapters).toEqual(preRestart.adapters);
   expect((await json<FitState>(api, "get", `/v1/jobs/${failed}/fit`)).score).toEqual(accepted.score);
   expect(app.external.calls.filter((call) => call.path.startsWith("/jobstreaming/linkedin/"))).toHaveLength(3);
+});
+
+test("repeated LinkedIn limits keep the fallback between one and two minutes", async ({ api, app }, info) => {
+  const { profile } = await configureSearch(api, 1);
+  const search = await action(api, "discovery.search", { queries: [], locations: [], expectedProfileVersion: profile.profileVersion });
+  for (let attempt = 0; attempt < 6; attempt++)
+    (await listingAt(app, 0)).raw("Too many requests", { status: 429, headers: { "Retry-After": "1" } });
+  (await listingAt(app, 0)).raw("Too many requests", { status: 429 });
+  await expect.poll(async () => (await throttleEvents(api, search.runId)).length).toBe(7);
+  const events = await throttleEvents(api, search.runId);
+  expect(events.map(event => event.retryAfterSeconds)).toEqual([1, 1, 1, 1, 1, 1, null]);
+  expect(events.slice(0, 6).map(plannedWaitMs)).toEqual(Array(6).fill(4_000));
+  const last = events[6]!;
+  const wait = plannedWaitMs(last);
+  expect(wait).toBeGreaterThanOrEqual(60_000);
+  expect(wait).toBeLessThanOrEqual(120_000);
+  await expect.poll(async () => {
+    const runs = await json<{ runs: { runId: string; cooldowns: { retryAtEpochSeconds: number }[] }[] }>(api, "get", "/v1/discovery/runs");
+    return runs.runs.find(run => run.runId === search.runId)?.cooldowns[0]?.retryAtEpochSeconds;
+  }).toBe(last.retryAtEpochSeconds);
+  await json(api, "post", `/v1/action-runs/${search.runId}/cancel`, {});
+  expect((await terminal(api, search.runId)).status).toBe("cancelled");
+  await info.attach("capped-fallback", { contentType: "application/json", body: JSON.stringify({ consecutiveLimits: events.length, waitMs: wait }) });
+});
+
+test.describe("search timer handoff", () => {
+  test.use({ searchTimerDebugger: true });
+
+  test("an overdue search retries on cold startup even if the worker quit before registering its timer", async ({ api, app, context, page, postgres }, info) => {
+    const { library } = await configureSearch(api, 1);
+    await page.goto("/jobs");
+    const original = await startSearch(page);
+    (await listingAt(app, 0)).raw("Too many requests", { status: 429, headers: { "Retry-After": "18" } });
+    await app.waitForSearchTimerPause(original.runId);
+    const [throttle] = await throttleEvents(api, original.runId);
+    const deadline = throttle!.retryAtEpochSeconds * 1000;
+    expect(plannedWaitMs(throttle!)).toBe(18_000);
+    const progress = page.getByRole("region", { name: "Job search progress" });
+    const visibleTime = progress.locator("time");
+    await expect(visibleTime).toHaveAttribute("datetime", new Date(deadline).toISOString());
+    await info.attach("local-retry-time", { contentType: "image/png", body: await progress.screenshot() });
+    await page.close();
+
+    let workerStartedAt = 0;
+    await app.restartWorker(undefined, async () => {
+      await app.restartApi({ afterExit: async () => {
+        await postgres.pause();
+        try {
+          await expect.poll(() => Date.now(), { timeout: 22_000, intervals: [200] }).toBeGreaterThan(deadline);
+          expect(app.external.calls.filter(call => call.path.startsWith(listingPath))).toHaveLength(1);
+        } finally {
+          await postgres.resume();
+        }
+      } });
+      workerStartedAt = Date.now();
+    });
+
+    const retry = await listingAt(app, 0);
+    const resumedAt = Date.now();
+    expect(workerStartedAt).toBeGreaterThan(deadline);
+    expect(resumedAt - workerStartedAt).toBeLessThan(12_000);
+    retry.raw(listingCards([7651]));
+    (await detailFor(app, 7651)).raw(description("Maintain durable workflow recovery."));
+    await serveRoleTarget(roleModel(app), "match");
+    await serveSavedAssessment(assessmentModel(app), library);
+    expect((await completed(api, original.runId)).result).toMatchObject({ status: "completed", newJobs: 1, preparation: { assessedJobs: 1 } });
+    expect(await throttleEvents(api, original.runId)).toEqual([throttle]);
+    const reopened = await context.newPage();
+    await reopened.goto("/jobs");
+    await expect(reopened.getByRole("heading", { name: "Search completed", exact: true })).toBeVisible();
+    await info.attach("offline-recovery", { contentType: "application/json", body: JSON.stringify({
+      promisedWaitMs: plannedWaitMs(throttle!), deadline, workerStartedAt, resumedAt, elapsedFromWorkerStartMs: resumedAt - workerStartedAt,
+    }) });
+  });
 });

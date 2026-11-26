@@ -305,6 +305,7 @@ export async function applicationStack(
     fitRecoveryDebugger = false,
     cohortBoundaryDebugger = false,
     modelReceiptDebugger = false,
+    searchTimerDebugger = false,
     preflight = false,
     sqlitePredecessor = false,
     predecessorPython: explicitPredecessorPython,
@@ -385,6 +386,7 @@ export async function applicationStack(
   const cohortPaused = path.join(directory, "cohort-boundary-paused.json");
   const modelReceiptArm = path.join(directory, "model-receipt-arm");
   const modelReceiptPaused = path.join(directory, "model-receipt-paused.json");
+  const searchTimerPaused = path.join(directory, "search-timer-paused.json");
   async function startWorker(workerFeatures, selected = workspace, selectedEnv = env) {
     worker = await launch(
       `worker-${++workerGeneration}`,
@@ -393,6 +395,7 @@ export async function applicationStack(
         ...(recoveryDebuggerEnabled ? [path.join(repo, "apps/web/e2e/harness/fit-recovery-debugger.py"), recoveryArm, recoveryPaused]
           : cohortBoundaryDebugger ? [path.join(repo, "apps/web/e2e/harness/cohort-boundary-debugger.py"), cohortArm, cohortPaused]
           : modelReceiptDebugger ? [path.join(repo, "apps/web/e2e/harness/model-receipt-debugger.py"), modelReceiptArm, modelReceiptPaused]
+          : searchTimerDebugger && workerGeneration === 1 ? [path.join(repo, "apps/web/e2e/harness/search-timer-debugger.py"), searchTimerPaused]
           : ["-m", "jobctrl.app.worker"]),
         "--workspace",
         selected,
@@ -553,7 +556,7 @@ print(json.dumps([dict(zip(("receiptId","ownerKey","status","inputFingerprint","
       get workerPid() {
         return worker?.pid;
       },
-      async restartApi({ freshWorkspace = false } = {}) {
+      async restartApi({ freshWorkspace = false, afterExit } = {}) {
         if (replacementWorkspace || preflight || sourceRevision)
           throw new Error("Only the original ordinary synthetic workspace can restart its API.");
         let selected = workspace;
@@ -575,6 +578,7 @@ print(json.dumps([dict(zip(("receiptId","ownerKey","status","inputFingerprint","
         previous.crash();
         await previous.stop();
         services.splice(services.indexOf(previous), 1);
+        await afterExit?.();
         await startServer(selected, selectedEnv);
         if (freshWorkspace) {
           await startWorker(undefined, selected, selectedEnv);
@@ -585,6 +589,14 @@ print(json.dumps([dict(zip(("receiptId","ownerKey","status","inputFingerprint","
           }, "replacement workspace worker registration");
           await disableCompensationAutomation();
         }
+      },
+      async waitForSearchTimerPause(runId) {
+        await waitFor(async () => {
+          try {
+            const pause = JSON.parse(await readFile(searchTimerPaused, "utf8"));
+            return pause.pid === worker.pid && pause.workflowId.endsWith(`-${runId}`);
+          } catch (error) { if (error.code === "ENOENT") return false; throw error; }
+        }, "owned search workflow paused before timer registration");
       },
       async armCohortBoundaryPause() {
         if (!cohortBoundaryDebugger) throw new Error("The cohort guard debugger is not enabled.");

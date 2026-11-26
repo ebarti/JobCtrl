@@ -29,7 +29,9 @@ const RunListSchema = z.object({ ok: z.literal(true), runs: z.array(z.object({
   runId: z.string().min(1), status: z.string(), newJobs: z.number().int().nonnegative(),
   failures: z.array(SourceFailureSchema).optional(), observedJobs: z.number().int().nonnegative(), failureCode: z.string().nullable(), createdAt: z.string(), updatedAt: z.string(),
   continuedByRunId: z.string().min(1).nullish(),
-  cooldowns: z.array(z.object({ board: z.string(), retryAfterSeconds: z.number().nonnegative() })).optional(),
+  cooldowns: z.array(z.object({
+    board: z.string(), retryAfterSeconds: z.number().nonnegative(), retryAtEpochSeconds: z.number().optional(),
+  })).optional(),
   postings: z.object({ received: z.number(), duplicate: z.number(), excluded: z.number(), pending: z.number() }).optional(),
 }).passthrough()) });
 const ResultSchema = z.object({ failures: z.array(SourceFailureSchema).optional(), status: z.string().optional(), acquisitionStatus: z.string().optional(),

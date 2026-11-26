@@ -345,12 +345,15 @@ minimum interval between request starts across searches and worker restarts.
 
 The activity log records when a LinkedIn listing or detail request receives HTTP
 429, the number of responses received and the requested delay. The Jobs page
-shows when JobCtrl will retry. It honors a positive `Retry-After`. When the
-header is missing, invalid or zero, JobCtrl waits four seconds after the first
-rate limit and doubles the delay on successive limits, up to 15 minutes per
-wait. At the deadline the same search automatically retries its unfinished
-work with its original criteria and remaining new-job allowance. You can close
-the tab, restart the worker or choose **Request stop** during the wait.
+shows the next retry in your local time. JobCtrl honors a positive
+`Retry-After`, including waits longer than two minutes. When the header is
+missing, invalid or zero, JobCtrl picks a random delay for each retry. The
+first wait is 4–8 seconds, then 8–16, 16–32, 32–64 and finally 60–120 seconds
+for each further retry. Closing the Jobs browser tab leaves the search running.
+If you quit JobCtrl or turn off the computer, that time counts toward the wait.
+When the worker starts again, it waits only until the saved deadline. If the
+deadline has passed, it resumes the same search as soon as it is ready, with
+the original criteria and remaining job allowance. **Request stop** cancels it.
 Jobs already assessed keep their scores. For an older search that already
 ended because of a rate limit, **Continue LinkedIn search** resumes its saved
 position under the current retry behavior.

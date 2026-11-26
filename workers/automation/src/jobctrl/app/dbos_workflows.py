@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import time
 from typing import TYPE_CHECKING
 
 from dbos import DBOS
@@ -56,10 +57,11 @@ async def run_search(run_id: str):
         turn = await search_step(run_id)
         if turn["done"]:
             return run_id
-        if turn["waitSeconds"] > 0:
-            # The durable timeout retains the original deadline after restart.
-            # Stop wakes a sleeping search so its queue slot is available immediately.
-            await DBOS.recv_async(topic=STOP_TOPIC, timeout_seconds=turn["waitSeconds"])
+        wake_at = turn.get("wakeAt", 0.0)
+        if wake_at or turn.get("waitSeconds", 0) > 0:
+            # Replay the same interruptible receive even when overdue. For older
+            # turns DBOS reuses its recorded timer, or rechecks the board immediately.
+            await DBOS.recv_async(topic=STOP_TOPIC, timeout_seconds=max(0.0, wake_at - time.time()))
 
 
 @DBOS.step(name="jobctrl.schedule.admit.v1")

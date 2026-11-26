@@ -96,7 +96,7 @@ test("search assesses the exact saved LinkedIn detail after a later posting is t
   expect(throttle.events[0]).toEqual(expect.objectContaining({ occurredAt: expect.any(String), payload: {
     board: "linkedin", unitId: expect.any(String), phase: "detail", httpStatus: 429,
     leaseEpoch: 1, responses: { listing: 1, detail: 2, other: 0 }, elapsedMs: expect.any(Number),
-    receivedAt: expect.any(String), retryAfterSeconds: 601,
+    receivedAt: expect.any(String), retryAfterSeconds: 601, retryAtEpochSeconds: expect.any(Number),
   } }));
   await json(api, "post", `/v1/action-runs/${started.runId}/cancel`, {});
   expect((await terminal(api, started.runId)).status).toBe("cancelled");

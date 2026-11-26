@@ -162,10 +162,13 @@ Terminal SDK board rate limits use `discovery_provider_rate_limited` and set
 `diagnostic` to `rate_limited` in the warning and run result. A terminal board
 rate limit stops that board's remaining query and location units for the run.
 LinkedIn listing and detail requests share a four-second minimum interval across
-runs. Every LinkedIn HTTP 429 pauses that board. A positive `Retry-After` sets
-its deadline, otherwise JobCtrl uses its persisted exponential backoff. While
-the deadline is outstanding, the run stays active and exposes the wait in
-`cooldowns`. A worker restart retains the wait. The same run automatically
+runs. Every LinkedIn HTTP 429 pauses that board. JobCtrl honors a positive
+`Retry-After` and the minimum request interval. Without a usable header it
+uses exponential backoff with jitter and a 120-second ceiling. While the
+deadline is outstanding, the run stays active.
+Each entry in `cooldowns` includes `retryAtEpochSeconds` (absolute Unix time)
+and `retryAfterSeconds` (remaining wait). The worker counts time spent offline
+toward that same deadline. The same run automatically
 resumes pending acquisition unless cancelled or its job limit is already met.
 The run list also explains rate limits from historical records that stored this
 code with a generic message.
@@ -176,7 +179,8 @@ from. Each event includes `receivedAt` (UTC), `unitId`, `phase` (`listing`,
 `detail`, or `other`), `leaseEpoch`, `elapsedMs` since the discovery run started,
 and cumulative `responses` for that run and board through the reported 429. `retryAfterSeconds`
 is the provider's requested delay or `null` when the header is absent or
-unusable. The source's `politeness.rateLimitedCount`
+unusable. New events also record the effective deadline in `retryAtEpochSeconds`.
+The source's `politeness.rateLimitedCount`
 continues to describe recent runs that settled with a rate-limit failure.
 `partial` means at least one source unit completed or reached the new-job limit
 while another failed. A completed source may return no jobs. Reaching the limit
