@@ -413,9 +413,14 @@ async function upgradeCurrentWorkspace(){
  await run(python,[path.join(repo,'workers/automation/scripts/qa_postgres_upgrade_source.py'),'--checkout',predecessor,'--workspace',sourceWorkspace]);
  const before=digest(await readFile(path.join(sourceWorkspace,'jobctrl.db')));
  const targetEnv={...env,JOBCTRL_DIR:sourceWorkspace};
- const refused=await run(selector,['start','--no-open'],{commandEnv:targetEnv,acceptFailure:true});
- assert.notEqual(refused.code,0);
- assert.match(refused.stderr,/existing SQLite workspace requires a verified PostgreSQL upgrade/);
+ try {
+  const refused=await run(selector,['start','--no-open'],{commandEnv:targetEnv,acceptFailure:true});
+  assert.notEqual(refused.code,0);
+  assert.match(refused.stderr,/existing SQLite workspace requires a verified PostgreSQL upgrade/);
+  await assert.rejects(stat(path.join(sourceWorkspace,'postgres')),{code:'ENOENT'});
+ } finally {
+  await run(selector,['stop'],{commandEnv:targetEnv});
+ }
  assert.equal(digest(await readFile(path.join(sourceWorkspace,'jobctrl.db'))),before);
  passed('existing-sqlite-workspace-is-preserved-before-desktop-upgrade');
 }

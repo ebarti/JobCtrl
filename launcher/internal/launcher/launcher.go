@@ -566,7 +566,19 @@ func checkStartSchemaVersion(ctx launchContext) error {
 	if !usesPythonApplication(ctx.Manifest) || ctx.Manifest.SchemaVersion != 2 {
 		return errors.New("the selected payload does not implement the Python application")
 	}
-	return checkPythonApplicationWorkspace(ctx)
+	if err := checkPythonApplicationWorkspace(ctx); err != nil {
+		return err
+	}
+	if _, err := readPostgresSelection(ctx, "active.json"); !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if _, err := os.Lstat(filepath.Join(ctx.Instance.StateDir, "jobctrl.db")); !errors.Is(err, os.ErrNotExist) {
+		if err != nil {
+			return err
+		}
+		return errDesktopSQLiteUpgrade
+	}
+	return nil
 }
 
 func ExitCode(err error) int {

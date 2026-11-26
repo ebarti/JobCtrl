@@ -20,6 +20,8 @@ type postgresSelection struct {
 	Generation    string `json:"generation"`
 }
 
+var errDesktopSQLiteUpgrade = errors.New("existing SQLite workspace requires a verified PostgreSQL upgrade before desktop startup")
+
 func postgresRoot(ctx launchContext) string { return filepath.Join(ctx.Instance.StateDir, "postgres") }
 func (s postgresSelection) path(ctx launchContext) string {
 	return filepath.Join(postgresRoot(ctx), s.Generation)
@@ -231,7 +233,7 @@ func admitPostgres(ctx launchContext, selection postgresSelection, expectedPID i
 		if err = refuseOpenWorkspaceDatabases(src, temporal); err != nil {
 			return err
 		}
-		return errors.New("existing SQLite workspace requires a verified PostgreSQL upgrade before desktop startup")
+		return errDesktopSQLiteUpgrade
 	} else if !activeAlready {
 		cmd := localCommand(ctx, python, "-I", "-B", "-c", "from pathlib import Path; from jobctrl.app.database import Database; import sys; Database(Path(sys.argv[1]))", ctx.Instance.StateDir)
 		if err := cmd.Run(); err != nil {
