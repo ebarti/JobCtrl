@@ -264,8 +264,7 @@ refuses to activate that physical clone; do not point the original workspace
 at it. Native verified recovery is a separate operation. PostgreSQL tools come
 from `JOBCTRL_POSTGRES_BIN_DIR` or PATH.
 
-The source CLI can import the current Python SQLite workspace explicitly into PostgreSQL.
-Desktop startup preserves an existing SQLite workspace and requires its verified upgrade before opening it.
+The current Python SQLite workspace can be imported explicitly into PostgreSQL.
 Keep its source database, companions, predecessor workflow history and owned
 artifacts. Rehearse into an isolated target first; stop old writers and drain
 outstanding work before the final snapshot. Validation covers content and file

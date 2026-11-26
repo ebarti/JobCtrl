@@ -413,16 +413,17 @@ async function upgradeCurrentWorkspace(){
  await run(python,[path.join(repo,'workers/automation/scripts/qa_postgres_upgrade_source.py'),'--checkout',predecessor,'--workspace',sourceWorkspace]);
  const before=digest(await readFile(path.join(sourceWorkspace,'jobctrl.db')));
  const targetEnv={...env,JOBCTRL_DIR:sourceWorkspace};
- try {
-  const refused=await run(selector,['start','--no-open'],{commandEnv:targetEnv,acceptFailure:true});
-  assert.notEqual(refused.code,0);
-  assert.match(refused.stderr,/existing SQLite workspace requires a verified PostgreSQL upgrade/);
-  await assert.rejects(stat(path.join(sourceWorkspace,'postgres')),{code:'ENOENT'});
- } finally {
-  await run(selector,['stop'],{commandEnv:targetEnv});
- }
+ try{
+  await run(selector,['start','--no-open'],{commandEnv:targetEnv});
+  assert.equal((await api('/v1/settings')).revision,3);
+  assert.equal((await api('/v1/health')).dbos.available,true);
+  const socket=path.join('/private/tmp',`jobctrl-pg-${process.getuid()}-${digest(sourceWorkspace).slice(0,24)}`);
+  const result=await run(path.join(postgresBin,'psql'),['-XAtw','-h',socket,'-p','5432','-U','jobctrl','-d','jobctrl','-c',"SELECT count(*) FROM app_events WHERE event_type='SyntheticUpgrade' AND event_id=1"]);
+  assert.equal(result.stdout.trim(),'1');
+ }finally{await run(selector,['stop'],{commandEnv:targetEnv});}
  assert.equal(digest(await readFile(path.join(sourceWorkspace,'jobctrl.db'))),before);
- passed('existing-sqlite-workspace-is-preserved-before-desktop-upgrade');
+ assert.equal((await stat(path.join(sourceWorkspace,'jobctrl.db'))).mode & 0o777,0o400);
+ passed('current-python-import-keeps-original-and-verifies-source-event-through-postgres');
 }
 
 async function receiptRefusals(){

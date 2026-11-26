@@ -20,8 +20,6 @@ type postgresSelection struct {
 	Generation    string `json:"generation"`
 }
 
-var errDesktopSQLiteUpgrade = errors.New("existing SQLite workspace requires a verified PostgreSQL upgrade before desktop startup")
-
 func postgresRoot(ctx launchContext) string { return filepath.Join(ctx.Instance.StateDir, "postgres") }
 func (s postgresSelection) path(ctx launchContext) string {
 	return filepath.Join(postgresRoot(ctx), s.Generation)
@@ -233,7 +231,18 @@ func admitPostgres(ctx launchContext, selection postgresSelection, expectedPID i
 		if err = refuseOpenWorkspaceDatabases(src, temporal); err != nil {
 			return err
 		}
-		return errDesktopSQLiteUpgrade
+		// The importer takes a consistent SQLite backup and verifies all authority before activation.
+		cmd := localCommand(ctx, python, "-I", "-B", "-m", "jobctrl.app.postgres_upgrade", "--sqlite", src, "--workspace", ctx.Instance.StateDir, "--seal-source")
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("verified PostgreSQL import failed; staged and source data preserved: %w", err)
+		}
+		info, e := os.Lstat(src)
+		if e != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0400 {
+			return errors.New("canonical SQLite predecessor is not sealed read-only")
+		}
+		if err = refuseOpenWorkspaceDatabases(src, temporal); err != nil {
+			return err
+		}
 	} else if !activeAlready {
 		cmd := localCommand(ctx, python, "-I", "-B", "-c", "from pathlib import Path; from jobctrl.app.database import Database; import sys; Database(Path(sys.argv[1]))", ctx.Instance.StateDir)
 		if err := cmd.Run(); err != nil {
