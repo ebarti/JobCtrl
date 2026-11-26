@@ -405,7 +405,7 @@ c=sqlite3.connect(p/'temporal.db');c.execute('CREATE TABLE legacy_history(value 
 
 async function upgradeCurrentWorkspace(){
  const predecessor=path.join(root,'sqlite-predecessor');
- const sourceWorkspace=path.join(root,'current-python-workspace');
+ const sourceWorkspace=path.join(env.TMPDIR,'current-python-workspace');
  const archive=path.join(root,'sqlite-predecessor.tar');
  await mkdir(predecessor,{mode:0o700});
  await run('/usr/bin/git',['archive','--format=tar','--output',archive,'f8e329d2dda0ac44599c9a4f281cff459d0b7868','workers/automation/src/jobctrl']);
