@@ -20,7 +20,7 @@ from jobctrl.app.errors import AppError
 from jobctrl.app.events import now
 from jobctrl.app.execution import ExecutionCustody
 from jobctrl.app.scheduling import SCHEMA as SCHEDULE_SCHEMA, maintain
-from jobctrl.app.worker_identity import DBOS_APPLICATION, DBOS_SCHEMA, READY_WORKFLOW
+from jobctrl.app.worker_identity import DBOS_APPLICATION, DBOS_SCHEMA, READY_WORKFLOW, WORKER_QUEUES
 from jobctrl.app.workflow_compat import inspect_pending
 
 log = logging.getLogger(__name__)
@@ -62,20 +62,24 @@ async def run_worker(workspace: Path, *, enabled_features=None):
         binding.application = application
         binding.registration = worker_id
         binding.stopping = stop.is_set
+        slots = application.runtime.settings.get("workerActivitySlots", 4)
+        binding.action_slots = asyncio.Semaphore(slots)
         DBOS(config={
             "name": DBOS_APPLICATION, "system_database_engine": application.runtime.database.engine,
             "dbos_system_schema": DBOS_SCHEMA, "serializer": DBOSPortableJSONSerializer(),
             "application_version": identity["workflowVersion"], "executor_id": executor,
             "enable_otlp": False, "use_listen_notify": False, "scheduler_polling_interval_sec": 2.0,
         })
-        DBOS.listen_queues([identity[key] for key in ("taskQueue", "searchQueue", "scheduleQueue")])
+        DBOS.listen_queues([identity[key] for key in WORKER_QUEUES])
         DBOS.launch()
         # Scheduled ticks target the latest version. The single desktop executor
         # may also be a deliberately restored compatible build.
         if DBOS.get_latest_application_version()["version_name"] != identity["workflowVersion"]:
             DBOS.set_latest_application_version(identity["workflowVersion"])
-        slots = application.runtime.settings.get("workerActivitySlots", 4)
-        for queue, capacity in (("taskQueue", slots), ("searchQueue", 1), ("scheduleQueue", 1)):
+        # Leave a slot for interactive actions during a search backlog. With a
+        # configured single slot the two queues share that slot as it frees up.
+        for queue, capacity in (("taskQueue", slots), ("assessmentQueue", max(1, slots - 1)),
+                                ("searchQueue", 1), ("scheduleQueue", 1)):
             DBOS.register_queue(identity[queue], worker_concurrency=capacity, polling_interval_sec=0.15)
 
     started = now()

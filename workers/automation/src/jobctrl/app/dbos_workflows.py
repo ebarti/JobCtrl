@@ -10,6 +10,7 @@ from dbos import DBOS
 from jobctrl.app.worker_identity import ACTION_WORKFLOW, READY_WORKFLOW, SCHEDULE_WORKFLOW, SEARCH_WORKFLOW, STOP_TOPIC
 
 if TYPE_CHECKING:
+    import asyncio
     from collections.abc import Callable
     from jobctrl.app.actions import Application
 
@@ -20,6 +21,7 @@ class WorkerBinding:
     application: Application
     registration: str
     stopping: Callable[[], bool]
+    action_slots: asyncio.Semaphore
 
 
 binding = WorkerBinding()
@@ -32,7 +34,9 @@ def worker_ready():
 
 @DBOS.step(name="jobctrl.execute.v1", preemptible=True)
 async def action_step(run_id: str):
-    return await binding.application.execute_turn(run_id, DBOS.workflow_id, search=False, stopping=binding.stopping)
+    # The assessment and ordinary queues share the configured action capacity.
+    async with binding.action_slots:
+        return await binding.application.execute_turn(run_id, DBOS.workflow_id, search=False, stopping=binding.stopping)
 
 
 @DBOS.workflow(name=ACTION_WORKFLOW)

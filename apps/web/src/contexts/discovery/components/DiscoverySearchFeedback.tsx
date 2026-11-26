@@ -11,7 +11,7 @@ import "./discovery-search-feedback.css";
 export interface DiscoveryAssessmentProgress {
   phase: "acquiring" | "assessing" | null;
   assessedJobs: number | null; failedJobs: number | null; totalJobs: number | null;
-  checkpoint: { postingsChecked: number | null; requirementsChecked: number | null; phase: "checking" | "normalizing" | "qualifying" } | null;
+  checkpoint: { postingsChecked: number | null; requirementsChecked: number | null; phase: "checking" | "checking_each_job" | "normalizing" | "qualifying" } | null;
   skippedJobs: number | null;
   skipped: readonly { jobId: string; reason: string }[];
   failures: readonly { jobId: string; stage: string; code: string | null }[];
@@ -81,7 +81,8 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
     {checkpoint && assessmentProgress?.totalJobs != null ? <p aria-label="Fit preparation progress">
       {checkpoint.postingsChecked !== null ? `${checkpoint.postingsChecked} of ${assessmentProgress.totalJobs} postings checked. ` : ""}
       {checkpoint.requirementsChecked !== null ? `Requirements checked for ${checkpoint.requirementsChecked} of ${assessmentProgress.totalJobs} jobs. ` : ""}
-      {checkpoint.phase === "qualifying" ? "Checking your evidence against the requirements before publishing Fit scores." : checkpoint.phase === "normalizing" ? "Reconciling requirements across these jobs before Fit scoring." : "Fit scoring waits for posting and requirements checks across this search."}
+      {checkpoint.phase === "checking_each_job" ? "Each eligible job can be scored once its posting and requirements checks finish." :
+        checkpoint.phase === "qualifying" ? "Checking your evidence against the requirements before publishing Fit scores." : checkpoint.phase === "normalizing" ? "Reconciling requirements across these jobs before Fit scoring." : "Fit scoring waits for posting and requirements checks across this search."}
     </p> : null}
     {unsupportedLanguages > 0 ? <p>{unsupportedLanguages} {unsupportedLanguages === 1 ? "posting was" : "postings were"} skipped because only English postings are supported. No fit score was calculated.</p> : null}
     {noRequirements > 0 ? <p>{noRequirements} {noRequirements === 1 ? "posting had" : "postings had"} no in-scope requirements to assess. No fit score was calculated.</p> : null}

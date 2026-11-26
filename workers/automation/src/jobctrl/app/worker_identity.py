@@ -28,6 +28,8 @@ ACTION_WORKFLOW = "jobctrl.action.v1"
 SEARCH_WORKFLOW = "jobctrl.search.v1"
 SCHEDULE_WORKFLOW = "jobctrl.schedule.v1"
 STOP_TOPIC = "jobctrl.stop.v1"
+ASSESSMENT_ACTION = "preparation.assess_discovered"
+WORKER_QUEUES = ("taskQueue", "assessmentQueue", "searchQueue", "scheduleQueue")
 SCHEDULE_ACTIONS = {"discovery": "discovery.search", "compensation": "compensation.refresh_stale",
                     "approved-applications": "applications.run_approved"}
 
@@ -53,6 +55,7 @@ def process_identity(runtime) -> dict:
         "engine": "dbos",
         "systemSchema": DBOS_SCHEMA,
         "taskQueue": queue,
+        "assessmentQueue": queue + "-assessments",
         "searchQueue": queue + "-search",
         "scheduleQueue": queue + "-schedules",
     }
@@ -64,3 +67,11 @@ def search_workflow(action, payload):
     return (action == "preparation.run" and payload.get("recipe") == "search"
             and not payload.get("force", False)
             and payload.get("scope", "selected" if payload.get("job_ids") else "pending") == "pending")
+
+
+def action_route(action, payload):
+    if action == ASSESSMENT_ACTION:
+        return ACTION_WORKFLOW, "assessmentQueue"
+    if search_workflow(action, payload):
+        return SEARCH_WORKFLOW, "searchQueue"
+    return ACTION_WORKFLOW, "taskQueue"
