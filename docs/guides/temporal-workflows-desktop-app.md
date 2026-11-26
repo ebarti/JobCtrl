@@ -18,9 +18,13 @@ receipt means queued work was accepted, not that it completed. Runs expose
 progress and failure separately. A matching worker and database are required;
 database availability alone does not establish worker readiness.
 
-Discovery retains its progress across pages, while separate queues let other
-work proceed during a source cooldown. Explicit schedules can search for new
-jobs; rechecking saved postings remains manual. Cancellation records the
+Discovery retains its progress across pages. Each newly discovered posting enters an
+independent assessment queue, so a long search can process its backlog while
+a manual URL import uses an available action slot. By default, assessments
+can use three of the four action slots. With one slot, the worker runs one
+action at a time. Search progress and schedule ticks use their own queues.
+Scheduled searches can find new jobs. Users can recheck saved postings manually.
+Cancellation records the
 request and targets the durable workflow, but an already dispatched external
 effect may still be unsettled. Retry does not grant approval or repeat an
 ambiguous submission. Model calls retain their receipts and spend constraints;

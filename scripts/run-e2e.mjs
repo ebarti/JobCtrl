@@ -104,6 +104,58 @@ if (installed) {
 let active;
 let interrupted;
 let preflightStarted;
+let verifyOwnedRun;
+let removeAllocated;
+let snapshotIdentity;
+let webIdentity;
+
+async function greenBrowserReport() {
+  // Listing, custom reporters/configs, zero tests, retries, skips and incomplete
+  // teardown must retain their generated artifacts even if Playwright exits 0.
+  if (arguments_.some((arg) => arg === "--list" || arg === "-l")) return false;
+  const reportPath = path.join(evidence, "results.json");
+  let report;
+  try {
+    const info = await lstat(reportPath);
+    if (info.isSymbolicLink() || !info.isFile() || info.nlink !== 1) return false;
+    report = JSON.parse(await readFile(reportPath, "utf8"));
+  } catch {
+    return false;
+  }
+  if (!report || typeof report !== "object" ||
+      report.config?.configFile !== path.join(root, "apps/web/e2e/playwright.config.ts") ||
+      !Array.isArray(report.errors) || report.errors.length !== 0 ||
+      !Number.isInteger(report.stats?.expected) || report.stats.expected < 1 ||
+      report.stats.skipped !== 0 || report.stats.unexpected !== 0 || report.stats.flaky !== 0 ||
+      !Array.isArray(report.suites)) return false;
+  let count = 0;
+  function greenSuite(suite) {
+    if (!suite || typeof suite !== "object" || !Array.isArray(suite.specs) ||
+        (suite.suites !== undefined && !Array.isArray(suite.suites))) return false;
+    for (const spec of suite.specs) {
+      if (!spec || typeof spec !== "object" || !Array.isArray(spec.tests) || spec.tests.length === 0) return false;
+      for (const test of spec.tests) {
+        count++;
+        if (!test || typeof test !== "object" || test.status !== "expected" || test.expectedStatus !== "passed" ||
+            !Array.isArray(test.results) || test.results.length !== 1 ||
+            !test.results[0] || test.results[0].status !== "passed" || test.results[0].retry !== 0) return false;
+      }
+    }
+    return (suite.suites ?? []).every(greenSuite);
+  }
+  return report.suites.every(greenSuite) && count === report.stats.expected;
+}
+
+async function removeGreenGeneratedArtifacts() {
+  if (!verifyOwnedRun || await verifyOwnedRun() !== evidence || !snapshotIdentity || !webIdentity)
+    throw new Error("E2E run or generated directory ownership could not be verified");
+  const directories = [
+    [path.join(evidence, "source-checkout"), snapshotIdentity],
+    [path.join(evidence, "web-build"), webIdentity],
+  ];
+  for (const [directory, identity] of directories) await removeAllocated(directory, identity);
+}
+
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.on(signal, () => {
     interrupted = signal;
@@ -170,6 +222,7 @@ try {
         "Python source changed while its snapshot was copied; no application stack was started",
       );
     }
+    snapshotIdentity = await lstat(snapshotRoot, { bigint: true });
     environment.JOBCTRL_E2E_SOURCE_PATH = path.dirname(snapshot);
     summary.pythonSource = { ...copied, path: snapshot };
     summary.runtimePolicy = { ...policyCopied, path: policySnapshot };
@@ -236,8 +289,10 @@ try {
   if (interrupted) throw new Error(`E2E run interrupted by ${interrupted}`);
   preflightStarted = performance.now();
   summary.preflight = { status: "starting" };
-  const { applicationStack, postgresStack } =
+  const { applicationStack, postgresStack, ownedRun, removeAllocated: removeOwnedDirectory } =
     await import("../apps/web/e2e/harness/runtime.mjs");
+  verifyOwnedRun = ownedRun;
+  removeAllocated = removeOwnedDirectory;
   const preflightDatabase = await postgresStack();
   let preflight;
   try {
@@ -263,6 +318,7 @@ try {
   environment.JOBCTRL_E2E_STATIC_DIR = staticDir;
   summary.buildMs = Math.round(performance.now() - buildStarted);
   if (code === 0 && !interrupted) {
+    if (!installed) webIdentity = await lstat(staticDir, { bigint: true });
     summary.webBuild = await sourceInventory(staticDir);
     const testStarted = performance.now();
     code = await run([
@@ -303,10 +359,38 @@ try {
     summary.exitCode = 1;
     process.exitCode = 1;
   }
-  await writeFile(
-    path.join(evidence, "timings.json"),
-    `${JSON.stringify(summary, null, 2)}\n`,
-    { mode: 0o600 },
-  );
+  const timingsPath = path.join(evidence, "timings.json");
+  // Persist the candidate hashes and run outcome before releasing any bytes.
+  await writeFile(timingsPath, `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
+  if (!installed && summary.exitCode === 0 && !interrupted && summary.webBuildUnchanged === true &&
+      summary.lockfileUnchanged === true && await greenBrowserReport()) {
+    try {
+      if (!verifyOwnedRun || await verifyOwnedRun() !== evidence || !snapshotIdentity || !webIdentity)
+        throw new Error("E2E run or generated directory ownership could not be verified");
+      const snapshotRoot = path.join(evidence, "source-checkout");
+      const current = await lstat(snapshotRoot, { bigint: true });
+      if (current.isSymbolicLink() || !current.isDirectory() || current.dev !== snapshotIdentity.dev ||
+          current.ino !== snapshotIdentity.ino || await realpath(snapshotRoot) !== snapshotRoot)
+        throw new Error("Generated E2E source identity changed; cleanup refused");
+      const [sourceAfter, policyAfter] = await Promise.all([
+        sourceInventory(summary.pythonSource.path), sourceResource(summary.runtimePolicy.path),
+      ]);
+      summary.pythonSourceUnchanged = sourceAfter.sha256 === summary.pythonSource.sha256;
+      summary.runtimePolicyUnchanged = policyAfter.sha256 === summary.runtimePolicy.sha256;
+      if (!summary.pythonSourceUnchanged || !summary.runtimePolicyUnchanged)
+        throw new Error("Frozen E2E source changed during the run; cleanup refused");
+      if (interrupted) throw new Error("E2E run interrupted before cleanup; generated artifacts retained");
+      await removeGreenGeneratedArtifacts();
+      summary.generatedArtifacts = { status: "removed", bytes: summary.pythonSource.bytes + summary.runtimePolicy.bytes + summary.webBuild.bytes };
+    } catch (error) {
+      summary.generatedArtifacts = { status: "cleanup_failed", error: error.message };
+      summary.exitCode = 1;
+      process.exitCode = 1;
+    }
+  } else {
+    summary.generatedArtifacts = { status: "retained" };
+  }
+  summary.totalMs = Math.round(performance.now() - started);
+  await writeFile(timingsPath, `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
   console.log(`E2E timing: ${JSON.stringify(summary)}`);
 }

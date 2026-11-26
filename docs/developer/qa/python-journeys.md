@@ -53,7 +53,12 @@ real credentials are never adopted. The IPC-connected process-group leader
 reserves its group identity until cleanup and cleans its group if the harness
 disconnects. Test evidence lives in an owned temporary run directory. Failed
 synthetic state stays local for diagnosis; CI uploads selected logs, timings,
-traces and reports and excludes databases, native HOME and provider state.
+traces and reports and excludes databases, native HOME and provider state. After a
+fully passing source browser run with no skips, flakes or interruptions, the runner
+releases only that run’s generated `source-checkout` and `web-build` directories.
+Their hashes remain in `timings.json`; reports, screenshots, traces and logs remain.
+Failed, skipped, flaky, interrupted, list-only and installed runs retain their
+generated artifacts for diagnosis.
 
 The observed results and dated execution records below predate the PostgreSQL
 and DBOS migration unless explicitly labeled otherwise. They describe historical
@@ -62,15 +67,15 @@ record exact candidate and observed outcomes.
 
 ## Coverage ledger
 
-The current configured inventory is **224 journeys in 63 project-file groups**.
-It includes **223 Chromium cases in 62 spec files** and **one demo case in one file**.
+The configured inventory at `f704ac2b23e3` is **240 journeys in 69 project-file groups**.
+It includes **238 Chromium cases in 68 spec files** and **two demo cases in one file**.
 The all-project listing has no inventory errors. It includes the QA workspaces
 and requirement deletion lifecycle, shared event-stream recovery, expanded
 screen layouts, keyboard-driven Profile saves, posting-fetch refusals and the
 actual terminal-root v4 and terminal-group v5 predecessor upgrades, demand-citation
 role refusals, Fit schema refusals, rediscovery recovery and accepted-score
-currentness. The six hosted shard listings contain 50 / 26 / 37 / 43 / 41 / 27
-cases and match the unsharded inventory exactly once.
+currentness. A historical six-shard listing contained 50 / 26 / 37 / 43 / 41 / 27
+cases and matched its then-current unsharded inventory exactly once.
 Listing these scenarios is not evidence that the complete current candidate passed.
 
 ### Accepted postings and Fit currentness
@@ -78,8 +83,9 @@ Listing these scenarios is not evidence that the complete current candidate pass
 The [predecessor Fit journey](../../../apps/web/e2e/journeys/legacy-fit-reasons.spec.ts)
 checks the Jobs grid before and after a matching Fit skip is recorded. It uses
 an exact posting revision and hash from the search. A fresh language decision
-on the unchanged posting updates the Fit tab. The grid links the earlier search’s
-skip until a posting refresh changes the source. The grid uses bulk reads.
+on the unchanged posting updates the Fit tab. After English reassessment, the
+grid shows Not assessed while preserving the earlier search’s skip in run
+history. The grid uses bulk reads.
 
 The [URL import journeys](../../../apps/web/e2e/journeys/posting-fetch-failures.spec.ts)
 hold the enrichment lane with a separate request and submit a posting through
