@@ -88,13 +88,12 @@ Source dependency provisioning remains in `scripts/install` and
 `corepack pnpm dev:setup`. Browser installation uses `scripts/install` or the
 explicit pinned Playwright command above, outside provider setup.
 
-This source candidate uses JobStreaming 0.0.6 from the exact Git commit recorded
-in `workers/automation/pyproject.toml` and `uv.lock`. It provides automatic source
-traversal and explicit completion reasons. The SDK candidate is not a published
-package. Source setup and QA use that immutable Git override; before a native
-release, replace it with the exact published SDK version and hashed wheel lock.
-The native core installer continues to require hashes and prebuilt wheels, so
-this source override does not establish release-build readiness.
+Source setup and QA install JobStreaming 0.0.7 from PyPI. The worker pins the
+published version in `workers/automation/pyproject.toml` and its distribution
+hashes in `workers/automation/uv.lock`. The SDK provides source traversal,
+explicit completion reasons and query-filtered Lenny’s Jobs listings.
+Set `JOBSTREAMING_LENNYSJOBS_LISTINGS_URL` in the worker environment to connect
+the listing source. See [Discovery](user/discovery.md) for the connection format.
 
 ### PostgreSQL runtime tools
 
