@@ -98,16 +98,8 @@ class PostgresStartupError(RuntimeError):
             return
         text = log.read_text(encoding="utf-8", errors="replace")
         self.sqlstates = sorted(set(re.findall(r"^([0-9A-Z]{5}) (?:FATAL|PANIC|ERROR):", text, re.MULTILINE)))
-        signatures = {
-            "address_in_use": "address already in use", "bind": "could not bind",
-            "shared_memory": "shared memory", "semaphore": "semaphore",
-            "permission": "permission denied", "missing_file": "no such file or directory",
-            "pid_file": "lock file", "memory": "cannot allocate memory",
-            "disk_space": "no space left on device", "locale": "locale",
-            "timezone": "time zone", "socket": "socket", "configuration": "configuration file",
-            "invalid_parameter": "invalid value", "library": "library", "version": "incompatible",
-        }
-        self.causes = sorted(key for key, signature in signatures.items() if signature in text.lower())
+        if "postmaster became multithreaded during startup" in text:
+            self.causes.append("postmaster_multithreaded_at_startup")
 
 
 class PostgresFixture:
@@ -123,7 +115,10 @@ class PostgresFixture:
 
     def tool(self, name, *arguments, timeout=30):
         executable = self.tools / (name + (".exe" if os.name == "nt" else ""))
-        return subprocess.run([executable, *arguments], capture_output=True, text=True, check=True, timeout=timeout)
+        # An unset locale can start a macOS system thread before PostgreSQL forks.
+        # initdb --no-locale sets database collation, not the postmaster environment.
+        return subprocess.run([executable, *arguments], env={**os.environ, "LC_ALL": "C"},
+                              capture_output=True, text=True, check=True, timeout=timeout)
 
     def url(self, database):
         return f"postgresql://jobctrl:{self.password}@127.0.0.1:{self.port}/{database}?connect_timeout=3"
