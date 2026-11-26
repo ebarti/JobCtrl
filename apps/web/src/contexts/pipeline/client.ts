@@ -11,7 +11,7 @@ import type { SessionRequestIdentity } from "../../shared/lib/useSessionRequestI
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
-import { preparationRequestInput, type PreparationRetryRequest, usePreparationRecovery } from "./recovery.js";
+import { preparationAdmissionKey, preparationRequestInput, type PreparationRetryRequest, usePreparationRecovery } from "./recovery.js";
 
 export const recipeSchema = z.enum(["run", "discover", "enrich", "analyze", "score", "tailor", "prepare"]);
 export type PreparationRecipe = z.infer<typeof recipeSchema>;
@@ -186,6 +186,7 @@ export function usePreparationCommands() {
   const { http } = usePorts();
   const recovery = usePreparationRecovery();
   const submit = useMutation({
+    mutationKey: preparationAdmissionKey(tenantId),
     mutationFn: async (input: { action: "preparation.run"; body: PreparationRequest } | { action: "preparation.retry"; body: PreparationRetryRequest }) => {
       const { identity, previous } = await recovery.begin(input.action, input.body);
       const path = `/v1/actions/${input.action}`;

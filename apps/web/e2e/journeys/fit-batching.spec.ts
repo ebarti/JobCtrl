@@ -185,7 +185,7 @@ test("a new Job initially batches historical and unseen qualifications after a f
   expect(app.external.calls).toHaveLength(beforeExact);
 });
 
-test("a held initial Job batch cannot replace a concurrently published historical qualification head", async ({ api, app }) => {
+test("concurrent initial Job fits share one paid qualification and preserve historical evidence", async ({ api, app }) => {
   const seed = await createScoredFit(api, app, "historical-head-old");
   const oldHistory = await json(api, "get", `/v1/jobs/${seed.posting.job_id}/fit/history`);
   await saveChangedFacts(api);
@@ -203,22 +203,23 @@ test("a held initial Job batch cannot replace a concurrently published historica
   const first = await action(api, "fit.assess", { job_id: jobs[0]!.job_id, ...assessBody });
   const firstBatch = await modelCall(app, "fit.qualification-batch");
   const second = await action(api, "fit.assess", { job_id: jobs[1]!.job_id, ...assessBody });
-  const secondBatch = await modelCall(app, "fit.qualification-batch");
-  for (const batch of [firstBatch, secondBatch]) expect((batch.body["context"] as { requirements: QualificationBinding[] }).requirements.map((row) => row.requirement_id)).toEqual([sharedId]);
+  expect(second.runId).not.toBe(first.runId);
+  await expect.poll(async () => (await json<{ status: string }>(api, "get", `/v1/action-runs/${second.runId}`)).status).toBe("running");
+  expect((firstBatch.body["context"] as { requirements: QualificationBinding[] }).requirements.map(row => row.requirement_id)).toEqual([sharedId]);
   const achievement = seed.library.roles[0]!.achievements[0]!;
   firstBatch.reply(qualificationBatchDecision(firstBatch, () => ({ achievementIds: [achievement.achievement_id], evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] })));
-  await completed(api, first.runId);
-  const winner = await json<Fit>(api, "get", fitPath(jobs[0]!));
-  expect(winner.current).toBe(true);
-  secondBatch.reply(qualificationBatchDecision(secondBatch, () => ({ kind: "missing" })));
-  expect(await terminal(api, second.runId)).toMatchObject({ status: "failed", errorCode: "revision_conflict" });
-  expect((await json<Fit>(api, "get", fitPath(jobs[1]!))).score).toBeNull();
-  expect(await json<Fit>(api, "get", fitPath(jobs[0]!))).toEqual(winner);
+  await Promise.all([completed(api, first.runId), completed(api, second.runId)]);
+  const [winner, follower] = await Promise.all(jobs.map(job => json<Fit>(api, "get", fitPath(job))));
+  expect(winner!.current).toBe(true);
+  const shared = winner!.score!.assessments[0]!;
+  expect(follower).toMatchObject({ current: true, score: { assessments: [{
+    requirement_id: sharedId, assessment_id: shared.assessment_id, determination_id: shared.determination_id,
+  }] } });
   const library = await json<{ requirements: { requirement_id: string; assessment: Assessment | null }[] }>(api, "get", "/v1/fit/requirement-library");
-  expect(library.requirements.find((row) => row.requirement_id === sharedId)!.assessment).toMatchObject({ assessment_id: winner.score!.assessments[0]!.assessment_id, determination_id: winner.score!.assessments[0]!.determination_id, current: true });
+  expect(library.requirements.find((row) => row.requirement_id === sharedId)!.assessment).toMatchObject({ assessment_id: shared.assessment_id, determination_id: shared.determination_id, current: true });
   expect(await json(api, "get", `/v1/jobs/${seed.posting.job_id}/fit/history`)).toEqual(oldHistory);
   expect((await json<Fit>(api, "get", `/v1/jobs/${seed.posting.job_id}/fit`)).current).toBe(false);
-  expect(app.external.calls.slice(before).map((call) => call.body["operation"])).toEqual(["fit.qualification-batch", "fit.qualification-batch"]);
+  expect(app.external.calls.slice(before).map((call) => call.body["operation"])).toEqual(["fit.qualification-batch"]);
 });
 
 for (const defect of ["schema", "incomplete", "duplicate", "foreign requirement", "cross-row citation", "non-verbatim evidence", "stale revision"] as const) {

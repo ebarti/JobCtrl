@@ -13,6 +13,7 @@ import ctypes
 import json
 import os
 import platform
+import re
 import signal
 import shutil
 import secrets
@@ -85,6 +86,30 @@ raise SystemExit(0)
 '''
 
 
+class PostgresStartupError(RuntimeError):
+    """Expose only structured startup diagnostics from the empty synthetic cluster."""
+
+    def __init__(self, log: Path, returncode: int):
+        super().__init__("The credential fixture database could not start.")
+        self.returncode = returncode
+        self.sqlstates = []
+        self.causes = []
+        if not log.is_file():
+            return
+        text = log.read_text(encoding="utf-8", errors="replace")
+        self.sqlstates = sorted(set(re.findall(r"^([0-9A-Z]{5}) (?:FATAL|PANIC|ERROR):", text, re.MULTILINE)))
+        signatures = {
+            "address_in_use": "address already in use", "bind": "could not bind",
+            "shared_memory": "shared memory", "semaphore": "semaphore",
+            "permission": "permission denied", "missing_file": "no such file or directory",
+            "pid_file": "lock file", "memory": "cannot allocate memory",
+            "disk_space": "no space left on device", "locale": "locale",
+            "timezone": "time zone", "socket": "socket", "configuration": "configuration file",
+            "invalid_parameter": "invalid value", "library": "library", "version": "incompatible",
+        }
+        self.causes = sorted(key for key, signature in signatures.items() if signature in text.lower())
+
+
 class PostgresFixture:
     def __init__(self, owned: Path, tools: Path):
         self.root = owned / "postgres"
@@ -134,9 +159,11 @@ class PostgresFixture:
         finally:
             passfile.unlink(missing_ok=True)
         with (self.data / "postgresql.conf").open("a", encoding="ascii") as config:
-            config.write(f"\nlisten_addresses = '127.0.0.1'\nport = {self.port}\nunix_socket_directories = ''\n")
+            config.write(f"\nlisten_addresses = '127.0.0.1'\nport = {self.port}\nunix_socket_directories = ''\nlog_line_prefix = '%e '\n")
         try:
             self.tool("pg_ctl", "-D", self.data, "-l", self.root / "postgres.log", "-t", "20", "-w", "start")
+        except subprocess.CalledProcessError as error:
+            raise PostgresStartupError(self.root / "postgres.log", error.returncode) from error
         finally:
             self.postmaster = self._postmaster_identity()
         with psycopg.connect(self.url("postgres")) as connection:
@@ -376,6 +403,8 @@ def credential_metadata(client) -> dict:
 def error_metadata(error: Exception) -> dict:
     """Report allowlisted execution metadata without response bodies or locals."""
     metadata = {"errorType": type(error).__name__}
+    if isinstance(error, PostgresStartupError):
+        metadata.update(returnCode=error.returncode, sqlstates=error.sqlstates, causes=error.causes)
     if isinstance(error, CredentialInspectionError):
         metadata.update(httpStatus=error.http_status, errorCode=error.error_code,
                         credentialStoreReason=error.store_reason)
