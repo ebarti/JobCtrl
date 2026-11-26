@@ -6,16 +6,15 @@ import asyncio
 import hashlib
 import json
 import logging
-import os
 import time
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
 from starlette.applications import Starlette
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -63,28 +62,29 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
     runtime = application.runtime
     capabilities = sorted({name for feature in application.features.values() for name in feature.capabilities})
 
-    def temporal_metadata():
-        configured = os.environ.get("JOBCTRL_TEMPORAL_UI_URL", "")
-        try:
-            parsed = urlsplit(configured)
-            valid = (parsed.scheme in {"http", "https"} and parsed.hostname and not parsed.username
-                     and not parsed.password and not parsed.query and not parsed.fragment)
-            parsed.port  # Reject malformed ports before exposing a link.
-        except ValueError:
-            valid = False
-        return {"namespace": os.environ.get("JOBCTRL_TEMPORAL_NAMESPACE", "default"),
-                "uiBaseUrl": configured.rstrip("/") if valid else None}
-
-    async def health(request):
+    def storage_and_spend():
         with runtime.database.connect() as connection:
             connection.execute("SELECT 1").fetchone()
+        return runtime.model.spend()
+
+    async def health(request):
+        spend = await run_in_threadpool(storage_and_spend)
+        dbos, worker = await asyncio.gather(
+            run_in_threadpool(application.dbos_status), application.dispatch_readiness(),
+        )
         return JSONResponse({
-            "ok": True, "application": "jobctrl-python", "schemaVersion": SCHEMA_VERSION,
+            "ok": True,
+            "application": "jobctrl-python",
+            "schemaVersion": SCHEMA_VERSION,
             "workspaceId": hashlib.sha256(str(runtime.workspace).encode()).hexdigest(),
-            "databaseInstanceId": runtime.database.instance_id, "runtimeIdentity": application.identity,
-            "features": list(application.features), "capabilities": capabilities, "worker": await application.dispatch_readiness(),
-            "llmSpend": runtime.model.spend(),
-            "temporal": temporal_metadata(),
+            "databaseInstanceId": runtime.database.instance_id,
+            "runtimeIdentity": application.identity,
+            "features": list(application.features),
+            "capabilities": capabilities,
+            "storage": {"engine": "postgresql", "status": "ready"},
+            "dbos": dbos,
+            "worker": worker,
+            "llmSpend": spend,
         })
 
     def settings_response(saved):
@@ -332,9 +332,15 @@ def create_http_app(application: Application, *, static_dir: Path | None = None,
 
     @asynccontextmanager
     async def lifespan(app):
-        yield
         from jobctrl.app.model_providers import close_provider_runtimes
-        await asyncio.to_thread(close_provider_runtimes)
+
+        try:
+            yield
+        finally:
+            try:
+                await run_in_threadpool(close_provider_runtimes)
+            finally:
+                await run_in_threadpool(application.close)
 
     app = Starlette(routes=routes, middleware=[Middleware(LocalSecurity, workspace=runtime.workspace, port=port,
                                                          database_instance_id=runtime.database.instance_id,

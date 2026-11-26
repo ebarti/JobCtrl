@@ -8,6 +8,7 @@ import hashlib
 import json
 
 
+LINKEDIN_REQUEST_INTERVAL_SECONDS = 4.0
 BOARD_RATE_LIMIT_CODE = "discovery_provider_rate_limited"
 BOARD_RATE_LIMIT_MESSAGE = "The board rate-limited this search. Wait before running another search on this board."
 

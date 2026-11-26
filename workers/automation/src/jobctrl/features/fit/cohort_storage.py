@@ -61,7 +61,6 @@ class InitialCohortStorage:
 
     def validate_initial_cohort(self, state):
         with self._database.connect() as connection:
-            connection.execute("BEGIN")
             self._assert_initial_cohort(connection, state)
 
     def start_initial_cohort(self, state):

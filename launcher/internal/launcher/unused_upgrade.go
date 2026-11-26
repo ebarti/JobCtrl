@@ -9,6 +9,14 @@ import (
 // A selected installation need not have been started yet. Only absence of both
 // databases and every SQLite sidecar establishes that initialization is safe.
 func unusedDatabasePair(stateDir string) (bool, error) {
+	if info, err := os.Lstat(filepath.Join(stateDir, "postgres", "active.json")); err == nil {
+		if !info.Mode().IsRegular() {
+			return false, errors.New("invalid PostgreSQL selection")
+		}
+		return false, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
 	temporal, err := temporalHistoryPath(stateDir)
 	if err != nil {
 		return false, err

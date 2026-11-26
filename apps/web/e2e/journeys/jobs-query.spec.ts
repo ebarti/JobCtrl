@@ -210,8 +210,8 @@ test("Posted pay Known includes current employer amounts in their original curre
 });
 
 test.describe("Posted pay on a server with annual EUR filters", () => {
-  test.use({ features: "jobs,compensation", sourceRevision: "17f9ce5be1de2f21735fb27d5dfe8f6d1b7c8118" });
-  test("Jobs offers supported Posted pay choices and preserves a legacy revision across upgrade", async ({ api, app, page }) => {
+  test.use({ features: "jobs,compensation" });
+  test("Jobs offers supported Posted pay choices and preserves a query revision across restart", async ({ api, app, page }) => {
     await capture(api, "legacy-pay-first", "Synthetic legacy pay first");
     await capture(api, "legacy-pay-second", "Synthetic legacy pay second");
     const annual = "/v1/jobs/query?posted_known=unknown&limit=1";
@@ -224,9 +224,10 @@ test.describe("Posted pay on a server with annual EUR filters", () => {
     let dialog = await columnFilter(page, "posted_compensation", "Posted pay");
     const select = dialog.getByRole("combobox", { name: "Posted pay", exact: true });
     await expect(select).toHaveValue("unknown");
-    await expect(select.locator("option")).toHaveText(["All", "Known annual EUR", "Unknown annual EUR"]);
+    await expect(select.locator("option")).toHaveText(["All", "Known", "Unknown", "Known annual EUR", "Unknown annual EUR"]);
     await page.keyboard.press("Escape");
-    await app.upgradeSource();
+    await app.restartWorker();
+    await app.restartApi();
     const after = await json<Query>(api, "get", nextPage);
     expect(after.query_revision).toBe(before.query_revision);
     expect(after.rows.map((row) => row.job.job_id)).toEqual(next.rows.map((row) => row.job.job_id));

@@ -10,7 +10,7 @@ do not prove that a capability has passed the integrated journey gates. See
 
 | Surface | Responsibility |
 | --- | --- |
-| `workers/automation/src/jobctrl/app/` | Python composition, HTTP/security, SQLite/event infrastructure, model gateway, durable actions, worker and preparation orchestration. |
+| `workers/automation/src/jobctrl/app/` | Python composition, HTTP/security, PostgreSQL/event infrastructure, model gateway, durable actions, worker and preparation orchestration. |
 | `workers/automation/src/jobctrl/features/<owner>/` | Feature domain, application actions, public services, owned schema, persistence and HTTP adapters. |
 | `workers/automation/src/jobctrl/cli.py` | CLI entry point to the same Python application actions and public local API. |
 | `apps/web/` | React/Vite navigation, feature views, ports, adapters, client state and query invalidation. |

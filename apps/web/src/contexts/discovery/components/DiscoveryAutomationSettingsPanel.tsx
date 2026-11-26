@@ -84,7 +84,7 @@ export function DiscoveryAutomationSettingsForm({
       const response = await updateSettings.mutateAsync(value);
       if (JSON.stringify(formApi.state.values) === submittedValues) {
         formApi.reset(toFormValues(response));
-        setStatusMessage("Automation settings saved in SQLite");
+        setStatusMessage("Automation settings saved");
       } else {
         setStatusMessage("Saved; newer changes pending");
       }

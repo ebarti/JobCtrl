@@ -1,7 +1,7 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
 
 export type DatabaseStartupProblem = {
-  kind: "migration_required" | "incompatible";
+  kind: "migration_required" | "incompatible" | "unavailable";
   message: string;
 };
 
@@ -17,6 +17,18 @@ export function databaseStartupProblem(error: unknown): DatabaseStartupProblem |
     return {
       kind: "migration_required",
       message: "This workspace requires the deliberate Profile transfer before the Python application can start.",
+    };
+  }
+  if (code === "database_unavailable") {
+    return {
+      kind: "unavailable",
+      message: "The workspace PostgreSQL server is unavailable. Check JobCtrl status and try again.",
+    };
+  }
+  if (code === "workspace_restore_mismatch") {
+    return {
+      kind: "incompatible",
+      message: "This workspace belongs to another PostgreSQL database. Use the original database or JobCtrl recovery.",
     };
   }
   if (code === "database_migration_required") {

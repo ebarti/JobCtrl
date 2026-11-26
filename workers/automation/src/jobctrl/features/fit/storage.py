@@ -1,4 +1,4 @@
-"""Small SQLite adapter for Fit's own accepted records."""
+"""Small PostgreSQL adapter for Fit's own accepted records."""
 
 from __future__ import annotations
 
@@ -26,21 +26,10 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage, Initia
     @contextmanager
     def read_snapshot(self, connection=None):
         if connection is not None:
-            owns_scope = not connection.in_transaction
-            if owns_scope:
-                connection.execute("BEGIN")
-            try:
-                yield SqliteFitReadSession(self, connection)
-            finally:
-                if owns_scope:
-                    connection.rollback()
+            yield PostgresFitReadSession(self, connection)
             return
         with self._database.connect() as owned:
-            owned.execute("BEGIN")
-            try:
-                yield SqliteFitReadSession(self, owned)
-            finally:
-                owned.rollback()
+            yield PostgresFitReadSession(self, owned)
 
     def _assert_profile(self, connection, snapshot, *, full_profile=False):
         if getattr(snapshot, "manual_refresh", False):
@@ -229,20 +218,18 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage, Initia
 
     def latest_assessment(self, profile_id, requirement_id, requirement_revision, *, source_fingerprint=None,
                           connection=None) -> dict | None:
+        # A bare canonical ID has several demand qualifications. Historical
+        # readers use explicit assessment IDs, never a chosen head.
+        if source_fingerprint is None:
+            return None
         def load(conn):
-            # A bare canonical ID has several possible demand qualifications.
-            # Historical reads use explicit assessment IDs, never a chosen head.
-            if source_fingerprint is None:
-                return None
-            query = """SELECT assessment_json FROM fit_assessments
-                       WHERE profile_id=? AND requirement_id=? AND requirement_revision=?
-                       AND json_extract(assessment_json,'$.contract_version')=?"""
-            values = [profile_id, requirement_id, str(requirement_revision), CONTRACT_VERSION]
-            if source_fingerprint is not None:
-                query += " AND source_fingerprint=?"
-                values.append(source_fingerprint)
-            row = conn.execute(query + " ORDER BY rowid DESC LIMIT 1", values).fetchone()
-            return json.loads(row[0]) if row else None
+            candidates = conn.execute(
+                "SELECT assessment_json FROM fit_assessments WHERE profile_id=? AND requirement_id=?"
+                " AND requirement_revision=? AND source_fingerprint=? ORDER BY insertion_order DESC",
+                (profile_id, requirement_id, str(requirement_revision), source_fingerprint),
+            )
+            return next((record for record in (json.loads(row[0]) for row in candidates)
+                         if record.get("contract_version") == CONTRACT_VERSION), None)
         return self._read(load, connection)
 
     def assessment_sources(self, assessment_id, connection=None) -> list[dict]:
@@ -285,7 +272,7 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage, Initia
             row = conn.execute(
                 """SELECT relation_json FROM fit_coverage_relations
                 WHERE profile_id=? AND requirement_id=? AND requirement_revision=? AND assessment_id=?
-                  AND variant_id=? AND variant_revision=? ORDER BY rowid DESC LIMIT 1""",
+                  AND variant_id=? AND variant_revision=? ORDER BY insertion_order DESC LIMIT 1""",
                 (profile_id, requirement_id, str(requirement_revision), assessment_id, variant_id,
                  str(variant_revision)),
             ).fetchone()
@@ -316,14 +303,14 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage, Initia
         return self._read(lambda conn: [json.loads(row[0]) for row in conn.execute(
             """SELECT relation_json FROM fit_coverage_relations
             WHERE profile_id=? AND requirement_id=? AND requirement_revision=?
-              AND variant_id=? AND variant_revision=? ORDER BY rowid DESC""",
+              AND variant_id=? AND variant_revision=? ORDER BY insertion_order DESC""",
             (profile_id, requirement_id, str(requirement_revision), variant_id, str(variant_revision)),
         )], connection)
 
     def wording_requests(self, profile_id, requirement_id, requirement_revision, connection=None) -> list[dict]:
         def load(conn):
             bindings = []
-            for row in conn.execute("SELECT binding_json FROM fit_wording_requests WHERE profile_id=? ORDER BY rowid DESC", (profile_id,)):
+            for row in conn.execute("SELECT binding_json FROM fit_wording_requests WHERE profile_id=? ORDER BY insertion_order DESC", (profile_id,)):
                 binding = json.loads(row[0])
                 members = binding.get("requirements", [binding])
                 for member in members:
@@ -383,7 +370,7 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage, Initia
 
     def anchors(self, connection=None) -> list[dict]:
         return self._read(lambda conn: [json.loads(row[0]) for row in conn.execute(
-            "SELECT anchor_json FROM fit_correction_anchors ORDER BY rowid DESC",
+            "SELECT anchor_json FROM fit_correction_anchors ORDER BY insertion_order DESC",
         )], connection)
 
     def save_anchor(self, conn, anchor: dict) -> None:
@@ -404,11 +391,12 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage, Initia
         if connection is None:
             with self.read_snapshot() as read:
                 return read.score_batch(job_ids)
+        ids = [ident for ident in job_ids if isinstance(ident, str) and "\0" not in ident]
         return {row["job_id"]: json.loads(row["score_json"]) for row in connection.execute(
-            "WITH wanted AS (SELECT value job_id FROM json_each(?)), ranked AS ("
+            "WITH wanted AS (SELECT unnest(?::text[]) AS job_id), ranked AS ("
             " SELECT s.job_id,s.score_json,row_number() OVER (PARTITION BY s.job_id ORDER BY s.revision DESC) position"
             " FROM fit_score_versions s JOIN wanted w ON w.job_id=s.job_id)"
-            " SELECT job_id,score_json FROM ranked WHERE position=1", (encoded(job_ids),),
+            " SELECT job_id,score_json FROM ranked WHERE position=1", (ids,),
         )}
 
     def superseded_assessments(self, assessment_ids, connection=None):
@@ -417,27 +405,28 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage, Initia
                 return read.superseded_assessments(assessment_ids)
         # An explicit source-bound user correction can invalidate its earlier
         # evidence decision. A repeat model call on identical inputs cannot.
+        ids = [ident for ident in assessment_ids if isinstance(ident, str) and "\0" not in ident]
         return {row[0] for row in connection.execute(
             "SELECT original.assessment_id FROM fit_assessments original "
-            "WHERE original.assessment_id IN (SELECT value FROM json_each(?)) AND EXISTS ("
+            "WHERE original.assessment_id=ANY(?::text[]) AND EXISTS ("
             " SELECT 1 FROM fit_assessments correction WHERE correction.profile_id=original.profile_id"
             " AND correction.requirement_id=original.requirement_id"
             " AND correction.requirement_revision=original.requirement_revision"
-            " AND correction.source_fingerprint=original.source_fingerprint AND correction.rowid>original.rowid"
+            " AND correction.source_fingerprint=original.source_fingerprint AND correction.insertion_order>original.insertion_order"
             " AND correction.origin='manual')",
-            (encoded(assessment_ids),),
+            (ids,),
         )}
 
     def coverage_rows(self, assessment_ids, connection=None):
         if (not isinstance(assessment_ids, (list, tuple)) or len(assessment_ids) > 1000
                 or any(not isinstance(item, str) or not item for item in assessment_ids)):
             raise AppError("invalid_assessment_selection", "Read coverage for at most 1,000 qualification records.")
-        ids = list(dict.fromkeys(assessment_ids))
+        ids = list(dict.fromkeys(ident for ident in assessment_ids if "\0" not in ident))
         if not ids:
             return []
         return self._read(lambda conn: [json.loads(row[0]) for row in conn.execute(
-            "SELECT relation_json FROM fit_coverage_relations WHERE assessment_id IN (SELECT value FROM json_each(?)) ORDER BY rowid DESC",
-            (encoded(ids),),
+            "SELECT relation_json FROM fit_coverage_relations WHERE assessment_id=ANY(?::text[]) ORDER BY insertion_order DESC",
+            (ids,),
         )], connection)
 
     def operation(self, operation_id, input_fingerprint, connection=None):
@@ -480,26 +469,41 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage, Initia
                 return self.delete_job_data(job_id, conn)
         for table in ("fit_operation_receipts", "fit_correction_anchors", "fit_score_versions"):
             connection.execute(f"DELETE FROM {table} WHERE job_id=?", (job_id,))
-        connection.execute("""
-            UPDATE fit_initial_cohort_operations SET state_json='{"status":"source_deleted"}'
-            WHERE EXISTS(SELECT 1 FROM json_each(state_json,'$.request.job_ids') WHERE value=?)
-            """, (job_id,))
-        connection.execute(
-            "DELETE FROM fit_refresh_operations WHERE EXISTS(SELECT 1 FROM json_each(state_json,'$.job_ids') WHERE value=?)", (job_id,),
-        )
-        connection.execute(
-            "DELETE FROM fit_assessments WHERE json_extract(assessment_json,'$.job_id')=?"
-            " AND json_extract(assessment_json,'$.category') IN ('education','language')", (job_id,),
-        )
+        cohorts = connection.execute("SELECT operation_id,state_json FROM fit_initial_cohort_operations")
+        cohorts = [ident for ident, state in cohorts
+                   if job_id in json.loads(state).get("request", {}).get("job_ids", [])]
+        if cohorts:
+            connection.execute(
+                "UPDATE fit_initial_cohort_operations SET state_json=? WHERE operation_id=ANY(?::text[])",
+                ('{"status":"source_deleted"}', cohorts),
+            )
+        refreshes = connection.execute("SELECT operation_id,state_json FROM fit_refresh_operations")
+        refreshes = [ident for ident, state in refreshes if job_id in json.loads(state).get("job_ids", [])]
+        if refreshes:
+            connection.execute("DELETE FROM fit_refresh_operations WHERE operation_id=ANY(?::text[])", (refreshes,))
+        assessments = connection.execute("SELECT assessment_id,assessment_json FROM fit_assessments")
+        direct = [ident for ident, record in ((ident, json.loads(raw)) for ident, raw in assessments)
+                  if record.get("job_id") == job_id and record.get("category") in {"education", "language"}]
+        if direct:
+            connection.execute("DELETE FROM fit_assessments WHERE assessment_id=ANY(?::text[])", (direct,))
 
     def delete_requirement_data(self, requirement_ids, connection=None):
         if connection is None or not connection.in_transaction:
             raise RuntimeError("Permanent requirement cleanup requires the owner's write transaction.")
-        self._prune_wording_requests(set(requirement_ids), connection)
+        wanted = set(requirement_ids)
+        self._prune_wording_requests(wanted, connection)
+        for table, key, field in (
+            ("fit_user_association_versions", ("profile_id", "association_id", "revision"), "association_json"),
+            ("fit_current_wording_versions", ("assignment_id", "revision"), "assignment_json"),
+        ):
+            columns = ",".join((*key, field))
+            versions = connection.execute(f"SELECT {columns} FROM {table}")
+            where = " AND ".join(f"{column}=?" for column in key)
+            connection.executemany(
+                f"DELETE FROM {table} WHERE {where}",
+                [row[:-1] for row in versions if json.loads(row[-1]).get("requirement_id") in wanted],
+            )
         for ident in requirement_ids:
-            for table, field in (("fit_user_association_versions", "association_json"),
-                                 ("fit_current_wording_versions", "assignment_json")):
-                connection.execute(f"DELETE FROM {table} WHERE json_extract({field},'$.requirement_id')=?", (ident,))
             # Coverage owns the only local FK to assessments, so remove it first.
             for table in ("fit_coverage_relations", "fit_user_associations",
                           "fit_current_wordings", "fit_assessments"):
@@ -538,7 +542,7 @@ class FitStore(RefreshStorage, AssociationStorage, CurrentWordingStorage, Initia
             )
 
 
-class SqliteFitReadSession:
+class PostgresFitReadSession:
     """Typed read operations bound to one private adapter snapshot."""
 
     def __init__(self, store, connection):

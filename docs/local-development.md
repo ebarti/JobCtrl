@@ -1,6 +1,6 @@
 # Local Development
 
-JobCtrl uses a Python application and Temporal worker, a TypeScript/React web
+JobCtrl uses a Python application and DBOS worker, a TypeScript/React web
 client, and a browser extension. This page covers source setup, running the
 local stack, and verifying changes. The Python transformation is in progress;
 source behavior and synthetic proof do not establish a published release.
@@ -19,7 +19,7 @@ scripts/install
 
 `scripts/install` is the first-run path for new contributors. It checks for
 Node.js 22.13 or newer, Corepack, uv (the Python worker needs Python 3.11 or
-newer), the Temporal CLI, and Go 1.24 or newer on macOS, offers
+newer), PostgreSQL 17 runtime tools, and Go 1.24 or newer on macOS, offers
 Homebrew installs for missing machine-level tools when available, then runs the
 repository dependency setup: frozen corepack pnpm install, uv sync, and Playwright
 Chromium installs for both the web package and the Python worker. This direct
@@ -55,8 +55,7 @@ corepack pnpm dev:setup
 `corepack pnpm dev:setup` installs the Node workspace dependencies and runs
 `uv --project workers/automation sync --extra dev`, which installs the Python
 worker, the pinned JobStreaming wheel, its locked transitive
-dependencies, and the Python dev tools used by local checks. It does not install Temporal or
-Playwright browser binaries. Do not set `UV_EXCLUDE_NEWER` (or a global uv
+dependencies, and the Python dev tools used by local checks. It does not install PostgreSQL runtime tools or Playwright browser binaries. Do not set `UV_EXCLUDE_NEWER` (or a global uv
 `exclude-newer` config): it makes uv treat `uv.lock` as needing re-resolution,
 so every `--locked` command in this repository fails or, worse, rewrites the
 lockfile. System Chrome/Chromium is optional; contributor
@@ -97,6 +96,15 @@ release, replace it with the exact published SDK version and hashed wheel lock.
 The native core installer continues to require hashes and prebuilt wheels, so
 this source override does not establish release-build readiness.
 
+### PostgreSQL runtime tools
+
+Source development and E2E require PostgreSQL 17 tools. The pinned runtime
+can be built with `bash scripts/install-postgres-runtime.sh INSTALL_ROOT`;
+set `JOBCTRL_POSTGRES_BIN_DIR=INSTALL_ROOT/bin` for source and QA. Building
+requires Bash, Node, GNU make, a C compiler, bison, flex and zlib development
+headers; on macOS use Xcode command line tools. The native distribution's
+macOS arm64 payload includes its own PostgreSQL runtime.
+
 ## Run
 
 <a id="native-credential-migration"></a>
@@ -109,30 +117,32 @@ for credential sources and precedence. The launcher may inherit environment
 values, so a separate workspace directory alone does not isolate credentials;
 never use personal credentials for QA.
 
+To migrate persistent provider secrets for an initialized source workspace, run
+`scripts/dev stop` and `scripts/dev migrate-credentials` with the same
+`JOBCTRL_DIR` used for development. The launcher opens only that workspace's
+PostgreSQL database for the duration of credential maintenance. It leaves the
+API, worker, and schedules stopped. Source order and marker behavior are covered
+in [Migrating legacy plaintext secrets](user/configuration.md#migrating-legacy-plaintext-secrets).
+
 ### Start the development stack
 
 ```bash
 corepack pnpm dev
 ```
 
-The source launcher builds the browser extension, then starts Temporal, the
-Python HTTP application, the Vite web app and the Python worker. It runs in the
-foreground: keep the terminal open and stop the stack with Ctrl-C. It tracks
-process ownership under `.dev/pids/` and logs under `.dev/logs/`. On macOS,
-the source fleet shares workspace ownership controls with a compatible installed
-application. An unverified process or an unexpected listener is not authority
-to stop or replace it.
-
-The launcher waits up to 30 seconds for Temporal's health check before starting
-the worker. If Temporal stays unavailable, startup fails visibly without
-launching the worker; inspect `.dev/logs/temporal.log` before trying again.
+The source launcher builds the browser extension, then starts local PostgreSQL,
+the Python HTTP application, the Vite web app and the Python worker. It runs in
+the foreground: keep the terminal open and stop the stack with Ctrl-C. It tracks
+process ownership under `.dev/pids/` and logs under `.dev/logs/`. A responding
+API probe alone does not establish that every writer or descendant has stopped.
+Inspect ownership, listener and process state independently before changing
+the runtime.
 
 The default workspace is `~/.jobctrl`, the API is loopback-only on
 `127.0.0.1:8766`, and Vite requests port `5173`. Use the printed URL if Vite
-chooses a different port. New workspaces use `$JOBCTRL_DIR/temporal.db`; keep
-application and Temporal state together for recovery. A responding API probe
-alone does not establish that every writer or descendant has stopped. Inspect
-ownership, listener and process state independently before changing the runtime.
+chooses a different port. The local server uses a workspace-scoped private Unix
+socket, without a TCP listener. Application data and DBOS state share one
+PostgreSQL database.
 
 For a detached stack, use `corepack pnpm dev:start`; inspect it with
 `corepack pnpm dev:status` and stop its owned processes with
@@ -142,49 +152,39 @@ For a detached stack, use `corepack pnpm dev:start`; inspect it with
 
 ### Workspace compatibility and source updates
 
-The Python application does not upgrade a pre-Python application database in
-place. It refuses a legacy workspace before opening its database with SQLite;
-this applies to source startup across platforms. Preserve the existing workspace
-and its history. Starting a checkout, updating source dependencies or an
-installed release does not authorize a reset.
+The supported SQLite upgrade source is the current Python workspace. Stop and
+drain its writers and outstanding work before the final snapshot. Keep the
+source, history, receipts and owned files; starting a checkout does not authorize
+a reset. Rehearse against an isolated target before any cutover. The explicit
+import accepts `JOBCTRL_DATABASE_URL` and takes a consistent SQLite online
+snapshot:
 
-The deliberate transition uses `jobctrl profile-transfer` with a read-only
-source, a nonexistent target outside the source, a complete browser Profile
-sources and attachment manifest, and explicit `--confirm-profile-only-reset`.
-It preserves the full Profile, supporting sources, confirmations, preferences
-and provenance; other application data starts fresh in the new workspace. The
-command leaves the source and workspace selection unchanged. Review the receipt
-and select the new workspace deliberately after verification. Installed cutover
-also requires a separate fresh native runtime home with no active selection; an
-existing installation's runtime home cannot adopt the incomplete database pair.
-First native selection consumes the transfer permission once. Preserve both old
-locations and inspect an interrupted selection rather than clearing its marker.
-See
-[Getting Started](user/getting-started.md#update-roll-back-or-remove-jobctrl)
-for the release boundary. A one-off Profile transfer integrity proof uses owned
-synthetic data; development and QA never reset a real user's workspace.
+```bash
+python -m jobctrl.app.postgres_upgrade --sqlite /path/to/source/jobctrl.db \
+  --workspace /path/to/isolated-target \
+  --artifact-workspace /path/to/source --rehearse
+```
 
-For source updates, stop the owned stack, preserve unrelated work, update the
-checkout and dependencies, and restart only after checking workspace
-compatibility. The `requirements-v2` source generation requires stopped old
-writers and a verified workspace backup before new writes. Its active catalog
-starts empty while accepted history and bytes remain retained. After new writes,
-rollback restores that backup with compatible application/workflow state; an
-older binary alone is insufficient. See the
-[typed upgrade boundary](user/data-and-safety.md#typed-requirements-upgrade).
-The later capability-consolidation policy adds its own schema extension within
-that generation; it does not empty the retained catalog. Stop the owned writers
-and verify a paired workspace backup before adopting the new source. Starting
-it registers the extension but does not run semantic repair. **Jobs →
-Requirements → Consolidate skills** explicitly admits one complete retained
-catalog determination. Failed or cancelled work preserves the accepted catalog,
-scores and resume bytes. After successful publication, use the compatible
-backup and workflow state for rollback rather than starting an older checkout
-against the changed workspace. See the
-[consolidation contract](user/requirements-library.md).
-Updating a checkout does not publish or update an installed release. For ordinary development that does not need personal data, use a
-separate owned synthetic `JOBCTRL_DIR`, with synthetic credentials and sources;
-setting that path alone does not isolate inherited environment credentials.
+A rehearsal leaves the destination staged and unstartable. Final activation
+requires the original artifact workspace to be the target workspace, with old
+writers stopped; the import itself does not stop them. It verifies counts,
+content digests, keys and file bindings before activation. Old Temporal history
+is retained, not replayed. A rehearsal target must not overlap the original artifact workspace and must
+differ from the directory containing the SQLite backup. A detached backup
+requires the original artifact workspace. Native final activation seals the source read-only
+with a bound private record after checking predecessor descriptors. Recovery
+before publication may restore its recorded original mode under the staging lock;
+uncertain publication stays sealed for retry. A rollback before later writes
+requires stopped newer workers and verified source identity, database status,
+original mode and predecessor selection/history. Later PostgreSQL writes require
+separate recovery. Uncertain provider charges or external effects must
+remain unsettled. Before and after subsequent target writes have different
+rollback implications; preserve the verified source and target evidence. See
+the [migration plan](plans/2026-11-25-postgres-dbos.md).
+
+Use a separate owned synthetic `JOBCTRL_DIR` and database for ordinary development
+and QA; setting a workspace path alone does not isolate inherited credentials.
+Updating source does not publish an installed release.
 
 ### Runtime Overrides
 
@@ -203,9 +203,8 @@ Python HTTP application accepts only loopback binds.
 | `JOBCTRL_DEMO_STATE_DIR` | `.dev/demo/wrangler` | Local demo Worker persistence. |
 | `VITE_JOBCTRL_API_BASE_URL` | Launcher-selected API URL | Browser API origin for the source stack. |
 | `VITE_DEV_API_PROXY_TARGET` | `http://127.0.0.1:8766` | Vite `/v1` proxy target. |
-| `JOBCTRL_TEMPORAL_DB` | `$JOBCTRL_DIR/temporal.db` for a new workspace | Temporal development-server history. Keep it paired with the application workspace. |
-| `JOBCTRL_TEMPORAL_ADDRESS` | `127.0.0.1:7233` | Temporal address used by the application and worker. |
-| `JOBCTRL_TEMPORAL_NAMESPACE` | `default` | Temporal namespace used by the application and worker. |
+| `JOBCTRL_DATABASE_URL` | Launcher-selected | PostgreSQL connection shared by API and worker. |
+| `JOBCTRL_POSTGRES_BIN_DIR` | Runtime-selected | Directory containing PostgreSQL 17 tools for source and QA. |
 | `VITE_GOOGLE_MAPS_API_KEY` | unset | Enables Google Maps address search in the Profile form. |
 
 Inspect the stack from another terminal:
@@ -232,7 +231,7 @@ corepack pnpm worker:start
 uv --project workers/automation run --no-sync python -m jobctrl doctor
 ```
 
-The API and worker need the intended workspace and Temporal configuration; the
+The API and worker need the intended workspace and PostgreSQL configuration; the
 launcher normally supplies them. The web development proxy targets the Python
 HTTP application. Do not run destructive database maintenance or a real-user
 reset for development or QA.
@@ -265,7 +264,7 @@ under `.dev/demo/wrangler/`; override the three `JOBCTRL_DEMO_*` variables in
 the table above for isolated multi-worktree sessions. Inspect process logs with
 `corepack pnpm dev:logs demo-api` or `corepack pnpm dev:logs demo-web`.
 
-The local demo does not start the JobCtrl API, Temporal, Python worker, SSE, or
+The local demo does not start the JobCtrl API, PostgreSQL, Python worker, SSE, or
 host-OS integrations. Only the exact value `demo` selects this frontend
 composition; the lifecycle command supplies it automatically. A missing or
 invalid `VITE_JOBCTRL_APP_MODE` keeps the normal local composition, so a
@@ -356,7 +355,7 @@ corepack pnpm e2e
 ```
 
 The journey command builds the web application once, then exercises the real
-Python API, worker, Temporal, SQLite and renderer in owned synthetic workspaces.
+Python API, worker, PostgreSQL, DBOS and renderer in owned synthetic workspaces.
 External model and provider boundaries are controlled. A full Profile-only
 transfer is a separate one-off synthetic integrity proof; never perform a live
 user reset as part of development or QA. Packaging and installed-runtime

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import closing
 from pathlib import Path
 from typing import Optional
 
@@ -31,9 +32,13 @@ def migrate_credentials(
 
     from jobctrl.native_runtime_config import get_env_path, workspace_path
     from jobctrl.native_credentials import NativeCredentialError, NativeCredentialMigrationError
+    from jobctrl.app.contracts import WorkspaceStorage
     from jobctrl.app.credentials import CredentialService
+    from jobctrl.app.database import Database
     from jobctrl.app.errors import AppError
-    from jobctrl.cli import _application, _fail
+    from jobctrl.app.events import EventStore
+    from jobctrl.app.settings import Settings
+    from jobctrl.cli import _fail
     from jobctrl.runtime import is_bundled_runtime
 
     selected_workspace = workspace_path()
@@ -52,7 +57,12 @@ def migrate_credentials(
                 paths.append(configured_path)
     marker_path = marker or (selected_workspace / ".native-credentials-migrated.json")
     try:
-        result = CredentialService(_application().runtime).migrate_persistent_env(paths, marker_path)
+        with closing(Database.open_existing(selected_workspace, read_only=False)) as database:
+            events = EventStore(database)
+            settings = Settings(database, events, initialize=False)
+            settings.snapshot()
+            storage = WorkspaceStorage(database.workspace, database, settings, events)
+            result = CredentialService(storage).migrate_persistent_env(paths, marker_path)
     except (NativeCredentialMigrationError, NativeCredentialError, AppError) as exc:
         console.print(f"[red]Credential migration failed:[/red] {exc}")
         raise typer.Exit(code=1) from exc

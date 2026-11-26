@@ -4,14 +4,15 @@ package launcher
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -35,7 +36,7 @@ func RunSource(executable string, args, env []string, stdout, stderr io.Writer) 
 	if handled, err := ownedExecutionHelper(args); handled {
 		return err
 	}
-	if len(args) < 2 || (args[0] != "run" && args[0] != "stop" && args[0] != "switch" && args[0] != "verify" && args[0] != "__source-run") {
+	if len(args) < 2 || (args[0] != "run" && args[0] != "stop" && args[0] != "switch" && args[0] != "verify" && args[0] != "postgres" && args[0] != "__source-run" && args[0] != "migrate-credentials") {
 		return errors.New("usage: jobctrl-source run|stop SOURCE_ROOT [component...]")
 	}
 	root, err := filepath.EvalSymlinks(args[1])
@@ -48,8 +49,11 @@ func RunSource(executable string, args, env []string, stdout, stderr io.Writer) 
 		return errors.New("source development launcher is not a regular file")
 	}
 	for _, name := range args[2:] {
+		if args[0] == "migrate-credentials" {
+			break
+		}
 		switch name {
-		case "temporal", "api", "web", "worker", "docs", "demo-api", "demo-web":
+		case "postgres", "api", "web", "worker", "docs", "demo-api", "demo-web":
 		default:
 			return fmt.Errorf("unknown source component %q", name)
 		}
@@ -59,6 +63,15 @@ func RunSource(executable string, args, env []string, stdout, stderr io.Writer) 
 		return err
 	}
 	ctx := launchContext{Executable: executable, Instance: inst, Environment: env}
+	if args[0] == "migrate-credentials" {
+		return sourceMigrateCredentials(ctx, root, args, stdout, stderr)
+	}
+	if args[0] == "postgres" {
+		if len(args) != 2 {
+			return errors.New("usage: jobctrl-source postgres SOURCE_ROOT")
+		}
+		return sourcePostgres(ctx, root)
+	}
 	if args[0] == "verify" {
 		owned, err := authenticatedOwnedExecution(ctx)
 		if err != nil || !owned {
@@ -189,13 +202,15 @@ func runSourceInsideScope(ctx launchContext, script string, targets []string, st
 	arguments := append([]string{script, "run"}, targets...)
 	child := payloadCommand(ctx.Environment, "/bin/bash", arguments...)
 	child.Dir = filepath.Dir(filepath.Dir(script))
-	child.Env = make([]string, 0, len(ctx.Environment)+2)
+	child.Env = make([]string, 0, len(ctx.Environment)+3)
 	for _, pair := range ctx.Environment {
-		if !strings.HasPrefix(pair, "JOBCTRL_DEV_INNER=") && !strings.HasPrefix(pair, "JOBCTRL_DIR=") {
+		if !strings.HasPrefix(pair, "JOBCTRL_DEV_INNER=") && !strings.HasPrefix(pair, "JOBCTRL_DIR=") && !strings.HasPrefix(pair, "JOBCTRL_SOURCE_LAUNCHER=") {
 			child.Env = append(child.Env, pair)
 		}
 	}
-	child.Env = append(child.Env, "JOBCTRL_DEV_INNER=1", "JOBCTRL_DIR="+ctx.Instance.StateDir)
+	// The service owner must retain the process that forwards TERM to the
+	// postmaster. A go-run wrapper can exit before its compiled child drains.
+	child.Env = append(child.Env, "JOBCTRL_DEV_INNER=1", "JOBCTRL_DIR="+ctx.Instance.StateDir, "JOBCTRL_SOURCE_LAUNCHER="+ctx.Executable)
 	readyRead, readyWrite, err := os.Pipe()
 	if err != nil {
 		return err
@@ -260,9 +275,6 @@ func runSourceInsideScope(ctx launchContext, script string, targets []string, st
 
 func sourceWorkerReady(ctx launchContext) bool {
 	values := environmentMap(ctx.Environment)
-	if address := values["TEMPORAL_ADDRESS"]; address != "" && address != "localhost:7233" && address != "127.0.0.1:7233" && address != "[::1]:7233" {
-		return false
-	}
 	host, port := values["JOBCTRL_API_HOST"], values["JOBCTRL_API_PORT"]
 	if host == "" {
 		host = "127.0.0.1"
@@ -313,43 +325,15 @@ func sourceWorkerReady(ctx launchContext) bool {
 		return false
 	}
 	after, err := processStartIdentity(pid)
-	return err == nil && before == after && sourceTemporalHistoryReady(ctx, pid, current)
-}
-
-// A healthy worker alone can be connected to another Temporal server. Only
-// record a source witness once a different process in this same kernel scope
-// has the selected history open as well.
-func sourceTemporalHistoryReady(ctx launchContext, workerPID int, scope [2]uint64) bool {
-	path, err := temporalHistoryPath(ctx.Instance.StateDir)
+	if err != nil || before != after {
+		return false
+	}
+	server, err := postgresPID(ctx)
 	if err != nil {
 		return false
 	}
-	output, err := exec.Command("/usr/sbin/lsof", "-nP", "-Fp", path).Output()
-	if err != nil {
-		return false
-	}
-	for _, line := range strings.Split(string(output), "\n") {
-		if !strings.HasPrefix(line, "p") {
-			continue
-		}
-		pid, err := strconv.Atoi(strings.TrimPrefix(line, "p"))
-		if err != nil || pid <= 0 || pid == workerPID || pid == os.Getpid() {
-			continue
-		}
-		before, err := processStartIdentity(pid)
-		if err != nil {
-			continue
-		}
-		ids, err := processCoalitionIDs(pid)
-		if err != nil || ids != scope {
-			continue
-		}
-		after, err := processStartIdentity(pid)
-		if err == nil && before == after {
-			return true
-		}
-	}
-	return false
+	serverIDs, err := processCoalitionIDs(server)
+	return err == nil && serverIDs == current
 }
 
 func sourceHasFullFleet(targets []string) bool {
@@ -360,7 +344,7 @@ func sourceHasFullFleet(targets []string) bool {
 	for _, target := range targets {
 		seen[target] = true
 	}
-	return seen["temporal"] && seen["api"] && seen["worker"]
+	return seen["postgres"] && seen["api"] && seen["worker"]
 }
 
 func refuseBackupOfRunningSource(ctx launchContext) error {
@@ -386,47 +370,114 @@ func refuseBackupOfRunningSource(ctx launchContext) error {
 	return nil
 }
 
-func sourcePathMatches(path, expected string) bool {
-	if path == "" || !filepath.IsAbs(path) {
-		return false
-	}
-	resolve := func(value string) (string, error) {
-		if resolved, err := filepath.EvalSymlinks(value); err == nil {
-			return resolved, nil
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return "", err
-		}
-		parent, err := filepath.EvalSymlinks(filepath.Dir(value))
-		if err != nil {
-			return "", err
-		}
-		return filepath.Join(parent, filepath.Base(value)), nil
-	}
-	actual, err := resolve(filepath.Clean(path))
-	if err != nil {
-		return false
-	}
-	want, err := resolve(expected)
-	return err == nil && actual == want
-}
-
 func validateSourceWorkspacePaths(ctx launchContext) error {
 	values := environmentMap(ctx.Environment)
-	if address := values["TEMPORAL_ADDRESS"]; address != "" && address != "localhost:7233" && address != "127.0.0.1:7233" && address != "[::1]:7233" {
-		return errors.New("the shared workspace requires the local Temporal server at localhost:7233")
+	if configured := values["JOBCTRL_DATABASE_URL"]; configured != "" {
+		u, err := url.Parse(configured)
+		if err != nil || u.Scheme != "postgresql" || u.Host != "" || u.Path != "/jobctrl" || (u.User == nil || u.User.String() != "jobctrl") || u.Query().Get("host") != postgresSocket(ctx.Instance.StateDir) || u.Query().Get("port") != "5432" || len(u.Query()) != 2 {
+			return errors.New("source database URL must select the workspace's managed PostgreSQL socket")
+		}
 	}
-	if namespace := values["TEMPORAL_NAMESPACE"]; namespace != "" && namespace != "default" {
-		return errors.New("the shared workspace requires the default Temporal namespace")
+	return nil
+}
+
+func sourcePostgresContext(ctx launchContext, root string) (launchContext, error) {
+	ctx.SourcePython = filepath.Join(root, "workers", "automation", ".venv", "bin", "python")
+	dir := environmentMap(ctx.Environment)["JOBCTRL_POSTGRES_BIN_DIR"]
+	if dir == "" {
+		dir = filepath.Join(root, ".dev", "postgres-runtime", "bin")
 	}
-	if configured := values["JOBCTRL_DB_PATH"]; configured != "" && !sourcePathMatches(configured, filepath.Join(ctx.Instance.StateDir, "jobctrl.db")) {
-		return errors.New("the source database must belong to JOBCTRL_DIR; use a separate JOBCTRL_DIR for an isolated workspace")
+	if !filepath.IsAbs(dir) {
+		return ctx, errors.New("PostgreSQL binaries require an absolute directory")
 	}
-	temporal, err := temporalHistoryPath(ctx.Instance.StateDir)
+	ctx.Environment = append(ctx.Environment, "JOBCTRL_POSTGRES_BIN_DIR="+dir, "JOBCTRL_DATABASE_URL="+postgresURL(ctx.Instance.StateDir))
+	return ctx, nil
+}
+
+func sourceMigrateCredentials(ctx launchContext, root string, args []string, stdout, stderr io.Writer) error {
+	store, err := release.Open(ctx.Instance.RuntimeHome)
 	if err != nil {
 		return err
 	}
-	if configured := values["JOBCTRL_TEMPORAL_DB"]; configured != "" && !sourcePathMatches(configured, temporal) {
-		return errors.New("the Temporal history must belong to the shared JOBCTRL_DIR workspace")
+	selection, err := store.SelectionLock(false)
+	if err != nil {
+		return err
 	}
-	return nil
+	defer selection.Close()
+	if err := refusePendingBridgeHandoff(store.Home); err != nil {
+		return err
+	}
+	if err := refusePendingSourceMigration(ctx); err != nil {
+		return err
+	}
+	if journal, err := store.ReadJournal(); err == nil && journal.Resumable() {
+		return errors.New("complete the pending release transition before credential migration")
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	owned, err := authenticatedOwnedExecution(ctx)
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return runInOwnedExecution(ctx, args, stdout, stderr)
+	}
+	ctx, err = sourcePostgresContext(ctx, root)
+	if err != nil {
+		return err
+	}
+	return migrateStoppedCredentials(ctx, args[2:], stdout, stderr)
+}
+
+func sourcePostgres(ctx launchContext, root string) error {
+	owned, err := authenticatedOwnedExecution(ctx)
+	if err != nil || !owned {
+		return errors.Join(errors.New("source PostgreSQL requires its workspace execution scope"), err)
+	}
+	ctx, err = sourcePostgresContext(ctx, root)
+	if err != nil {
+		return err
+	}
+	if err := checkPythonApplicationWorkspace(ctx); err != nil {
+		return err
+	}
+	selection, err := preparePostgres(ctx)
+	if err != nil {
+		return err
+	}
+	ctx.PostgresData = selection.path(ctx)
+	cmd := localCommand(ctx, postgresTool(ctx, "postgres"), "-D", ctx.PostgresData, "-c", "listen_addresses=", "-c", "unix_socket_directories="+postgresSocket(ctx.Instance.StateDir), "-c", "unix_socket_permissions=0700", "-p", "5432")
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	stop, done := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer done()
+	if err = cmd.Start(); err != nil {
+		return err
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	shutdown := func() error { _ = cmd.Process.Signal(syscall.SIGINT); return <-exited }
+	deadline := time.NewTimer(startupTimeout)
+	defer deadline.Stop()
+	for verifyPostmaster(ctx) != nil {
+		select {
+		case <-stop.Done():
+			return shutdown()
+		case err := <-exited:
+			return fmt.Errorf("source PostgreSQL exited before readiness: %v", err)
+		case <-deadline.C:
+			_ = shutdown()
+			return errors.New("PostgreSQL startup timed out")
+		case <-time.After(150 * time.Millisecond):
+		}
+	}
+	if err := admitPostgres(ctx, selection, cmd.Process.Pid); err != nil {
+		_ = shutdown()
+		return err
+	}
+	select {
+	case err := <-exited:
+		return err
+	case <-stop.Done():
+		return shutdown()
+	}
 }

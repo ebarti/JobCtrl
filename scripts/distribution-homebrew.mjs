@@ -165,7 +165,7 @@ export function validateRenderedHomebrewFormula({ formula, descriptor, descripto
   invariant(!formula.includes('Pathname.new(Dir.home)'), "rendered Homebrew formula must not write the user home during install");
   invariant(!/\bhead\s+/.test(formula), "rendered Homebrew formula must not have a HEAD/source path");
   invariant(!/depends_on\s+/.test(formula), "rendered Homebrew formula must not install a developer-toolchain dependency");
-  for (const forbidden of ["corepack", "git", "node", "uv", "temporal", "poppler", "chrome"]) {
+  for (const forbidden of ["corepack", "git", "node", "uv", "temporal", "postgres", "postgresql", "poppler", "chrome"]) {
     invariant(!new RegExp(`depends_on\\s+\"${forbidden}\"`).test(formula), `rendered Homebrew formula must not depend on ${forbidden}`);
   }
   return true;

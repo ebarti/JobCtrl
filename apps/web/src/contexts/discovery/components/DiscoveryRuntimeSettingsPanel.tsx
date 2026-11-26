@@ -75,13 +75,13 @@ const RUNTIME_SETTING_HELP = {
   schedulingEnabled: {
     title: "Enable scheduled discovery",
     description:
-      "Control whether worker startup reconciles a recurring Temporal Discover schedule. Restart the worker after changing this setting.",
+      "Run recurring searches for new jobs. The worker picks up changes while it is running.",
     href: `${DISCOVERY_GUIDE_URL}#runtime-setting-enable-scheduled-discovery`,
   },
   scheduleCron: {
     title: "Schedule cron",
     description:
-      "Define the local recurring schedule with a five-field cron expression. It is used only when scheduled discovery is enabled, and changes require a worker restart.",
+      "Use a five-field cron expression to set when recurring searches start. The worker picks up changes while it is running.",
     href: `${DISCOVERY_GUIDE_URL}#runtime-setting-schedule-cron`,
   },
 } satisfies Record<string, DiscoverySettingHelpContent>;
@@ -149,21 +149,13 @@ export function DiscoveryRuntimeSettingsForm({ initial, includeSearchSettings = 
       const submitted = { ...value, boards: value.boards?.slice() };
       const editedFields = RUNTIME_FIELDS.filter((field) => formApi.getFieldMeta(field)?.isDirty);
       let savedValues: RuntimeSettingsValues;
-      let scheduleChanged: boolean;
       try {
-        const outcome = await baseline.runSave(async () => {
-          const latest = baseline.currentValues();
+        savedValues = await baseline.runSave(async () => {
           const request: RuntimeSettingsValues = {};
           for (const field of editedFields) Object.assign(request, { [field]: submitted[field] });
           const response = await updateSettings.mutateAsync(request);
-          const saved = baseline.acknowledge(toValues(response));
-          return {
-            saved,
-            scheduleChanged: saved.schedulingEnabled !== latest.schedulingEnabled || saved.scheduleCron !== latest.scheduleCron,
-          };
+          return baseline.acknowledge(toValues(response));
         });
-        savedValues = outcome.saved;
-        scheduleChanged = outcome.scheduleChanged;
       } catch {
         // The mutation owns error presentation and cache rollback; retain the draft.
         return;
@@ -179,7 +171,7 @@ export function DiscoveryRuntimeSettingsForm({ initial, includeSearchSettings = 
         formApi.setFieldValue(field, current[field]);
       }
       setStatusMessage(
-        `Runtime settings saved.${scheduleChanged ? " Restart pending for scheduled discovery changes." : ""}${pendingFields.length ? " Newer changes pending." : ""}`,
+        `Runtime settings saved.${pendingFields.length ? " Newer changes pending." : ""}`,
       );
     },
   });

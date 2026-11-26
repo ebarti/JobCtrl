@@ -6,14 +6,14 @@ from starlette.routing import Route
 from jobctrl.app.contracts import Feature
 from jobctrl.app.http import json_object
 from jobctrl.features.interviews.schema import RUN_SCHEMA, SCHEMA
-from jobctrl.features.interviews.repository import SqliteInterviewRepository
+from jobctrl.features.interviews.repository import PostgresInterviewRepository
 from jobctrl.features.interviews.service import InterviewService
 
 
 def build_feature(runtime, *, profile, jobs, requirements=None, fit=None, resumes=None, **_ports):
     runtime.database.initialize_feature("interviews", SCHEMA)
     runtime.database.initialize_feature("interviews_runs", RUN_SCHEMA)
-    service = InterviewService(SqliteInterviewRepository(runtime.database, runtime.events, runtime.workspace),
+    service = InterviewService(PostgresInterviewRepository(runtime.database, runtime.events, runtime.workspace),
                                model=runtime.model, profile=profile, jobs=jobs, requirements=requirements, fit=fit, resumes=resumes)
 
     async def catalog(request):

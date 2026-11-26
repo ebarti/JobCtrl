@@ -2494,15 +2494,8 @@ export const ActivityListQuerySchema = z
 export type ActivityListQuery = z.infer<typeof ActivityListQuerySchema>;
 
 // ---------------------------------------------------------------------------
-// Workflow runs (PR 5 of the Temporal stack)
-//
-// `workflow_run_projections` is the unified workflow-run source (Python-sole-
-// writer, folded from the `Workflow*` lifecycle events) covering every
-// workflow type. Apply rows are enriched with job context via a LEFT JOIN to
-// `apply_run_projections`, the apply-specific detail projection. The run id is
-// the Temporal workflow id, so the deep-link uses it verbatim.
-// `WorkflowRunStatusSchema` widens beyond `ApplyRunStatus` so non-apply
-// workflows land here without another migration.
+// Workflow history shared by the browser demo and archived read adapters.
+// Workflow and product run IDs can differ. Both are used verbatim.
 // ---------------------------------------------------------------------------
 
 export const WORKFLOW_RUN_STATUSES = [
@@ -2561,19 +2554,11 @@ export const WorkflowRunsListQuerySchema = z
 export type WorkflowRunsListQuery = z.infer<typeof WorkflowRunsListQuerySchema>;
 
 export interface WorkflowRunSummary {
-  /** Temporal workflow id — drives the deep-link to the Temporal Web UI. */
+  /** Stable workflow identity. */
   readonly workflowId: string;
-  /**
-   * Logical run id surfaced by the read-model. Equal to `workflowId` for
-   * apply runs (the Python `ApplyWorkflow` sets `run_id = info.workflow_id`);
-   * preserved as a distinct field so future non-apply workflows that key
-   * timeline events on a different id keep working.
-   */
+  /** Stable product run identity. */
   readonly runId: string;
-  /**
-   * Temporal workflow type (e.g. `JobPipelineWorkflow`, `ApplyWorkflow`).
-   * Empty string for legacy apply rows that predate the Workflow* events.
-   */
+  /** The recorded workflow type, empty for older Apply history. */
   readonly workflowType: string;
   readonly jobKey: string;
   readonly title: string;
@@ -2588,7 +2573,7 @@ export interface WorkflowRunSummary {
 }
 
 export interface WorkflowRunTimelineEvent {
-  /** Recorded execution identity; absent only for legacy events. */
+  /** @deprecated Historical Temporal provenance. Use the workflow ID to identify a run. */
   readonly temporalRunId?: string | null;
   readonly eventType: string;
   readonly occurredAt: string | null;
@@ -2652,7 +2637,7 @@ export interface WorkflowRunProviderFailureDiagnostic {
 }
 
 export interface WorkflowRunFailureDiagnostics {
-  /** Whether Temporal will automatically retry this workflow failure. */
+  /** Whether the workflow engine will automatically retry this failure. */
   readonly automaticRetryable: boolean;
   /** Whether the operator can start a new Tailor recovery attempt. */
   readonly manualRecoveryAvailable: boolean;
@@ -2680,6 +2665,7 @@ export interface WorkflowRunDetail {
   readonly retryable: boolean;
   readonly failureDiagnostics?: WorkflowRunFailureDiagnostics;
   readonly inputSummary: Record<string, unknown>;
+  /** @deprecated Historical Temporal provenance. Use workflowId for run identity. */
   readonly temporalRunId: string | null;
   readonly startedAt: string | null;
   readonly finishedAt: string | null;

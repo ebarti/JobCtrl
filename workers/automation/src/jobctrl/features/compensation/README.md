@@ -5,7 +5,7 @@ normalization and compensation refresh actions. `core/` uses only standard
 Python and receives neutral sources, model judgments, rates and policies; it
 imports no JobCtrl database, ID, HTTP, Temporal, configuration or model types.
 The JobCtrl adapters map public Jobs snapshots, host configuration, strict
-model receipts, provider transports, feature-owned SQLite and durable actions.
+model receipts, provider transports, feature-owned PostgreSQL and durable actions.
 
 The model gateway makes meaning decisions using the compensation lane and
 spend preflight. A result is accepted only when its exact source hash, source

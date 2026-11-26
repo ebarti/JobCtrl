@@ -1,4 +1,4 @@
-"""SQLite unit of work for Learning's data, receipts and committed events."""
+"""PostgreSQL unit of work for Learning's data, receipts and committed events."""
 
 from contextlib import contextmanager, nullcontext
 import json
@@ -11,7 +11,7 @@ def _json(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
-class SqliteLearningSession:
+class PostgresLearningSession:
     def __init__(self, connection, events):
         self.source_context, self.events = connection, events
 
@@ -37,7 +37,12 @@ class SqliteLearningSession:
 
     def list_latest(self, kind, limit):
         table, key, field = self._names(kind)
-        rows = self.source_context.execute(f"SELECT {key},revision,value_json FROM {table} WHERE ({key},revision) IN (SELECT {key},MAX(revision) FROM {table} GROUP BY {key}) ORDER BY rowid DESC LIMIT ?", (limit,)).fetchall()
+        rows = self.source_context.execute(
+            f"SELECT {key},revision,value_json FROM {table} "
+            f"WHERE ({key},revision) IN (SELECT {key},MAX(revision) FROM {table} GROUP BY {key}) "
+            "ORDER BY storage_order DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
         return [self._decode(row, field) for row in rows]
 
     def history(self, milestone_id, limit):
@@ -76,11 +81,11 @@ class SqliteLearningSession:
         self.source_context.execute("UPDATE learning_requests SET state='failed',error_json=?,updated_at=? WHERE operation_id=? AND state!='complete'", (_json(error), at, identity))
 
     def save_cohort(self, value):
-        self.source_context.execute("INSERT INTO learning_cohorts VALUES(?,?,?)", (value["cohortId"], value["revision"], _json(value)))
+        self.source_context.execute("INSERT INTO learning_cohorts(cohort_id,revision,value_json) VALUES(?,?,?)", (value["cohortId"], value["revision"], _json(value)))
         self.events.append(self.source_context, "CareerLearningRecorded", {"cohortId": value["cohortId"], "revision": value["revision"]}, feature="learning", aggregate_id=value["cohortId"])
 
     def save_milestone(self, value):
-        self.source_context.execute("INSERT INTO learning_milestones VALUES(?,?,?)", (value["milestoneId"], value["revision"], _json(value)))
+        self.source_context.execute("INSERT INTO learning_milestones(milestone_id,revision,value_json) VALUES(?,?,?)", (value["milestoneId"], value["revision"], _json(value)))
         self.events.append(self.source_context, "CareerLearningRecorded", {"milestoneId": value["milestoneId"], "revision": value["revision"]}, feature="learning", aggregate_id=value["milestoneId"])
 
     def record_attempt(self, cohort_id, code, at, *, publish):
@@ -89,7 +94,7 @@ class SqliteLearningSession:
             self.events.append(self.source_context, "CareerLearningRecorded", {"cohortId": cohort_id, "failureCode": code}, feature="learning", aggregate_id=cohort_id)
 
 
-class SqliteLearningRepository:
+class PostgresLearningRepository:
     def __init__(self, database, events, workspace):
         self.database, self.events, self.workspace = database, events, workspace
 
@@ -100,8 +105,7 @@ class SqliteLearningRepository:
                 yield current
         else:
             with self.database.connect() as connection:
-                connection.execute("BEGIN")
-                yield SqliteLearningSession(connection, self.events)
+                yield PostgresLearningSession(connection, self.events)
 
     @contextmanager
     def transaction(self, session=None):
@@ -110,7 +114,7 @@ class SqliteLearningRepository:
                 yield current
         else:
             with self.database.transaction() as connection:
-                yield SqliteLearningSession(connection, self.events)
+                yield PostgresLearningSession(connection, self.events)
 
     def request_lock(self, identity):
         return request_lock(self.workspace, identity)

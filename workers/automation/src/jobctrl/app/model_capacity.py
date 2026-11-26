@@ -5,8 +5,11 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from typing import TypeVar
 
 from .errors import AppError
+
+_Admission = TypeVar("_Admission")
 
 
 class ModelCapacityBusy(AppError):
@@ -33,7 +36,7 @@ def wait_for_model_capacity(cancelled: Callable[[], bool], *, on_wait: Callable[
         _waiting.reset(token)
 
 
-async def admit_model_call(lane: str, admit: Callable[[], str]) -> str:
+async def admit_model_call(lane: str, admit: Callable[[], _Admission]) -> _Admission:
     policy = _waiting.get()
     if policy is None or policy.lane is not None and policy.lane != lane:
         return admit()

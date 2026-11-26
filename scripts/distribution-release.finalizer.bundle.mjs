@@ -7603,7 +7603,7 @@ var SAFE_FILE_MODES = /* @__PURE__ */ new Set(["0644", "0755"]);
 var EXPECTED_LOCK_INPUTS = /* @__PURE__ */ new Map([
   ["node-runtime-archive", "node-runtime"],
   ["python-runtime-archive", "python-runtime"],
-  ["temporal-runtime-archive", "temporal-runtime"],
+  ["postgres-runtime-source", "postgres-runtime"],
   ["chromium-core-headless-archive", "chromium-core"],
   ["playwright-mcp-archive", "playwright-mcp"]
 ]);
@@ -8088,6 +8088,13 @@ function validateComponentLocks(lockValue, inventoryById) {
     invariant(input.url.startsWith("https://"), `${id}.url must use HTTPS`);
     invariant(SHA256_PATTERN.test(input.sha256), `${id}.sha256 must be lowercase SHA-256`);
     invariant(["tar.gz", "zip"].includes(input.archiveType), `${id}: unsupported archiveType`);
+    if (id === "postgres-runtime-source") {
+      invariant(/^17\.\d+$/.test(input.version) && input.version === component.version, "PostgreSQL source version does not match the inventory");
+      invariant(
+        input.archiveType === "tar.gz" && input.url === `https://ftp.postgresql.org/pub/source/v${input.version}/postgresql-${input.version}.tar.gz`,
+        "PostgreSQL source must be the official versioned upstream archive"
+      );
+    }
     assertString(input.license, `${id}.license`);
     invariant(input.license === component.license, `${id}: license does not match component inventory`);
   }
@@ -9280,13 +9287,18 @@ var FORBIDDEN_PLAYWRIGHT_MCP_RUNTIME_PATHS = [
   "playwright-mcp/node_modules/playwright-core/README.md",
   "playwright-mcp/node_modules/playwright-core/bin"
 ];
-var TEMPORAL_BRIDGE_BUILD_SOURCE_PATHS = [
-  "temporalio/bridge/sdk-core",
-  "temporalio/bridge/src",
-  "temporalio/bridge/Cargo.toml",
-  "temporalio/bridge/Cargo.lock"
+var POSTGRES_RUNTIME_EXECUTABLES = [
+  "postgres",
+  "initdb",
+  "pg_ctl",
+  "pg_isready",
+  "createdb",
+  "pg_dump",
+  "pg_restore",
+  "psql"
 ];
 var PYTHON_RUNTIME_NON_RUNTIME_PATHS = /* @__PURE__ */ new Set([
+  "dbos/_templates",
   "email/architecture.rst",
   "google/protobuf/testdata",
   "numpy/ma/README.rst",
@@ -9311,15 +9323,12 @@ function canonicalJson(value) {
   return `${JSON.stringify(value, null, 2)}
 `;
 }
-function isTemporalBridgeBuildSourcePath(relativePath) {
-  return TEMPORAL_BRIDGE_BUILD_SOURCE_PATHS.some((sourcePath) => relativePath === sourcePath || relativePath.startsWith(`${sourcePath}/`));
-}
 function isKnownPythonNonRuntimePath(relativePath) {
   const [packageName, metadataDirectory, resourceDirectory] = relativePath.split("/");
   const isTyperDevelopmentInstructions = packageName === "typer" && metadataDirectory?.startsWith(".") && resourceDirectory === "skills";
   return [...PYTHON_RUNTIME_NON_RUNTIME_PATHS].some(
     (nonRuntimePath) => relativePath === nonRuntimePath || relativePath.startsWith(`${nonRuntimePath}/`)
-  ) || isTyperDevelopmentInstructions || /^temporalio\/contrib\/.+\/README\.md$/.test(relativePath);
+  ) || isTyperDevelopmentInstructions;
 }
 function pythonRuntimeRelativePath(payloadPath) {
   return payloadPath.replace(/^(?:worker|playwright-python)\/site-packages\//, "").replace(/^python\/lib\/python3\.12\//, "");
@@ -9627,7 +9636,7 @@ echo fixture:${name}:${contracts.versions[componentId]}
       await copyApplicationSchemaContract(sourceRoot, root);
       continue;
     }
-    const executable = ["jobctrl-launcher", "node-runtime", "python-runtime", "temporal-runtime", "playwright-mcp"].includes(componentId);
+    const executable = ["jobctrl-launcher", "node-runtime", "python-runtime", "postgres-runtime", "playwright-mcp"].includes(componentId);
     const filename = executable ? "bin" : "payload";
     await writeFile2(path3.join(root, filename), `fixture:${componentId}:${contracts.versions[componentId]}
 `, { mode: executable ? 493 : 420 });
@@ -9639,7 +9648,7 @@ async function copyApplicationSchemaContract(sourceRoot, launcherRoot) {
   const sourceInfo = await lstat3(source);
   invariant3(sourceInfo.isFile() && !sourceInfo.isSymbolicLink(), "application schema declaration must be a regular file");
   const contents = await readFile3(source);
-  invariant3(contents.equals(Buffer.from('{"schemaVersion":1,"application":"jobctrl-python","applicationId":1245926228,"userVersion":1}\n')), "application schema declaration does not match the Python application identity");
+  invariant3(contents.equals(Buffer.from('{"schemaVersion":2,"application":"jobctrl-python","storage":"postgresql","major":17,"workflow":"dbos"}\n')), "application schema declaration does not match the Python application identity");
   const target = path3.join(launcherRoot, "application-schema.json");
   await writeFile2(target, contents, { mode: 420, flag: "wx" });
   await chmod2(target, 420);
@@ -9752,10 +9761,24 @@ async function normalizeInstalledPythonMetadata(sitePackagesRoots) {
       const recordPath = path3.join(distInfoRoot, "RECORD");
       if (!await exists(recordPath)) continue;
       const rows = (await readFile3(recordPath, "utf8")).split(/\r?\n/).filter(Boolean);
+      let metadataRecord = null;
+      const metadataRelativePath = path3.posix.join(distInfo.name, "METADATA");
+      if (distInfo.name.startsWith("croniter-")) {
+        const metadataPath = path3.join(sitePackages, metadataRelativePath);
+        const metadata = await readFile3(metadataPath, "utf8");
+        const headers = metadata.split(/\r?\n\r?\n/, 1)[0];
+        invariant3(/^Name: croniter$/m.test(headers), "unexpected metadata in the croniter dist-info directory");
+        const contents = Buffer.from(`${headers}
+
+`);
+        await writeFile2(metadataPath, contents, { mode: 420 });
+        const digest = createHash3("sha256").update(contents).digest("base64url");
+        metadataRecord = `${metadataRelativePath},sha256=${digest},${contents.length}`;
+      }
       const canonicalRows = rows.filter((row) => {
         const installedPath = pythonRecordPath(row);
         return !installedPath.startsWith("bin/") && !installedPath.endsWith("/direct_url.json") && !installedPath.endsWith("/uv_cache.json") && !isKnownPythonNonRuntimePath(installedPath);
-      });
+      }).map((row) => metadataRecord && pythonRecordPath(row) === metadataRelativePath ? metadataRecord : row);
       await writeFile2(recordPath, `${canonicalRows.join("\n")}
 `, { mode: 420 });
       await chmod2(recordPath, 420);
@@ -9803,7 +9826,7 @@ async function assertCopiedWebRuntimeBytes(sourceRoot, payloadRoot, exclude) {
   );
   return { status: "exact-runtime-byte-copy", fileCount: payload.length };
 }
-async function assembleExternalRuntimes(payloadRoot, contracts, cacheDirectory, scratchDirectory) {
+async function assembleExternalRuntimes(payloadRoot, root, contracts, cacheDirectory, scratchDirectory) {
   const lockById = new Map(contracts.locks.inputs.map((lock) => [lock.id, lock]));
   const archiveById = /* @__PURE__ */ new Map();
   for (const lock of contracts.locks.inputs) archiveById.set(lock.id, await downloadLockedArchive(lock, cacheDirectory));
@@ -9836,16 +9859,17 @@ async function assembleExternalRuntimes(payloadRoot, contracts, cacheDirectory, 
   await assertSymlinksPreserved(pythonRoot, pythonEntries);
   await prunePythonRuntime(pythonRoot);
   await requireResolvedFileWithin(path3.join(pythonRoot, "bin", "python3"), pythonRoot, "bundled Python executable");
-  const temporalRoot = componentRoot(payloadRoot, contracts, "temporal-runtime");
-  const temporalEntries = await extractVerifiedArchive({
-    archivePath: archiveById.get("temporal-runtime-archive"),
-    lock: lockById.get("temporal-runtime-archive"),
-    destination: temporalRoot,
-    stripComponents: 0
+  const postgresRoot = componentRoot(payloadRoot, contracts, "postgres-runtime");
+  await run("/bin/bash", [path3.join(root, "scripts", "install-postgres-runtime.sh"), postgresRoot], {
+    cwd: root,
+    env: {
+      PATH: path3.dirname(process2.execPath) + ":/usr/bin:/bin:/usr/sbin:/sbin",
+      JOBCTRL_POSTGRES_SOURCE_ARCHIVE: archiveById.get("postgres-runtime-source")
+    }
   });
-  await assertSymlinksPreserved(temporalRoot, temporalEntries);
-  await requireFile(path3.join(temporalRoot, "temporal"), "bundled Temporal executable");
-  await chmod2(path3.join(temporalRoot, "temporal"), 493);
+  for (const executable of POSTGRES_RUNTIME_EXECUTABLES) {
+    await requireFile(path3.join(postgresRoot, "bin", executable), `bundled PostgreSQL ${executable}`);
+  }
   const chromiumRoot = componentRoot(payloadRoot, contracts, "chromium-core");
   const headlessRevisionRoot = path3.join(chromiumRoot, "chromium_headless_shell-1248");
   const headlessEntries = await extractVerifiedArchive({
@@ -10477,6 +10501,34 @@ async function collectNodeLicenseInventory(contracts, cacheDirectory, contributo
   assertNodeAttributionClosure(contributors, inventory);
   return { inventory, licenseSources };
 }
+async function loadPsycopgBinaryNotices(root) {
+  const distribution = path3.join(root, "packaging", "distribution");
+  const lock = JSON.parse(await readFile3(path3.join(distribution, "psycopg-binary-notices.lock.json"), "utf8"));
+  const uvLock = await readFile3(path3.join(root, "workers", "automation", "uv.lock"), "utf8");
+  const wheelEntry = uvLock.split("\n[[package]]\n").find((entry) => entry.startsWith('name = "psycopg-binary"\n'));
+  invariant3(wheelEntry?.includes(`version = "${lock.version}"`) && wheelEntry.includes(`/${lock.wheel}", hash = "sha256:${lock.wheelSha256}"`), "psycopg-binary notice lock does not match the locked macOS wheel");
+  for (const library of lock.libraries) {
+    for (const notice of library.notices) {
+      invariant3(/^[a-z0-9.-]+\.txt$/.test(notice.file) && notice.source.startsWith("https://"), "invalid psycopg-binary notice reference");
+      const noticePath = path3.join(distribution, "licenses", "psycopg-binary", notice.file);
+      invariant3(await sha256File2(noticePath) === notice.sha256, `psycopg-binary notice hash mismatch: ${notice.file}`);
+    }
+  }
+  return lock;
+}
+async function assertPsycopgWheelLibraryClosure(sitePackages, lock) {
+  const directory = path3.join(sitePackages, "psycopg_binary", ".dylibs");
+  const expected = new Map(lock.libraries.flatMap(({ files }) => Object.entries(files)));
+  const installed = await readdir2(directory, { withFileTypes: true });
+  invariant3(installed.length === expected.size, "psycopg-binary macOS library count differs from the audited wheel");
+  for (const file of installed) {
+    invariant3(file.isFile() && expected.has(file.name), `unexpected native library in the psycopg-binary wheel: ${file.name}`);
+    invariant3(
+      await sha256File2(path3.join(directory, file.name)) === expected.get(file.name),
+      `native library does not match the audited upstream psycopg-binary wheel: ${file.name}`
+    );
+  }
+}
 async function collectPythonLicenseEvidence(payloadRoot, contracts, cacheDirectory) {
   const roots = [
     path3.join(componentRoot(payloadRoot, contracts, "jobctrl-worker"), "site-packages"),
@@ -10484,6 +10536,8 @@ async function collectPythonLicenseEvidence(payloadRoot, contracts, cacheDirecto
   ];
   const packages = [];
   const licenseSources = [];
+  const binaryNotices = await loadPsycopgBinaryNotices(REPO_ROOT);
+  let auditedBinaryWheel = false;
   for (const sitePackages of roots) {
     for (const entry of (await readdir2(sitePackages, { withFileTypes: true })).sort((left, right) => bytewiseCompare3(left.name, right.name))) {
       if (!entry.isDirectory() || !entry.name.endsWith(".dist-info")) continue;
@@ -10502,13 +10556,27 @@ async function collectPythonLicenseEvidence(payloadRoot, contracts, cacheDirecto
         invariant3(lockedEvidence.license === license, `${name}: locked license evidence expression does not match package metadata`);
         evidence = [await downloadLockedLicenseEvidence(lockedEvidence, cacheDirectory)];
       }
+      if (canonicalPackageName(name) === "psycopg-binary") {
+        invariant3(version === binaryNotices.version && !auditedBinaryWheel, "unexpected version or duplicate macOS psycopg-binary wheel");
+        await assertPsycopgWheelLibraryClosure(sitePackages, binaryNotices);
+        auditedBinaryWheel = true;
+        for (const library of binaryNotices.libraries) {
+          for (const notice of library.notices) {
+            licenseSources.push({
+              subject: `pypi:psycopg-binary:${library.name}@${library.version}`,
+              source: path3.join(DISTRIBUTION_DIR, "licenses", "psycopg-binary", notice.file)
+            });
+          }
+        }
+      }
       packages.push({ name, version, license });
       for (const source of evidence) licenseSources.push({ subject: `pypi:${name}`, source });
     }
   }
+  invariant3(auditedBinaryWheel, "Python production closure lacks the audited psycopg-binary wheel");
   invariant3(packages.length > 0, "Python production closure contains no dist-info metadata");
   packages.sort((left, right) => bytewiseCompare3(left.name, right.name));
-  return { packages, licenseSources };
+  return { packages, licenseSources, binaryNotices };
 }
 async function resolvePythonLicense(metadata, evidence) {
   const expression = metadata.match(/^License-Expression: (.+)$/m)?.[1]?.trim();
@@ -10597,7 +10665,7 @@ async function collectTopLevelLicenseEvidence(payloadRoot, root, contracts) {
   const mcpRoot = componentRoot(payloadRoot, contracts, "playwright-mcp");
   const pythonRoot = componentRoot(payloadRoot, contracts, "python-runtime");
   const nodeRoot = componentRoot(payloadRoot, contracts, "node-runtime");
-  const temporalRoot = componentRoot(payloadRoot, contracts, "temporal-runtime");
+  const postgresRoot = componentRoot(payloadRoot, contracts, "postgres-runtime");
   const sources = [];
   const add = async (subject, candidates) => sources.push({ subject, source: await firstExisting(candidates, subject) });
   await add("jobctrl", [path3.join(root, "LICENSE")]);
@@ -10609,7 +10677,9 @@ async function collectTopLevelLicenseEvidence(payloadRoot, root, contracts) {
     path3.join(pythonRoot, "LICENSE"),
     path3.join(pythonRoot, "lib", "python3.12", "LICENSE.txt")
   ]);
-  await add("temporal-runtime", [path3.join(temporalRoot, "LICENSE"), path3.join(temporalRoot, "LICENSE.txt")]);
+  await add("postgres-runtime", [path3.join(postgresRoot, "COPYRIGHT")]);
+  await add("postgres-runtime:regex", [path3.join(postgresRoot, "COPYRIGHT.regex")]);
+  await add("postgres-runtime:snowball", [path3.join(postgresRoot, "Snowball-BSD-3-Clause.txt")]);
   await add("pdfjs-renderer", [
     path3.join(root, "apps", "web", "node_modules", "pdfjs-dist", "LICENSE"),
     path3.join(root, "node_modules", "pdfjs-dist", "LICENSE")
@@ -10668,30 +10738,11 @@ async function materializeLicenseSources(releaseRoot, sources) {
   }
   return records;
 }
-async function pruneTemporalBridgeBuildSources(sitePackages) {
-  const bridgeRoot = path3.join(sitePackages, "temporalio", "bridge");
-  if (!await exists(bridgeRoot)) return { status: "temporal-bridge-not-installed", removedPaths: [] };
-  const removedPaths = [];
-  for (const relativePath of TEMPORAL_BRIDGE_BUILD_SOURCE_PATHS) {
-    const candidate = path3.join(sitePackages, ...relativePath.split("/"));
-    if (await exists(candidate)) removedPaths.push(relativePath);
-  }
-  if (removedPaths.length === 0) return { status: "temporal-bridge-build-sources-absent", removedPaths };
-  const bridgeEntries = await readdir2(bridgeRoot, { withFileTypes: true });
-  const nativeBridge = bridgeEntries.find((entry) => entry.isFile() && /^temporal_sdk_bridge(?:\.[A-Za-z0-9_+-]+)?\.so$/.test(entry.name));
-  invariant3(nativeBridge, "Temporal bridge build sources cannot be pruned without the compiled temporal_sdk_bridge extension");
-  await Promise.all(removedPaths.map((relativePath) => rm2(path3.join(sitePackages, ...relativePath.split("/")), { recursive: true, force: true })));
-  for (const relativePath of TEMPORAL_BRIDGE_BUILD_SOURCE_PATHS) {
-    invariant3(!await exists(path3.join(sitePackages, ...relativePath.split("/"))), `Temporal bridge build source survived pruning: ${relativePath}`);
-  }
-  return { status: "temporal-bridge-build-sources-pruned", removedPaths };
-}
 function shouldPruneInstalledPythonPath(relativePath, entry) {
   if (isGitMetadataBasename(entry.name) || entry.name.endsWith(".egg-info") || entry.name.endsWith(".pyc")) return true;
-  return isTemporalBridgeBuildSourcePath(relativePath) || isKnownPythonNonRuntimePath(relativePath);
+  return isKnownPythonNonRuntimePath(relativePath);
 }
 async function pruneInstalledPythonTree(root) {
-  const temporalBridge = await pruneTemporalBridgeBuildSources(root);
   async function visit(directory, relativeDirectory = "") {
     const entries = await readdir2(directory, { withFileTypes: true });
     for (const entry of entries) {
@@ -10705,7 +10756,6 @@ async function pruneInstalledPythonTree(root) {
     }
   }
   await visit(root);
-  return { temporalBridge };
 }
 function isMachOMagic(bytes) {
   if (bytes.length < 4) return false;
@@ -10928,9 +10978,9 @@ async function smokeNativeLauncherLifecycle({ payloadRoot, extractedRoot, stockE
     invariant3(health?.worker?.status === "healthy", "native launcher API health was not healthy");
     let status = await statusJson();
     invariant3(status.status === "running", `native launcher status is ${status.status}`);
-    for (const component of ["temporal", "worker", "api"]) invariant3(status.components?.[component]?.state === "running", `native launcher ${component} status is not running`);
+    for (const component of ["postgres", "worker", "api"]) invariant3(status.components?.[component]?.state === "running", `native launcher ${component} status is not running`);
     const logs = await invoke(["logs"]);
-    invariant3(logs.stdout.includes("== temporal ==") && logs.stdout.includes("== worker ==") && logs.stdout.includes("== api =="), "native launcher logs did not route all bounded component logs");
+    invariant3(logs.stdout.includes("== postgres ==") && logs.stdout.includes("== worker ==") && logs.stdout.includes("== api =="), "native launcher logs did not route all bounded component logs");
     const version = JSON.parse((await invoke(["version", "--json"])).stdout);
     invariant3(typeof version.buildId === "string" && /^[a-f0-9]{64}$/.test(version.manifestSha256), "native launcher version JSON is incomplete");
     await invoke(["doctor"]);
@@ -11219,6 +11269,20 @@ finally:
     profileSha256: createHash3("sha256").update(LOOPBACK_ONLY_SANDBOX_PROFILE).digest("hex"),
     nonLoopbackProbe: JSON.parse(networkProbe.stdout.trim())
   };
+  const postgresBin = path3.join(payloadRoot, contracts.componentPaths.get("postgres-runtime"), "bin");
+  const postgresVersion = contracts.versions["postgres-runtime"];
+  for (const tool of POSTGRES_RUNTIME_EXECUTABLES) {
+    const result = await runLoopbackSandboxed(path3.join(postgresBin, tool), ["--version"], { cwd: payloadRoot, env: stockEnvironment });
+    invariant3(result.stdout.trim() === `${tool} (PostgreSQL) ${postgresVersion}`, `embedded PostgreSQL ${tool} version mismatch`);
+  }
+  await runLoopbackSandboxed(path3.join(postgresBin, "initdb"), [
+    "-D",
+    path3.join(canonicalExtractedRoot, "postgres-smoke-cluster"),
+    "--no-locale",
+    "--encoding=UTF8",
+    "--username=jobctrl",
+    "--auth=trust"
+  ], { cwd: payloadRoot, env: stockEnvironment });
   const nodeVersion = (await runLoopbackSandboxed(nodeExecutable, ["--version"], { cwd: payloadRoot, env: stockEnvironment })).stdout.trim();
   invariant3(nodeVersion === `v${contracts.versions["node-runtime"]}`, `embedded Node version mismatch: ${nodeVersion}`);
   const mcpProtocol = await smokePlaywrightMcpProtocol(
@@ -11260,6 +11324,8 @@ finally:
   return {
     status: deferApplicationJourneys ? "pending-installed-journeys" : "pass",
     nodeVersion,
+    postgresVersion,
+    postgresInitialization: "isolated-cluster-created",
     playwrightMcp: mcpProtocol,
     tlsClientNative: "darwin-arm64-load-pass",
     dbBackedRoute: "/v1/jobs",
@@ -11302,7 +11368,7 @@ async function runInstalledApplicationJourneys({ payloadRoot, contracts, shard }
       JOBCTRL_E2E_PAYLOAD_DIR: payloadRoot,
       JOBCTRL_E2E_PYTHON: path3.join(payloadRoot, contracts.componentPaths.get("python-runtime"), "bin", "python3"),
       JOBCTRL_E2E_STATIC_DIR: path3.join(payloadRoot, contracts.componentPaths.get("jobctrl-web")),
-      JOBCTRL_TEMPORAL_CLI_PATH: path3.join(payloadRoot, contracts.componentPaths.get("temporal-runtime"), "temporal"),
+      JOBCTRL_POSTGRES_BIN_DIR: path3.join(payloadRoot, contracts.componentPaths.get("postgres-runtime"), "bin"),
       PLAYWRIGHT_BROWSERS_PATH: path3.join(payloadRoot, contracts.componentPaths.get("chromium-core"))
     }
   });
@@ -11806,9 +11872,6 @@ async function scanForbiddenPayload(payloadRoot, { forbiddenAbsolutePaths = [] }
     if (file.path.startsWith("playwright-mcp/node_modules/") && lowerPath.endsWith(".md")) {
       failures.push(`${file.path}: Playwright MCP documentation closure`);
     }
-    if (isTemporalBridgeBuildSourcePath(pythonRelativePath)) {
-      failures.push(`${file.path}: Temporal bridge build/source closure`);
-    }
     if (isKnownPythonNonRuntimePath(pythonRelativePath)) {
       failures.push(`${file.path}: known non-runtime Python source/docs/fixture closure`);
     }
@@ -12191,7 +12254,7 @@ async function buildRealPayload({
   try {
     const resolvedCacheDirectory = path3.resolve(cacheDirectory);
     const [externalInputs, nativeGoToolchain] = await Promise.all([
-      assembleExternalRuntimes(payloadRoot, contracts, resolvedCacheDirectory, scratchDirectory),
+      assembleExternalRuntimes(payloadRoot, root, contracts, resolvedCacheDirectory, scratchDirectory),
       prepareNativeGoToolchain(root, resolvedCacheDirectory, scratchDirectory, contracts.launcherToolchain)
     ]);
     const pythonRuntimePrune = await pruneUnusedPythonRuntime(componentRoot(payloadRoot, contracts, "python-runtime"));
@@ -12252,6 +12315,7 @@ async function buildRealPayload({
         pythonPackageCount: pythonAttribution.packages.length,
         payloadNpmPackages,
         browserEmbeddedResources: browserResources,
+        psycopgBinary: pythonAttribution.binaryNotices,
         chromiumCredits: "licenses/texts contains the verbatim LICENSE.headless_shell notice file from the pinned headless browser"
       }
     });
@@ -12375,6 +12439,7 @@ async function main2(argv = process2.argv.slice(2)) {
   if (command === "audit") {
     invariant3(Object.keys(options).length === 0, "distribution audit accepts no options");
     const contracts = await loadBuildContracts(REPO_ROOT);
+    await loadPsycopgBinaryNotices(REPO_ROOT);
     process2.stdout.write(canonicalJson({
       status: "pass",
       launcherToolchain: {
@@ -13491,7 +13556,7 @@ function parseCommandJson(result, label) {
 }
 function assertRunningStatus(status) {
   invariant4(status?.status === "running", "published smoke status must be running");
-  for (const component of ["temporal", "worker", "api"]) invariant4(status.components?.[component]?.state === "running", `published smoke ${component} is not running`);
+  for (const component of ["postgres", "worker", "api"]) invariant4(status.components?.[component]?.state === "running", `published smoke ${component} is not running`);
   return true;
 }
 function assertStoppedStatus(status) {

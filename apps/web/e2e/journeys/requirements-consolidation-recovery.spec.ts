@@ -76,8 +76,8 @@ for (const legacy of [false, true]) {
     expect((await lookup()).status()).toBe(404);
 
     if (legacy) {
-      // Recreate the predecessor's exact identity shape without altering the
-      // real request, its fingerprint, or any application state.
+      // Recreate the earlier browser's saved identity shape while keeping the
+      // real request fingerprint and application state.
       const removed = await page.evaluate((key) => {
         const stored = sessionStorage.getItem(key);
         if (!stored) throw new Error("The real earlier request identity was not retained");
@@ -109,12 +109,12 @@ for (const legacy of [false, true]) {
         const earlier = await page.evaluate((key) => JSON.parse(sessionStorage.getItem(key)!), recoveryKey("earlier-catalog"));
         expect(earlier.requestId).toBe(idempotencyKey);
 
-        // A later new current request can run. It exposes a durable receipt,
-        // and the delayed pre-upgrade request cannot acquire a second scope.
+        // A new request for the current catalog exposes a durable receipt.
+        // The delayed earlier request cannot acquire a second scope.
         const admitted = await api.post(startPath, { data: { expected_catalog_revision: current.catalog_revision } });
         expect(admitted.status()).toBe(202);
         const currentRunId = (await admitted.json() as { runId: string }).runId;
-        await modelCall(app, "requirements.match_catalog");
+        const held = await modelCall(app, "requirements.match_catalog");
         const late = () => api.post(startPath, {
           headers: { "Idempotency-Key": idempotencyKey },
           data: { expected_catalog_revision: original.catalog_revision },
@@ -122,11 +122,13 @@ for (const legacy of [false, true]) {
         const occupied = await late();
         expect(occupied.status()).toBe(409);
         expect((await occupied.json()).error).toMatchObject({ code: "action_scope_busy", details: { runId: currentRunId } });
-        await json(api, "post", `/v1/action-runs/${currentRunId}/cancel`, {});
+        expect(await json(api, "post", `/v1/action-runs/${currentRunId}/cancel`, {})).toMatchObject({ cancellationRequested: true });
         expect((await terminal(api, currentRunId)).status).toBe("cancelled");
+        await expect.poll(() => held.closed).toBe(true);
         const stale = await late();
         expect(stale.status()).toBe(409);
         expect((await stale.json()).error.code).toBe("requirements_consolidation_catalog_changed");
+        expect(app.external.calls.slice(initialCalls).map(call => call.body["operation"])).toEqual(["requirements.match_catalog"]);
       } else {
         const retry = page.waitForResponse((response) => startRequest(new URL(response.url()))
           && response.request().method() === "POST");

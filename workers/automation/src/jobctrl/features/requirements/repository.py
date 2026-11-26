@@ -1,4 +1,4 @@
-"""SQLite adapter; only requirement-owned tables are read or written here."""
+"""PostgreSQL adapter; only requirement-owned tables are read or written here."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from .cohort_storage import CohortStorage
 from .normalization_domain import NORMALIZATION_VERSION
 
 
-class SqliteRequirementStore(NormalizationStore, CohortStorage):
+class PostgresRequirementStore(NormalizationStore, CohortStorage):
     def admit_catalog_prompt(self, operation_id, prompt_version, connection):
         connection.execute("INSERT INTO requirements_refresh_transport VALUES (?,?)", (operation_id, prompt_version))
 
@@ -47,7 +47,6 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
     @contextmanager
     def read_session(self):
         with self.database.connect() as connection:
-            connection.execute("BEGIN")
             yield connection
 
     def current_snapshot(self, job_id, connection=None):
@@ -63,30 +62,30 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
     def job_bindings(self, job_ids, connection, *, scored=None):
         if not job_ids:
             return {}
-        placeholders = ",".join("?" for _ in job_ids)
-        rows = connection.execute(
-            "SELECT s.job_id,s.revision,s.posting_revision,s.posting_hash,s.snapshot_json, "
-            "(SELECT json_group_array(json_object( "
-            "'requirement_id',json_extract(item.value,'$.requirement_id'), "
-            "'accepted_revision',json_extract(item.value,'$.requirement_revision'), "
-            "'current_revision',h.revision)) "
-            "FROM json_each(s.snapshot_json,'$.requirements') item "
-            "LEFT JOIN requirements_heads h ON h.requirement_id=json_extract(item.value,'$.requirement_id')) AS bindings_json "
-            "FROM requirements_accepted a JOIN requirements_snapshots s ON s.job_id=a.job_id AND s.revision=a.revision "
-            f"WHERE a.job_id IN ({placeholders})", tuple(job_ids),
-        ).fetchall()
+        rows = [
+            (row, json.loads(row["snapshot_json"])) for row in connection.execute(
+                "SELECT s.job_id,s.revision,s.posting_revision,s.posting_hash,s.snapshot_json "
+                "FROM requirements_accepted a JOIN requirements_snapshots s ON s.job_id=a.job_id AND s.revision=a.revision "
+                "WHERE a.job_id=ANY(?::text[])", (list(job_ids),),
+            )
+        ]
+        requirement_ids = {
+            item["requirement_id"] for _, snapshot in rows for item in snapshot.get("requirements", [])
+        }
+        heads = dict(connection.execute(
+            "SELECT requirement_id,revision FROM requirements_heads WHERE requirement_id=ANY(?::text[])",
+            (sorted(requirement_ids),),
+        )) if requirement_ids else {}
         bindings, comparisons, snapshots = {}, [], {}
-        for row in rows:
-            records = json.loads(row["bindings_json"])
-            accepted = {(item["requirement_id"], item["accepted_revision"]) for item in records}
-            current = {(item["requirement_id"], item["current_revision"]) for item in records if item["current_revision"] is not None}
-            snapshot = json.loads(row["snapshot_json"])
+        for row, snapshot in rows:
+            accepted = {(item["requirement_id"], item["requirement_revision"]) for item in snapshot.get("requirements", [])}
+            current = {(ident, heads[ident]) for ident, _ in accepted if ident in heads}
             reasons = [] if current_contract(snapshot) else ["contract_changed"]
             if current_contract(snapshot) and snapshot.get("normalization_version") != NORMALIZATION_VERSION:
                 reasons.append("consolidation_required")
             demands = {item["requirement_id"]: item.get("normalized_demand", {}).get("demand_fingerprint")
                        for item in snapshot.get("requirements", [])}
-            if any(item["accepted_revision"] != item["current_revision"] for item in records):
+            if any(revision != heads.get(ident) for ident, revision in accepted):
                 reasons.append("requirement_revised")
             direct = [{"requirement_id": item["requirement_id"], "requirement_revision": item["revision"]}
                       for field in ("education", "languages") for item in snapshot.get(field, [])] if current_contract(snapshot) else []
@@ -129,25 +128,31 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
         # Every intervening snapshot must be an accepted catalog replacement
         # of the same extracted posting. A job proposal uses its own attempt
         # ID, and an explicit canonical correction has a separate action row.
-        return connection.execute("""
-            SELECT old.job_id, old.snapshot_json
-            FROM json_each(?) requested
-            JOIN requirements_snapshots old ON old.job_id=json_extract(requested.value,'$.job_id')
-                AND old.revision=json_extract(requested.value,'$.before')
-            WHERE NOT EXISTS (
-                SELECT 1 FROM requirements_snapshots revised
-                LEFT JOIN requirements_reconciliations reconciliation
-                    ON reconciliation.operation_id=json_extract(revised.snapshot_json,'$.normalization_provenance.reconciliation_id')
-                LEFT JOIN requirements_revision_actions correction ON correction.action_id=reconciliation.operation_id
-                WHERE revised.job_id=old.job_id AND revised.revision>old.revision
-                    AND revised.revision<=json_extract(requested.value,'$.after')
-                    AND (revised.posting_hash<>old.posting_hash
-                        OR revised.extraction_determination_id<>old.extraction_determination_id
-                        OR reconciliation.operation_id IS NULL
-                        OR revised.attempt_id<>('normalization:' || reconciliation.operation_id || ':' || old.job_id)
-                        OR correction.action_id IS NOT NULL)
-            )
+        rows = connection.execute("""
+            SELECT old.job_id,old.snapshot_json,revised.revision AS intervening_revision,
+                   revised.snapshot_json AS intervening_snapshot,reconciliation.operation_id,
+                   (revised.posting_hash=old.posting_hash
+                    AND revised.extraction_determination_id=old.extraction_determination_id
+                    AND correction.action_id IS NULL) AS same_extraction
+            FROM jsonb_to_recordset(?::jsonb) AS requested(job_id text, "before" integer, "after" integer)
+            JOIN requirements_snapshots old ON old.job_id=requested.job_id AND old.revision=requested."before"
+            LEFT JOIN requirements_snapshots revised
+              ON revised.job_id=old.job_id AND revised.revision>old.revision AND revised.revision<=requested."after"
+            LEFT JOIN requirements_reconciliations reconciliation
+              ON revised.attempt_id=('normalization:' || reconciliation.operation_id || ':' || old.job_id)
+            LEFT JOIN requirements_revision_actions correction ON correction.action_id=reconciliation.operation_id
         """, (canonical_json(comparisons),))
+        sources, rejected = {}, set()
+        for row in rows:
+            job_id = row["job_id"]
+            sources.setdefault(job_id, row)
+            if row["intervening_revision"] is None:
+                continue
+            snapshot = json.loads(row["intervening_snapshot"])
+            if (not row["same_extraction"] or row["operation_id"] is None
+                    or (snapshot.get("normalization_provenance") or {}).get("reconciliation_id") != row["operation_id"]):
+                rejected.add(job_id)
+        return [row for job_id, row in sources.items() if job_id not in rejected]
 
     def get_meaning(self, requirement_id, revision=None, connection=None):
         if connection is None:
@@ -238,7 +243,7 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
                 raise RequirementError("requirements_correction_call_unsettled")
             used = connection.execute(
                 "SELECT count(*) FROM requirements_model_cache WHERE operation=? "
-                "AND json_extract(result_json,'$.attempt_id')=?", (operation, attempt_id),
+                "AND (result_json::jsonb ->> 'attempt_id')=?", (operation, attempt_id),
             ).fetchone()[0]
         if used >= maximum:
             raise RequirementError("requirements_catalog_unavailable", details={"reason": "model_call_bound",
@@ -263,13 +268,13 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
     def accepted_occurrence_jobs(self, connection, requirement_id=None):
         """Return accepted occurrence roots; Jobs owns whether each job exists."""
         rows = connection.execute(
-            "SELECT DISTINCT o.requirement_id,o.job_id FROM requirements_occurrences o "
-            "JOIN requirements_accepted a ON a.job_id=o.job_id AND a.revision=o.snapshot_revision "
-            "WHERE json_extract(o.occurrence_json,'$.contract_version')=?"
-            + (" AND o.requirement_id=?" if requirement_id is not None else ""),
-            (CONTRACT_VERSION, requirement_id) if requirement_id is not None else (CONTRACT_VERSION,),
-        ).fetchall()
-        return [(row["requirement_id"], row["job_id"]) for row in rows]
+            "SELECT o.requirement_id,o.job_id,o.occurrence_json FROM requirements_occurrences o "
+            "JOIN requirements_accepted a ON a.job_id=o.job_id AND a.revision=o.snapshot_revision"
+            + (" WHERE o.requirement_id=?" if requirement_id is not None else ""),
+            (requirement_id,) if requirement_id is not None else (),
+        )
+        return list(dict.fromkeys((ident, job_id) for ident, job_id, occurrence in rows
+                                  if current_contract(json.loads(occurrence))))
 
     def index_status(self):
         with self.read_session() as connection:
@@ -279,13 +284,14 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
                 "ON m.requirement_id=h.requirement_id AND m.revision=h.revision",
             )]
             meanings = [meaning for meaning in meanings if current_contract(meaning)]
-            indexed = connection.execute(
-                "SELECT r.requirement_id,r.revision,r.document FROM requirements_retrieval r "
-                "JOIN requirements_meanings m ON m.requirement_id=r.requirement_id AND m.revision=r.revision "
-                "WHERE json_extract(m.meaning_json,'$.contract_version')=?", (CONTRACT_VERSION,),
-            ).fetchall()
+            indexed = [
+                (ident, revision, document) for ident, revision, document, meaning in connection.execute(
+                    "SELECT r.requirement_id,r.revision,r.document,m.meaning_json FROM requirements_retrieval r "
+                    "JOIN requirements_meanings m ON m.requirement_id=r.requirement_id AND m.revision=r.revision"
+                ) if current_contract(json.loads(meaning))
+            ]
             expected = {(m["requirement_id"], m["revision"]): self._document(m) for m in meanings}
-            actual = {(row[0], int(row[1])): row[2] for row in indexed}
+            actual = {(ident, revision): document for ident, revision, document in indexed}
             return {"contract_version": CONTRACT_VERSION, "catalog_revision": meta[0], "indexed_revision": meta[1], "meaning_count": len(meanings),
                     "indexed_count": len(indexed), "fresh": meta[0] == meta[1] and len(indexed) == len(actual) and expected == actual}
 
@@ -353,13 +359,21 @@ class SqliteRequirementStore(NormalizationStore, CohortStorage):
             with self.database.transaction() as connection:
                 return self.delete_job_data(job_id, connection)
         # Jobs owns deletion authorization and the enclosing transaction.
-        connection.execute("""
-            UPDATE requirements_cohort_operations SET state_json='{"status":"source_deleted"}'
-            WHERE json_extract(state_json,'$.request.job_id')=?
-               OR EXISTS(SELECT 1 FROM json_each(state_json,'$.prepared') WHERE json_extract(value,'$.job_id')=?)
-               OR EXISTS(SELECT 1 FROM json_each(state_json,'$.captured.accepted_heads') WHERE json_extract(value,'$.job_id')=?)
-               OR EXISTS(SELECT 1 FROM json_each(state_json,'$.captured.members') WHERE json_extract(value,'$.provenance.posting.job_id')=?)
-            """, (job_id, job_id, job_id, job_id))
+        cohorts = []
+        for ident, raw in connection.execute("SELECT operation_id,state_json FROM requirements_cohort_operations"):
+            state = json.loads(raw)
+            captured = state.get("captured") or {}
+            if ((state.get("request") or {}).get("job_id") == job_id
+                    or any(item.get("job_id") == job_id for item in state.get("prepared") or [])
+                    or any(item.get("job_id") == job_id for item in captured.get("accepted_heads") or [])
+                    or any((item.get("provenance", {}).get("posting") or {}).get("job_id") == job_id
+                           for item in captured.get("members") or [])):
+                cohorts.append(ident)
+        if cohorts:
+            connection.execute(
+                "UPDATE requirements_cohort_operations SET state_json=? WHERE operation_id=ANY(?::text[])",
+                ('{"status":"source_deleted"}', cohorts),
+            )
         connection.execute("DELETE FROM requirements_occurrences WHERE job_id=?", (job_id,))
         connection.execute("DELETE FROM requirements_accepted WHERE job_id=?", (job_id,))
         connection.execute("DELETE FROM requirements_snapshots WHERE job_id=?", (job_id,))

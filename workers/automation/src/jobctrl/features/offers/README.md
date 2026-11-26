@@ -11,7 +11,7 @@ offer milestone through its public port in the same transaction when that
 optional feature is present.
 
 The application service depends on the feature-owned ledger repository and its
-transaction interface. The SQLite adapter supplies the Jobs existence check,
+transaction interface. The PostgreSQL adapter supplies the Jobs existence check,
 append-only writes, optional Applications milestone and ID-only event through
 one shared transaction; it also joins the transaction supplied by Jobs for
 reviewed permanent deletion. Source-bound reads accept the caller's transaction

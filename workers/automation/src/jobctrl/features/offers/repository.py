@@ -1,13 +1,12 @@
-"""SQLite adapter for Offers' immutable ledger and atomic participants."""
+"""PostgreSQL adapter for Offers' immutable ledger and atomic participants."""
 
 from __future__ import annotations
 
 import json
-import sqlite3
 from contextlib import contextmanager, nullcontext
 from typing import Iterator
 
-from jobctrl.app.database import Database
+from jobctrl.app.database import Connection, Database
 
 from .ports import OfferApplicationsPort, OfferEventsPort, OfferJobsPort
 
@@ -16,8 +15,8 @@ def _json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
-class SqliteOfferTransaction:
-    def __init__(self, connection: sqlite3.Connection, jobs: OfferJobsPort,
+class PostgresOfferTransaction:
+    def __init__(self, connection: Connection, jobs: OfferJobsPort,
                  applications: OfferApplicationsPort | None, events: OfferEventsPort):
         self.connection = connection
         self.jobs = jobs
@@ -58,7 +57,7 @@ class SqliteOfferTransaction:
                            feature="offers", aggregate_id=job_id)
 
 
-class SqliteOfferRepository:
+class PostgresOfferRepository:
     def __init__(self, database: Database, jobs: OfferJobsPort,
                  applications: OfferApplicationsPort | None, events: OfferEventsPort):
         self.database = database
@@ -66,19 +65,19 @@ class SqliteOfferRepository:
         self.applications = applications
         self.events = events
 
-    def _unit(self, connection: sqlite3.Connection) -> SqliteOfferTransaction:
-        return SqliteOfferTransaction(connection, self.jobs, self.applications, self.events)
+    def _unit(self, connection: Connection) -> PostgresOfferTransaction:
+        return PostgresOfferTransaction(connection, self.jobs, self.applications, self.events)
 
-    def read_offer(self, job_id: str, connection: sqlite3.Connection | None = None) -> dict:
+    def read_offer(self, job_id: str, connection: Connection | None = None) -> dict:
         with nullcontext(connection) if connection is not None else self.database.connect() as conn:
             return self._unit(conn).read_offer(job_id)
 
     @contextmanager
-    def transaction(self) -> Iterator[SqliteOfferTransaction]:
+    def transaction(self) -> Iterator[PostgresOfferTransaction]:
         with self.database.transaction() as conn:
             yield self._unit(conn)
 
-    def delete_job_data(self, job_id: str, connection: sqlite3.Connection | None = None) -> None:
+    def delete_job_data(self, job_id: str, connection: Connection | None = None) -> None:
         if connection is None or not connection.in_transaction:
             raise RuntimeError("Permanent deletion requires the canonical transaction")
         connection.execute("DELETE FROM offer_decisions WHERE job_id=?", (job_id,))

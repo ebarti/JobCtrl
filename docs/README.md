@@ -60,7 +60,7 @@ has one defining page; other pages summarize it briefly and link to that owner.
   binding approval, durable submit intent, ambiguity, and manual browser
   submission.
 - [`guides/temporal-workflows-desktop-app.md`](guides/temporal-workflows-desktop-app.md):
-  durable local orchestration, workflow identity, retries, projections, and
+  DBOS durable local orchestration, workflow identity, retries, projections, and
   recovery.
 
 ### The Job-Search Lifecycle
@@ -68,7 +68,7 @@ has one defining page; other pages summarize it briefly and link to that owner.
 - [`user/candidate-profile.md`](user/candidate-profile.md): canonical candidate
   facts, preferences, attestations, approved wording, and manual updates to
   affected matches after saved changes.
-- [`user/discovery.md`](user/discovery.md): target search through JobStreaming, direct posting URL imports, board states, schedules, and SQLite ownership.
+- [`user/discovery.md`](user/discovery.md): target search through JobStreaming, direct posting URL imports, board states, schedules, and database ownership.
 - [`user/enrichment-and-extraction.md`](user/enrichment-and-extraction.md): job
   capture, extraction, normalization, deduplication, snapshots, and provenance.
 - [`user/scoring-and-employer-analysis.md`](user/scoring-and-employer-analysis.md):
@@ -145,10 +145,10 @@ has one defining page; other pages summarize it briefly and link to that owner.
   provider runtime design; verify its integration with the Python model gateway
   before treating those implementation details as current.
 - [`architecture/pipeline/`](architecture/pipeline/index.md): Python feature
-  actions and preparation, Temporal execution, retries, scheduling and recovery.
+  actions and preparation, DBOS execution, retries, scheduling and recovery.
 - [`architecture/data-events-and-projections.md`](architecture/data-events-and-projections.md):
   the distinction between domain state, events, projections, and telemetry.
-- [`architecture/storage.md`](architecture/storage.md): physical SQLite and file
+- [`architecture/storage.md`](architecture/storage.md): PostgreSQL and file
   authorities.
 - [`architecture/portable-workspace.md`](architecture/portable-workspace.md): future
   proposal (not implemented) for owned workspace bundles and safe import.

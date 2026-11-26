@@ -1,4 +1,4 @@
-"""SQLite adapter for repeat checks and one-use submission consent."""
+"""PostgreSQL adapter for repeat checks and one-use submission consent."""
 
 import json
 from contextlib import contextmanager
@@ -62,7 +62,7 @@ class _RepeatSession:
         self._repository.event(self._connection, "ApplicationsUpdated", job, **references)
 
 
-class SqliteRepeatStore:
+class PostgresRepeatStore:
     def __init__(self, repository, sources, feedback):
         self._repository, self._sources, self._feedback = repository, sources, feedback
         self._reader = self._guard = None

@@ -1,5 +1,8 @@
-import { test, expect, json, action, terminal } from "../harness/fixtures.js";
+import { test, expect, json, action, completed, modelCall, terminal } from "../harness/fixtures.js";
 import { baseline, createBaseline } from "./core-data.js";
+import { indeedPage } from "./indeed-data.js";
+import { posting, respondProducer } from "./preparation-cohort-data.js";
+import { catalogMatching } from "./requirements-data.js";
 
 test.use({ nativeAccountingPreflight: true, features: "profile,jobs,discovery" });
 
@@ -59,4 +62,48 @@ test("native Discovery preflight explains missing accounting and links to contex
   expect(forbiddenRequests).toEqual([]);
   expect(app.external.calls).toEqual([]);
   await testInfo.attach("pricing-saved-and-returned", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
+});
+
+test.describe("literal search and downstream model budgeting", () => {
+  test.use({ nativeAccountingPreflight: false, features: "profile,jobs,requirements,fit,resumes,discovery,preparation" });
+
+  test("an explicit query keeps the captured posting when Fit reaches the monetary cap", async ({ api, app }) => {
+    await createBaseline(api, { ...baseline, experience: {
+      target_role: "Unrelated saved role", target_locations: "Madrid", target_work_models: "remote",
+    } });
+    const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+    await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 1 });
+    const row = posting(201);
+    const search = await action(api, "discovery.search", {
+      queries: ["Explicit synthetic query"], locations: [{ location: "Madrid", remote: true }],
+      boards: ["indeed"], hoursOld: 0, newJobLimit: 1, resultsPerSite: 1,
+    });
+    const board = await app.external.next();
+    expect(board.path).toBe("/jobstreaming/indeed");
+    board.respond(indeedPage({ jobs: [row], cursor: null, complete: true }));
+    const page = await app.external.next();
+    expect(page.path).toBe("/posting-page");
+    respondProducer(page, [row]);
+    for (const operation of ["page_interpretation", "posting_extraction", "description_quality", "jobs.role_analysis", "requirements.extract"]) {
+      respondProducer(await modelCall(app, operation), [row]);
+    }
+    const normalize = await modelCall(app, "requirements.match_catalog");
+    normalize.respond({
+      value: catalogMatching(normalize, { r1: { verdict: "new" } }),
+      usage: { input_tokens: 20, output_tokens: 10, cost_usd: 1 },
+    });
+
+    const result = (await completed(api, search.runId)).result as { newJobIds: string[] };
+    expect(result.newJobIds).toHaveLength(1);
+    const [jobId] = result.newJobIds;
+    expect(result).toMatchObject({
+      status: "partial", acquisitionStatus: "completed", newJobs: 1, failures: [],
+      preparation: { assessedJobs: 0, failedJobs: 1, failures: [{ jobId, stage: "fit", code: "spend_limit_reached" }] },
+    });
+    expect(await json(api, "get", `/v1/jobs/${jobId}`)).toMatchObject({ job_id: jobId });
+    expect(await json(api, "get", `/v1/jobs/${jobId}/fit`)).toMatchObject({ score: null });
+    const operations = app.external.calls.map((call) => call.body?.["operation"]);
+    expect(operations).not.toContain("discovery.role_target_match");
+    expect(operations).not.toContain("fit.qualification-batch");
+  });
 });

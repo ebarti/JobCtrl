@@ -71,7 +71,7 @@ experience role or any source/approval authority. Saving an initialized baseline
 requires at least one authored role. GET/HEAD readers never enter write paths,
 and preview HEAD returns format headers without launching the renderer.
 
-Every mutation compares and writes under the same SQLite transaction as its
+Every mutation compares and writes under the same PostgreSQL transaction as its
 committed invalidation. Conflicts return `409 revision_conflict`, with the safe
 reason such as `stale_profile_version`, `stale_source_revision` or
 `stale_wording_revision`. Validation returns `400`; provider/output failures use
@@ -144,7 +144,7 @@ and canonical feature services, rather than independent business writers.
 ## Shared Settings Fields {#config-json-field-reference}
 
 Configuration field names and defaults are determined by the integrated Python
-settings adapter and revisioned `app_settings` in SQLite. The historical anchor
+settings adapter and revisioned `app_settings` in PostgreSQL. The historical anchor
 is retained for deep links; `config.json` is not a second current authority.
 Consult the implementation before relying on an old field or restart claim.
 Settings and credentials have different storage and disclosure

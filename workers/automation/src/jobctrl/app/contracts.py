@@ -21,17 +21,22 @@ class ActionContext:
     request_id: str
     cancelled: Callable[[], bool] = lambda: False
     heartbeat: Callable[[dict | None], None] = lambda details=None: None
+    user_cancelled: Callable[[], bool] | None = None
 
 
 ActionHandler = Callable[[ActionContext, dict], Awaitable[Any]]
 
 
 @dataclass(frozen=True)
-class Runtime:
+class WorkspaceStorage:
     workspace: Path
     database: Database
     settings: Settings
     events: EventStore
+
+
+@dataclass(frozen=True)
+class Runtime(WorkspaceStorage):
     model: ModelGateway
 
 

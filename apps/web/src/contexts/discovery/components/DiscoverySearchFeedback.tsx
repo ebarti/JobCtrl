@@ -11,7 +11,7 @@ import "./discovery-search-feedback.css";
 export interface DiscoveryAssessmentProgress {
   phase: "acquiring" | "assessing" | null;
   assessedJobs: number | null; failedJobs: number | null; totalJobs: number | null;
-  checkpoint: { postingsChecked: number | null; requirementsChecked: number | null; phase: "checking" | "normalizing" | "qualifying" } | null;
+  checkpoint: { postingsChecked: number | null; requirementsChecked: number | null; phase: "checking" | "checking_each_job" | "normalizing" | "qualifying" } | null;
   skippedJobs: number | null;
   skipped: readonly { jobId: string; reason: string }[];
   failures: readonly { jobId: string; stage: string; code: string | null }[];
@@ -75,11 +75,14 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
       <div className="discovery-search-status-row" role="status"><h2>{label}</h2>{counts ? <p className="discovery-search-counts">{controller.countsStale ? <span>Last recorded:</span> : null}<span>{counts.newJobs} new jobs</span><span>{counts.observedJobs} observed</span></p> : null}</div>
       {active ? <Progress value={null} aria-label="Job search progress" className="discovery-search-progress" /> : null}
     </div>
+    {controller.cooldowns.map((wait) => <p key={wait.board}>{boardLabel(wait.board)} paused this search. {controller.linkedInPaused ? "You can continue in" : "JobCtrl will check again in"} {Math.ceil(wait.retryAfterSeconds)} seconds. Saved jobs can still be assessed.</p>)}
+    {controller.postings && controller.postings.received > 0 ? <p>{controller.postings.received} received · {controller.postings.duplicate} already saved · {controller.postings.excluded} excluded · {controller.postings.pending} pending</p> : null}
     {assessedJobs !== null ? <p>{assessmentProgress?.unavailable && !controller.assessment ? "Last recorded: " : ""}{assessmentProgress?.totalJobs != null ? `${assessedJobs} of ${assessmentProgress.totalJobs} jobs assessed` : `${assessedJobs} jobs assessed`}{failedJobs !== null ? ` · ${failedJobs} failed` : ""}{skippedJobs !== null && skippedJobs > 0 ? ` · ${skippedJobs} skipped` : ""}</p> : null}
     {checkpoint && assessmentProgress?.totalJobs != null ? <p aria-label="Fit preparation progress">
       {checkpoint.postingsChecked !== null ? `${checkpoint.postingsChecked} of ${assessmentProgress.totalJobs} postings checked. ` : ""}
       {checkpoint.requirementsChecked !== null ? `Requirements checked for ${checkpoint.requirementsChecked} of ${assessmentProgress.totalJobs} jobs. ` : ""}
-      {checkpoint.phase === "qualifying" ? "Checking your evidence against the requirements before publishing Fit scores." : checkpoint.phase === "normalizing" ? "Reconciling requirements across these jobs before Fit scoring." : "Fit scoring waits for posting and requirements checks across this search."}
+      {checkpoint.phase === "checking_each_job" ? "Each eligible job can be scored once its posting and requirements checks finish." :
+        checkpoint.phase === "qualifying" ? "Checking your evidence against the requirements before publishing Fit scores." : checkpoint.phase === "normalizing" ? "Reconciling requirements across these jobs before Fit scoring." : "Fit scoring waits for posting and requirements checks across this search."}
     </p> : null}
     {unsupportedLanguages > 0 ? <p>{unsupportedLanguages} {unsupportedLanguages === 1 ? "posting was" : "postings were"} skipped because only English postings are supported. No fit score was calculated.</p> : null}
     {noRequirements > 0 ? <p>{noRequirements} {noRequirements === 1 ? "posting had" : "postings had"} no in-scope requirements to assess. No fit score was calculated.</p> : null}

@@ -2,7 +2,7 @@
 
 This module owns no feature tables. It evaluates literal user filters and
 arithmetic over recorded scalar values, then sorts globally before pagination.
-All owner reads share one SQLite snapshot. Full posting/audit DTOs are hydrated
+All owner reads share one PostgreSQL snapshot. Full posting/audit DTOs are hydrated
 only for the selected page; the global scan retains scalars and revision refs.
 """
 
@@ -406,7 +406,6 @@ class JobQueries:
         candidates = []
         filter_source_pay = query.posted_known in SOURCE_PAY_FILTERS
         with self.database.connect() as connection:
-            connection.execute("BEGIN")
             offset = 0
             while True:
                 selection = self.jobs.select_job_ids({"status": "all", "include_hidden": True,

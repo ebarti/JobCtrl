@@ -17,12 +17,13 @@ from .sources import FrozenFitProfileSnapshot, approved_fingerprint, dto, fact_f
 class RefreshStorage:
     def latest_requirement_assessment(self, profile_id, requirement_id, connection=None, *, demand_fingerprint):
         def load(conn):
-            row = conn.execute(
+            candidates = conn.execute(
                 "SELECT assessment_json FROM fit_assessments WHERE profile_id=? AND requirement_id=?"
-                " AND json_extract(assessment_json,'$.demand_fingerprint') IS ? ORDER BY rowid DESC LIMIT 1",
-                (profile_id, requirement_id, demand_fingerprint),
-            ).fetchone()
-            return json.loads(row[0]) if row else None
+                " ORDER BY insertion_order DESC",
+                (profile_id, requirement_id),
+            )
+            return next((record for record in (json.loads(row[0]) for row in candidates)
+                         if record.get("demand_fingerprint") == demand_fingerprint), None)
         return self._read(load, connection)
 
     def refresh_operation(self, operation_id, connection=None):
@@ -34,21 +35,21 @@ class RefreshStorage:
     def latest_refresh(self, profile_id, connection=None):
         def load(conn):
             row = conn.execute(
-                "SELECT state_json FROM fit_refresh_operations WHERE profile_id=? ORDER BY rowid DESC LIMIT 1", (profile_id,),
+                "SELECT state_json FROM fit_refresh_operations WHERE profile_id=? ORDER BY insertion_order DESC LIMIT 1", (profile_id,),
             ).fetchone()
             return json.loads(row[0]) if row else None
         return self._read(load, connection)
 
     def completed_refresh(self, profile_id, connection=None):
         def load(conn):
-            row = conn.execute(
+            candidates = conn.execute(
                 "SELECT state_json FROM fit_refresh_operations WHERE profile_id=? AND status='completed'"
-                " AND json_extract(state_json,'$.contract_version')=?"
-                " AND json_extract(state_json,'$.qualification_semantics_version')=?"
-                " AND json_extract(state_json,'$.qualification_prompt_version')=? ORDER BY rowid DESC LIMIT 1",
-                (profile_id, CONTRACT_VERSION, QUALIFICATION_SEMANTICS_VERSION, QUALIFICATION_PROMPT_VERSION),
-            ).fetchone()
-            return json.loads(row[0]) if row else None
+                " ORDER BY insertion_order DESC", (profile_id,),
+            )
+            return next((record for record in (json.loads(row[0]) for row in candidates)
+                         if record.get("contract_version") == CONTRACT_VERSION
+                         and record.get("qualification_semantics_version") == QUALIFICATION_SEMANTICS_VERSION
+                         and record.get("qualification_prompt_version") == QUALIFICATION_PROMPT_VERSION), None)
         return self._read(load, connection)
 
     def _write_refresh(self, connection, state):
@@ -125,7 +126,9 @@ class RefreshStorage:
                 raise AppError("fit_refresh_busy", "A manual Fit refresh for this Profile is already active.", 409,
                                {"operationId": active[0]})
             self._assert_refresh_inputs(connection, state)
-            connection.execute("INSERT INTO fit_refresh_operations VALUES(?,?,?,?,?,?,?)", (
+            connection.execute(
+                "INSERT INTO fit_refresh_operations"
+                "(operation_id,profile_id,input_fingerprint,status,state_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (
                 state["operation_id"], state["profile_id"], state["input_fingerprint"], state["status"],
                 encoded(state), state["created_at"], state["updated_at"],
             ))
@@ -133,7 +136,6 @@ class RefreshStorage:
 
     def validate_refresh(self, operation_id):
         with self._database.connect() as connection:
-            connection.execute("BEGIN")
             state = self._running_refresh(connection, operation_id)
             self._assert_refresh_inputs(connection, state)
             return state
@@ -159,24 +161,37 @@ class RefreshStorage:
     def unpublished_qualification_calls(self, state, key, expected):
         # A completed historical call already has a gateway pin in its raw result.
         # A started historical call has only an argument key and an operation lifetime.
-        call = '$.calls."' + key + '"'
-        pin = "COALESCE(json_extract(state_json,?),json_extract(state_json,?))"
         with self._database.connect() as connection:
             rows = connection.execute(
-                "SELECT created_at,updated_at,(status='stale' AND json_extract(state_json,'$.failure_code')='revision_conflict' "
-                "AND json_extract(state_json,'$.phase') IN ('qualification','publication')) eligible, "
-                + pin + " receipt_id," + pin + " gateway_input FROM fit_refresh_operations "
-                "WHERE profile_id=? AND status IN ('stale','failed','limited','cancelled') AND json_extract(state_json,'$.factual_published')=0 "
-                "AND json_extract(state_json,'$.job_ids')=? AND json_extract(state_json,'$.contract_version')=? "
-                "AND json_extract(state_json,'$.qualification_semantics_version')=? "
-                "AND json_extract(state_json,'$.qualification_prompt_version')=? "
-                "AND json_extract(state_json,?)='fit.qualification-batch' AND (gateway_input IS NULL OR gateway_input=?)",
-                (call + ".receipt_id", call + ".result.provenance.receipt_id", call + ".input_fingerprint",
-                 call + ".result.provenance.input_fingerprint", state["profile_id"], encoded(state["job_ids"]),
-                 state["contract_version"], state["qualification_semantics_version"], state["qualification_prompt_version"],
-                 call + ".kind", expected),
-            ).fetchall()
-        return [dict(row) for row in rows]
+                "SELECT created_at,updated_at,status,state_json FROM fit_refresh_operations"
+                " WHERE profile_id=? AND status IN ('stale','failed','limited','cancelled')",
+                (state["profile_id"],),
+            )
+            calls = []
+            for created_at, updated_at, status, raw in rows:
+                candidate = json.loads(raw)
+                if (candidate.get("factual_published") not in (False, 0)
+                        or any(candidate.get(field) != state[field] for field in (
+                            "job_ids", "contract_version", "qualification_semantics_version", "qualification_prompt_version",
+                        ))):
+                    continue
+                call = candidate.get("calls", {}).get(key, {})
+                if call.get("kind") != "fit.qualification-batch":
+                    continue
+                provenance = (call.get("result") or {}).get("provenance") or {}
+                receipt = call.get("receipt_id")
+                gateway_input = call.get("input_fingerprint")
+                if gateway_input is None:
+                    gateway_input = provenance.get("input_fingerprint")
+                if gateway_input is None or gateway_input == expected:
+                    calls.append({
+                        "created_at": created_at, "updated_at": updated_at,
+                        "eligible": status == "stale" and candidate.get("failure_code") == "revision_conflict"
+                                    and candidate.get("phase") in {"qualification", "publication"},
+                        "receipt_id": provenance.get("receipt_id") if receipt is None else receipt,
+                        "gateway_input": gateway_input,
+                    })
+            return calls
 
     def adopt_refresh_qualification(self, operation_id, key, authority, lookup):
         with self._database.transaction() as connection:

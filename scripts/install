@@ -198,7 +198,12 @@ check_system_dependencies() {
   ensure_node
   ensure_command "corepack" "Corepack" "install Corepack directly or with Homebrew (brew install corepack)" 1 corepack
   ensure_command "uv" "uv" "install uv from https://docs.astral.sh/uv/ or Homebrew" 1 uv
-  ensure_command "temporal" "Temporal CLI" "install the Temporal CLI so pnpm dev can start temporal server start-dev" 0 temporal
+  if [[ -z ${JOBCTRL_POSTGRES_BIN_DIR:-} && ! -x "$ROOT/.dev/postgres-runtime/bin/postgres" ]]; then
+    ensure_command "cc" "C compiler" "install Xcode Command Line Tools or Linux compiler development tools" 1
+    ensure_command "make" "GNU Make" "install GNU Make" 1
+    ensure_command "bison" "Bison" "install Bison" 1
+    ensure_command "flex" "Flex" "install Flex" 1
+  fi
   if [[ "$(uname -s)" == "Darwin" ]]; then ensure_go; fi
 }
 
@@ -224,6 +229,19 @@ install_python_worker() {
     run_in_root uv --project workers/automation sync --extra dev
   else
     SKIPPED_STEPS+=("Python worker dependency sync")
+  fi
+}
+
+install_postgres_runtime() {
+  local runtime_home="$ROOT/.dev/postgres-runtime"
+  if [[ -n ${JOBCTRL_POSTGRES_BIN_DIR:-} ]]; then
+    ok "using PostgreSQL tools from JOBCTRL_POSTGRES_BIN_DIR"
+  elif [[ -x "$runtime_home/bin/postgres" ]]; then
+    ok "PostgreSQL runtime already present at $runtime_home"
+  elif confirm "Build the pinned PostgreSQL runtime for local development?"; then
+    run_in_root bash scripts/install-postgres-runtime.sh "$runtime_home"
+  else
+    SKIPPED_STEPS+=("PostgreSQL runtime build")
   fi
 }
 
@@ -326,6 +344,7 @@ main() {
   enable_corepack
   install_node_workspace
   install_python_worker
+  install_postgres_runtime
   install_playwright_browsers
   run_python_setup
   print_summary

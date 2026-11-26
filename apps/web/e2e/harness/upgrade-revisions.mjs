@@ -1,6 +1,7 @@
 // The harness executes only these fixed predecessors. Hosted checkouts fetch
 // missing objects from the same inventory before running the upgrade journeys.
 export const upgradeRevisions = Object.freeze([
+  "db8043d5f86389e1427d5335e3da336dc35437f6",
   "8ab86e9232d66fff9795906e061d208e7a057d8b",
   "5b9db7ddfa20fa2d618687da1b311e2287286679",
   "6e4131061fb41aab4743701084a7c74a19fa21f3",

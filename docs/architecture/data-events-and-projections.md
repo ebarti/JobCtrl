@@ -66,12 +66,12 @@ the actions through `POST /v1/actions/preparation.run` or
 Fit and Resumes services and persist per-job step checkpoints; business state
 stays with each feature. Preparation does not imply Apply or approve a submission. The shared
 `/v1/actions/{action}` and action-run APIs submit, inspect and cancel durable
-work. A 202 receipt indicates Temporal accepted the action, not that every step
+work. A 202 receipt indicates the action and DBOS dispatch were committed, not that every step
 finished. See [pipeline](pipeline/index.md).
 
 ## Verification
 
-Use the real Python application, SQLite, worker, event stream and browser to
+Use the real Python application, PostgreSQL, DBOS worker, event stream and browser to
 exercise commit/rollback, stale saves, reconnect, source ownership and recovery.
 The [journey ledger](../developer/qa/python-journeys.md) separates planned
 coverage from observed results. Source code alone does not prove integrated

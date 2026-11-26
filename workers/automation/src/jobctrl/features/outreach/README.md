@@ -63,7 +63,7 @@ revisions and exact reviewed body. An authentic failed-quality review remains
 verified while blocked by its verdict; missing or mismatched receipt authority
 blocks approval, copy and fresh send attestations.
 
-Only `outreach_*` tables are read by this package's SQLite adapter. Generated
+Only `outreach_*` tables are read by this package's PostgreSQL adapter. Generated
 messages, facts, model results and source snapshots never appear in event
 payloads. Events invalidate the feature's public reads using IDs and state.
 The target recurring real-application journeys are in

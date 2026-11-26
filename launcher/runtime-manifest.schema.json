@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://jobctrl.dev/schemas/runtime-manifest-v1.json",
+  "$id": "https://jobctrl.dev/schemas/runtime-manifest-v2.json",
   "title": "JobCtrl launcher runtime manifest",
   "type": "object",
   "additionalProperties": false,
@@ -13,7 +13,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": 1
+      "const": 2
     },
     "launcherProtocol": {
       "const": 2
@@ -22,17 +22,9 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "temporalGrpc",
-        "temporalUi",
         "api"
       ],
       "properties": {
-        "temporalGrpc": {
-          "const": 7233
-        },
-        "temporalUi": {
-          "const": 8233
-        },
         "api": {
           "const": 8766
         }
@@ -52,7 +44,7 @@
         "properties": {
           "name": {
             "enum": [
-              "temporal",
+              "postgres",
               "worker",
               "api"
             ]
@@ -117,29 +109,10 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "temporal",
+        "postgres",
         "api"
       ],
       "properties": {
-        "temporal": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "component",
-            "arguments"
-          ],
-          "properties": {
-            "component": {
-              "const": "temporal"
-            },
-            "arguments": {
-              "type": "array",
-              "items": {
-                "type": "string"
-              }
-            }
-          }
-        },
         "api": {
           "type": "object",
           "additionalProperties": false,
@@ -157,6 +130,25 @@
             },
             "requireWorkerPid": {
               "const": true
+            }
+          }
+        },
+        "postgres": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "executable",
+            "arguments"
+          ],
+          "properties": {
+            "arguments": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "executable": {
+              "const": "postgres/bin/psql"
             }
           }
         }

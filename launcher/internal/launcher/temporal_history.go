@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // temporalHistoryPath selects the only existing history, retaining source
@@ -48,19 +47,4 @@ func temporalHistoryPath(stateDir string) (string, error) {
 		return legacy, nil
 	}
 	return root, nil
-}
-
-func withTemporalHistory(ctx launchContext) (launchContext, error) {
-	path, err := temporalHistoryPath(ctx.Instance.StateDir)
-	if err != nil {
-		return ctx, err
-	}
-	environment := make([]string, 0, len(ctx.Environment)+1)
-	for _, value := range ctx.Environment {
-		if !strings.HasPrefix(value, "JOBCTRL_TEMPORAL_DB=") {
-			environment = append(environment, value)
-		}
-	}
-	ctx.Environment = append(environment, "JOBCTRL_TEMPORAL_DB="+path)
-	return ctx, nil
 }

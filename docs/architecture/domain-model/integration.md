@@ -1,7 +1,7 @@
 # Integration and Event Boundaries
 
 The target application is one Python modular application. HTTP, CLI and the
-Temporal worker compose the same feature services and invoke the same canonical
+DBOS worker compose the same feature services and invoke the same canonical
 business actions. There is no Fastify business API, TypeScript/Python JSON-RPC
 hop, forwarding bridge or alternate business writer at cutover. This target is
 being implemented and still requires integrated verification.
@@ -18,7 +18,7 @@ handler or a sibling table read.
 ## Commands and durable execution
 
 Short requests use feature HTTP adapters. Durable work is submitted to the
-Python application and acknowledged as accepted only after Temporal accepts it.
+Python application and acknowledged as accepted after action acceptance and DBOS enqueue commit together.
 The worker dispatches the registered feature action to the same application
 service; workflow retries and cancellation obey feature-owned source, approval
 and external-effect fences. CLI is another adapter to that application.

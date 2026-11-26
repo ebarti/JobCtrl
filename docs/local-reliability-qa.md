@@ -21,34 +21,22 @@ unverified. No unresolved Blocker/High may remain in the claimed scope.
 ## Commands and evidence
 
 Run `corepack pnpm e2e` for the recurring suite. It builds the web application
-once, starts real Python HTTP and worker processes with real Temporal, and
+once, starts real Python HTTP and worker processes with real PostgreSQL and DBOS, and
 creates fresh owned workspaces. Focus with a normal Playwright filter, for
 example `corepack pnpm e2e -- --grep 'approved baseline'`. There are zero test
 retries. The run reports build, journey and total elapsed time; the hosted job
 also measures dependency preparation. See the exact scenario and coverage
 ledger in [Python application journeys](developer/qa/python-journeys.md).
 
-The workspace identity journey opens the same disposable database with a second
-API configured for a different workflow namespace. It verifies a write refusal,
-restarts the original worker and reads the saved job through the original API.
-The dispatch journey stops the owned Temporal server while the worker keeps
-heartbeating. It checks public status, refused admission and earlier receipts,
-then restores the same history and retries through the actions endpoint.
-The Stop recovery journey queues a run behind a held activity, records Stop
-during a real Temporal outage, reloads Run detail, and retries after recovery.
-It checks the receipt against Temporal's cancellation history and verifies a
-late Stop for that run leaves its successor and accepted artifacts intact.
-
-Hosted Browser CI schedules that same inventory in six fixed, disjoint
-Playwright shards, `--shard=1/6` through `--shard=6/6`, on separate
-runners. Each hosted invocation uses two Playwright workers, zero retries, the
-existing case deadlines and the 720-second global deadline; the ordinary
-unsharded local command retains its one-worker default. Each shard builds once,
-each worker owns its Temporal service, and each journey owns its application
-workspace. Shards retain separately named evidence. Matrix fail-fast is disabled so a failed shard does
-not cancel its peers. The stable **Browser / UI checks** result passes only when
-all six shard jobs succeed. Record the result of every shard and the candidate
-revision to establish complete hosted coverage.
+For the PostgreSQL/DBOS candidate, qualify concurrent admissions, a crash on
+each side of enqueue, lost acknowledgement, worker replacement, cancellation,
+source cooldown and schedules through real entrypoints with controlled external
+services. Verify the stable action identity and canonical state, not merely a
+healthy process. Test the migration with an isolated snapshot, including row
+counts/digests, file bindings, unresolved effects and rollback boundaries.
+Each Playwright worker owns a private PostgreSQL cluster and each journey owns
+its database. `JOBCTRL_POSTGRES_BIN_DIR` selects the PostgreSQL tools. A configured
+journey or historical result does not prove the candidate passed it.
 
 Hosted Ubuntu transport recovery may prefer only the fixed Ubuntu-listed,
 operator-verified HTTPS candidate after all three completed original mirror
@@ -93,7 +81,7 @@ checks its ownership marker and directory identity, and never adopts a
 caller-selected application database. Its IPC-connected process-group leader
 reserves the group identity until cleanup and tears down its own group if its
 parent disconnects. Preserve unrelated services and files. Confirm owned API,
-worker, Temporal, browser and helper processes have exited after a run.
+worker, PostgreSQL, browser and helper processes have exited after a run.
 
 ## Semantic determinations
 
@@ -247,14 +235,14 @@ repeating external effects or inventing source observations.
 ## Durable execution recovery
 
 Start work through the public HTTP/CLI durable action entrypoint and inspect
-real Temporal acceptance. Hold an external request, cancel through the actual
+real DBOS acceptance. Hold an external request, cancel through the actual
 API, kill the actual worker process, launch a new PID and require the original
 run to terminalize or recover under its original identity. Pausing a process,
 writing a heartbeat, seeding a completed row or replaying a recorded response is
 not restart proof. A new healthy PID must execute subsequent real work.
 
 Separate cancellation, graceful shutdown, worker crash, provider loss and
-Temporal-history loss. Preserve accepted artifacts and explicit external
+database or durable-state unavailability. Preserve accepted artifacts and explicit external
 permissions. Do not retry assertions or add arbitrary sleeps to conceal a race.
 Use bounded observations of actual state. Local flags and a live wrapper PID do
 not prove the underlying worker or its owned descendants are healthy.
@@ -280,47 +268,23 @@ require the corresponding platform proof; a synthetic command cannot prove it.
 
 <a id="schema-15-forward-upgrade"></a>
 
-## Deliberate fresh-state cutover
+## PostgreSQL workspace transition and native lifecycle
 
-The target refuses legacy application databases without mutation. The explicit
-transfer preserves the full Profile, authored baseline, supporting attachments,
-confirmations/preferences and provenance in a fresh target workspace and resets
-other JobCtrl-owned state only at the authorized cutover. Do not run a real-user
-reset during development or QA. An existing confirmation cannot be invented
-from an old row shape; unknown authority stays review-required.
+Rehearse the supported current Python SQLite source into an isolated destination
+without starting background work or contacting providers. Preserve the source
+and files; verify schema, keys, per-table counts and digests, sequences and file
+bindings before activation. Drain or explicitly reconcile outstanding work;
+retain uncertain external effects and provider charges. Test interruption and
+retry, final cutover from a fresh snapshot with writers stopped, and rollback
+both before and after later writes. Never expose private contents in evidence.
 
-The full synthetic old-to-new Profile integrity proof is one-off and separate
-from recurring E2E. Compare source and target facts, exact attachment bytes,
-versions, confirmations, uncertainty and immutable original source. Browser
-storage attachments require a distinct synthetic browser-source bundle proof.
-The native lifecycle admits only the Python application identity: application
-ID `0x4A435354` (`1245926228`), `user_version=1`, exact `app_metadata`, and an
-authenticated `launcher/application-schema.json` declaration. Updates and
-paired rollbacks stay within that target application. Legacy admission must
-refuse before stopping a runtime, creating a backup/journal, replacing a selector,
-or changing source data. After candidate startup fails, retain live databases
-and receipts; `jobctrl stop` then `jobctrl update` continues forward. Never
-restore an earlier snapshot over possible later commits automatically.
-
-Run `node scripts/qa/native-lifecycle-e2e.mjs --python
-"$PWD/workers/automation/.venv/bin/python" --temporal
-"$JOBCTRL_TEMPORAL_CLI_PATH" --output-parent "$RUNNER_TEMP"` on macOS arm64.
-The required native CI contexts partition that command with `--suite lifecycle`
-and `--suite custody`. Lifecycle owns install/update/backup/paired rollback,
-pair integrity and legacy refusal. Custody owns live execution-receipt refusal,
-escaped-child cleanup and restart, failed-start forward recovery and unresolved
-provider receipts. Each starts the real application in a fresh owned workspace;
-omitting `--suite` runs both partitions. An unknown suite fails before setup.
-The script uses compiled public installer/launcher entrypoints, real CPython,
-HTTP/worker/Temporal, immutable application source, owned synthetic workspaces,
-and the fixed loopback-only payload restriction. It observes coherent backup
-and restart, preserved update state, both exact restored database files before
-writers start, failure/resumption, malformed or changed pair refusal, unresolved
-provider accounting, and environment-empty new-session TERM-ignoring child
-cleanup with an unrelated process control. Its local unsigned payload does not
-qualify Developer ID, notarization, stable-release retention or the actual
-published predecessor. Those remain distinct required release gates; installed
-release acquisition and retention must be exercised before a release claim.
+Native qualification uses the built launcher and its owned local PostgreSQL
+runtime: exercise startup, stop, restart, a coherent database/DBOS backup and
+verified restore alongside owned files, uncertainty fences, process custody,
+upgrade and rollback. Run on the applicable platform. Signed distribution,
+published predecessor and real user cutover remain separate proof obligations.
+A local source result alone does not establish any of them. See the
+[migration plan](plans/2026-11-25-postgres-dbos.md).
 
 ## Completion
 

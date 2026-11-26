@@ -1,13 +1,22 @@
 import { indeedPage } from "./indeed-data.js";
-import { test, expect, json, action, completed, terminal, modelCall } from "../harness/fixtures.js";
+import { test, expect, json, action, completed, terminal, modelCall, type ApplicationStack, type ExternalCall } from "../harness/fixtures.js";
 import { baseline, createBaseline, createPosting } from "./core-data.js";
 import { serveRoleTarget } from "./discovery-role-scope-data.js";
 import type { FitState } from "./fit-data.js";
-import { servePostingAssessment, serveSavedAssessment, serveQualification } from "./search-assessment-data.js";
-import { authoredPartition, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
-import { citeSources, modelSources, NORMALIZATION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
-import { qualificationBindings } from "./qualification-data.js";
-import { respondProducer, untilNormalization } from "./preparation-cohort-data.js";
+import { servePostingAssessment, serveSavedAssessment } from "./search-assessment-data.js";
+import type { NormalizedSnapshot } from "./consolidation-data.js";
+import { catalogMatching, NORMALIZATION_PROMPT_VERSION } from "./requirements-data.js";
+import { respondProducer } from "./preparation-cohort-data.js";
+
+// Source pages and independent Fit actions may be at external boundaries simultaneously.
+function externalStream(app: ApplicationStack, match: (call: ExternalCall) => boolean): ApplicationStack {
+  return { ...app, external: { ...app.external, next: (options) => app.external.next({ ...options, match }) } };
+}
+
+const assessments = (app: ApplicationStack) => externalStream(app,
+  (call) => !call.path.startsWith("/jobstreaming/") && call.body["operation"] !== "discovery.role_target_match");
+const boardPage = (app: ApplicationStack) => app.external.next({ match: (call) => call.path === "/jobstreaming/indeed" });
+const roleMatches = (app: ApplicationStack) => externalStream(app, (call) => call.body["operation"] === "discovery.role_target_match");
 
 function linkedinCard(id: number) {
   return `<div class="base-search-card"><a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/synthetic-engineer-${id}"><span class="sr-only">Synthetic Systems Engineer</span></a><h4 class="base-search-card__subtitle">Synthetic Board Company</h4></div>`;
@@ -65,16 +74,16 @@ test("search assesses the exact saved LinkedIn detail after a later posting is t
   const description = "Maintain durable workflow recovery.";
   firstDetail.raw(`<div class="show-more-less-html__markup"><p>${description}</p></div>`);
   await serveRoleTarget(app, "match");
-  const secondDetail = await app.external.next();
+  const secondDetail = await app.external.next({ match: (call) => call.path === "/jobstreaming/linkedin/jobs/view/1235" });
   expect(secondDetail.path).toBe("/jobstreaming/linkedin/jobs/view/1235");
   secondDetail.raw("Private synthetic response", { status: 429, headers: { "Retry-After": "601" } });
   await serveSavedAssessment(app, library);
 
-  const result = (await completed(api, started.runId)).result as { newJobIds: string[] };
-  expect(result).toMatchObject({ status: "partial", newJobs: 1, observedJobs: 1,
-    failures: [{ boards: ["linkedin"], code: "discovery_provider_rate_limited" }],
-    preparation: { status: "succeeded", assessedJobs: 1, failedJobs: 0 } });
-  const job = result.newJobIds[0]!;
+  const jobs = await json<{ jobs: { job_id: string }[] }>(api, "get", "/v1/jobs");
+  expect(jobs.jobs).toHaveLength(1);
+  const job = jobs.jobs[0]!.job_id;
+  await expect.poll(async () => (await json<FitState>(api, "get", `/v1/jobs/${job}/fit`)).current).toBe(true);
+  expect(await json(api, "get", `/v1/action-runs/${started.runId}`)).toMatchObject({ status: "running" });
   const posting = await json<{ revision: number }>(api, "get", `/v1/jobs/${job}`);
   expect(posting).toMatchObject({ content_state: "provider_detail", needs_enrichment: true, full_description: description });
   const run = await json<{ steps: unknown[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
@@ -92,6 +101,9 @@ test("search assesses the exact saved LinkedIn detail after a later posting is t
     leaseEpoch: 1, responses: { listing: 1, detail: 2, other: 0 }, elapsedMs: expect.any(Number),
     receivedAt: expect.any(String), retryAfterSeconds: 601,
   } }));
+  await json(api, "post", `/v1/action-runs/${started.runId}/cancel`, {});
+  expect((await terminal(api, started.runId)).status).toBe("cancelled");
+  expect((await json<FitState>(api, "get", `/v1/jobs/${job}/fit`)).score).toEqual(fit.score);
 });
 
 test("saved search checks each LinkedIn page before requesting the next with literal roles", async ({ api, app, page }) => {
@@ -119,12 +131,13 @@ test("saved search checks each LinkedIn page before requesting the next with lit
   expect(detail.path).toBe("/jobstreaming/linkedin/jobs/view/1237");
   expect(detailStart - listingStart).toBeGreaterThan(3500);
   detail.raw('<div class="show-more-less-html__markup"><p>Maintain durable workflow recovery.</p></div>');
-  await serveRoleTarget(app, "match");
-  const secondDetail = await app.external.next();
+  await serveRoleTarget(roleMatches(app), "match");
+  const scoring = serveSavedAssessment(assessments(app), library);
+  const secondDetail = await app.external.next({ match: (call) => call.path === "/jobstreaming/linkedin/jobs/view/1238" });
   expect(secondDetail.path).toBe("/jobstreaming/linkedin/jobs/view/1238");
   secondDetail.raw('<div class="show-more-less-html__markup"><p>Review supplier contracts.</p></div>');
-  await serveRoleTarget(app, "mismatch");
-  const continuation = await app.external.next();
+  await serveRoleTarget(roleMatches(app), "mismatch");
+  const continuation = await app.external.next({ match: (call) => call.path.includes("/seeMoreJobPostings/search") });
   expect(new URL(continuation.path, "http://localhost").searchParams.get("start")).toBe("10");
   expect(performance.now() - detailStart).toBeGreaterThan(3500);
   continuation.raw("Too many requests", { status: 429 });
@@ -132,7 +145,7 @@ test("saved search checks each LinkedIn page before requesting the next with lit
   await expect.poll(async () => (await throttles()).events.map((event) => event.payload)).toEqual([expect.objectContaining({
     phase: "listing", responses: { listing: 2, detail: 2, other: 0 }, retryAfterSeconds: null,
   })]);
-  await serveSavedAssessment(app, library);
+  await scoring;
   expect((await completed(api, started.runId)).result).toMatchObject({ status: "partial", newJobs: 1,
     roleTargetObservations: { match: 1, mismatch: 1 },
     failures: [{ code: "discovery_provider_rate_limited" }], preparation: { assessedJobs: 1 } });
@@ -150,27 +163,35 @@ test("search retains a listing and makes no automatic posting fetch after Linked
   const listing = await app.external.next();
   expect(listing.path).toContain("/jobstreaming/linkedin/jobs-guest/jobs/api/seeMoreJobPostings/search?");
   listing.raw(linkedinCard(1236) + '<div class="base-search-card"></div>'.repeat(9));
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const next = await app.external.next({ timeout: 20_000 });
-    expect(new URL(next.path, "http://localhost").searchParams.get("start")).toBe("10");
-    next.raw("Too many requests", { status: 429, headers: { "Retry-After": "0" } });
+  let next = await app.external.next({ timeout: 20_000 });
+  const earlierPostingCheck = next.path === "/posting-page";
+  if (earlierPostingCheck) {
+    // An independent child can reach its external read while the source is healthy.
+    next.respond({}, 503);
+    next = await app.external.next({ timeout: 20_000 });
   }
+  expect(new URL(next.path, "http://localhost").searchParams.get("start")).toBe("10");
+  next.raw("Too many requests", { status: 429, headers: { "Retry-After": "0" } });
   const result = (await completed(api, started.runId)).result as { newJobIds: string[] };
   const job = result.newJobIds[0]!;
   expect(result).toMatchObject({ status: "partial", newJobs: 1,
     preparation: { assessedJobs: 0, failedJobs: 1, failures: [
-      { jobId: job, stage: "enrich", code: "posting_check_deferred_source_rate_limited" },
+      { jobId: job, stage: "enrich", code: earlierPostingCheck ? "posting_fetch_unavailable" : "posting_check_deferred_source_rate_limited" },
     ] } });
   const run = await json<{ steps: unknown[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
   expect(run.steps).toContainEqual(expect.objectContaining({ jobId: job, stage: "enrich", status: "failed", postingRevision: 1 }));
-  expect(app.external.calls.filter((call) => call.path === "/posting-page" || call.path === "/model")).toHaveLength(0);
+  expect(app.external.calls.filter((call) => call.path === "/posting-page")).toHaveLength(Number(earlierPostingCheck));
+  expect(app.external.calls.filter((call) => call.path === "/model")).toHaveLength(0);
   const throttle = await json<{ events: { payload: unknown }[] }>(api, "get",
     `/v1/events?aggregateId=${started.runId}&type=DiscoverySourceRateLimited`);
-  expect(throttle.events.map((event) => event.payload)).toEqual([4, 3, 2].map((listing) => expect.objectContaining({
-    phase: "listing", responses: { listing, detail: 0, other: 0 }, retryAfterSeconds: 0,
-  })));
-
-  const retry = await action(api, "preparation.retry", { run_id: started.runId });
+  expect(throttle.events.map((event) => event.payload)).toEqual([expect.objectContaining({
+    phase: "listing", responses: { listing: 2, detail: 0, other: 0 }, retryAfterSeconds: 0,
+  })]);
+  await expect.poll(async () => {
+    const state = await json<{ runs: { runId: string; cooldowns: unknown[] }[] }>(api, "get", "/v1/discovery/runs");
+    return state.runs.find((row) => row.runId === started.runId)?.cooldowns;
+  }, { timeout: 15_000 }).toEqual([]);
+  const retry = await action(api, "preparation.retry", { run_id: started.runId, job_ids: [job] });
   const manual = await app.external.next();
   expect(manual.path).toBe("/posting-page");
   manual.respond({}, 503);
@@ -369,169 +390,102 @@ test("search replay preserves a failed job while a replacement worker finishes t
   expect(source.path).toBe("/jobstreaming/indeed");
   source.respond(indeedPage({ jobs: [first, second], cursor: null, complete: true }));
   const authored = [{ ...first, demand: first.description, foreignExtractionSource: true }, { ...second, demand: second.description }];
+  const held = await app.external.next({ match: (call) => call.path === "/posting-page" && call.body["url"] === second.url });
   for (;;) {
-    const call = await app.external.next();
+    const call = await assessments(app).external.next();
     respondProducer(call, authored);
-    if (call.body?.["operation"] === "requirements.extract") break;
+    if (call.body["operation"] === "requirements.extract") break;
   }
-  // Under the frozen positive-budget policy each producer settles serially.
-  // A foreign extraction source refuses the first producer before the held,
-  // safely recoverable second posting fetch.
-  const held = await app.external.next();
-  expect(held.path).toBe("/posting-page");
-  expect(held.body).toEqual({ url: second.url });
-  const frozen = await json<{ jobIds: string[]; executionPolicy: unknown; steps: { jobId: string; stage: string; status: string; errorCode: string }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-  expect(frozen.executionPolicy).toMatchObject({ version: "search-cohort-v1", producer_mode: "serial" });
+  const state = () => json<{ jobIds: string[]; executionPolicy: unknown; steps: { jobId: string; stage: string; status: string; errorCode: string }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
+  await expect.poll(async () => (await state()).steps.find((step) => step.stage === "requirements" && step.status === "failed")?.errorCode).toBeTruthy();
+  const frozen = await state();
+  expect(frozen.executionPolicy).toMatchObject({ version: "search-jobs-v1" });
   expect(frozen.jobIds).toHaveLength(2);
-  const failed = frozen.steps.find((step) => step.stage === "requirements_extract")!;
-  expect(failed).toMatchObject({ jobId: frozen.jobIds[0], status: "failed", errorCode: expect.any(String) });
+  const failed = frozen.steps.find((step) => step.stage === "requirements" && step.status === "failed")!;
+  expect(failed.jobId).toBeTruthy();
   await page.goto("/jobs");
   const failedRow = page.getByRole("row").filter({ hasText: first.title });
-  await expect(failedRow.getByRole("link", { name: "Requirements extraction failed" })).toHaveAttribute("href", `/runs/${started.runId}`);
-  await expect(page.getByRole("row").filter({ hasText: second.title }).getByRole("link", { name: "Waiting for search checks" }))
-    .toHaveAttribute("href", `/runs/${started.runId}`);
+  await expect(failedRow.getByRole("link", { name: "Requirements check failed" })).toHaveAttribute("href", `/runs/${started.runId}`);
   const replacement = await app.restartWorker();
   expect(replacement.current).not.toBe(replacement.previous);
   await expect.poll(() => held.closed).toBe(true);
   const resumed = await app.external.next({ timeout: 45_000 });
   expect(resumed.path).toBe("/posting-page");
   expect(resumed.body).toEqual({ url: second.url });
-  respondProducer(resumed, authored);
-  for (;;) {
-    const call = await app.external.next();
-    if (call.body?.["operation"] === "requirements.match_catalog") {
-      const input = call.body["context"] as CatalogContext;
-      expect(input.incoming).toHaveLength(1);
-      expect(input.incoming[0]!.job_id).toBe(frozen.jobIds[1]);
-      call.reply(authoredPartition(call, [{ groupId: "later", memberIds: [input.incoming[0]!.member_id], category: "professional_experience", name: second.description, definition: second.description }],
-        [{ groupId: "later", definition: second.description, jobIds: [frozen.jobIds[1]!] }]));
-      break;
-    }
-    respondProducer(call, authored);
-  }
-  await serveQualification(app, library);
+  await servePostingAssessment(assessments(app), library, second, { pageRequest: resumed });
   const finished = await completed(api, started.runId);
-  expect(finished["result"]).toMatchObject({ ok: false, status: "partial", preparation: { assessedJobs: 1, failedJobs: 1, failures: [{ jobId: failed.jobId, stage: "requirements_extract", code: failed.errorCode }] } });
+  expect(finished["result"]).toMatchObject({ ok: false, status: "partial", preparation: { assessedJobs: 1, failedJobs: 1, failures: [{ jobId: failed.jobId, stage: "requirements", code: failed.errorCode }] } });
   const retained = await json<{ jobIds: string[]; steps: unknown[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
   expect(retained.jobIds).toEqual(frozen.jobIds);
   expect(retained.steps).toContainEqual(failed);
   expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(1);
-  expect((await json<FitState>(api, "get", `/v1/jobs/${frozen.jobIds[1]}/fit`)).current).toBe(true);
+  const sibling = frozen.jobIds.find((id) => id !== failed.jobId)!;
+  expect((await json<FitState>(api, "get", `/v1/jobs/${sibling}/fit`)).current).toBe(true);
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "requirements.match_catalog")).toHaveLength(1);
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
 });
 
-test.describe("cohort final currentness guard", () => {
-  test.use({ cohortBoundaryDebugger: true });
+test("search reuses an already checked demand and reports a source edit before final settlement", async ({ api, app, page }) => {
+  const { library } = await createBaseline(api);
+  const settings = await json<{ revision: number; settings: { newJobLimit: number } }>(api, "get", "/v1/discovery/settings");
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0 });
+  const started = await action(api, "discovery.search", { queries: ["Synthetic recovery engineer"], locations: ["Madrid"], newJobLimit: 3 });
+  const first = { job_key: "demand-first", url: "https://www.indeed.com/viewjob?jk=demand-first", title: "First Synthetic Engineer",
+    company: "Synthetic Company", description: "Maintain durable workflow recovery.", location: "Madrid" };
+  const second = { ...first, job_key: "demand-second", url: "https://www.indeed.com/viewjob?jk=demand-second", title: "Second Synthetic Engineer" };
+  const saved = async (url: string) => {
+    const state = await json<{ jobs: { job_id: string; url: string }[] }>(api, "get", "/v1/jobs");
+    return state.jobs.find((job) => job.url === url)!.job_id;
+  };
+  (await boardPage(app)).respond(indeedPage({ jobs: [first], cursor: "owned-next", complete: false }));
+  const next = await boardPage(app);
+  const worker = assessments(app);
+  await servePostingAssessment(worker, library, first);
+  const firstId = await saved(first.url);
+  await expect.poll(async () => (await json<FitState>(api, "get", `/v1/jobs/${firstId}/fit`)).current).toBe(true);
+  const original = await json<FitState>(api, "get", `/v1/jobs/${firstId}/fit`);
+  const requirement = (await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${firstId}/requirements`)).requirements[0]!;
+  expect(await json(api, "get", `/v1/action-runs/${started.runId}`)).toMatchObject({ status: "running" });
 
-  test("search settles cohort consolidation before Fit, reuses identical demands and reports concurrent changes without replacing accepted scores", async ({ api, app, page }) => {
-    const { library } = await createBaseline(api);
-    const settings = await json<{ revision: number; settings: { newJobLimit: number } }>(api, "get", "/v1/discovery/settings");
-    await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0 });
-    const payload = { queries: ["Synthetic recovery engineer"], locations: [{ location: "Madrid", remote: true }], newJobLimit: 2 };
-    const started = await action(api, "discovery.search", payload);
-    const first = { job_key: "cohort-first", url: "https://www.indeed.com/viewjob?jk=cohort-first", title: "Synthetic First Cohort Engineer", company: "Synthetic Cohort Company", description: "Maintain durable workflow recovery, including operational readiness.", location: "Madrid" };
-    const second = { job_key: "cohort-second", url: "https://www.indeed.com/viewjob?jk=cohort-second", title: "Synthetic Second Cohort Engineer", company: "Synthetic Cohort Company", description: "Maintain operational readiness for durable workflow recovery.", location: "Madrid" };
-    const source = await app.external.next();
-    expect(source.path).toBe("/jobstreaming/indeed");
-    source.respond(indeedPage({ jobs: [first, second], cursor: null, complete: true }));
-    const matching = await untilNormalization(app, [first, second].map((row) => ({ ...row, demand: row.description })));
-    const frozen = await json<{ cohortFrozen: boolean; jobIds: string[]; steps: { jobId: string; stage: string; status: string }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-    expect(frozen.cohortFrozen).toBe(true);
-    expect(frozen.jobIds).toHaveLength(2);
-    const cohort = frozen.jobIds;
-    expect(frozen.steps.filter((step) => step.stage === "requirements_extract" && step.status === "succeeded")).toHaveLength(2);
-    expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(0);
-    await page.goto("/jobs");
-    const checkpoint = page.getByRole("region", { name: "Job search progress", exact: true }).getByLabel("Fit preparation progress", { exact: true });
-    await expect(checkpoint).toHaveText("2 of 2 postings checked. Requirements checked for 2 of 2 jobs. Reconciling requirements across these jobs before Fit scoring.");
-    const normalizedDemand = "Maintain operational readiness for durable workflow recovery.";
-    const input = matching.body["context"] as CatalogContext;
-    expect(input.incoming.map((row) => row.job_id).sort()).toEqual([...cohort].sort());
-    matching.reply(authoredPartition(matching, [{ groupId: "recovery", memberIds: input.incoming.map((row) => row.member_id), category: "professional_experience", name: normalizedDemand, definition: normalizedDemand }],
-      [{ groupId: "recovery", definition: normalizedDemand, jobIds: cohort }]));
-    await serveQualification(app, library, { beforeQualification: async (call) => {
-      // The actual qualification request follows both source-bound publications.
-      await expect(checkpoint).toContainText("Checking your evidence against the requirements before publishing Fit scores.");
-      const consolidated = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${cohort[0]}/requirements`);
-      const sibling = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${cohort[1]}/requirements`);
-      expect(consolidated.requirements[0]!.normalized_demand.definition).toBe(normalizedDemand);
-      expect(sibling.requirements[0]!.requirement_id).toBe(consolidated.requirements[0]!.requirement_id);
-      expect(sibling.requirements[0]!.normalized_demand.demand_fingerprint).toBe(consolidated.requirements[0]!.normalized_demand.demand_fingerprint);
-      const bindings = qualificationBindings(call);
-      expect(bindings).toMatchObject([{ requirement_id: consolidated.requirements[0]!.requirement_id,
-        demand_fingerprint: consolidated.requirements[0]!.normalized_demand.demand_fingerprint }]);
-      expect(modelSources(call).find((row) => row.source_id === bindings[0]!.source_id)?.text).toContain(normalizedDemand);
-      const preparing = await json<{ steps: { jobId: string; stage: string; status: string }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-      expect(preparing.steps.filter((step) => step.stage === "requirements" && step.status === "succeeded")).toHaveLength(2);
-      expect(preparing.steps.find((step) => step.jobId === cohort[1] && step.stage === "fit")?.status).toBe("pending");
-    } });
-    const settled = await completed(api, started.runId);
-    expect(settled["result"]).toMatchObject({ ok: true, status: "completed", newJobIds: cohort,
-      preparation: { status: "succeeded", assessedJobs: 2, failedJobs: 0, skippedJobs: 0 } });
-    const accepted = await Promise.all(cohort.map((jobId) => json<FitState>(api, "get", `/v1/jobs/${jobId}/fit`)));
-    for (const fit of accepted) expect(fit).toMatchObject({ current: true, stale_reasons: [], score: { score: 10 } });
-    expect(accepted[0]!.score.assessments[0]!.assessment_id).toBe(accepted[1]!.score.assessments[0]!.assessment_id);
-    expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
-    const afterSettings = await json<{ settings: { newJobLimit: number } }>(api, "get", "/v1/discovery/settings");
-    expect(afterSettings.settings.newJobLimit).toBe(settings.settings.newJobLimit);
-    await page.goto("/jobs");
-    await expect(checkpoint).toHaveCount(0);
-    for (const posting of [first, second]) {
-      const row = page.getByRole("row").filter({ has: page.getByRole("link", { name: posting.title, exact: true }) });
-      await expect(row.getByText("10/10", { exact: true })).toBeVisible();
-    }
-
-    // Observe the real final guard after both scores publish. A source edit in
-    // this durable gap must leave the score tied to the last analyzed requirements.
-    const changed = await action(api, "discovery.search", payload);
-    const third = { job_key: "cohort-concurrent-first", url: "https://www.indeed.com/viewjob?jk=cohort-concurrent-first", title: "Synthetic Source Change Engineer", company: "Synthetic Cohort Company", description: "Operate source-owned incident response.", location: "Madrid" };
-    const fourth = { job_key: "cohort-concurrent-second", url: "https://www.indeed.com/viewjob?jk=cohort-concurrent-second", title: "Synthetic Concurrent Sibling Engineer", company: "Synthetic Cohort Company", description: "Maintain documented deployment ownership.", location: "Madrid" };
-    const laterSource = await app.external.next();
-    expect(laterSource.path).toBe("/jobstreaming/indeed");
-    laterSource.respond(indeedPage({ jobs: [third, fourth], cursor: null, complete: true }));
-    const laterMatching = await untilNormalization(app, [third, fourth].map((row) => ({ ...row, demand: row.description })));
-    const changedCohort = (await json<{ jobIds: string[] }>(api, "get", `/v1/preparation/runs/${changed.runId}`)).jobIds;
-    expect(changedCohort).toHaveLength(2);
-    const laterInput = laterMatching.body["context"] as CatalogContext;
-    const originalRequirement = (await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${cohort[0]}/requirements`)).requirements[0]!;
-    const retained = retainedCapability(laterMatching, originalRequirement.requirement_id, "recovery");
-    const incoming = [third, fourth].map((row, index) => {
-      const member = laterInput.incoming.find((entry) => entry.job_id === changedCohort[index]);
-      expect(member).toBeTruthy();
-      return { groupId: `new-${index}`, memberIds: [member!.member_id], category: "professional_experience" as const, name: row.description, definition: row.description };
-    });
-    laterMatching.reply(authoredPartition(laterMatching, [retained, ...incoming], [
-      { groupId: "recovery", definition: normalizedDemand, jobIds: cohort, reuseDemandFingerprint: originalRequirement.normalized_demand.demand_fingerprint },
-      ...[third, fourth].map((row, index) => ({ groupId: `new-${index}`, definition: row.description, jobIds: [changedCohort[index]!] })),
-    ]));
-    await serveQualification(app, library, { beforeQualification: async () => { await app.armCohortBoundaryPause(); } });
-    await app.waitForCohortBoundaryPause();
-    let beforeChange: FitState | undefined;
-    try {
-      beforeChange = await json<FitState>(api, "get", `/v1/jobs/${changedCohort[0]}/fit`);
-      expect(beforeChange.current).toBe(true);
-      expect((await json<FitState>(api, "get", `/v1/jobs/${changedCohort[1]}/fit`)).current).toBe(true);
-      const posting = await json<{ revision: number }>(api, "get", `/v1/jobs/${changedCohort[0]}`);
-      await json(api, "patch", `/v1/jobs/${changedCohort[0]}`, { expectedRevision: posting.revision, description: "The current posting now requires separately reviewed incident-command ownership." });
-    } finally {
-      await app.resumeCohortBoundary();
-    }
-    const partial = await completed(api, changed.runId);
-    expect(partial["result"]).toMatchObject({ ok: false, status: "partial", acquisitionStatus: "completed",
-      preparation: { status: "partial", assessedJobs: 1, failedJobs: 1, failures: [{ jobId: changedCohort[0], stage: "fit", code: expect.any(String) }] } });
-    const after = await json<FitState>(api, "get", `/v1/jobs/${changedCohort[0]}/fit`);
-    expect(after).toMatchObject({ current: true, requirements_current: false, stale_reasons: [] });
-    expect(after.score).toEqual(beforeChange!.score);
-    expect((await json<FitState>(api, "get", `/v1/jobs/${changedCohort[1]}/fit`)).current).toBe(true);
-    for (const [index, jobId] of cohort.entries()) {
-      const prior = await json<FitState>(api, "get", `/v1/jobs/${jobId}/fit`);
-      expect(prior.current).toBe(true);
-      expect(prior.score).toEqual(accepted[index]!.score);
-    }
-    expect(app.external.calls.filter((call) => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(2);
-    expect((await json<{ runs: unknown[] }>(api, "get", "/v1/action-runs?action=fit.refresh")).runs).toEqual([]);
+  next.respond(indeedPage({ jobs: [second], cursor: "owned-final", complete: false }));
+  const finalPage = await boardPage(app);
+  for (const expected of ["/posting-page", "page_interpretation", "posting_extraction", "description_quality"]) {
+    const call = await worker.external.next();
+    expect(call.path === "/model" ? call.body["operation"] : call.path).toBe(expected);
+    respondProducer(call, [second]);
+  }
+  const matching = await modelCall(worker, "requirements.match_catalog");
+  matching.reply(catalogMatching(matching, { capability: { verdict: "equivalent", requirementId: requirement.requirement_id } }));
+  const secondId = await saved(second.url);
+  await expect.poll(async () => (await json<FitState>(api, "get", `/v1/jobs/${secondId}/fit`)).current).toBe(true);
+  const peer = await json<FitState>(api, "get", `/v1/jobs/${secondId}/fit`);
+  expect(peer.score.assessments[0]).toMatchObject({
+    assessment_id: original.score.assessments[0]!.assessment_id,
+    provenance: { receipt_id: original.score.assessments[0]!.provenance.receipt_id },
   });
+  const peerRequirement = (await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${secondId}/requirements`)).requirements[0]!;
+  expect(peerRequirement.requirement_id).toBe(requirement.requirement_id);
+  expect(peerRequirement.normalized_demand.demand_fingerprint).toBe(requirement.normalized_demand.demand_fingerprint);
+  await page.goto("/jobs");
+  for (const posting of [first, second]) {
+    const row = page.getByRole("row").filter({ has: page.getByRole("link", { name: posting.title, exact: true }) });
+    await expect(row.getByText("10/10", { exact: true })).toBeVisible();
+  }
+
+  // Both scores are accepted while the source still holds its final page.
+  // The ordinary completion guard must observe this concurrent posting edit.
+  const revision = (await json<{ revision: number }>(api, "get", `/v1/jobs/${firstId}`)).revision;
+  await json(api, "patch", `/v1/jobs/${firstId}`, { expectedRevision: revision,
+    description: "The current posting now requires separately reviewed incident-command ownership." });
+  finalPage.respond(indeedPage({ jobs: [], cursor: null, complete: true }));
+  expect((await completed(api, started.runId)).result).toMatchObject({ status: "partial", acquisitionStatus: "completed", newJobs: 2,
+    preparation: { assessedJobs: 1, failedJobs: 1, failures: [{ jobId: firstId, stage: "fit", code: expect.any(String) }] } });
+  const retained = await json<FitState>(api, "get", `/v1/jobs/${firstId}/fit`);
+  expect(retained.requirements_current).toBe(false);
+  expect(retained.score).toEqual(original.score);
+  expect((await json<FitState>(api, "get", `/v1/jobs/${secondId}/fit`)).score).toEqual(peer.score);
+  expect(app.external.calls.filter((call) => call.body["operation"] === "fit.qualification-batch")).toHaveLength(1);
+  expect((await json<{ settings: { newJobLimit: number } }>(api, "get", "/v1/discovery/settings")).settings.newJobLimit).toBe(settings.settings.newJobLimit);
 });
 
 test("search assesses retained new jobs after every source fails and preserves the canonical failed acquisition", async ({ api, app }) => {
@@ -543,7 +497,7 @@ test("search assesses retained new jobs after every source fails and preserves t
   const source = await app.external.next();
   expect(source.path).toBe("/jobstreaming/indeed");
   source.respond(indeedPage({ jobs: [posting], cursor: "unfinished-source", complete: false }));
-  const failing = await app.external.next();
+  const failing = await boardPage(app);
   expect(failing.path).toBe("/jobstreaming/indeed");
   failing.respond({ error: "controlled_external_provider_unavailable" }, 401);
   await servePostingAssessment(app, library, posting);

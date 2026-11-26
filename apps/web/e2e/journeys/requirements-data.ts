@@ -147,9 +147,14 @@ export type CatalogContext = {
 export type CitationSelection = { source_id: string; segment_id: string };
 type CitationReference = { sourceId: string; valuePath?: (string | number)[] };
 
-/** Select only owner-supplied references at explicitly authored DTO paths.
- * The helper neither invents quote text/ranges nor searches prose for meaning. */
-export function citationSelections(call: ExternalCall, references: CitationReference[]): CitationSelection[] {
+const citationCatalogs = new WeakMap<ExternalCall, {
+  segments: Record<string, Record<string, CitationSegment>>;
+  sourceIds: ReadonlySet<string>;
+}>();
+
+function offeredCitations(call: ExternalCall) {
+  const cached = citationCatalogs.get(call);
+  if (cached) return cached;
   const context = catalogContext(call);
   const segments = Object.fromEntries(Object.entries(context.citation_segments).map(([sourceId, catalog]) => [sourceId,
     Object.fromEntries(Object.entries(catalog).map(([segmentId, descriptor]) => {
@@ -167,11 +172,20 @@ export function citationSelections(call: ExternalCall, references: CitationRefer
     delete expanded.expanded_context_fingerprint;
     expect(normalizationFingerprint(expanded)).toBe(context.expanded_context_fingerprint);
   }
+  const catalog = { segments, sourceIds: new Set(modelSources(call).map(source => source.source_id)) };
+  citationCatalogs.set(call, catalog);
+  return catalog;
+}
+
+/** Select only owner-supplied references at explicitly authored DTO paths.
+ * The helper neither invents quote text/ranges nor searches prose for meaning. */
+export function citationSelections(call: ExternalCall, references: CitationReference[]): CitationSelection[] {
+  const { segments, sourceIds } = offeredCitations(call);
   return references.map(({ sourceId, valuePath }) => {
     const offered = Object.entries(segments[sourceId] ?? {}).filter(([, segment]) =>
       valuePath === undefined || JSON.stringify(Array.isArray(segment) ? segment : segment.value_path) === JSON.stringify(valuePath));
     expect(offered, "Select one explicitly provided source field reference").toHaveLength(1);
-    expect(modelSources(call).some((source) => source.source_id === sourceId)).toBe(true);
+    expect(sourceIds.has(sourceId)).toBe(true);
     return { source_id: sourceId, segment_id: offered[0]![0] };
   });
 }

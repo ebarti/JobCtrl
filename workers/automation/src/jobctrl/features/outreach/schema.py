@@ -2,7 +2,7 @@ SCHEMA = """
 CREATE TABLE outreach_records (
     thread_id TEXT PRIMARY KEY,
     target_key TEXT NOT NULL UNIQUE,
-    revision INTEGER NOT NULL,
+    revision BIGINT NOT NULL,
     record_json TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );

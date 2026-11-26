@@ -8,7 +8,7 @@ verification are separate decisions.
 
 Python owns application actions and canonical writes. HTTP, CLI and durable worker
 entry points call the same application services; no TypeScript business writer or
-JSON-RPC forwarding bridge remains at cutover. React remains the client. SQLite
+JSON-RPC forwarding bridge remains at cutover. React remains the client. PostgreSQL
 and the existing durable execution model remain local infrastructure.
 
 | Reference | Scope |

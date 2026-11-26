@@ -10,14 +10,14 @@ there is no Fastify business authority or TypeScript/Python JSON-RPC hop.
 | Route | Contract |
 | --- | --- |
 | `GET /v1/health` | Application/schema/workspace identity, selected features, live dispatch readiness and model accounting. |
-| `GET /v1/setup/status` | Public Profile/provider/browser/Temporal/policy readiness; configuration and verified readiness are distinct. |
+| `GET /v1/setup/status` | Public Profile/provider/browser/PostgreSQL/DBOS/worker/policy readiness; configuration and verified readiness are distinct. |
 | `GET /v1/settings` | Direct non-secret settings snapshot with integer `revision` and derived read-only `modelAccounting` (selected provider/model, availability, cost source and exact quote). Derivation does not contact providers or inspect credentials. |
 | `PATCH /v1/settings` | Partial top-level values plus required `expectedRevision`; returns a new snapshot or 409 for stale input. Nested maps replace the supplied map. |
 | `GET /v1/credentials` | Credential configuration/status metadata and shared settings revision; never secret values. |
 | `PATCH /v1/credentials` or `/v1/credentials/batch` | Requires `expectedRevision`; stale input performs no native mutation. |
 | `DELETE /v1/credentials/{key}` | Requires `?expectedRevision=N`; UI normally uses the batch operation. |
 | `/v1/providers/status`, `/v1/providers/models` | Provider readiness and live supported model catalogs. |
-| `POST /v1/actions/{action}` | Direct feature payload; optional `Idempotency-Key`; 202 only after confirmed Temporal admission. |
+| `POST /v1/actions/{action}` | Direct feature payload; optional `Idempotency-Key`; 202 after action acceptance and DBOS enqueue commit. |
 | `GET /v1/action-runs` | Newest-first `{runs,nextCursor,hasMore}`; optional `before` run ID and `limit` from 1 to 200. |
 | `GET /v1/action-runs/{runId}` | Current admission/execution result and cancellation state. |
 | `GET /v1/action-runs/summary` | Recorded status counts, total, active and pending cancellation counts. |
@@ -29,11 +29,9 @@ there is no Fastify business authority or TypeScript/Python JSON-RPC hop.
 
 An action run's `cancellationRequested` records the saved Stop. Its
 `cancellationDelivery` is `pending` while delivery remains unconfirmed and
-`acknowledged` once Temporal accepts the request. Receipts omit the field
+`acknowledged` once DBOS confirms the request. Receipts omit the field
 when neither state applies. Retry pending delivery with the same run ID.
-An acknowledgement leaves `status` active until the worker or Temporal
-history confirms the outcome. A Stop can also withdraw a locally recorded
-start if Temporal reports it absent and the run has no execution or bound history.
+An acknowledgement leaves `status` active until the worker or durable execution confirms the outcome.
 Terminal receipts from earlier versions may lack delivery evidence.
 
 The health `llmSpend` read model separates `costStatus` and `tokenStatus`, each
@@ -134,7 +132,7 @@ operation receipt in the same transaction as the action transition. See the
 scope, progress and limit fields.
 
 `discovery.search` also registers one active admission scope per workspace.
-The scope check and insertion share the SQLite write transaction, including
+The scope check and insertion share the PostgreSQL write transaction, including
 `pending`, `start_failed`, `queued` and `running`. A competing new identity gets
 409 `action_scope_busy` with the existing `runId`; exact same-key/same-body
 retries return their original run before this check. A lost acknowledgement
@@ -219,7 +217,7 @@ Synchronous operations return 200/201. A durable command returns, for example:
 Queued is not completed. Run status is `pending`, `queued`, `running`,
 `succeeded`, `failed`, `cancelled` or `start_failed`. A failed start confirmation
 may be uncertain. Retry with the same idempotency key and payload, which reuse the
-same Temporal identity. A different payload with that key returns 409.
+same durable workflow identity. A different payload with that key returns 409.
 Recovery clients retain the non-secret `databaseInstanceId` from health and send
 `Expected-Database-Instance-Id` on status reads and writes. A mismatch returns
 `workspace_changed` 409 before route execution, preventing an uncertain request
@@ -248,7 +246,7 @@ Profile or credential endpoints.
 
 Credential reads serialize with the OS-user mutation lock. Missing mutation
 revisions return 428; stale revisions return 409. Native-only writes increment
-the shared settings revision without storing secret values in SQLite. Unknown
+the shared settings revision without storing secret values in PostgreSQL. Unknown
 helper ownership returns `credential_store_unavailable` with
 `details.reason=ownership_unverified`, preserving the recovery record.
 
@@ -266,10 +264,8 @@ starting an event loop.
 
 Activity supports literal `feature`, `type`, `level`, `stage`, `aggregateId`,
 `since`, `until` and `q` filters. Search does not interpret SQL wildcard characters.
-Run lists support literal `status`, `action`, `since` and `until` filters. Health
-provides the configured Temporal namespace and a nullable explicit UI base URL;
-clients omit workflow links when the UI address is unknown.
-
+Run lists support literal `status`, `action`, `since` and `until` filters. Health reports storage, DBOS and worker readiness without requiring a workflow
+UI link.
 Only committed rows are visible. Rollback cannot produce an event for an
 uncommitted mutation. The web shell owns one connection and features own their
 invalidation rules. Activity is an operational history, not a source of inferred
@@ -278,12 +274,7 @@ business or semantic authority.
 See [runtime](architecture/runtime.md), [storage](architecture/storage.md), and
 [contract ownership](architecture/contracts-types-and-api-boundaries.md).
 
-The local `/v1/health` response includes `runtimeIdentity` with the startup
-build fingerprint, workspace, database instance, workflow history and queue.
-An unavailable worker supplies an actionable `message` and `reason`.
-Health, setup and pipeline telemetry use the same bounded check of the selected
-Temporal namespace and the worker's workflow and activity pollers. A refused
-new action creates no receipt. If confirmation of a start is lost, the 503
-includes the run ID and idempotency key. Sending the same payload and key
-reuses its workflow ID. A previously confirmed receipt can be read during
-a service outage.
+The local `/v1/health` response reports workspace and database identity, storage,
+DBOS and worker readiness. A reachable database alone does not prove a compatible
+worker is ready. Stable action and workflow identities allow an idempotent retry
+after lost acknowledgement. A different payload with the same key is rejected.

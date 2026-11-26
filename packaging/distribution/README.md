@@ -68,11 +68,11 @@ that an artifact has been released, installed, or qualified on each platform.
 | CLI business actions | `jobctrl action FEATURE.ACTION --payload FILE [--background]`, named feature commands, and explicit preparation recipes call `Application.execute` / `submit`. `run-status`, `runs`, `cancel`, and the durable Apply poll use the same application records. |
 | CLI reads and ordinary writes | `jobctrl request METHOD /v1/PATH --payload FILE` executes the actual registered HTTP route in-process with the local capability and loopback identity. It does not need a second listening server or a second business repository. |
 | Native setup and credentials | `setup`, `doctor`, `credentials migrate`, `capability`, `provider-pack-install`, and `gmail-auth` retain their actual native/provider boundaries. Credentials use the shared OS-user mutation guard and revision fence. |
-| CLI exports and backup | `material-export`, `material-locale`, and `backup` produce real document bytes or a consistent SQLite snapshot. Existing output paths are refused. |
+| CLI exports and backup | `material-export`, `material-locale`, and `backup` produce real document bytes or a consistent PostgreSQL snapshot. Existing output paths are refused. |
 | Browser extension | `jobctrl.extension_transport` preserves pairing, stable capture receipts, selected-installation browser leases and exact active-action/cancellation guards. Jobs owns captured posting interpretation; Applications owns restricted autofill and mapping. No application submission authority is granted to the extension. |
 | Synthetic public demo | `apps/web/src/demo` retains its IndexedDB workspace and explicit synthetic HTTP adapter; `apps/demo-edge` remains the separate consent/telemetry boundary and never forwards product writes to the local application. |
 | Fresh-state transfer | Explicit `profile-transfer` imports only the complete Profile into a previously nonexistent target. A complete browser-source/attachment manifest is required. Legacy startup cannot trigger this operation. |
-| Application QA | The fresh target journeys run through `scripts/run-e2e.mjs`. `--installed` uses the exact extracted interpreter, frontend assets and Temporal executable and skips the source frontend build. |
+| Application QA | The fresh target journeys run through `scripts/run-e2e.mjs`. `--installed` uses the exact extracted interpreter, frontend assets and PostgreSQL tools and skips the source frontend build. |
 
 Browser capability HTTP requests retain the existing `/v1/browser-capabilities`
 paths. Detected-browser/profile metadata remains local; synthetic QA cannot
@@ -86,23 +86,16 @@ transitive package, binary, dynamic library, and license. A production builder
 must fail when a payload component is absent from the inventory, marked
 developer-only, not approved for bundling, or missing its required attribution.
 
-The transformed payload starts `jobctrl.app.server` and `jobctrl.app.worker`
-from the same installed Python package. Both use the new application SQLite
-identity (`application_id=0x4A435354`, `user_version=1`). Source and installed
-startup refuse legacy databases without modifying them. The manifest covers
-`launcher/application-schema.json`, whose application identity must match both
-the SQLite file and the target release during native lifecycle operations.
-Historical schema transition declarations are not part of this payload and do
-not authorize an automatic transition into the Python application.
-
-The breaking cutover is explicit: `jobctrl profile-transfer --source SOURCE
---target NEW_WORKSPACE --confirm-profile-only-reset --browser-sources COMPLETE_MANIFEST.json` creates a fresh target,
-imports the complete Profile, and leaves the source workspace unchanged. The
-command refuses any existing target directory. Only Profile and its supporting
-sources/provenance transfer; jobs, application records, generated materials,
-Temporal history and all other application data start fresh. Select the new
-workspace through `JOBCTRL_DIR` after inspecting the transfer receipt. Running
-the development launcher never performs this operation.
+The payload starts the workspace PostgreSQL server, `jobctrl.app.server`
+and `jobctrl.app.worker`. PostgreSQL holds application data and DBOS durable
+workflow state in the same workspace database. The signed inventory binds
+`launcher/application-schema.json` and the runtime tools and resources under
+`postgres/`. Native update recognizes the authenticated Python SQLite
+predecessor with `application_id=0x4A435354` and `user_version=1`. It stages
+and validates the import before activating the PostgreSQL workspace. The source
+SQLite database and Temporal history remain available. Older SQLite identities
+are outside this migration contract. After activation, cross-engine rollback
+refuses to discard newer PostgreSQL state.
 
 The distribution builder records the actual source, Python wheel and browser
 closure. Source checks do not establish that a published artifact or installed
@@ -147,10 +140,15 @@ is allowed only when the signed wheel records are identical.
 
 The first release target is Apple-silicon macOS with a declared minimum of
 macOS 15.0. The floor is set by the full pinned provider/runtime closure, not by
-wheel tags; every Mach-O file is checked against that deployment target. Builder
-tools installed on a newer host are not assumed to be redistributable: for
-example, a Homebrew Temporal bottle compiled for the builder OS must not be
-copied into the artifact.
+wheel tags. Every Mach-O file is checked against that deployment target. The
+builder compiles PostgreSQL 17.12 from the official tarball with the SHA-256
+pinned in `components.lock.json`. It compiles against the macOS 15 deployment
+target, links the client library relative to the executable, and includes
+the server modules, bootstrap resources, and upstream copyright notice. The
+installed server runs from those authenticated files with a stock system PATH.
+A source developer can build the same PostgreSQL version with
+`bash scripts/install-postgres-runtime.sh INSTALL_ROOT` using Node, a C compiler,
+GNU Make, Bison, Flex, Perl and zlib development headers.
 
 Stable artifacts require:
 
@@ -240,18 +238,17 @@ The three provider packs remain artifact-excluded and report their exact locked
 wheel download bytes; extracted installed size belongs to state-owned
 activation reporting, not the signed core total.
 
-Before success, it extracts the archive with the stock macOS `unzip` and runs the
-bundled Node, Python, Temporal server, long-lived worker, API, web app, Chromium,
-and PDF.js paths with a stock system `PATH`. Runtime children execute under a
-macOS sandbox that denies non-loopback outbound IP connections; the smoke test
-proves the denial with an `EPERM` probe, submits an ephemeral saved-HTML capture
-through the extension API and its production Temporal workflow, reads the job
-and workflow projection back, renders production HTML to PDF, and renders the
-first PDF page in bundled Chromium. It then stops the full stack, restarts from
-the same extracted payload plus persisted Temporal/JobCtrl state, and proves a
-fresh worker heartbeat, stable DB identity, retained job, and completed Temporal
-run. The extracted payload tree is compared with the manifest again after all
-smoke processes exit.
+The builder extracts its ZIP with the stock macOS `unzip`. It checks the
+bundled PostgreSQL tool versions and uses the relocated `initdb` to create
+an isolated cluster, proving the installed server modules and bootstrap files
+are present. The extracted Node, Python, web, and Chromium paths run with a
+stock system PATH. Smoke executables run under a macOS sandbox that denies
+outbound IP connections beyond loopback and probes that restriction directly.
+Installed browser journeys drive the candidate across its PostgreSQL-backed API
+and DBOS worker. The protected release further checks the real native
+launcher lifecycle and independently qualifies the latest signed predecessor
+against the signed candidate. The builder compares the extracted tree against
+the manifest again when smoke processes finish.
 
 `SOURCE_DATE_EPOCH` controls ZIP timestamps and defaults to `0`. The local
 builder deliberately emits an unsigned, non-promotable artifact; signing and

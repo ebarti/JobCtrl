@@ -46,10 +46,10 @@ class AssociationStorage:
     def library_records(self, profile_id, connection=None):
         def read(conn):
             assessments = [json.loads(row[0]) for row in conn.execute(
-                "SELECT assessment_json FROM fit_assessments WHERE profile_id=? ORDER BY rowid DESC", (profile_id,),
+                "SELECT assessment_json FROM fit_assessments WHERE profile_id=? ORDER BY insertion_order DESC", (profile_id,),
             )]
             coverage = [json.loads(row[0]) for row in conn.execute(
-                "SELECT relation_json FROM fit_coverage_relations WHERE profile_id=? ORDER BY rowid DESC", (profile_id,),
+                "SELECT relation_json FROM fit_coverage_relations WHERE profile_id=? ORDER BY insertion_order DESC", (profile_id,),
             )]
             return {"assessments": assessments, "coverage": coverage,
                     "associations": self.association_records(profile_id, conn)}
@@ -171,7 +171,6 @@ class AssociationStorage:
 
     def association_history(self, association_id, profile_id, *, limit=50, offset=0):
         with self._database.connect() as connection:
-            connection.execute("BEGIN")
             head = connection.execute("SELECT revision FROM fit_user_associations WHERE profile_id=? AND association_id=?",
                                       (profile_id, association_id)).fetchone()
             if head is None:

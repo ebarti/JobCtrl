@@ -1,11 +1,8 @@
-import { createHash, randomUUID } from "node:crypto";
-import type { Response } from "@playwright/test";
+import type { APIResponse, Request, Response } from "@playwright/test";
 import { indeedPage } from "./indeed-data.js";
 import { createBaseline } from "./core-data.js";
-import { authoredPartition } from "./consolidation-data.js";
-import { COMMON_DEMAND, posting, untilNormalization } from "./preparation-cohort-data.js";
-import { catalogContext } from "./requirements-data.js";
-import { serveQualification } from "./search-assessment-data.js";
+import { posting, respondProducer } from "./preparation-cohort-data.js";
+import { servePostingAssessment } from "./search-assessment-data.js";
 import { action, terminal, test, expect, json, completed } from "../harness/fixtures.js";
 
 const storageKey = (operation: "preparation.run" | "preparation.retry") =>
@@ -183,8 +180,8 @@ test("a lost preparation admission is reconciled after reload without starting i
   expect(runs.runs.map((row) => row.runId)).toEqual([runId]);
 });
 
-test("the job pane recovers an earlier refused single-job retry and finishes the original search", async ({
-  app, api, page, allowResponseError,
+test("the job pane recovers a dropped selected-job retry without changing its sibling", async ({
+  app, api, page, allowRequestFailure, allowResponseError,
 }) => {
   const { library } = await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
@@ -197,106 +194,157 @@ test("the job pane recovers an earlier refused single-job retry and finishes the
   const source = await app.external.next();
   expect(source.path).toBe("/jobstreaming/indeed");
   source.respond(indeedPage({ jobs: postings, cursor: null, complete: true }));
-  const held = await app.external.next();
-  expect(held.path).toBe("/posting-page");
+  const held = await Promise.all(postings.map(posted => app.external.next({
+    match: call => call.path === "/posting-page" && call.body["url"] === posted.url,
+  })));
   await json(api, "post", `/v1/action-runs/${started.runId}/cancel`, {});
-  expect(await terminal(api, started.runId)).toMatchObject({ status: "cancelled" });
-  await expect.poll(() => held.closed).toBe(true);
-  const before = await json<{ jobIds: string[]; status: string }>(api, "get", `/v1/preparation/runs/${started.runId}`);
-  expect(before.status).toBe("cancelled");
+  const cancelled = await terminal(api, started.runId);
+  expect(cancelled).toMatchObject({ status: "cancelled" });
+  await expect.poll(() => held.map(call => call.closed)).toEqual([true, true]);
+  const before = await json<{ jobIds: string[]; status: string; executionPolicy: { version: string } }>(
+    api, "get", `/v1/preparation/runs/${started.runId}`);
+  expect(before).toMatchObject({ status: "cancelled", executionPolicy: { version: "search-jobs-v1" } });
   expect(before.jobIds).toHaveLength(2);
+  const { jobs } = await json<{ jobs: { job_id: string; url: string }[] }>(api, "get", "/v1/jobs");
+  const selected = jobs.find(job => job.url === postings[0]!.url)!.job_id;
+  const sibling = jobs.find(job => job.url === postings[1]!.url)!.job_id;
+  expect([selected, sibling].sort()).toEqual([...before.jobIds].sort());
 
   const operation = "preparation.retry";
-  const admissionPath = `/v1/actions/${operation}`;
-  const lookupPath = "/v1/action-runs/by-idempotency-key";
-  const retryRunsPath = `/v1/action-runs?action=${operation}`;
-  const requestId = randomUUID();
-  const headers = { "Idempotency-Key": requestId, "Expected-Database-Instance-Id": workspace.databaseInstanceId };
-  const oldBody = { run_id: started.runId, job_ids: [before.jobIds[0]!] };
-  const refusal = await api.post(admissionPath, { data: oldBody, headers });
-  expect(refusal.status()).toBe(409);
-  expect(await refusal.json()).toMatchObject({ error: { code: "preparation_cohort_retry_scope_required" } });
-  expect((await api.get(`${lookupPath}?action=${operation}`, { headers })).status()).toBe(404);
-  expect(await json(api, "get", retryRunsPath)).toMatchObject({ runs: [] });
-
-  await page.goto(`/jobs/${before.jobIds[0]}?jobTab=fit`);
+  const admissionPath = `${app.baseURL}/v1/actions/${operation}`;
+  const lookupPath = `${app.baseURL}/v1/action-runs/by-idempotency-key?action=${operation}`;
+  const retryRuns = () => json<{ runs: { runId: string }[] }>(api, "get", `/v1/action-runs?action=${operation}`);
+  const selectedBody = { run_id: started.runId, job_ids: [selected] };
+  const isAdmission = (request: Request) => request.method() === "POST" && request.url() === admissionPath;
+  await page.goto(`/jobs/${selected}?jobTab=fit`);
   const job = page.getByRole("main", { name: "Job details" });
-  const continueAssessment = job.getByRole("button", { name: "Continue fit assessment for all jobs" });
-  await expect(continueAssessment).toBeEnabled();
+  const retryButton = job.getByRole("button", { name: "Retry fit assessment for this job" });
+  await expect(retryButton).toBeEnabled();
   await expect(job.getByText("Fit assessment cancelled.", { exact: true })).toBeVisible();
 
-  // Restore only the version-1 browser identity the old button left behind.
-  // Its key, body fingerprint, workspace and refusal come from the real attempt above.
-  const key = storageKey(operation);
-  const record = { version: 1, operation, requestId,
-    fingerprint: createHash("sha256").update(JSON.stringify({ action: operation, body: oldBody })).digest("hex"),
-    workspaceId: workspace.workspaceId, databaseInstanceId: workspace.databaseInstanceId };
-  await page.evaluate(({ key, record }) => sessionStorage.setItem(key, JSON.stringify(record)), { key, record });
+  const forwarded = new Map<Request, APIResponse>();
   const misses: Response[] = [];
-  page.on("response", response => {
-    const url = new URL(response.url());
-    if (response.status() === 404 && url.pathname === lookupPath && url.searchParams.get("action") === operation) misses.push(response);
+  await page.route(lookupPath, async route => {
+    const upstream = await route.fetch();
+    if (upstream.status() === 404) forwarded.set(route.request(), upstream);
+    try {
+      await route.fulfill({ response: upstream });
+    } finally {
+      if (upstream.status() !== 404) await upstream.dispose();
+    }
   });
-  await page.reload();
-  const notice = job.getByRole("alert").filter({ hasText: "JobCtrl has no record of the previous request yet." });
-  await expect(notice).toBeVisible();
-  await expect(continueAssessment).toBeDisabled();
-  await job.getByText("Preparation options and history", { exact: true }).click();
-  await expect(job.getByRole("button", { name: "Retry unfinished", exact: true })).toBeDisabled();
-  const beforeRecovery = app.external.calls.length;
-  expect(await json(api, "get", retryRunsPath)).toMatchObject({ runs: [] });
+  const recordMiss = (response: Response) => {
+    if (response.url() === lookupPath && response.status() === 404) misses.push(response);
+  };
+  page.on("response", recordMiss);
+  try {
+    await page.route(admissionPath, route => route.abort("failed"), { times: 1 });
+    const dropped = page.waitForEvent("requestfailed", isAdmission);
+    await retryButton.click();
+    const failed = await dropped;
+    allowRequestFailure(failed, "net::ERR_FAILED");
+    const requestId = failed.headers()["idempotency-key"]!;
+    expect(requestId).toBeTruthy();
+    expect(failed.headers()["expected-database-instance-id"]).toBe(workspace.databaseInstanceId);
+    expect(failed.postDataJSON()).toEqual(selectedBody);
+    const lookupHeaders = { "Idempotency-Key": requestId, "Expected-Database-Instance-Id": workspace.databaseInstanceId };
+    expect((await api.get(lookupPath, { headers: lookupHeaders })).status()).toBe(404);
+    expect((await retryRuns()).runs).toEqual([]);
 
-  const isRetry = (response: Response) => response.request().method() === "POST" && new URL(response.url()).pathname === admissionPath;
-  const oldPost = page.waitForResponse(isRetry);
-  await notice.getByRole("button", { name: "Recover earlier retry" }).click();
-  const rejected = await oldPost;
-  await allowResponseError(rejected, { method: "POST", status: 409, code: "preparation_cohort_retry_scope_required" });
-  expect(rejected.request().headers()["idempotency-key"]).toBe(requestId);
-  expect(rejected.request().headers()["expected-database-instance-id"]).toBe(workspace.databaseInstanceId);
-  expect(rejected.request().postDataJSON()).toEqual(oldBody);
-  await expect(continueAssessment).toBeEnabled();
-  await expect(notice).toHaveCount(0);
-  await expect(job.getByRole("alert").filter({ hasText: "The earlier retry did not start." })).toBeVisible();
-  expect(await page.evaluate((key) => sessionStorage.getItem(key), key)).toBeNull();
-  expect(await json(api, "get", retryRunsPath)).toMatchObject({ runs: [] });
-  expect(app.external.calls).toHaveLength(beforeRecovery);
-
-  const correctedPost = page.waitForResponse(isRetry);
-  await continueAssessment.click();
-  const admitted = await correctedPost;
-  expect(admitted.status()).toBe(202);
-  const correctedKey = admitted.request().headers()["idempotency-key"];
-  expect(correctedKey).toBeTruthy();
-  expect(correctedKey).not.toBe(requestId);
-  expect(admitted.request().headers()["expected-database-instance-id"]).toBe(workspace.databaseInstanceId);
-  expect(admitted.request().postDataJSON()).toEqual({ run_id: started.runId });
-  const retry = (await admitted.json()) as { runId: string };
-  const matching = await untilNormalization(app, postings);
-  const input = catalogContext(matching);
-  matching.reply(authoredPartition(matching, [{ groupId: "recovery", memberIds: input.incoming.map((row) => row.member_id),
-    category: "professional_experience", name: COMMON_DEMAND, definition: COMMON_DEMAND }],
-  [{ groupId: "recovery", definition: COMMON_DEMAND, jobIds: before.jobIds }]));
-  await serveQualification(app, library);
-  await completed(api, retry.runId);
-  const resumed = await json<{ jobIds: string[]; steps: { jobId: string; stage: string; status: string }[] }>(api, "get", `/v1/preparation/runs/${retry.runId}`);
-  expect(resumed).toMatchObject({ parentRunId: started.runId, jobIds: before.jobIds, status: "succeeded" });
-  expect(resumed.steps.filter(step => step.stage === "fit" && step.status === "succeeded").map(step => step.jobId).sort()).toEqual([...before.jobIds].sort());
-  for (const id of before.jobIds) expect(await json(api, "get", `/v1/jobs/${id}/fit`)).toMatchObject({ current: true });
-  const recorded = await json<{ runs: { runId: string }[] }>(api, "get", retryRunsPath);
-  expect(recorded.runs.map(row => row.runId)).toEqual([retry.runId]);
-  expect(app.external.calls.filter(call => call.path === "/jobstreaming/indeed")).toHaveLength(1);
-  expect(app.external.calls.filter(call => call.body?.["operation"] === "fit.qualification-batch")).toHaveLength(1);
-  await expect(job.getByText("Fit assessment complete.", { exact: true })).toBeVisible();
-  await expect(job.getByRole("button", { name: "Retry unfinished", exact: true })).toHaveCount(0);
-  await expect(job.getByRole("button", { name: /^Search and assess fit/ })).toHaveCount(2);
-  // A background status read already in flight can return after a refusal,
-  // and the new key can be checked before its POST finishes admission.
-  expect(misses.filter(response => response.request().headers()["idempotency-key"] === requestId).length).toBeGreaterThanOrEqual(2);
-  for (const response of misses) {
-    const identity = response.request().headers()["idempotency-key"];
-    expect([requestId, correctedKey]).toContain(identity);
-    await allowResponseError(response, {
-      method: "GET", status: 404, code: "not_found", action: operation, idempotencyKey: identity!, databaseInstanceId: workspace.databaseInstanceId,
+    const key = storageKey(operation);
+    const saved = await page.evaluate(key => sessionStorage.getItem(key), key);
+    expect(saved).toBeTruthy();
+    expect(JSON.parse(saved!)).toMatchObject({
+      version: 1, operation, requestId, workspaceId: workspace.workspaceId, databaseInstanceId: workspace.databaseInstanceId,
     });
+    await page.reload();
+    const notice = job.getByRole("alert").filter({ hasText: "JobCtrl has no record of the previous request yet." });
+    await expect(notice).toBeVisible();
+    await expect(retryButton).toBeDisabled();
+
+    const retryResponse = page.waitForResponse(response => isAdmission(response.request()));
+    await notice.getByRole("button", { name: "Recover earlier retry", exact: true }).click();
+    const admitted = await retryResponse;
+    expect(admitted.status(), await admitted.text()).toBe(202);
+    expect(admitted.request().headers()["idempotency-key"]).toBe(requestId);
+    expect(admitted.request().headers()["expected-database-instance-id"]).toBe(workspace.databaseInstanceId);
+    expect(admitted.request().postDataJSON()).toEqual(selectedBody);
+    const retry = await admitted.json() as { runId: string };
+    expect(await json(api, "get", `/v1/action-runs/${retry.runId}`)).toMatchObject({ runId: retry.runId, action: operation });
+    const lookup = await api.get(lookupPath, { headers: lookupHeaders });
+    expect(lookup.ok(), await lookup.text()).toBe(true);
+    expect(await lookup.json()).toMatchObject({ runId: retry.runId });
+    await servePostingAssessment(app, library, postings[0]!);
+    await completed(api, retry.runId);
+
+    const resumed = await json<{ jobIds: string[]; steps: { jobId: string; stage: string; status: string }[] }>(
+      api, "get", `/v1/preparation/runs/${retry.runId}`);
+    expect(resumed).toMatchObject({ parentRunId: started.runId, jobIds: [selected], status: "succeeded" });
+    expect(resumed.steps.filter(step => step.stage === "fit" && step.status === "succeeded").map(step => step.jobId)).toEqual([selected]);
+    expect(await json(api, "get", `/v1/jobs/${selected}/fit`)).toMatchObject({ current: true });
+    expect(await json(api, "get", `/v1/jobs/${sibling}/fit`)).toMatchObject({ score: null });
+    expect(await json(api, "get", `/v1/action-runs/${started.runId}`)).toEqual(cancelled);
+    expect((await retryRuns()).runs.map(row => row.runId)).toEqual([retry.runId]);
+    expect(app.external.calls.filter(call => call.path === "/jobstreaming/indeed")).toHaveLength(1);
+    expect(app.external.calls.filter(call => call.path === "/posting-page").map(call => call.body["url"]).sort())
+      .toEqual([postings[0]!.url, postings[0]!.url, postings[1]!.url].sort());
+    expect(app.external.calls.filter(call => call.body["operation"] === "fit.qualification-batch")).toHaveLength(1);
+    await expect(job.getByText("Fit assessment complete.", { exact: true })).toBeVisible();
+    expect(await page.evaluate(key => sessionStorage.getItem(key), key)).toBeNull();
+    expect(misses.length).toBeGreaterThan(0);
+    await page.unrouteAll({ behavior: "wait" });
+    for (const response of misses) {
+      const upstream = forwarded.get(response.request());
+      expect(upstream).toBeDefined();
+      await allowResponseError(response, {
+        method: "GET", status: 404, code: "not_found", action: operation, idempotencyKey: requestId, databaseInstanceId: workspace.databaseInstanceId,
+      }, upstream);
+    }
+  } finally {
+    page.off("response", recordMiss);
+    await page.unrouteAll({ behavior: "wait" });
+    await Promise.all([...forwarded.values()].map(response => response.dispose()));
   }
+});
+
+test.describe("imported shared-cohort retry scope", () => {
+  test.use({ sqlitePredecessor: true });
+
+  test("an imported shared cohort still refuses a narrowed retry", async ({ app, api }) => {
+    await createBaseline(api);
+    const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
+    await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
+    const failed = posting(461);
+    const spanish = { ...posting(462), description: "Mantener la recuperación de los flujos de trabajo.", unsupported: true };
+    const payload = { queries: ["Synthetic retry engineer"], locations: ["Madrid"], boards: ["indeed"], newJobLimit: 2 };
+    const predecessor = app.cli(["action", "discovery.search", "--data", JSON.stringify(payload)]);
+    const source = await app.external.next();
+    expect(source.path).toBe("/jobstreaming/indeed");
+    const { unsupported: _fixtureOnly, ...spanishSource } = spanish;
+    source.respond(indeedPage({ jobs: [failed, spanishSource], cursor: null, complete: true }));
+    for (let index = 0; index < 7; index++) {
+      const call = await app.external.next();
+      if (call.path === "/posting-page" && call.body["url"] === failed.url) call.respond({}, 503);
+      else respondProducer(call, [spanish]);
+    }
+    const previous = await predecessor;
+    expect(previous.exitCode, previous.stderr).toBe(0);
+    const { runId, status } = JSON.parse(previous.stdout) as { runId: string; status: string };
+    expect(status).toBe("partial");
+    const before = await json<{ jobIds: string[]; steps: unknown[]; executionPolicy: { version: string } }>(
+      api, "get", `/v1/preparation/runs/${runId}`);
+    expect(before.executionPolicy.version).toBe("search-cohort-v1");
+    expect(before.jobIds).toHaveLength(2);
+    const callsBeforeImport = app.external.calls.length;
+    await app.upgradeSqliteToPostgres();
+    expect(await json(api, "get", `/v1/preparation/runs/${runId}`)).toEqual(before);
+
+    const retryRuns = () => json(api, "get", "/v1/action-runs?action=preparation.retry");
+    const prior = await retryRuns();
+    const retry = await api.post("/v1/actions/preparation.retry", { data: { run_id: runId, job_ids: [before.jobIds[0]] } });
+    expect(retry.status(), await retry.text()).toBe(409);
+    expect(await retry.json()).toMatchObject({ error: { code: "preparation_cohort_retry_scope_required" } });
+    expect(await retryRuns()).toEqual(prior);
+    expect(app.external.calls).toHaveLength(callsBeforeImport);
+  });
 });

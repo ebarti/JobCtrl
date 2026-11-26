@@ -47,15 +47,12 @@ async def setup_status(application, *, credential_service=None):
                           for item in await run_in_threadpool(list_browser_capabilities, app_dir=runtime.workspace)]
     except BrowserCapabilityError:
         browser_status = [{"id": "browser", "status": "failed", "detail": "Browser capability configuration could not be verified."}]
-    worker = await application.dispatch_readiness()
-    try:
-        client = await asyncio.wait_for(application.temporal(), timeout=2)
-        healthy = await asyncio.wait_for(client.service_client.check_health(), timeout=2)
-        temporal = {"status": "ready" if healthy else "unavailable"}
-    except Exception:
-        temporal = {"status": "unavailable", "reason": "temporal_unreachable"}
+    dbos, worker = await asyncio.gather(
+        run_in_threadpool(application.dbos_status), application.dispatch_readiness(),
+    )
     checks.extend([
-        {"id": "temporal", **temporal},
+        {"id": "postgresql", "status": "ready"},
+        {"id": "dbos", **dbos, "status": "ready" if dbos["available"] else "unavailable"},
         {"id": "worker", **worker},
         {"id": "model-policy", "status": "enabled" if settings.get("aiExecutionPolicy", {}).get("enabled") else "disabled",
          "provider": settings.get("defaultProvider"), "dailyBudgetUsd": settings.get("dailyBudgetUsd"),

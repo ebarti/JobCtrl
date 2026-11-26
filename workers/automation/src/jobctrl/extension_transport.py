@@ -20,19 +20,19 @@ from jobctrl.app.security import CapabilityToken
 SCHEMA = """
 CREATE TABLE extension_installation (
  id INTEGER PRIMARY KEY CHECK(id=1), installation_id TEXT NOT NULL,
- version TEXT NOT NULL, last_seen REAL NOT NULL
+ version TEXT NOT NULL, last_seen DOUBLE PRECISION NOT NULL
 );
 CREATE TABLE extension_browser_tasks (
  task_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, workflow_id TEXT NOT NULL,
  temporal_run_id TEXT NOT NULL, source_id TEXT NOT NULL, request_json TEXT NOT NULL,
- state TEXT NOT NULL, created_at REAL NOT NULL, deadline REAL NOT NULL,
+ state TEXT NOT NULL, created_at DOUBLE PRECISION NOT NULL, deadline DOUBLE PRECISION NOT NULL,
  timeout_ms INTEGER NOT NULL, installation_id TEXT, lease_id TEXT,
- lease_deadline REAL, result_json TEXT
+ lease_deadline DOUBLE PRECISION, result_json TEXT
 );
 CREATE INDEX extension_tasks_state ON extension_browser_tasks(state,created_at);
 CREATE TABLE extension_capture_receipts (
  capture_id TEXT PRIMARY KEY, input_hash TEXT NOT NULL, owner_id TEXT NOT NULL,
- state TEXT NOT NULL, lease_deadline REAL NOT NULL, acknowledgement_json TEXT
+ state TEXT NOT NULL, lease_deadline DOUBLE PRECISION NOT NULL, acknowledgement_json TEXT
 );
 """
 TRUSTED_BROWSER_HOSTS = frozenset({
@@ -81,8 +81,11 @@ def _iso(timestamp):
     return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat()
 
 
-def build_extension_routes(runtime, jobs, *, application):
+def initialize_extension_storage(runtime):
     runtime.database.initialize_feature("extension", SCHEMA)
+
+
+def build_extension_routes(runtime, jobs, *, application):
     capability = CapabilityToken(runtime.workspace)
 
     async def token(request):

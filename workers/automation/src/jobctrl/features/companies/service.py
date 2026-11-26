@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import datetime
 import hashlib
 from urllib.parse import urlsplit
@@ -11,6 +12,7 @@ from urllib.parse import urlsplit
 from pydantic import ValidationError
 
 from jobctrl.app.errors import AppError, NotFoundError
+from jobctrl.app.model_custody import model_call_scope
 from jobctrl.features.companies.domain import (
     INSTRUCTIONS, MAX_SOURCES, MAX_TEXT, PROMPT_VERSION, CompanyBriefingDetermination,
     briefing_view, company_key, failure, public_source_url, validate_result,
@@ -217,9 +219,34 @@ class CompaniesService:
             task.cancel()
             raise
 
-    async def refresh(self, job_id, *, allow_public_fetch=False, force=False, cancelled=lambda: False):
+    async def _acquire_sources(self, company, cancelled):
+        sources = []
+        async for url, page in self.pages.pages(company["sourceUrls"], cancelled=cancelled):
+            if len(sources) >= len(company["sourceUrls"]) or url != company["sourceUrls"][len(sources)]:
+                raise failure("briefing_source_unavailable", 409)
+            if page.outcome != "allowed" or page.status != 200 or not page.text.strip():
+                raise failure("briefing_source_unavailable", 409)
+            final_url = public_source_url(page.final_url)
+            if urlsplit(final_url).netloc not in {urlsplit(source).netloc for source in company["sourceUrls"]}:
+                raise failure("briefing_source_unavailable", 409)
+            text = page.text[:MAX_TEXT]
+            sources.append({"sourceId": _sha(url), "url": url, "finalUrl": final_url,
+                            "observedAt": self.clock(), "contentHash": _sha(text), "text": text})
+        if len(sources) != len(company["sourceUrls"]):
+            raise failure("briefing_source_unavailable", 409)
+        return sources
+
+    async def refresh(self, job_id, *, allow_public_fetch=False, force=False, cancelled=lambda: False, run_id=None, user_cancelled=None):
         if allow_public_fetch is not True:
             raise failure("briefing_public_fetch_opt_in_required")
+        retained = None
+        if run_id:
+            with self.history.read() as unit:
+                retained = unit.refresh_run(run_id)
+            if retained and retained['error_code']:
+                raise failure(retained['error_code'], 409)
+            if retained and retained['result'] is not None:
+                return retained['result']
         initial = self.read(job_id)
         if initial is not None and initial["status"] == "unavailable":
             raise failure("briefing_binding_invalid", 409)
@@ -231,11 +258,11 @@ class CompaniesService:
             if (not view or not view["company"] or "identity_review_required" in view["staleReasons"]
                     or view["company"]["companyId"] != company_id or view["company"]["revision"] != initial["company"]["revision"]):
                 raise failure("briefing_sources_changed", 409)
-            if view["lastAttempt"] != initial["lastAttempt"]:
+            if retained is None and view["lastAttempt"] != initial["lastAttempt"]:
                 if view["lastAttempt"] and view["lastAttempt"]["failureCode"]:
                     raise failure(view["lastAttempt"]["failureCode"], 409)
                 return view
-            if view["status"] == "current" and not force:
+            if retained is None and view["status"] == "current" and not force:
                 return view
             with self.history.read() as unit:
                 posting = unit.posting(job_id)
@@ -245,19 +272,18 @@ class CompaniesService:
                 raise failure("briefing_sources_changed", 409)
             sources, receipt_id, parsed, fingerprint = [], None, None, None
             try:
-                async for url, page in self.pages.pages(company["sourceUrls"], cancelled=cancelled):
-                    if len(sources) >= len(company["sourceUrls"]) or url != company["sourceUrls"][len(sources)]:
-                        raise failure("briefing_source_unavailable", 409)
-                    if page.outcome != "allowed" or page.status != 200 or not page.text.strip():
-                        raise failure("briefing_source_unavailable", 409)
-                    final_url = public_source_url(page.final_url)
-                    if urlsplit(final_url).netloc not in {urlsplit(source).netloc for source in company["sourceUrls"]}:
-                        raise failure("briefing_source_unavailable", 409)
-                    text = page.text[:MAX_TEXT]
-                    sources.append({"sourceId": _sha(url), "url": url, "finalUrl": final_url,
-                                    "observedAt": self.clock(), "contentHash": _sha(text), "text": text})
-                if len(sources) != len(company["sourceUrls"]):
-                    raise failure("briefing_source_unavailable", 409)
+                binding = {'job_id': job_id, 'company_id': company_id, 'company_revision': company['revision'],
+                           'link_revision': link['revision'], 'posting_revision': posting['revision'],
+                           'source_hash': posting.get('source_hash')}
+                if retained:
+                    if retained['binding'] != binding:
+                        raise failure('briefing_sources_changed', 409)
+                    sources = retained['sources']
+                else:
+                    sources = await self._acquire_sources(company, cancelled)
+                    if run_id:
+                        with self.history.write() as unit:
+                            unit.retain_refresh(run_id, binding, sources)
                 args = self._model_args(company, sources)
                 selection = self.model.selection()
                 fingerprint = self.model.fingerprint(**args, selection=selection)
@@ -269,15 +295,18 @@ class CompaniesService:
                         receipt_id = receipt["receipt_id"]
                         validate_result(parsed, sources)
                 if parsed is None:
-                    outcome = await self._wait(self.model.determine(**args), cancelled)
+                    with model_call_scope(f'companies:{run_id}') if run_id else nullcontext():
+                        outcome = await self._wait(self.model.determine(**args), cancelled)
                     receipt_id = outcome.provenance["receipt_id"]
                     parsed = CompanyBriefingDetermination.model_validate(outcome.value)
                     validate_result(parsed, sources)
                     # The selected settings might have changed between fingerprint and determine.
                     fingerprint = outcome.provenance["input_fingerprint"]
-                if cancelled():
-                    raise failure("briefing_cancelled", 409)
+                if not isinstance(receipt_id, str) or not isinstance(fingerprint, str):
+                    raise failure("briefing_binding_invalid", 409)
                 with self.history.write() as unit:
+                    if cancelled():
+                        raise failure("briefing_cancelled", 409)
                     current = unit.configuration(company_id)
                     current_link = unit.link(job_id)
                     current_posting = unit.assert_posting_current(job_id, posting["revision"], posting.get("source_hash"))
@@ -300,7 +329,13 @@ class CompaniesService:
                         "determinationId": fingerprint, "sources": [], "identityReason": None,
                     })
                     unit.notify_linked_jobs(company_id)
+                    if run_id:
+                        result = self._read(unit, current_posting, now=datetime.fromisoformat(self.clock()))
+                        unit.finish_refresh(run_id, result=result)
+                        return result
             except (Exception, asyncio.CancelledError) as error:
+                if (isinstance(error, asyncio.CancelledError) or cancelled()) and not (user_cancelled or cancelled)():
+                    raise asyncio.CancelledError() from None
                 code = ("briefing_cancelled" if isinstance(error, asyncio.CancelledError)
                         else error.code if isinstance(error, AppError) else "briefing_refresh_failed")
                 if receipt_id is None and isinstance(error, AppError) and error.details:
@@ -308,7 +343,8 @@ class CompaniesService:
                 try:
                     with self.history.write() as unit:
                         determination_id = None
-                        if code in {"briefing_identity_needs_review", "briefing_no_supported_claims"} and parsed is not None:
+                        if (code in {"briefing_identity_needs_review", "briefing_no_supported_claims"} and parsed is not None
+                                and isinstance(fingerprint, str) and isinstance(receipt_id, str)):
                             unit.record_determination(fingerprint, company_id, receipt_id, company["revision"], sources, parsed.model_dump())
                             self._verify(unit, company_id, company["revision"], sources, parsed.model_dump(), fingerprint)
                             determination_id = fingerprint
@@ -319,6 +355,8 @@ class CompaniesService:
                             "identityReason": parsed.identity_reason if parsed is not None and code == "briefing_identity_needs_review" else None,
                         })
                         unit.notify_linked_jobs(company_id)
+                        if run_id:
+                            unit.finish_refresh(run_id, error_code=code)
                 except Exception:
                     raise failure("briefing_failure_record_unavailable", 500) from None
                 if isinstance(error, asyncio.CancelledError):

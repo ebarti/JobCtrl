@@ -18,6 +18,8 @@ from jobctrl.app.database import Database
 from jobctrl.app.errors import AppError, NotFoundError
 from jobctrl.app.events import now
 from jobctrl.app.model_capacity import ModelCapacityBusy, admit_model_call
+from jobctrl.app.model_custody import SCHEMA as CUSTODY_SCHEMA, current_owner
+from jobctrl.app.model_shared_work import SCHEMA as SHARED_WORK_SCHEMA, active_shared_receipt, coordinate_work, share_receipt
 from jobctrl.app.settings import PROVIDER_CONFIGURATION_KEYS, Settings
 from jobctrl.app.synthetic import synthetic_boundary
 
@@ -69,7 +71,15 @@ class ModelGateway:
         self.workspace = workspace
         self.database = database
         self.settings = settings
+        database.initialize_feature("model_operation_receipts_v1", CUSTODY_SCHEMA)
+        database.initialize_feature("shared_model_work_v1", SHARED_WORK_SCHEMA)
         self.synthetic = synthetic_boundary(workspace, os.environ.get("JOBCTRL_E2E_PROVIDER_URL"))
+
+    def coordinate_work(self, keys, cancelled):
+        return coordinate_work(self.database, keys, cancelled)
+
+    def share_receipt(self, keys):
+        return share_receipt(self.database, keys)
 
     @staticmethod
     def _selection(settings: dict, model: str | None = None) -> dict:
@@ -218,24 +228,23 @@ class ModelGateway:
     def spend(self) -> dict:
         day = now()[:10]
         with self.database.connect() as connection:
-            connection.execute("BEGIN")
             settings = self.settings.snapshot(connection)
             budget = settings["dailyBudgetUsd"]
             unlimited = budget <= 0
             rows = connection.execute(
-                "SELECT lane,COUNT(*) calls,COALESCE(SUM(CAST(input_tokens AS REAL)),0) input_tokens,"
-                "COALESCE(SUM(CAST(output_tokens AS REAL)),0) output_tokens,SUM(cost_usd) cost_usd,"
+                "SELECT lane,COUNT(*) calls,COALESCE(SUM(CAST(input_tokens AS DOUBLE PRECISION)),0) input_tokens,"
+                "COALESCE(SUM(CAST(output_tokens AS DOUBLE PRECISION)),0) output_tokens,SUM(cost_usd) cost_usd,"
                 "SUM(CASE WHEN cost_source IN ('configured_pricing_estimate','sdk_estimate') THEN 1 ELSE 0 END) estimated_calls,"
-                "SUM(CASE WHEN provider_started IS NOT 0 AND status='uncertain' THEN 1 ELSE 0 END) unresolved,"
-                "SUM(CASE WHEN provider_started IS NOT 0 AND status NOT IN ('running','uncertain') "
+                "SUM(CASE WHEN provider_started IS DISTINCT FROM 0 AND status='uncertain' THEN 1 ELSE 0 END) unresolved,"
+                "SUM(CASE WHEN provider_started IS DISTINCT FROM 0 AND status NOT IN ('running','uncertain') "
                 "AND cost_usd IS NULL THEN 1 ELSE 0 END) unavailable_cost,"
-                "SUM(CASE WHEN provider_started IS NOT 0 AND status NOT IN ('running','uncertain') "
+                "SUM(CASE WHEN provider_started IS DISTINCT FROM 0 AND status NOT IN ('running','uncertain') "
                 "AND (input_tokens IS NULL OR output_tokens IS NULL) THEN 1 ELSE 0 END) unavailable_tokens "
                 "FROM app_model_calls WHERE created_at>=? GROUP BY lane", (day,)
             ).fetchall()
             # A live reservation occupies its lane until it settles, across UTC days.
             running = connection.execute(
-                "SELECT lane,owner_pid,COUNT(*) calls,SUM(created_at>=?) daily_calls FROM app_model_calls "
+                "SELECT lane,owner_pid,COUNT(*) calls,COUNT(*) FILTER (WHERE created_at>=?) daily_calls FROM app_model_calls "
                 "WHERE status='running' GROUP BY lane,owner_pid", (day,)
             ).fetchall()
         lanes = {row["lane"]: {**dict(row), "active": 0} for row in rows}
@@ -276,7 +285,6 @@ class ModelGateway:
 
     def lane_status(self) -> dict:
         with self.database.connect() as connection:
-            connection.execute("BEGIN")
             settings = self.settings.snapshot(connection)
             rows = connection.execute("SELECT lane,status,owner_pid FROM app_model_calls WHERE status IN ('running','uncertain')").fetchall()
         lanes = {name: {"lane": name, "active": 0, "unresolved": 0,
@@ -290,9 +298,34 @@ class ModelGateway:
                 "budgetBusy": settings["dailyBudgetUsd"] > 0 and any(item["active"] for item in lanes.values()),
                 "scope": "recorded model calls and configured lane limits; provider readiness is separate"}
 
-    def _admit(self, payload: dict, *, require_accounting: bool = False, on_admitted=None) -> str:
+    def _admit(self, payload: dict, *, require_accounting: bool = False, on_admitted=None) -> str | ModelResult:
         receipt_id = str(uuid.uuid4())
         with self.database.transaction() as connection:
+            owner = current_owner()
+            shared = active_shared_receipt()
+            digest = hashlib.sha256(_canonical(payload).encode()).hexdigest()
+            if owner is not None:
+                prior = connection.execute(
+                    "SELECT input_fingerprint,receipt_id FROM app_model_operation_receipts WHERE owner_key=? AND operation=?",
+                    (owner, payload["operation"])).fetchone()
+                if shared:
+                    peer = shared.prior(connection, payload["operation"], digest)
+                    if peer is not None and prior is not None and peer["receipt_id"] != prior["receipt_id"]:
+                        raise AppError("model_shared_publication_pending", "The shared requirement is awaiting an earlier publication.",
+                                       409, {"receiptId": peer["receipt_id"]})
+                    prior = prior or peer
+                if prior:
+                    identity = {"receiptId": prior["receipt_id"]}
+                    if prior["input_fingerprint"] != digest:
+                        raise AppError("model_operation_changed", "The inputs or selected model for this operation changed.", 409, identity)
+                    recorded = self.receipt(prior["receipt_id"], connection)
+                    if shared:
+                        shared.bind(connection, prior["receipt_id"])
+                    if recorded["status"] == "succeeded":
+                        return self._recorded_result(recorded)
+                    if recorded["status"] in {"running","uncertain"}:
+                        raise AppError("model_operation_unsettled", "The provider outcome for this operation is unresolved.", 409, identity)
+                    raise AppError(recorded["error_code"] or "model_operation_failed", "The earlier provider call failed.", 409, identity)
             settings = self.settings.snapshot(connection)
             if not settings["aiExecutionPolicy"]["enabled"]:
                 raise AppError("ai_disabled", "AI execution is disabled in Settings.", 409)
@@ -309,7 +342,7 @@ class ModelGateway:
             )
             uncertain = connection.execute(
                 "SELECT 1 FROM app_model_calls WHERE created_at>=? AND status!='running' AND "
-                "provider_started IS NOT 0 AND "
+                "provider_started IS DISTINCT FROM 0 AND "
                 "((? > 0 AND (status='uncertain' OR cost_usd IS NULL)) OR "
                 "(? > 0 AND lane=? AND (status='uncertain' OR input_tokens IS NULL OR output_tokens IS NULL))) LIMIT 1",
                 (day, budget, limit, lane),
@@ -317,7 +350,7 @@ class ModelGateway:
             if uncertain and (budget or limit):
                 raise AppError("spend_accounting_unresolved", "Model usage is unresolved; inspect the retained receipts before further calls.", 409)
             totals = connection.execute(
-                "SELECT COALESCE(SUM(cost_usd),0),COALESCE(SUM(CASE WHEN lane=? THEN CAST(input_tokens AS REAL)+output_tokens ELSE 0 END),0) "
+                "SELECT COALESCE(SUM(cost_usd),0),COALESCE(SUM(CASE WHEN lane=? THEN CAST(input_tokens AS DOUBLE PRECISION)+output_tokens ELSE 0 END),0) "
                 "FROM app_model_calls WHERE created_at>=?", (lane, day)
             ).fetchone()
             if (budget and totals[0] >= budget) or (limit and totals[1] >= limit):
@@ -333,9 +366,14 @@ class ModelGateway:
                 "INSERT INTO app_model_calls(receipt_id,operation,provider,model,lane,prompt_version,input_fingerprint,created_at,status,owner_pid,pricing_json) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (receipt_id, payload["operation"], payload["provider"], payload["model"], lane,
-                 payload["prompt_version"], hashlib.sha256(_canonical(payload).encode()).hexdigest(), now(), "running", os.getpid(),
+                 payload["prompt_version"], digest, now(), "running", os.getpid(),
                  _canonical(quote) if quote is not None else None),
             )
+            if owner is not None:
+                connection.execute("INSERT INTO app_model_operation_receipts VALUES(?,?,?,?)",
+                                   (owner, payload["operation"], digest, receipt_id))
+            if shared:
+                shared.bind(connection, receipt_id)
             if on_admitted is not None:
                 # The caller's durable phase must own this receipt before external execution can begin.
                 on_admitted(connection, receipt_id)
@@ -381,6 +419,8 @@ class ModelGateway:
         receipt_id = await admit_model_call(
             lane, lambda: self._admit(payload, require_accounting=require_accounting, on_admitted=on_admitted)
         )
+        if isinstance(receipt_id, ModelResult):
+            return receipt_id
         usage = {}
         try:
             value, usage = await self._external(payload, execution)
@@ -407,11 +447,14 @@ class ModelGateway:
             raise AppError(code, "The model determination was not accepted; previous accepted work is preserved.", 502,
                            {"receiptId": receipt_id}) from None
         self._settle(receipt_id, "succeeded", usage, result_json=encoded, provider_started=True)
-        receipt = self.receipt(receipt_id)
+        return self._recorded_result(self.receipt(receipt_id))
+
+    @staticmethod
+    def _recorded_result(receipt):
         provenance = {key: receipt[key] for key in (
             "receipt_id", "provider", "model", "lane", "prompt_version", "input_fingerprint", "created_at",
         )}
-        return ModelResult(value, provenance)
+        return ModelResult(receipt["value"], provenance)
 
     def _settle(self, receipt_id: str, status: str, usage: dict, *, result_json=None, error_code=None, provider_started=None):
         def amount(name):

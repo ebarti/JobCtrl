@@ -7,13 +7,13 @@ from jobctrl.app.contracts import Feature
 from jobctrl.app.errors import AppError
 from jobctrl.app.http import json_object
 from jobctrl.features.digest.schema import SCHEMA
-from jobctrl.features.digest.repository import SqliteDigestRepository
+from jobctrl.features.digest.repository import PostgresDigestRepository
 from jobctrl.features.digest.service import DigestService
 
 
 def build_feature(runtime, *, jobs, fit=None, discovery=None, applications=None, resumes=None, companies=None, **_ports):
     runtime.database.initialize_feature("digest", SCHEMA)
-    service = DigestService(SqliteDigestRepository(runtime.database, runtime.events), model=runtime.model,
+    service = DigestService(PostgresDigestRepository(runtime.database, runtime.events), model=runtime.model,
                             settings=runtime.settings, jobs=jobs, fit=fit, discovery=discovery,
                             applications=applications, resumes=resumes, companies=companies)
 

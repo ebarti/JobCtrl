@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 import json
+from datetime import datetime
 from math import ceil
 import os
 import time
@@ -46,9 +47,7 @@ class DiscoveryRepository:
                     else "default",
                     "editable": k not in {"applyApprovalRequired", "resultsPerSite", "maxParallelFamilies"},
                     "locked": k in {"applyApprovalRequired", "resultsPerSite", "maxParallelFamilies"},
-                    "activation": "inactive" if k in {"resultsPerSite", "maxParallelFamilies"} else "restart"
-                    if k in {"scheduleCron", "schedulingEnabled"}
-                    else "next_source_family"
+                    "activation": "inactive" if k in {"resultsPerSite", "maxParallelFamilies"} else "next_source_family"
                     if k.startswith("crawl") or k == "useBrowserHeaders"
                     else "next_run",
                 }
@@ -62,9 +61,7 @@ class DiscoveryRepository:
                     else "default",
                     "editable": k not in {"applyApprovalRequired", "resultsPerSite", "maxParallelFamilies"},
                     "locked": k in {"applyApprovalRequired", "resultsPerSite", "maxParallelFamilies"},
-                    "activation": "inactive" if k in {"resultsPerSite", "maxParallelFamilies"} else "restart"
-                    if k in {"scheduleCron", "schedulingEnabled"}
-                    else "next_source_family"
+                    "activation": "inactive" if k in {"resultsPerSite", "maxParallelFamilies"} else "next_source_family"
                     if k.startswith("crawl") or k == "useBrowserHeaders"
                     else "next_run",
                 }
@@ -226,7 +223,7 @@ class DiscoveryRepository:
         with self.database.transaction() as conn:
             for board in self.boards:
                 source = self._board_definition(board)
-                conn.execute("INSERT OR IGNORE INTO discovery_sources VALUES(?,1,'active',?,?)",
+                conn.execute("INSERT INTO discovery_sources VALUES(?,1,'active',?,?) ON CONFLICT(source_id) DO NOTHING",
                              (source["sourceId"], json.dumps(source), now()))
 
     def captures(self):
@@ -444,13 +441,7 @@ class DiscoveryRepository:
         self._require_no_continuation(connection, parent)
         if self.source("jobstreaming:linkedin", connection=connection)["state"] not in {"active", "experimental"}:
             raise AppError("discovery_resume_unavailable", "Enable the LinkedIn source before continuing this search.", 409)
-        wait = connection.execute(
-            """SELECT MAX(json_extract(payload_json, '$.retryAfterSeconds')
-                    - (julianday('now') - julianday(occurred_at)) * 86400)
-               FROM app_events WHERE event_type='DiscoverySourceRateLimited'
-                 AND json_extract(payload_json, '$.board')='linkedin'
-                 AND json_type(payload_json, '$.retryAfterSeconds')='integer'"""
-        ).fetchone()[0]
+        wait = self.cooldown("linkedin", connection)
         if wait is not None and wait > 0:
             seconds = ceil(wait)
             raise AppError("discovery_retry_too_early", f"LinkedIn asked JobCtrl to wait. Try again in {seconds} seconds.",
@@ -473,7 +464,7 @@ class DiscoveryRepository:
                 checkpoints[key] = (inherited or {}).get(key)
                 continue
             failure = json.loads(state["result_json"] or "{}").get("failure", {})
-            if state["status"] in {"deferred", "waiting_for_query_turn", "running"} or (
+            if state["status"] in {"deferred", "waiting_for_query_turn", "running", "waiting_for_source", "page_received"} or (
                 state["status"] == "failed" and failure.get("code") in {BOARD_RATE_LIMIT_CODE, "rate_limited"}
             ):
                 checkpoints[key] = parent
@@ -497,7 +488,7 @@ class DiscoveryRepository:
                 raise ConflictError("The saved Discovery run has different inputs.")
             if row and row["cancel_requested"]:
                 raise AppError("action_cancelled", "Discovery was cancelled.", 409)
-            if row and row["status"] in {"completed", "partial"}:
+            if row and row["result_json"] and row["status"] in {"completed", "partial", "failed"}:
                 return {"completed": True, "result": json.loads(row["result_json"])}
             # A retried durable activity takes a new epoch. Every admission and
             # cursor write checks that epoch, fencing an uncooperative old read.
@@ -517,6 +508,8 @@ class DiscoveryRepository:
                     (run_id, request_hash, json.dumps(request), token, clock + 120, now(), now()),
                 )
                 epoch = 1
+                if parent := request.get("resumeFromRunId"):
+                    self._copy_continuation(conn, run_id, request["resumeUnits"])
             self.events.append(
                 conn,
                 "DiscoveryRunUpdated",
@@ -525,6 +518,31 @@ class DiscoveryRepository:
                 aggregate_id=run_id,
             )
         return {"completed": False, "run_id": run_id, "token": token, "epoch": epoch}
+
+    @staticmethod
+    def _copy_continuation(conn, run_id, coordinates):
+        from jobctrl.features.discovery.adapters.checkpoints import insert_checkpoint, read_checkpoint
+
+        for unit_id, source in coordinates.items():
+            if source is None:
+                continue
+            saved = read_checkpoint(conn, source, unit_id)
+            if saved is None:
+                raise AppError("discovery_resume_checkpoint_missing", "The saved board position is unavailable.", 409)
+            insert_checkpoint(conn, run_id, unit_id, saved.model_copy(update={"revision": 0}))
+            prior = conn.execute("SELECT data_json,result_json FROM discovery_units WHERE run_id=? AND unit_id=?", (source,unit_id)).fetchone()
+            details = json.loads(prior["result_json"] or "{}") if prior else {}
+            if prior and details.get("sourceTerminations"):
+                restored = {k: details[k] for k in ("sourceTerminations","termination") if k in details}
+                conn.execute("INSERT INTO discovery_units VALUES(?,?,'page_received',?,?,?)",
+                             (run_id,unit_id,prior["data_json"],json.dumps(restored),now()))
+            # A received listing can still await a detail fetch or role decision.
+            for row in conn.execute("SELECT * FROM discovery_postings WHERE run_id=? AND unit_id=? AND status='pending' ORDER BY received_order",
+                                    (source, unit_id)):
+                key = "jobstreaming:" + fingerprint([run_id, unit_id, row["site"], row["job_key"]])
+                conn.execute("INSERT INTO discovery_postings(run_id,unit_id,receipt_key,site,job_key,status,listing_json,detail_json) "
+                             "VALUES(?,?,?,?,?,'pending',?,?)",
+                             (run_id, unit_id, key, row["site"], row["job_key"], row["listing_json"], row["detail_json"]))
 
     def guard_run(self, conn, lease):
         row = conn.execute("SELECT * FROM discovery_runs WHERE run_id=?", (lease["run_id"],)).fetchone()
@@ -565,8 +583,49 @@ class DiscoveryRepository:
             )
         return {"ok": True, "runId": run_id, "status": "cancelled"}
 
+    def finalize_action(self, run_id, status, error_code, connection):
+        changed = connection.execute(
+            "UPDATE discovery_runs SET status=?,cancel_requested=?,owner_token=NULL,lease_until=0,failure_code=?,updated_at=? "
+            "WHERE run_id=? AND status='running'", (status, int(status == "cancelled"), error_code, now(), run_id)).rowcount
+        if changed:
+            connection.execute("UPDATE discovery_source_runs SET status=?,updated_at=? WHERE run_id=? AND status='running'",
+                               (status, now(), run_id))
+            self.events.append(connection, "DiscoveryRunUpdated", {"runId": run_id, "status": status},
+                               feature="discovery", aggregate_id=run_id)
+
+    def run_summary(self, run_id):
+        with self.database.connect() as conn:
+            row = conn.execute("SELECT * FROM discovery_runs WHERE run_id=?", (run_id,)).fetchone()
+            return {"runId": run_id, "newJobs": row["new_jobs"], "observedJobs": row["observed_jobs"],
+                    "createdAt": row["created_at"], "updatedAt": row["updated_at"], "failureCode": row["failure_code"],
+                    **({"resumeFromRunId": parent} if (parent := json.loads(row["request_json"]).get("resumeFromRunId")) else {})}
+
     def runs(self):
         with self.database.connect() as conn:
+            rows = conn.execute("""
+                SELECT recent.*, recent.request_json::jsonb->>'resumeFromRunId' AS parent,
+                       link.result_json::jsonb#>>'{}' AS child
+                FROM (SELECT * FROM discovery_runs ORDER BY created_at DESC,run_id LIMIT 100) recent
+                LEFT JOIN discovery_operations link ON link.operation_id='linkedin-continuation:' || recent.run_id
+                ORDER BY recent.created_at DESC,recent.run_id
+            """).fetchall()
+            ids = [row["run_id"] for row in rows]
+            waits = {}
+            for row in conn.execute("""
+                SELECT DISTINCT u.run_id,board.value AS board,c.retry_at FROM discovery_units u
+                CROSS JOIN LATERAL jsonb_array_elements_text(u.data_json::jsonb->'sites') board
+                JOIN discovery_provider_cooldowns c ON c.board=board.value
+                WHERE u.run_id=ANY(?) AND c.retry_at>? AND (
+                  u.status='waiting_for_source' OR
+                  (u.status='failed' AND u.result_json::jsonb#>>'{failure,code}' IN ('discovery_provider_rate_limited','rate_limited'))
+                ) ORDER BY u.run_id,board.value
+            """, (ids,time.time())):
+                waits.setdefault(row["run_id"], []).append({
+                    "board": row["board"], "retryAfterSeconds": max(0, ceil(row["retry_at"] - time.time()))})
+            counts = {}
+            for run_id, status, count in conn.execute(
+                    "SELECT run_id,status,COUNT(*) FROM discovery_postings WHERE run_id=ANY(?) GROUP BY run_id,status", (ids,)):
+                counts.setdefault(run_id, {})[status] = count
             return {
                 "ok": True,
                 "runs": [
@@ -575,6 +634,9 @@ class DiscoveryRepository:
                         "status": r["status"],
                         "newJobs": r["new_jobs"],
                         "observedJobs": r["observed_jobs"],
+                        "cooldowns": waits.get(r["run_id"], []),
+                        **({"postings": self._posting_summary(counts.get(r["run_id"], {}))}
+                           if r["run_id"] in counts or json.loads(r["request_json"]).get("pageWorkflowVersion") else {}),
                         **({"resumeFromRunId": r["parent"]} if r["parent"] else {}),
                         **({"continuedByRunId": r["child"]} if r["child"] else {}),
                         "failureCode": r["failure_code"],
@@ -583,11 +645,7 @@ class DiscoveryRepository:
                         "createdAt": r["created_at"],
                         "updatedAt": r["updated_at"],
                     }
-                    for r in conn.execute("""SELECT recent.*, json_extract(recent.request_json, '$.resumeFromRunId') AS parent,
-                        json_extract(link.result_json, '$') AS child
-                        FROM (SELECT * FROM discovery_runs ORDER BY created_at DESC LIMIT 100) recent
-                        LEFT JOIN discovery_operations link ON link.operation_id='linkedin-continuation:' || recent.run_id
-                        ORDER BY recent.created_at DESC""")
+                    for r in rows
                 ],
             }
 
@@ -685,20 +743,21 @@ class DiscoveryRepository:
         with self.database.transaction() as conn:
             run = self.guard_run(conn, lease)
             if run["new_jobs"] >= limit:
+                conn.execute("UPDATE discovery_postings SET status='beyond_limit' WHERE run_id=? AND status='pending'", (lease["run_id"],))
                 failed_sources = {
                     row[0] for row in conn.execute(
                         "SELECT source_id FROM discovery_source_runs WHERE run_id=? AND status='failed'", (lease["run_id"],)
                     )
                 }
                 for row in conn.execute(
-                    "SELECT unit_id,status,data_json FROM discovery_units WHERE run_id=? AND status IN ('running','waiting_for_query_turn')", (lease["run_id"],)
+                    "SELECT unit_id,status,data_json FROM discovery_units WHERE run_id=? AND status IN ('running','waiting_for_query_turn','waiting_for_source','page_received')", (lease["run_id"],)
                 ).fetchall():
                     data = json.loads(row["data_json"])
                     sources = {data["source_id"]} if data.get("source_id") else {"jobstreaming:" + board for board in data.get("sites", [])}
                     if row["status"] == "running" and sources.intersection(failed_sources):
                         continue
                     conn.execute(
-                        "UPDATE discovery_units SET status='budget_exhausted',result_json=json_set(COALESCE(result_json,'{}'),'$.termination','budget_exhaustion'),updated_at=? WHERE run_id=? AND unit_id=?",
+                        "UPDATE discovery_units SET status='budget_exhausted',result_json=(COALESCE(result_json,'{}')::jsonb || jsonb_build_object('termination','budget_exhaustion'))::text,updated_at=? WHERE run_id=? AND unit_id=?",
                         (now(), lease["run_id"], row["unit_id"]),
                     )
                 conn.execute(
@@ -728,12 +787,12 @@ class DiscoveryRepository:
         with self.database.connect() as conn:
             self.guard_run(conn, lease)
             return dict(conn.execute(
-                """SELECT json_extract(u.data_json,'$.query'), COUNT(*)
+                """SELECT u.data_json::jsonb->>'query', COUNT(*)
                    FROM discovery_intake_receipts r JOIN discovery_units u
                      ON u.run_id=r.run_id AND u.unit_id=r.unit_id
-                   WHERE r.run_id=? AND r.outcome='accepted' AND json_extract(r.data_json,'$.isNew')=1
-                     AND json_extract(u.data_json,'$.source_family')='broad_boards'
-                   GROUP BY json_extract(u.data_json,'$.query')""", (lease["run_id"],)
+                   WHERE r.run_id=? AND r.outcome='accepted' AND (r.data_json::jsonb->>'isNew')::boolean
+                     AND u.data_json::jsonb->>'source_family'='broad_boards'
+                   GROUP BY u.data_json::jsonb->>'query'""", (lease["run_id"],)
             ))
 
     def run_request(self, run_id):
@@ -777,13 +836,113 @@ class DiscoveryRepository:
                 ),
             )
 
-    def record_rate_limit_response(self, lease, observation):
+    def cooldown(self, board, connection=None):
+        with nullcontext(connection) if connection is not None else self.database.connect() as conn:
+            row = conn.execute("SELECT retry_at FROM discovery_provider_cooldowns WHERE board=?", (board,)).fetchone()
+            return max(0.0, row[0] - time.time()) if row else 0.0
+
+    def reserve_board_request(self, lease, board, interval):
+        """Enforce source pacing across page turns, other runs and worker replacement."""
+        with self.database.transaction() as conn:
+            if lease is not None:
+                self.guard_run(conn, lease)
+            row = conn.execute("SELECT retry_at,next_request_at FROM discovery_provider_cooldowns WHERE board=?", (board,)).fetchone()
+            clock = time.time()
+            if row:
+                if row["retry_at"] > clock:
+                    return {"cooldown": row["retry_at"] - clock, "pace": 0}
+                if row["next_request_at"] > clock:
+                    return {"cooldown": 0, "pace": row["next_request_at"] - clock}
+            conn.execute("INSERT INTO discovery_provider_cooldowns(board,next_request_at) VALUES(?,?) "
+                         "ON CONFLICT(board) DO UPDATE SET next_request_at=excluded.next_request_at", (board, clock + interval))
+        return {"cooldown": 0, "pace": 0}
+
+    def provider_response(self, lease, board, unit_id, phase, status, received, delay, interval):
+        """Commit source pacing and cumulative response counts before the SDK consumes the response."""
+        with self.database.transaction() as conn:
+            run = self.guard_run(conn, lease)
+            if interval:
+                conn.execute("UPDATE discovery_provider_cooldowns SET next_request_at=GREATEST(next_request_at,?) WHERE board=?",
+                             (received.timestamp() + interval, board))
+            operation = f"board-responses:{lease['run_id']}:{board}"
+            row = conn.execute("SELECT result_json FROM discovery_operations WHERE operation_id=?", (operation,)).fetchone()
+            counts = json.loads(row[0]) if row else {"listing": 0, "detail": 0, "other": 0}
+            counts[phase] += 1
+            conn.execute("INSERT INTO discovery_operations VALUES(?,'board_responses',?,?,?) ON CONFLICT(operation_id) "
+                         "DO UPDATE SET result_json=excluded.result_json", (operation, run["request_hash"], json.dumps(counts), now()))
+            if status == 429:
+                started = datetime.fromisoformat(run["created_at"])
+                self.record_rate_limit_response(lease, {
+                    "board": board, "unitId": unit_id, "phase": phase, "httpStatus": status,
+                    "leaseEpoch": lease["epoch"], "responses": counts, "elapsedMs": max(0, round((received - started).total_seconds() * 1000)),
+                    "receivedAt": received.isoformat(timespec="milliseconds"), "retryAfterSeconds": delay,
+                }, connection=conn)
+
+    def record_rate_limit_response(self, lease, observation, connection=None):
+        board = observation["board"]
+        with nullcontext(connection) if connection is not None else self.database.transaction() as conn:
+            self.guard_run(conn, lease)
+            row = conn.execute("SELECT consecutive_limits FROM discovery_provider_cooldowns WHERE board=?", (board,)).fetchone()
+            count = (row[0] if row else 0) + 1
+            advertised = observation.get("retryAfterSeconds")
+            wait = float(advertised) if advertised else min(900, 4 * 2 ** min(8, count - 1))
+            conn.execute("INSERT INTO discovery_provider_cooldowns(board,retry_at,consecutive_limits,retry_advertised) VALUES(?,?,?,?) "
+                         "ON CONFLICT(board) DO UPDATE SET retry_at=GREATEST(discovery_provider_cooldowns.retry_at,excluded.retry_at), "
+                         "consecutive_limits=excluded.consecutive_limits,retry_advertised=excluded.retry_advertised",
+                         (board, time.time() + max(1, wait), count, int(bool(advertised))))
+            self.events.append(conn, "DiscoverySourceRateLimited", observation, feature="discovery",
+                               aggregate_id=lease["run_id"], level="warn", stage="board_search")
+
+    def defer_transient(self, lease, unit, recorded, board, delay):
+        with self.database.transaction() as conn:
+            self.save_unit(lease, unit, status="waiting_for_source", result=recorded, connection=conn)
+            conn.execute("INSERT INTO discovery_provider_cooldowns(board,retry_at) VALUES(?,?) ON CONFLICT(board) "
+                         "DO UPDATE SET retry_at=GREATEST(discovery_provider_cooldowns.retry_at,excluded.retry_at)", (board,time.time() + delay))
+
+    def source_recovered(self, lease, board):
         with self.database.transaction() as conn:
             self.guard_run(conn, lease)
-            self.events.append(
-                conn, "DiscoverySourceRateLimited", observation, feature="discovery",
-                aggregate_id=lease["run_id"], level="warn", stage="board_search",
-            )
+            conn.execute("UPDATE discovery_provider_cooldowns SET consecutive_limits=0,retry_advertised=0 "
+                         "WHERE board=? AND retry_at<=?", (board,time.time()))
+
+    def unit_states(self, run_id):
+        with self.database.connect() as conn:
+            return {r["unit_id"]: {"status": r["status"], "result": json.loads(r["result_json"] or "{}"),
+                                   "updatedAt": r["updated_at"], "data": json.loads(r["data_json"])}
+                    for r in conn.execute("SELECT * FROM discovery_units WHERE run_id=?", (run_id,))}
+
+    def record_listing(self, lease, unit, key, site, job_key, listing, acknowledge):
+        with self.database.transaction() as conn:
+            self.guard_run(conn, lease)
+            conn.execute("INSERT INTO discovery_postings(run_id,unit_id,receipt_key,site,job_key,listing_json,status) "
+                         "VALUES(?,?,?,?,?,?,'pending') ON CONFLICT(receipt_key) DO NOTHING",
+                         (lease["run_id"],unit["unit_id"],key,site,job_key,json.dumps(listing)))
+            acknowledge(conn)
+
+    def pending_postings(self, lease, unit):
+        with self.database.connect() as conn:
+            self.guard_run(conn, lease)
+            rows = conn.execute("SELECT receipt_key,listing_json,detail_json FROM discovery_postings "
+                                "WHERE run_id=? AND unit_id=? AND status='pending' ORDER BY received_order",
+                                (lease["run_id"],unit["unit_id"])).fetchall()
+        return [(r["receipt_key"],json.loads(r["listing_json"]),json.loads(r["detail_json"]) if r["detail_json"] else None)
+                for r in rows]
+
+    def save_posting_detail(self, lease, key, detail):
+        with self.database.transaction() as conn:
+            self.guard_run(conn, lease)
+            conn.execute("UPDATE discovery_postings SET detail_json=? WHERE run_id=? AND receipt_key=? AND status='pending'",
+                         (json.dumps(detail),lease["run_id"],key))
+
+    def posting_counts(self, run_id, connection=None):
+        with nullcontext(connection) if connection is not None else self.database.connect() as conn:
+            items = dict(conn.execute("SELECT status,COUNT(*) FROM discovery_postings WHERE run_id=? GROUP BY status", (run_id,)))
+        return self._posting_summary(items)
+
+    @staticmethod
+    def _posting_summary(items):
+        return {"received": sum(items.values()), **{key: items.get(key, 0) for key in
+                ("saved","duplicate","excluded","pending","operator_deleted","beyond_limit")}}
 
     def record_board_failure(self, lease, unit, error, *, board=None):
         """Persist the safe unit and source outcome together, before SDK acknowledgement."""
@@ -858,7 +1017,7 @@ class DiscoveryRepository:
         return decision
 
     def accept_posting(self, lease, unit, posting, *, jobs, receipt_key, excluded=False, limit=None, cancelled=None,
-                       role_target_decision=None, role_target_unavailable=None, existing_only=False):
+                       role_target_decision=None, role_target_unavailable=None, existing_only=False, handoff=None):
         with self.database.transaction() as conn:
             run = self.guard_run(conn, lease)
             if cancelled and cancelled():
@@ -932,6 +1091,10 @@ class DiscoveryRepository:
                     now(),
                 ),
             )
+            state = "saved" if created else "duplicate" if outcome == "accepted" else "excluded" if excluded else outcome
+            conn.execute("UPDATE discovery_postings SET status=? WHERE run_id=? AND receipt_key=?", (state, lease["run_id"], receipt_key))
+            if created and handoff is not None:
+                handoff(lease["run_id"], saved, conn)
             budget_reached = limit is not None and conn.execute(
                 "SELECT new_jobs FROM discovery_runs WHERE run_id=?", (lease["run_id"],)
             ).fetchone()[0] >= limit
@@ -944,10 +1107,11 @@ class DiscoveryRepository:
                 (run_id,),
             ).fetchall()
             role_counts = conn.execute(
-                """SELECT COALESCE(json_extract(data_json,'$.roleTargetMatch.verdict'),
-                                   json_extract(data_json,'$.roleTargetUnavailable.reason')) AS decision,
-                          COUNT(*) AS observations
-                   FROM discovery_intake_receipts WHERE run_id=? AND decision IS NOT NULL GROUP BY decision""",
+                """SELECT decision,COUNT(*) AS observations FROM (
+                      SELECT COALESCE(data_json::jsonb#>>'{roleTargetMatch,verdict}',
+                                      data_json::jsonb#>>'{roleTargetUnavailable,reason}') AS decision
+                      FROM discovery_intake_receipts WHERE run_id=?
+                   ) decisions WHERE decision IS NOT NULL GROUP BY decision""",
                 (run_id,),
             ).fetchall()
         return {
@@ -968,9 +1132,9 @@ class DiscoveryRepository:
             return conn.execute(
                 """SELECT 1 FROM discovery_intake_receipts
                    WHERE run_id=? AND job_id=? AND outcome='accepted'
-                   AND json_extract(data_json,'$.isNew')=1
-                   AND json_extract(data_json,'$.postingRevision')=?
-                   AND json_extract(data_json,'$.sourceId')=? LIMIT 1""",
+                   AND (data_json::jsonb->>'isNew')::boolean
+                   AND (data_json::jsonb->>'postingRevision')::integer=?
+                   AND data_json::jsonb->>'sourceId'=? LIMIT 1""",
                 (run_id, job_id, revision, source_id),
             ).fetchone() is not None
 
@@ -1022,7 +1186,7 @@ class DiscoveryRepository:
     def target_plan_operation(self, operation_id):
         with self.database.connect() as conn:
             row = conn.execute(
-                "SELECT data_json FROM discovery_target_plans WHERE json_extract(data_json,'$.operationId')=?",
+                "SELECT data_json FROM discovery_target_plans WHERE data_json::jsonb->>'operationId'=?",
                 (operation_id,),
             ).fetchone()
             return json.loads(row[0]) if row else None

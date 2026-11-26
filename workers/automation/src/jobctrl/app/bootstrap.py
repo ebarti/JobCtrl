@@ -19,11 +19,17 @@ FEATURE_NAMES = (
 )
 
 
-def create_application(workspace: Path | str, *, enabled_features: Collection[str] | None = None) -> Application:
+def create_application(workspace: Path | str, *, enabled_features: Collection[str] | None = None,
+                       database: Database | None = None, inspect_only: bool = False) -> Application:
     selected = set(FEATURE_NAMES if enabled_features is None else enabled_features)
     if selected - set(FEATURE_NAMES):
         raise AppError("unknown_feature", "The composition contains an unknown feature.", 500)
-    database = Database(workspace)
+    if database is None:
+        database = Database.open_existing(workspace) if inspect_only else Database(workspace)
+    elif database.workspace != Path(workspace).expanduser().resolve():
+        raise AppError("workspace_changed", "The database belongs to a different workspace.", 409)
+    elif database.read_only != inspect_only:
+        raise ValueError("Application inspection requires a read-only database handle.")
     events = EventStore(database)
     settings = Settings(database, events)
     runtime = Runtime(database.workspace, database, settings, events, ModelGateway(database.workspace, database, settings))
@@ -111,6 +117,9 @@ def create_application(workspace: Path | str, *, enabled_features: Collection[st
                 feature.action_admissions["discovery.search"] = lambda run_id, payload, connection: services["preparation"].admit_search(
                     run_id, payload, runtime.settings.snapshot(connection), connection)
     if "jobs" in services:
+        from jobctrl.extension_transport import initialize_extension_storage
+
+        initialize_extension_storage(runtime)
         jobs = services["jobs"]
         if "fit" in services:
             jobs.bind_fit(services["fit"])
@@ -131,6 +140,7 @@ def create_application(workspace: Path | str, *, enabled_features: Collection[st
     application = Application(runtime, features)
     if "preparation" in services:
         services["preparation"].bind_run_reader(application.action_run)
+        services["preparation"].bind_action_admitter(application.admit)
     if "applications" in services:
         services["applications"].set_action_reader(application.list_runs, job_action_run_id=application.job_action_run_id)
         if "interviews" in services:

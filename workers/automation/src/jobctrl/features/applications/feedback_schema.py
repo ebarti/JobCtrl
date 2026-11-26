@@ -6,9 +6,9 @@ CREATE TABLE application_feedback_evidence (
  provider TEXT NOT NULL CHECK(provider='gmail'), provider_message_id TEXT NOT NULL,
  provider_thread_id TEXT, headers_json TEXT NOT NULL, message_text TEXT NOT NULL,
  received_at TEXT NOT NULL, linked_at TEXT NOT NULL, body_sha256 TEXT NOT NULL,
- link_confidence REAL NOT NULL, link_receipt_id TEXT NOT NULL,
+ link_confidence DOUBLE PRECISION NOT NULL, link_receipt_id TEXT NOT NULL,
  link_provenance_json TEXT NOT NULL, link_value_json TEXT NOT NULL,
- link_sources_json TEXT NOT NULL, posting_revision INTEGER NOT NULL,
+ link_sources_json TEXT NOT NULL, posting_revision BIGINT NOT NULL,
  posting_hash TEXT NOT NULL, anchor_at TEXT NOT NULL,
  PRIMARY KEY(tenant_id,evidence_id), UNIQUE(tenant_id,provider,provider_message_id)
 );
@@ -16,11 +16,11 @@ CREATE INDEX application_feedback_evidence_job ON application_feedback_evidence(
 CREATE TABLE application_feedback_suggestions (
  tenant_id TEXT NOT NULL, suggestion_id TEXT NOT NULL, job_id TEXT NOT NULL,
  evidence_id TEXT NOT NULL, suggested_kind TEXT NOT NULL,
- confidence REAL NOT NULL, rationale TEXT NOT NULL,
+ confidence DOUBLE PRECISION NOT NULL, rationale TEXT NOT NULL,
  outcome_receipt_id TEXT NOT NULL, outcome_provenance_json TEXT NOT NULL,
  outcome_value_json TEXT NOT NULL, outcome_sources_json TEXT NOT NULL,
  status TEXT NOT NULL CHECK(status IN ('pending','accepted','corrected','ignored')),
- version INTEGER NOT NULL, created_at TEXT NOT NULL, decided_at TEXT,
+ version BIGINT NOT NULL, created_at TEXT NOT NULL, decided_at TEXT,
  decision TEXT, decision_reason TEXT, decided_outcome_id TEXT,
  decision_request_json TEXT, decision_hash TEXT, decision_fact_hash TEXT,
  PRIMARY KEY(tenant_id,suggestion_id), UNIQUE(tenant_id,evidence_id),

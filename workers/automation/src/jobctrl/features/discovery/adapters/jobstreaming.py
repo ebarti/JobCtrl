@@ -130,7 +130,7 @@ class _RemoteScopeAdapter:
 
 def _remote_safe_registry(
     spec: JobStreamingSearchSpec, registry: AdapterRegistry | None,
-    linkedin_page_accepted: threading.Event | None,
+    page_accepted: threading.Event | None,
 ) -> AdapterRegistry:
     """Retain unsupported boards as failures instead of broadening a search."""
     normalized = _normalize_tls_adapter_timeouts(registry)
@@ -144,7 +144,7 @@ def _remote_safe_registry(
         def guarded_factory(*, _site: str = site, **kwargs: Any) -> _RemoteScopeAdapter:
             return _RemoteScopeAdapter(
                 normalized.create(_site, **kwargs),
-                linkedin_page_accepted if _site == Site.LINKEDIN.value else None,
+                page_accepted,
             )
 
         # The provider's public cursor-version contract must remain unchanged
@@ -231,19 +231,40 @@ class JobStreamingGateway:
     """Build and consume the pinned JobStreaming event contract."""
 
     @staticmethod
-    def configure_linkedin_transport(registry, send):
+    def configure_transport(registry, site, requests):
+        """Preserve SDK-owned sessions and observe unmodified response deadlines."""
         source = registry or default_registry()
+        if site not in {adapter.value for adapter in source.sites}:
+            return source
         observed = source.copy()
 
         def factory(**kwargs):
-            adapter = source.create(Site.LINKEDIN, **kwargs)
-            for transport in set(adapter.session.adapters.values()):
-                transport.send = partial(send, transport.send)
+            adapter = source.create(site, **kwargs)
+            # Some SDK adapters sleep between pages inside one stream. A resumed
+            # page still honors the longest configured native interval.
+            requests.interval = max(requests.interval, getattr(adapter, "delay", 0) + getattr(adapter, "band_delay", 0))
+            installed = set()
+
+            def observe(session):
+                transports = tuple(session.adapters.values()) if hasattr(session, "adapters") else (session,)
+                for transport in transports:
+                    if id(transport) in installed:
+                        continue
+                    method = "send" if hasattr(transport, "send") else "execute_request"
+                    if hasattr(transport, method):
+                        setattr(transport, method, partial(requests.send, getattr(transport, method)))
+                        installed.add(id(transport))
+                return session
+
+            if getattr(adapter, "session", None) is not None:
+                observe(adapter.session)
+            register = adapter.track_transport
+            adapter.track_transport = lambda session: observe(register(session))
             return adapter
 
-        cursor_version = source.cursor_schema_version(Site.LINKEDIN)
+        cursor_version = source.cursor_schema_version(site)
         options = {"cursor_schema_version": cursor_version} if cursor_version != 1 else {}
-        observed.register(Site.LINKEDIN, factory, replace=True, **options)
+        observed.register(site, factory, replace=True, **options)
         return observed
 
     @staticmethod
@@ -286,7 +307,7 @@ class JobStreamingGateway:
         retry_backoff: float = 5.0,
         cancel_event: threading.Event | None = None,
         registry: AdapterRegistry | None = None,
-        linkedin_page_accepted: threading.Event | None = None,
+        page_accepted: threading.Event | None = None,
     ) -> SearchStream:
         """Open an explicit-ack stream without consuming any event.
 
@@ -311,8 +332,20 @@ class JobStreamingGateway:
             retry_backoff=retry_backoff,
             ack_mode=AckMode.EXPLICIT,
             cancel_event=cancel_event,
-            registry=_remote_safe_registry(spec, registry, linkedin_page_accepted),
+            registry=_remote_safe_registry(spec, registry, page_accepted),
         )
+
+    @staticmethod
+    def restore_posting(stored: dict) -> JobPost:
+        # These SDK enums have tuple-valued members. JSON encodes them as arrays
+        # and the pinned SDK requires their exact tuple values for validation.
+        posting = dict(stored)
+        location = posting.get("location")
+        if location and isinstance(location.get("country"), list):
+            posting["location"] = {**location, "country": tuple(location["country"])}
+        if posting.get("job_type"):
+            posting["job_type"] = [tuple(item) if isinstance(item, list) else item for item in posting["job_type"]]
+        return JobPost.model_validate(posting)
 
     @classmethod
     def frame_for_job_event(

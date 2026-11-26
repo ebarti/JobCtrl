@@ -1,4 +1,4 @@
-"""One SQLite authority for thread generations, attestations and reminders."""
+"""One PostgreSQL authority for thread generations, attestations and reminders."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from .domain import fingerprint, now
 
 
-class SqliteOutreachStore:
+class PostgresOutreachStore:
     def __init__(self, database, events):
         self.database, self.events = database, events
 

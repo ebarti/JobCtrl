@@ -41,17 +41,20 @@ PROVIDER_CONFIGURATION_KEYS = frozenset({
 
 
 class Settings:
-    def __init__(self, database: Database, events: EventStore):
+    def __init__(self, database: Database, events: EventStore, *, initialize: bool = True):
         self.database = database
         self.events = events
-        with database.transaction() as connection:
-            connection.execute("INSERT OR IGNORE INTO app_settings VALUES(1,1,?)", (json.dumps(DEFAULTS),))
+        if initialize and not database.read_only:
+            with database.transaction() as connection:
+                connection.execute("INSERT INTO app_settings VALUES(1,1,?) ON CONFLICT(id) DO NOTHING", (json.dumps(DEFAULTS),))
 
     def snapshot(self, connection=None) -> dict:
         if connection is None:
             with self.database.connect() as owned:
                 return self.snapshot(owned)
         row = connection.execute("SELECT revision,value_json FROM app_settings WHERE id=1").fetchone()
+        if row is None:
+            raise AppError("settings_uninitialized", "Finish initial JobCtrl startup before changing workspace settings.", 409)
         return {**json.loads(row["value_json"]), "revision": row["revision"]}
 
     def get(self, key: str, default=None):

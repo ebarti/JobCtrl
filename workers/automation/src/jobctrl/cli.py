@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlencode, urlsplit
@@ -31,8 +32,11 @@ def _output(value: Any) -> None:
     typer.echo(json.dumps(value, ensure_ascii=False, indent=2, default=str))
 
 
-def _fail(code: str, message: str, *, exit_code: int = 1) -> None:
-    typer.echo(json.dumps({"error": {"code": code, "message": message}}), err=True)
+def _fail(code: str, message: str, *, exit_code: int = 1, run_id: str | None = None) -> None:
+    error = {"code": code, "message": message}
+    if run_id is not None:
+        error["details"] = {"runId": run_id}
+    typer.echo(json.dumps({"error": error}), err=True)
     raise typer.Exit(exit_code)
 
 
@@ -63,6 +67,7 @@ def _load_payload(payload: Path | None, data: str | None = None) -> dict:
     return value
 
 
+@contextmanager
 def _application():
     from jobctrl.app.bootstrap import create_application
 
@@ -70,11 +75,15 @@ def _application():
 
     try:
         features = os.environ.get("JOBCTRL_FEATURES")
-        return create_application(_workspace_path(), enabled_features=features.split(",") if features else None)
+        application = create_application(_workspace_path(), enabled_features=features.split(",") if features else None)
     except AppError as error:
         _fail(error.code, error.message)
     except Exception:
         _fail("application_unavailable", "The application composition could not be initialized.")
+    try:
+        yield application
+    finally:
+        application.close()
 
 
 def _run(awaitable):
@@ -108,11 +117,11 @@ async def _request(method: str, path: str, body: dict | None = None):
     parsed = urlsplit(path)
     if not path.startswith("/v1/") or parsed.scheme or parsed.netloc or parsed.fragment:
         _fail("invalid_path", "Request path must be a local /v1/ application path.", exit_code=2)
-    application = _application()
-    token = CapabilityToken(application.runtime.workspace).read_or_create()
-    transport = httpx.ASGITransport(app=create_http_app(application), client=("127.0.0.1", 0))
-    async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8787", timeout=None) as client:
-        response = await client.request(method.upper(), path, json=body, headers={"authorization": f"Bearer {token}"})
+    with _application() as application:
+        token = CapabilityToken(application.runtime.workspace).read_or_create()
+        transport = httpx.ASGITransport(app=create_http_app(application), client=("127.0.0.1", 0))
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8787", timeout=None) as client:
+            response = await client.request(method.upper(), path, json=body, headers={"authorization": f"Bearer {token}"})
     if response.status_code >= 400:
         try:
             value = response.json()
@@ -125,13 +134,32 @@ async def _request(method: str, path: str, body: dict | None = None):
     return response
 
 
+async def _wait_for_run(application, run_id: str, *, failure_code: str = "action_failed"):
+    from jobctrl.app.errors import AppError
+
+    try:
+        while True:
+            run = application.action_run(run_id)
+            if run["status"] == "succeeded":
+                return run
+            if run["status"] in {"failed", "cancelled", "start_failed"}:
+                _fail(run.get("errorCode") or failure_code,
+                      "The durable run ended without success. Inspect its recorded outcome.", run_id=run_id)
+            await asyncio.sleep(0.25)
+    except AppError as error:
+        _fail(error.code, error.message, run_id=run_id)
+    except asyncio.CancelledError:
+        _fail("interrupted", "The command stopped waiting. Inspect the same durable run before retrying.",
+              exit_code=130, run_id=run_id)
+
+
 async def _execute(action_name: str, payload: dict, *, background: bool, idempotency_key: str | None = None):
-    application = _application()
-    if background:
-        return await application.submit(action_name, payload, idempotency_key=idempotency_key)
-    if idempotency_key:
-        _fail("invalid_idempotency_key", "--idempotency-key requires --background.", exit_code=2)
-    return await application.execute(action_name, payload)
+    with _application() as application:
+        receipt = await application.submit(action_name, payload, idempotency_key=idempotency_key)
+        if background:
+            return receipt
+        completed = await _wait_for_run(application, receipt["runId"])
+        return completed["result"]
 
 
 def _version(value: bool) -> None:
@@ -155,7 +183,8 @@ def main(
 @app.command()
 def actions() -> None:
     """List the explicit actions registered by the installed feature composition."""
-    _output({"actions": sorted(_application().actions)})
+    with _application() as application:
+        _output({"actions": sorted(application.actions)})
 
 
 @app.command()
@@ -235,18 +264,12 @@ async def _preparation(recipe: str, job_ids: list[str], *, limit: int | None = N
         payload["allow_below_threshold"] = True
     if discovery is not None:
         payload["discovery"] = discovery
-    application = _application()
-    receipt = await application.submit("preparation.run", payload, idempotency_key=idempotency_key)
-    if not wait:
-        return receipt
-    _output(receipt)
-    while True:
-        run = application.action_run(receipt["runId"])
-        if run["status"] == "succeeded":
-            return run
-        if run["status"] in {"failed", "cancelled", "start_failed"}:
-            _fail(run.get("errorCode") or "preparation_failed", "The preparation run ended without success; inspect its run ID and stage outcomes.")
-        await asyncio.sleep(0.25)
+    with _application() as application:
+        receipt = await application.submit("preparation.run", payload, idempotency_key=idempotency_key)
+        if not wait:
+            return receipt
+        _output(receipt)
+        return await _wait_for_run(application, receipt["runId"], failure_code="preparation_failed")
 
 
 def _recipe_command(recipe: str):
@@ -397,9 +420,9 @@ def material_locale(
 def check_posting_availability(job_id: str) -> None:
     """Refresh the saved posting through Jobs source-bound availability authority."""
     async def refresh():
-        application = _application()
-        snapshot = application.services["jobs"].get_job(job_id)
-        return await application.submit("jobs.refresh", {"job_id": job_id, "expectedRevision": snapshot["revision"]})
+        with _application() as application:
+            snapshot = application.services["jobs"].get_job(job_id)
+            return await application.submit("jobs.refresh", {"job_id": job_id, "expectedRevision": snapshot["revision"]})
     _output(_run(refresh()))
 
 
@@ -551,24 +574,24 @@ def job(
 ) -> None:
     """Inspect a saved JobId/URL, import a new URL, or submit its explicit recipe."""
     async def execute():
-        application = _application()
-        jobs = application.services["jobs"]
-        if urlsplit(target).scheme in {"http", "https"}:
-            snapshot = jobs.resolve_url(target)
-            if snapshot is None:
-                if any((apply_ready, prepare, score, tailor)):
-                    _fail("saved_job_required", "Import the URL first, then inspect and review its saved data before requesting preparation or Apply.", exit_code=2)
-                return await application.submit("jobs.capture_url", {"url": target})
-        else:
-            snapshot = jobs.get_job(target)
-        if sum((apply_ready, prepare, score, tailor)) > 1:
-            _fail("explicit_job_action_required", "Choose one explicit job action.", exit_code=2)
-        if apply_ready:
-            return await application.submit("applications.run_approved", {"limit": 1, "url": snapshot["url"]})
-        if any((prepare, score, tailor)):
-            recipe = "prepare" if prepare else "score" if score else "tailor"
-            return await _preparation(recipe, [snapshot["job_id"]], wait=wait)
-        return snapshot
+        with _application() as application:
+            jobs = application.services["jobs"]
+            if urlsplit(target).scheme in {"http", "https"}:
+                snapshot = jobs.resolve_url(target)
+                if snapshot is None:
+                    if any((apply_ready, prepare, score, tailor)):
+                        _fail("saved_job_required", "Import the URL first, then inspect and review its saved data before requesting preparation or Apply.", exit_code=2)
+                    return await application.submit("jobs.capture_url", {"url": target})
+            else:
+                snapshot = jobs.get_job(target)
+            if sum((apply_ready, prepare, score, tailor)) > 1:
+                _fail("explicit_job_action_required", "Choose one explicit job action.", exit_code=2)
+            if apply_ready:
+                return await application.submit("applications.run_approved", {"limit": 1, "url": snapshot["url"]})
+            if any((prepare, score, tailor)):
+                recipe = "prepare" if prepare else "score" if score else "tailor"
+                return await _preparation(recipe, [snapshot["job_id"]], wait=wait)
+            return snapshot
     _output(_run(execute()))
 
 
@@ -576,7 +599,8 @@ def job(
 def run_status(run_id: str) -> None:
     """Inspect the canonical durable run without starting it again."""
     async def inspect():
-        return _application().action_run(run_id)
+        with _application() as application:
+            return application.action_run(run_id)
     _output(_run(inspect()))
 
 
@@ -584,7 +608,8 @@ def run_status(run_id: str) -> None:
 def cancel(run_id: str) -> None:
     """Request cancellation of the existing durable action."""
     async def stop():
-        return await _application().cancel(run_id)
+        with _application() as application:
+            return await application.cancel(run_id)
     _output(_run(stop()))
 
 
@@ -607,7 +632,7 @@ def init() -> None:
 
 @app.command()
 def doctor(json_output: bool = typer.Option(False, "--json")) -> None:
-    """Inspect real Profile, providers, browser, worker, budget and Temporal readiness."""
+    """Inspect Profile, providers, browsers, spend, PostgreSQL, DBOS and worker readiness."""
     _output(_run(_request("GET", "/v1/setup/status")).json())
 
 
@@ -727,9 +752,9 @@ def extension_token(rotate: bool = typer.Option(False, "--rotate")) -> None:
     """Show the local pairing capability only on this explicit command."""
     from jobctrl.app.security import CapabilityToken
 
-    application = _application()
-    token = CapabilityToken(application.runtime.workspace)
-    _output({"token": token.rotate() if rotate else token.read_or_create()})
+    with _application() as application:
+        token = CapabilityToken(application.runtime.workspace)
+        _output({"token": token.rotate() if rotate else token.read_or_create()})
 
 
 @app.command("profile-transfer")
@@ -739,9 +764,9 @@ def profile_transfer(
     confirm_profile_only_reset: bool = typer.Option(False, "--confirm-profile-only-reset", help="Explicitly transfer only Profile; other application data starts empty."),
     browser_sources: Path = typer.Option(..., "--browser-sources", help="Complete read-only browser Profile sources/attachment manifest."),
 ) -> None:
-    """Deliberate breaking cutover: preserve full Profile into a new workspace.
+    """Transfer a legacy Profile into a new workspace and PostgreSQL database.
 
-    Source data remains untouched. No current workspace selector is changed.
+    Set JOBCTRL_PROFILE_TARGET_DATABASE_URL to the empty destination database.
     """
     if not confirm_profile_only_reset:
         _fail("confirmation_required", "Pass --confirm-profile-only-reset after reviewing that only Profile transfers.", exit_code=2)
@@ -756,6 +781,7 @@ def profile_transfer(
     if target.exists() or target.is_symlink():
         _fail("target_exists", "Target must not exist; existing data is never overwritten.", exit_code=2)
     from jobctrl.app.bootstrap import create_application
+    from jobctrl.app.database import Database
     from jobctrl.app.errors import AppError
     from jobctrl.features.profile.transfer import export_legacy_profile, import_profile, validate_bundle
 
@@ -767,9 +793,21 @@ def profile_transfer(
         if transferred.get("transfer_complete") is not True:
             _fail("profile_transfer_incomplete", "The browser Profile export is incomplete; no target was created.")
         digest = hashlib.sha256(json.dumps(bundle, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        database_url = os.environ.get("JOBCTRL_PROFILE_TARGET_DATABASE_URL")
+        if not database_url:
+            _fail("database_url_required", "Set JOBCTRL_PROFILE_TARGET_DATABASE_URL to a new empty PostgreSQL database.", exit_code=2)
+        if Database.probe(target, database_url=database_url) is not None:
+            _fail("target_database_exists", "Choose a new empty PostgreSQL database for the Profile transfer.", exit_code=2)
         target.mkdir(mode=0o700, parents=False, exist_ok=False)
-        application = create_application(target, enabled_features={"profile"})
-        import_profile(application.services["profile"], bundle)
+        database = Database(target, database_url=database_url)
+        try:
+            application = create_application(target, enabled_features={"profile"}, database=database)
+            try:
+                import_profile(application.services["profile"], bundle)
+            finally:
+                application.close()
+        finally:
+            database.close()
         receipt = {
             "schema": "jobctrl.profile-cutover.v1", "status": "complete", "sourcePreserved": True,
             "target": str(target), "profileBundleSha256": digest, "reset": "all-non-profile-application-data",
@@ -787,41 +825,33 @@ def profile_transfer(
         _fail("profile_transfer_failed", "Profile transfer did not complete; preserve the source and inspect any owned target before retrying.")
 
 
+@app.command("postgres-upgrade")
+def postgres_upgrade(
+    sqlite: Path = typer.Option(..., "--sqlite", help="Current JobCtrl Python SQLite snapshot to import."),
+    artifact_workspace: Path | None = typer.Option(None, "--artifact-workspace"),
+    rehearse: bool = typer.Option(False, "--rehearse", help="Validate and leave the destination staged."),
+) -> None:
+    """Import an existing Python workspace into its selected PostgreSQL database."""
+    from jobctrl.app.postgres_upgrade import main as upgrade
+
+    arguments = ["--sqlite", str(sqlite), "--workspace", str(_workspace_path())]
+    if artifact_workspace is not None:
+        arguments.extend(["--artifact-workspace", str(artifact_workspace)])
+    if rehearse:
+        arguments.append("--rehearse")
+    raise typer.Exit(upgrade(arguments))
+
+
 @app.command()
 def backup(output: Path | None = typer.Option(None, "--output", "-o")) -> None:
-    """Create a consistent read-only snapshot; never replace an existing file."""
-    import sqlite3
-    import tempfile
-    from contextlib import closing
-    from datetime import datetime, timezone
+    """Create a PostgreSQL archive of the current workspace database."""
+    from jobctrl.app.errors import AppError
+    from jobctrl.app.postgres_backup import backup_workspace
 
-    source = _workspace_path() / "jobctrl.db"
-    if source.is_symlink() or not source.is_file():
-        _fail("database_missing", "Choose an existing regular application database.")
-    destination = output or (_workspace_path() / "backups" / ("jobctrl-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + ".db"))
-    destination = destination.expanduser().absolute()
-    if destination.is_dir():
-        destination /= "jobctrl-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + ".db"
-    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    temporary = None
     try:
-        fd, name = tempfile.mkstemp(prefix=".jobctrl-backup-", suffix=".db", dir=destination.parent)
-        os.close(fd)
-        temporary = Path(name)
-        with closing(sqlite3.connect(source.resolve().as_uri() + "?mode=ro", uri=True)) as reader:
-            with closing(sqlite3.connect(temporary)) as writer:
-                reader.backup(writer)
-                if writer.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-                    _fail("backup_invalid", "The SQLite snapshot did not pass integrity validation.")
-        os.link(temporary, destination)
-        _output({"backedUp": True, "path": str(destination), "bytes": destination.stat().st_size})
-    except FileExistsError:
-        _fail("output_exists", "The backup destination already exists; choose a new path.")
-    except (OSError, sqlite3.Error):
-        _fail("backup_failed", "A consistent backup could not be created; the source was not modified.")
-    finally:
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)
+        _output(backup_workspace(_workspace_path(), output))
+    except AppError as error:
+        _fail(error.code, error.message)
 
 
 @app.command("gmail-auth")

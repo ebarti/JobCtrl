@@ -36,9 +36,10 @@ dependencies = [
     "pypdf>=6.14.2",
     "pyyaml>=6.0",
     "pandas>=2.0",
-    # 1.31 includes the cancellation/shield fix, while retaining activity
-    # cancellation details and run IDs used by enrichment ownership fencing.
-    "temporalio>=1.31",
+    # The application and its durable work share the workspace's PostgreSQL database.
+    "dbos==3.6.0",
+    "psycopg[binary]>=3.2,<4",
+    "sqlalchemy>=2.0,<3",
     "opentelemetry-api>=1.27",
     "opentelemetry-sdk>=1.27",
     "opentelemetry-exporter-otlp-proto-http>=1.27",

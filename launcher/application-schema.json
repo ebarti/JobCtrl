@@ -1,1 +1,1 @@
-{"schemaVersion":1,"application":"jobctrl-python","applicationId":1245926228,"userVersion":1}
+{"schemaVersion":2,"application":"jobctrl-python","storage":"postgresql","major":17,"workflow":"dbos"}

@@ -119,9 +119,8 @@ test("a missing description determination can use a raw title once while a state
   expect(await posted()).toMatchObject({ sourceCurrent: false, determination: { receipt_id: salaryFact.determination.receipt_id } });
 });
 
-test.describe("title pay upgrade", () => {
-  test.use({ sourceRevision: "17f9ce5be1de2f21735fb27d5dfe8f6d1b7c8118" });
-  test("a retained market estimate keeps its exact old pay source across a title-only upgrade", async ({ api, app }) => {
+test.describe("title pay persistence", () => {
+  test("a retained market estimate and title pay keep their exact sources across restart", async ({ api, app }) => {
     const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
     await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
     const job = await capture(api, "legacy-title", title);
@@ -132,9 +131,7 @@ test.describe("title pay upgrade", () => {
       attribution: "Authored synthetic title upgrade report" }]));
     const options = { observationsJsonPath: report, includeEuroTopTech: false };
     const before = await action(api, "compensation.refresh", { ...options, jobId: job.job_id });
-    const empty = await modelCall(app, "compensation.posted_pay");
-    expect(sources(empty.body)).toEqual([{ source_id: `posting:${job.job_id}:${job.revision}:missing`, text: "" }]);
-    empty.reply(missing);
+    await replyToTitle(app, job.job_id, job.revision);
     for (const kind of ["posting", "report"]) {
       const call = await modelCall(app, "compensation.classification");
       const source = sources(call.body)[0]!;
@@ -147,12 +144,11 @@ test.describe("title pay upgrade", () => {
     const market = () => json(api, "get", `/v1/jobs/${job.job_id}/compensation/market`);
     const originalMarket = await market();
     expect(originalMarket).toMatchObject({ recordStatus: "recorded" });
-    await app.upgradeSource();
+    const originalPosted = await json(api, "get", `/v1/jobs/${job.job_id}/compensation/posted`);
+    expect(originalPosted).toMatchObject({ sourceCurrent: true, fact: { sourceField: "title", period: "unknown" } });
+    await app.restartWorker();
+    await app.restartApi();
     expect(await market()).toEqual(originalMarket);
-    const recovered = await action(api, "compensation.refresh_stale", options);
-    await replyToTitle(app, job.job_id, job.revision);
-    expect(await completed(api, recovered.runId)).toMatchObject({ result: { status: "succeeded", results: [{ jobId: job.job_id, status: "succeeded" }] } });
-    expect(await json(api, "get", `/v1/jobs/${job.job_id}/compensation/posted`)).toMatchObject({ sourceCurrent: true, fact: { sourceField: "title", period: "unknown" } });
-    expect(await market()).toMatchObject({ recordStatus: "recorded", sourceCurrent: true });
+    expect(await json(api, "get", `/v1/jobs/${job.job_id}/compensation/posted`)).toEqual(originalPosted);
   });
 });

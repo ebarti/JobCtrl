@@ -20,7 +20,8 @@ from jobctrl.features.discovery.adapters.jobstreaming import supported_boards
 def build_feature(runtime, *, jobs, profile=None):
     runtime.database.initialize_feature("discovery", SCHEMA)
     repository = DiscoveryRepository(runtime.database, runtime.events, runtime.settings, boards=supported_boards())
-    repository.seed_boards()
+    if not runtime.database.read_only:
+        repository.seed_boards()
     execution = DiscoveryExecutionAdapter(repository, jobs=jobs, workspace=runtime.workspace)
     service = DiscoveryService(
         repository,
@@ -187,4 +188,6 @@ def build_feature(runtime, *, jobs, profile=None):
         # tabs, schedules and clients share one active search per workspace.
         action_scopes={"discovery.search": lambda _payload: "workspace"},
         action_admissions={"discovery.search": service.check_search_admission},
+        action_finalizers={"discovery.search": service.finalize},
+        action_versions={"discovery.search": "search-pages-v1"},
     )

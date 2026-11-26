@@ -1,4 +1,4 @@
-"""SQLite adapter for Applications' private feedback/outcome store contract."""
+"""PostgreSQL adapter for Applications' private feedback/outcome store contract."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ def _values(data, columns):
             for column in columns]
 
 
-class SqliteFeedbackRepository:
+class PostgresFeedbackRepository:
     def __init__(self, runtime):
         self.database, self.events = runtime.database, runtime.events
         self.database.initialize_feature("application_feedback", SCHEMA)
@@ -34,7 +34,6 @@ class SqliteFeedbackRepository:
             yield connection
             return
         with self.database.connect() as conn:
-            conn.execute("BEGIN")
             yield conn
 
     def transaction(self, connection=None):
@@ -132,7 +131,10 @@ class SqliteFeedbackRepository:
 
     def suggestion_counts(self, tenant_id, connection=None):
         with self.read(connection) as conn:
-            return dict(conn.execute("SELECT status,COUNT(*) FROM application_feedback_suggestions WHERE tenant_id=? AND status!='pending' GROUP BY status", (tenant_id,)))
+            return {row[0]: row[1] for row in conn.execute(
+                "SELECT status,COUNT(*) FROM application_feedback_suggestions "
+                "WHERE tenant_id=? AND status!='pending' GROUP BY status", (tenant_id,),
+            )}
 
     def append_event(self, connection, event_type, payload, job_id):
         self.events.append(connection, event_type, payload, feature="applications", aggregate_id=job_id)

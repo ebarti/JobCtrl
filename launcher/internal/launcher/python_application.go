@@ -49,9 +49,26 @@ func historicalInspectionCommand(args []string) bool {
 }
 
 func checkPythonApplicationWorkspace(ctx launchContext) error {
+	if selected, err := readPostgresSelection(ctx, "active.json"); err == nil {
+		return validatePostgresVersion(selected.path(ctx))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	database := filepath.Join(ctx.Instance.StateDir, "jobctrl.db")
 	info, err := os.Lstat(database)
 	if errors.Is(err, os.ErrNotExist) {
+		history, e := temporalHistoryPath(ctx.Instance.StateDir)
+		if e != nil {
+			return e
+		}
+		if _, e = os.Lstat(history); !errors.Is(e, os.ErrNotExist) {
+			return errors.New("existing workflow history has lost its Python application database; preserve the workspace")
+		}
+		for _, suffix := range []string{"-wal", "-journal", "-shm"} {
+			if _, e = os.Lstat(database + suffix); !errors.Is(e, os.ErrNotExist) {
+				return errors.New("orphaned SQLite companions: preserve the workspace")
+			}
+		}
 		return nil
 	}
 	if err != nil {

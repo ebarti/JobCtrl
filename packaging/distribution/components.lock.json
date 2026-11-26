@@ -21,13 +21,13 @@
       "license": "PSF-2.0"
     },
     {
-      "id": "temporal-runtime-archive",
-      "componentId": "temporal-runtime",
-      "version": "1.7.3",
-      "url": "https://github.com/temporalio/cli/releases/download/v1.7.3/temporal_cli_1.7.3_darwin_arm64.tar.gz",
-      "sha256": "ed0357cd77aef432021556c36c3b68bfbe38b86677dd7db86575abd312dc56c7",
+      "id": "postgres-runtime-source",
+      "componentId": "postgres-runtime",
+      "version": "17.12",
+      "url": "https://ftp.postgresql.org/pub/source/v17.12/postgresql-17.12.tar.gz",
+      "sha256": "b46f61048797e9cf1728dd4ac459831f5126c4745581f729500541c86e59a8ac",
       "archiveType": "tar.gz",
-      "license": "MIT"
+      "license": "PostgreSQL"
     },
     {
       "id": "chromium-core-headless-archive",

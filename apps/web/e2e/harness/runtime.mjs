@@ -25,7 +25,8 @@ const groupScript = fileURLToPath(
   new URL("process-group.mjs", import.meta.url),
 );
 export const python = path.join(repo, "workers/automation/.venv/bin/python");
-const temporal = process.env.JOBCTRL_TEMPORAL_CLI_PATH ?? "temporal";
+const pgBin = process.env.JOBCTRL_POSTGRES_BIN_DIR ?? "";
+const pgCommand = (name) => pgBin ? path.join(pgBin, name) : name;
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 class ProcessExited extends Error {}
 
@@ -251,46 +252,25 @@ export async function ownedRun() {
   return target;
 }
 
-export async function temporalStack() {
+export async function postgresStack() {
   const root = await ownedRun();
-  const directory = await mkdtemp(path.join(root, "temporal-"));
+  const directory = await mkdtemp(path.join(root, "postgres-"));
   const identity = await lstat(directory, { bigint: true });
   const home = path.join(directory, "home");
+  const data = path.join(directory, "data");
   await mkdir(home, { mode: 0o700 });
-  const address = `127.0.0.1:${await port()}`;
+  const env = environment(home);
+  // Each private socket directory is unique, so workers can share this port.
+  const pgPort = 5432;
+  await execFile(pgCommand("initdb"), ["-D", data, "-U", "jobctrl", "-A", "trust", "--no-locale", "--encoding=UTF8"], { env, timeout: 60_000 });
   async function start() {
-    const service = await launch(
-      "temporal",
-      temporal,
-      [
-        "server",
-        "start-dev",
-        "--ip",
-        "127.0.0.1",
-        "--port",
-        address.split(":")[1],
-        "--headless",
-        "--db-filename",
-        path.join(directory, "history.db"),
-        "--log-level",
-        "error",
-      ],
-      { directory, env: environment(home) },
-    );
+    const service = await launch("postgres", pgCommand("postgres"), ["-D", data, "-h", "", "-p", String(pgPort), "-k", directory], { directory, env });
     try {
-      await waitFor(
-        async () => {
-          service.assertRunning();
-          const { stdout } = await execFile(
-            temporal,
-            ["operator", "cluster", "health", "--address", address],
-            { timeout: 3_000, env: environment(home) },
-          );
-          return stdout.includes("SERVING");
-        },
-        "real Temporal health",
-        { timeout: 40_000 },
-      );
+      await waitFor(async () => {
+        service.assertRunning();
+        await execFile(pgCommand("pg_isready"), ["-h", directory, "-p", String(pgPort), "-U", "jobctrl"], { env, timeout: 2_000 });
+        return true;
+      }, "owned PostgreSQL readiness", { timeout: 40_000 });
     } catch (error) {
       await service.stop();
       throw error;
@@ -300,25 +280,14 @@ export async function temporalStack() {
   let service = await start();
   let retainState = false;
   return {
-    address,
-    async history(workflowId, runId) {
-      const { stdout } = await execFile(
-        temporal,
-        ["workflow", "show", "--address", address, "--workflow-id", workflowId, "--run-id", runId, "--output", "json"],
-        { timeout: 5_000, env: environment(home) },
-      );
-      return JSON.parse(stdout).events;
+    async createDatabase() {
+      const name = `e2e_${randomUUID().replaceAll("-", "")}`;
+      await execFile(pgCommand("createdb"), ["-h", directory, "-p", String(pgPort), "-U", "jobctrl", name], { env, timeout: 10_000 });
+      return `postgresql://jobctrl@/${name}?host=${encodeURIComponent(directory)}&port=${pgPort}`;
     },
-    async pause() {
-      await service.stop();
-      service = null;
-    },
-    async resume() {
-      service = await start();
-    },
-    retainForDiagnosis() {
-      retainState = true;
-    },
+    async pause() { await service.stop(); service = null; },
+    async resume() { service = await start(); },
+    retainForDiagnosis() { retainState = true; },
     async close() {
       await service?.stop();
       if (!retainState) await removeAllocated(directory, identity);
@@ -327,7 +296,7 @@ export async function temporalStack() {
 }
 
 export async function applicationStack(
-  temporalAddress,
+  databaseURL,
   {
     features,
     discoveryTransport = "jobstreaming",
@@ -335,7 +304,11 @@ export async function applicationStack(
     sourceRevision,
     fitRecoveryDebugger = false,
     cohortBoundaryDebugger = false,
+    modelReceiptDebugger = false,
     preflight = false,
+    sqlitePredecessor = false,
+    predecessorPython: explicitPredecessorPython,
+    createDatabase,
     pythonExecutable = process.env.JOBCTRL_E2E_PYTHON ?? python,
     staticDir = process.env.JOBCTRL_E2E_STATIC_DIR ??
       path.join(repo, "dist/web"),
@@ -344,6 +317,7 @@ export async function applicationStack(
   const started = performance.now();
   const root = await ownedRun();
   const directory = await mkdtemp(path.join(root, "application-"));
+  let predecessorPython = explicitPredecessorPython;
   const home = path.join(directory, "home");
   const workspace = path.join(directory, "workspace");
   await mkdir(home, { mode: 0o700 });
@@ -363,9 +337,8 @@ export async function applicationStack(
     JOBCTRL_DIR: workspace,
     JOBCTRL_API_HOST: "127.0.0.1",
     JOBCTRL_API_PORT: baseURL.split(":")[2],
-    JOBCTRL_TEMPORAL_ADDRESS: temporalAddress,
-    JOBCTRL_TEMPORAL_NAMESPACE: "default",
-    JOBCTRL_TEMPORAL_TASK_QUEUE: `e2e-${randomUUID()}`,
+    JOBCTRL_DATABASE_URL: databaseURL,
+    ...(pgBin ? { JOBCTRL_POSTGRES_BIN_DIR: pgBin } : {}),
     JOBCTRL_SYNTHETIC_BOUNDARIES: "1",
     JOBCTRL_E2E_TOKEN: token,
     JOBCTRL_E2E_PROVIDER_URL: `${external.url}/model`,
@@ -410,6 +383,8 @@ export async function applicationStack(
   const recoveryPaused = path.join(directory, "fit-recovery-paused.json");
   const cohortArm = path.join(directory, "cohort-boundary-arm");
   const cohortPaused = path.join(directory, "cohort-boundary-paused.json");
+  const modelReceiptArm = path.join(directory, "model-receipt-arm");
+  const modelReceiptPaused = path.join(directory, "model-receipt-paused.json");
   async function startWorker(workerFeatures, selected = workspace, selectedEnv = env) {
     worker = await launch(
       `worker-${++workerGeneration}`,
@@ -417,11 +392,10 @@ export async function applicationStack(
       [
         ...(recoveryDebuggerEnabled ? [path.join(repo, "apps/web/e2e/harness/fit-recovery-debugger.py"), recoveryArm, recoveryPaused]
           : cohortBoundaryDebugger ? [path.join(repo, "apps/web/e2e/harness/cohort-boundary-debugger.py"), cohortArm, cohortPaused]
+          : modelReceiptDebugger ? [path.join(repo, "apps/web/e2e/harness/model-receipt-debugger.py"), modelReceiptArm, modelReceiptPaused]
           : ["-m", "jobctrl.app.worker"]),
         "--workspace",
         selected,
-        "--temporal-address",
-        temporalAddress,
       ],
       { directory, env: workerFeatures === undefined ? selectedEnv : { ...selectedEnv, JOBCTRL_FEATURES: workerFeatures } },
     );
@@ -431,7 +405,7 @@ export async function applicationStack(
   async function startServer(selected = workspace, selectedEnv = env) {
     server = await launch(
       ++serverGeneration === 1 ? "api" : `api-${serverGeneration}`,
-      pythonExecutable,
+      sqlitePredecessor && !upgraded ? predecessorPython : pythonExecutable,
       ["-m", "jobctrl.app.server", "--host", "127.0.0.1", "--port", env.JOBCTRL_API_PORT,
         "--workspace", selected, ...(preflight ? [] : ["--static-dir", staticDir])],
       { directory, env: selectedEnv },
@@ -457,24 +431,39 @@ export async function applicationStack(
       throw new Error(`Could not isolate compensation automation through Settings (${configured.status})`);
   }
   try {
-    if (sourceRevision) {
-      if (!upgradeRevisions.includes(sourceRevision))
+    if (sqlitePredecessor && sourceRevision)
+      throw new Error("SQLite migration cannot combine an older source revision.");
+    const predecessorRevision = sqlitePredecessor ? "db8043d5f86389e1427d5335e3da336dc35437f6" : sourceRevision;
+    if (predecessorRevision) {
+      if (!sqlitePredecessor && !upgradeRevisions.includes(predecessorRevision))
         throw new Error("The source upgrade journey requires its exact fixed predecessor.");
-      const resolved = await execFile("git", ["rev-parse", "--verify", `${sourceRevision}^{commit}`], { cwd: repo, timeout: 5_000 });
-      if (resolved.stdout.trim() !== sourceRevision)
+      const resolved = await execFile("git", ["rev-parse", "--verify", `${predecessorRevision}^{commit}`], { cwd: repo, timeout: 5_000 });
+      if (resolved.stdout.trim() !== predecessorRevision)
         throw new Error("The predecessor source identity did not resolve exactly.");
       const archive = path.join(directory, "predecessor-source.tar");
       const extracted = path.join(directory, "predecessor-source");
       await mkdir(extracted, { mode: 0o700 });
-      await execFile("git", ["archive", "--format=tar", "--output", archive, sourceRevision, "workers/automation/src"], { cwd: repo, timeout: 10_000 });
+      await execFile("git", ["archive", "--format=tar", "--output", archive, predecessorRevision, ...(sqlitePredecessor ? ["workers/automation"] : ["workers/automation/src"])], { cwd: repo, timeout: 10_000 });
       await execFile("tar", ["-xf", archive, "-C", extracted], { timeout: 10_000 });
       await rm(archive);
       env.PYTHONPATH = path.join(extracted, "workers/automation/src");
+      if (sqlitePredecessor) {
+        delete env.JOBCTRL_DATABASE_URL;
+        if (!predecessorPython) {
+          const project = path.join(extracted, "workers/automation");
+          const venv = path.join(directory, "predecessor-venv");
+          const setupEnv = { PATH: process.env.PATH, HOME: home, UV_PROJECT_ENVIRONMENT: venv, UV_LOCKED: "1", UV_PYTHON: process.env.UV_PYTHON ?? "3.12" };
+          await execFile("uv", ["sync", "--project", project, "--locked", "--all-extras", "--no-install-project"], { env: setupEnv, timeout: 180_000, maxBuffer: 1_000_000 });
+          predecessorPython = path.join(venv, "bin/python");
+        }
+      }
     }
     if (fitRecoveryDebugger && !["df06b08ae201f7a73dc2c359944c06daf517c69e", "b49dc52e3d727356870317069304ac6ceb9f1237"].includes(sourceRevision))
       throw new Error("The durable-gap debugger requires an exact declared Fit predecessor.");
-    if (cohortBoundaryDebugger && (sourceRevision || fitRecoveryDebugger))
-      throw new Error("The cohort guard debugger requires the exact current candidate worker.");
+    if ((cohortBoundaryDebugger || modelReceiptDebugger) && (sourceRevision || sqlitePredecessor || fitRecoveryDebugger))
+      throw new Error("The selected debugger requires the exact current candidate worker.");
+    if (cohortBoundaryDebugger && modelReceiptDebugger)
+      throw new Error("Only one candidate debugger can be installed.");
     if (process.env.JOBCTRL_E2E_INSTALLED === "1") {
       const payloadRoot = await realpath(process.env.JOBCTRL_E2E_PAYLOAD_DIR);
       const [executable, assets] = await Promise.all([
@@ -526,7 +515,7 @@ export async function applicationStack(
     );
     if (!nativeAccountingPreflight) env.JOBCTRL_E2E_CREDENTIAL_HELPER = credentialHelper;
     await startServer();
-    if (!preflight) {
+    if (!preflight && !sqlitePredecessor) {
       await startWorker();
       await waitFor(async () => {
         worker.assertRunning();
@@ -535,7 +524,25 @@ export async function applicationStack(
         });
         return (await health.json()).worker?.healthy === true;
       }, "live Python worker registration");
-      await disableCompensationAutomation();
+    }
+    if (!preflight) await disableCompensationAutomation();
+    async function inspectProviderReceipts(operation) {
+      const inspected = await execFile(pythonExecutable, ["-c", `
+import json, os, pathlib, sys
+import psycopg
+root = pathlib.Path(sys.argv[1])
+marker = root / ".jobctrl-e2e-owned.json"
+assert root.resolve() == root and not marker.is_symlink()
+owner = json.loads(marker.read_text())
+assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
+with psycopg.connect(os.environ["JOBCTRL_DATABASE_URL"], options="-c default_transaction_read_only=on") as conn:
+    rows = conn.execute("""SELECT m.receipt_id,c.owner_key,m.status,m.input_fingerprint,m.cost_usd
+                           FROM app_model_calls m LEFT JOIN app_model_operation_receipts c
+                             ON c.receipt_id=m.receipt_id
+                           WHERE m.operation=%s ORDER BY m.receipt_id""", (sys.argv[2],)).fetchall()
+print(json.dumps([dict(zip(("receiptId","ownerKey","status","inputFingerprint","costUsd"), row)) for row in rows]))
+`, workspace, operation], { env, timeout: 5_000, maxBuffer: 100_000 });
+      return JSON.parse(inspected.stdout);
     }
     return {
       baseURL,
@@ -545,19 +552,6 @@ export async function applicationStack(
       setupMs: Math.round(performance.now() - started),
       get workerPid() {
         return worker?.pid;
-      },
-      async alternateNamespaceApi(namespace) {
-        const apiPort = String(await port());
-        const url = `http://127.0.0.1:${apiPort}`;
-        const alternate = await launch("alternate-api", pythonExecutable,
-          ["-m", "jobctrl.app.server", "--host", "127.0.0.1", "--port", apiPort, "--workspace", workspace],
-          { directory, env: { ...env, JOBCTRL_API_PORT: apiPort, JOBCTRL_TEMPORAL_NAMESPACE: namespace } });
-        services.push(alternate);
-        await waitFor(async () => {
-          alternate.assertRunning();
-          return (await fetch(`${url}/v1/health`)).ok;
-        }, "alternate workspace API health");
-        return url;
       },
       async restartApi({ freshWorkspace = false } = {}) {
         if (replacementWorkspace || preflight || sourceRevision)
@@ -569,7 +563,8 @@ export async function applicationStack(
           replacementWorkspace = { path: selected, identity: await lstat(selected, { bigint: true }) };
           await writeFile(path.join(selected, ".jobctrl-e2e-owned.json"),
             JSON.stringify({ version: 1, workspace: selected, token }), { flag: "wx", mode: 0o600 });
-          selectedEnv = { ...env, JOBCTRL_DIR: selected, JOBCTRL_TEMPORAL_TASK_QUEUE: `e2e-${randomUUID()}` };
+          if (!createDatabase) throw new Error("A fresh workspace requires an owned database allocator");
+          selectedEnv = { ...env, JOBCTRL_DIR: selected, JOBCTRL_DATABASE_URL: await createDatabase() };
           if (env.JOBCTRL_E2E_CREDENTIAL_HELPER) {
             const helper = path.join(selected, "credential-helper");
             await writeFile(helper, await readFile(env.JOBCTRL_E2E_CREDENTIAL_HELPER), { flag: "wx", mode: 0o700 });
@@ -595,10 +590,6 @@ export async function applicationStack(
         if (!cohortBoundaryDebugger) throw new Error("The cohort guard debugger is not enabled.");
         await writeFile(cohortArm, "final-currentness-guard", { mode: 0o600, flag: "wx" });
       },
-      async armCohortReceiptPause() {
-        if (!cohortBoundaryDebugger) throw new Error("The cohort receipt debugger is not enabled.");
-        await writeFile(cohortArm, "fit-receipt", { mode: 0o600, flag: "wx" });
-      },
       async waitForCohortBoundaryPause(boundary = "final-currentness-guard") {
         await waitFor(async () => {
           try { const pause = JSON.parse(await readFile(cohortPaused, "utf8")); return pause.pid === worker.pid && pause.boundary === boundary; }
@@ -611,31 +602,26 @@ export async function applicationStack(
         process.kill(worker.pid, "SIGCONT");
         await rm(cohortPaused);
       },
-      async cohortReceiptCheckpoint(runId) {
-        const inspected = await execFile(pythonExecutable, ["-c", `
-import json, os, pathlib, sqlite3, sys
-root = pathlib.Path(sys.argv[1])
-owner = json.loads((root / '.jobctrl-e2e-owned.json').read_text())
-assert root.resolve() == root and owner['workspace'] == str(root) and owner['token'] == os.environ['JOBCTRL_E2E_TOKEN']
-file = root / 'jobctrl.db'
-assert file.is_file() and not file.is_symlink()
-with sqlite3.connect(file.as_uri() + '?mode=ro', uri=True) as conn:
-    conn.execute('PRAGMA query_only=ON')
-    conn.row_factory = sqlite3.Row
-    phase = conn.execute("SELECT status,input_json FROM preparation_steps WHERE run_id=? AND job_id='' AND stage='fit_qualify'", (sys.argv[2],)).fetchone()
-    assert phase is not None
-    operation = json.loads(phase['input_json'])['_operation_id']
-    row = conn.execute('SELECT state_json FROM fit_initial_cohort_operations WHERE operation_id=?', (operation,)).fetchone()
-    assert row is not None
-    state = json.loads(row['state_json'])
-    call = state['call']
-    receipts = [dict(row) for row in conn.execute("SELECT receipt_id,status,operation,input_fingerprint FROM app_model_calls WHERE input_fingerprint=? ORDER BY receipt_id", (call['input_fingerprint'],))]
-    print(json.dumps({'operationId': operation, 'phaseStatus': phase['status'], 'stateStatus': state['status'],
-                      'callStatus': call['status'], 'inputFingerprint': call['input_fingerprint'],
-                      'storedReceiptId': (call.get('result') or {}).get('provenance', {}).get('receipt_id'), 'receipts': receipts}))
-`, workspace, runId], { env, timeout: 5_000, maxBuffer: 100_000 });
-        return JSON.parse(inspected.stdout);
+      async armModelReceiptPause() {
+        if (!modelReceiptDebugger) throw new Error("The model receipt debugger is not enabled.");
+        await writeFile(modelReceiptArm, "", { mode: 0o600, flag: "wx" });
       },
+      async waitForModelReceiptPause() {
+        let receiptId;
+        await waitFor(async () => {
+          try {
+            const pause = JSON.parse(await readFile(modelReceiptPaused, "utf8"));
+            if (pause.pid === worker.pid) receiptId = pause.receiptId;
+            return typeof receiptId === "string";
+          } catch (error) {
+            if (error.code === "ENOENT" || error instanceof SyntaxError) return false;
+            throw error;
+          }
+        }, "owned model receipt pause");
+        return receiptId;
+      },
+      fitProviderReceipts: () => inspectProviderReceipts("fit.qualification-batch"),
+      requirementsExtractionReceipts: () => inspectProviderReceipts("requirements.extract"),
       async armFitRecoveryPause(operation) {
         if (!recoveryDebuggerEnabled || !["fit.catalog-impact", "fit.qualification-batch"].includes(operation))
           throw new Error("Only the declared predecessor external-call gap can be armed.");
@@ -649,18 +635,42 @@ with sqlite3.connect(file.as_uri() + '?mode=ro', uri=True) as conn:
       },
       async fitRefreshCheckpoint(operationId) {
         const result = await execFile(pythonExecutable, ["-c", `
-import json, pathlib, sqlite3, sys
+import json, os, pathlib, sys
+import psycopg
 root = pathlib.Path(sys.argv[1])
 owned = json.loads((root / '.jobctrl-e2e-owned.json').read_text())
 if owned['workspace'] != str(root): raise RuntimeError('Workspace ownership mismatch')
-connection = sqlite3.connect((root / 'jobctrl.db').as_uri() + '?mode=ro', uri=True)
-connection.execute('PRAGMA query_only=ON')
-row = connection.execute('SELECT state_json FROM fit_refresh_operations WHERE operation_id=?', (sys.argv[2],)).fetchone()
+connection = psycopg.connect(os.environ['JOBCTRL_DATABASE_URL'], options='-c default_transaction_read_only=on')
+row = connection.execute('SELECT state_json FROM fit_refresh_operations WHERE operation_id=%s', (sys.argv[2],)).fetchone()
 if row is None: raise RuntimeError('The admitted refresh has no checkpoint')
 state = json.loads(row[0])
 print(json.dumps({key: state[key] for key in ('calls', 'checkpoints', 'impact_selection_scope_version', 'qualification_transport_version') if key in state}))
 `, workspace, operationId], { env, timeout: 5_000, maxBuffer: 4 * 1024 * 1024 });
         return JSON.parse(result.stdout);
+      },
+      async upgradeSqliteToPostgres() {
+        if (!sqlitePredecessor || upgraded || preflight)
+          throw new Error("Only the exact owned SQLite predecessor can migrate once.");
+        await server.stop();
+        services.splice(services.indexOf(server), 1);
+        const backup = path.join(directory, "pre-upgrade.db");
+        await execFile(predecessorPython, ["-m", "jobctrl", "--workspace", workspace, "backup", "--output", backup], { env, cwd: repo, timeout: 15_000 });
+        if (process.env.JOBCTRL_E2E_INSTALLED === "1") delete env.PYTHONPATH;
+        else env.PYTHONPATH = process.env.JOBCTRL_E2E_SOURCE_PATH ?? path.join(repo, "workers/automation/src");
+        env.JOBCTRL_DATABASE_URL = databaseURL;
+        const args = ["-m", "jobctrl.app.postgres_upgrade", "--sqlite", backup, "--workspace", workspace];
+        const first = JSON.parse((await execFile(pythonExecutable, args, { env, cwd: repo, timeout: 60_000 })).stdout);
+        const repeated = JSON.parse((await execFile(pythonExecutable, args, { env, cwd: repo, timeout: 60_000 })).stdout);
+        if (first.receipt_sha256 !== repeated.receipt_sha256 || first.rows !== repeated.rows)
+          throw new Error("Repeated import changed the source receipt or row count.");
+        upgraded = true;
+        await startServer();
+        await startWorker();
+        await waitFor(async () => {
+          worker.assertRunning();
+          return (await (await fetch(`${baseURL}/v1/health`)).json()).worker?.healthy === true;
+        }, "migrated Python worker registration");
+        return { first, repeated };
       },
       async upgradeSource() {
         if (!sourceRevision || upgraded || preflight)
@@ -696,37 +706,37 @@ print(json.dumps({key: state[key] for key in ('calls', 'checkpoints', 'impact_se
       },
       async databaseSchemaFingerprint() {
         const inspected = await execFile(pythonExecutable, ["-c", `
-import hashlib, json, os, pathlib, sqlite3, sys
+import hashlib, json, os, pathlib, sys
+import psycopg
 root = pathlib.Path(sys.argv[1])
 owner = json.loads((root / ".jobctrl-e2e-owned.json").read_text())
 assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
-file = root / "jobctrl.db"
-assert not file.is_symlink()
-with sqlite3.connect(file.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
-    conn.execute("PRAGMA query_only=ON")
-    schema = conn.execute("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").fetchall()
-print(hashlib.sha256(json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
+with psycopg.connect(os.environ["JOBCTRL_DATABASE_URL"], options="-c default_transaction_read_only=on") as conn:
+    rows = conn.execute("SELECT 'table', tablename, tablename, NULL FROM pg_catalog.pg_tables WHERE schemaname='public' UNION ALL SELECT 'index', indexname, tablename, indexdef FROM pg_catalog.pg_indexes WHERE schemaname='public' ORDER BY 1,2").fetchall()
+
+print(hashlib.sha256(json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()).hexdigest())
 `, workspace], { env, timeout: 5_000, maxBuffer: 10_000 });
         return inspected.stdout.trim();
       },
       async databaseSchemaInventory() {
         const inspected = await execFile(pythonExecutable, ["-c", `
-import json, os, pathlib, sqlite3, sys
+import json, os, pathlib, sys
+import psycopg
 root = pathlib.Path(sys.argv[1])
 owner = json.loads((root / ".jobctrl-e2e-owned.json").read_text())
 assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
-file = root / "jobctrl.db"
-assert not file.is_symlink()
-with sqlite3.connect(file.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
-    conn.execute("PRAGMA query_only=ON")
-    rows = conn.execute("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").fetchall()
+with psycopg.connect(os.environ["JOBCTRL_DATABASE_URL"], options="-c default_transaction_read_only=on") as conn:
+    rows = conn.execute("SELECT 'table', tablename, tablename, NULL FROM pg_catalog.pg_tables WHERE schemaname='public' UNION ALL SELECT 'index', indexname, tablename, indexdef FROM pg_catalog.pg_indexes WHERE schemaname='public' ORDER BY 1,2").fetchall()
+
 print(json.dumps([dict(zip(("type", "name", "table", "sql"), row)) for row in rows], sort_keys=True))
 `, workspace], { env, timeout: 5_000, maxBuffer: 200_000 });
         return JSON.parse(inspected.stdout);
       },
       async requirementsReconciliation(operationId) {
         const inspected = await execFile(pythonExecutable, ["-c", `
-import json, os, pathlib, sqlite3, sys
+import json, os, pathlib, sys
+import psycopg
+from psycopg.rows import dict_row
 root = pathlib.Path(sys.argv[1])
 assert root.is_dir() and root.resolve() == root
 marker = root / ".jobctrl-e2e-owned.json"
@@ -735,12 +745,8 @@ owner = json.loads(marker.read_text())
 assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
 operation_id = sys.argv[2]
 assert 0 < len(operation_id) <= 240
-file = root / "jobctrl.db"
-assert file.is_file() and not file.is_symlink() and file.parent.resolve() == root
-with sqlite3.connect(file.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
-    conn.execute("PRAGMA query_only=ON")
-    conn.row_factory = sqlite3.Row
-    row = conn.execute("SELECT operation_id,action_fingerprint,input_fingerprint,captured_catalog_revision,published_catalog_revision,decision_json,receipt_json,report_json FROM requirements_reconciliations WHERE operation_id=?", (operation_id,)).fetchone()
+with psycopg.connect(os.environ["JOBCTRL_DATABASE_URL"], options="-c default_transaction_read_only=on", row_factory=dict_row) as conn:
+    row = conn.execute("SELECT operation_id,action_fingerprint,input_fingerprint,captured_catalog_revision,published_catalog_revision,decision_json,receipt_json,report_json FROM requirements_reconciliations WHERE operation_id=%s", (operation_id,)).fetchone()
     assert row is not None
     result = {key: row[key] for key in ("operation_id", "action_fingerprint", "input_fingerprint", "captured_catalog_revision", "published_catalog_revision")}
     result.update(selection=json.loads(row["decision_json"]), authority_receipt=json.loads(row["receipt_json"]), stored_report=json.loads(row["report_json"]))
@@ -757,10 +763,44 @@ print(json.dumps(result, sort_keys=True))
       async restoreRendering() {
         await rm(renderFailure);
       },
+      async inspectLogicalBackup(archiveName, runId) {
+        if (!createDatabase || !/^[a-z0-9-]+\.pgdump$/.test(archiveName))
+          throw new Error("Inspect only an archive created by this owned application stack.");
+        const archive = path.join(directory, archiveName);
+        const archiveInfo = await lstat(archive);
+        if (!archiveInfo.isFile() || archiveInfo.isSymbolicLink() || archiveInfo.mode & 0o077)
+          throw new Error("The logical archive must be a private regular file from this journey.");
+        const scratchUrl = await createDatabase();
+        const scratchEnv = { ...env, JOBCTRL_DATABASE_URL: scratchUrl };
+        await execFile(pgCommand("pg_restore"), ["--exit-on-error", "--single-transaction", "--no-owner", "--no-acl",
+          "--dbname", scratchUrl, archive], { env: scratchEnv, timeout: 45_000 });
+        const inspection = `import json, os, sys
+import psycopg
+with psycopg.connect(os.environ['JOBCTRL_DATABASE_URL']) as connection:
+    row = connection.execute('SELECT a.status, w.status FROM app_action_runs a JOIN dbos.workflow_status w ON a.workflow_id=w.workflow_uuid WHERE a.run_id=%s', (sys.argv[1],)).fetchone()
+    print(json.dumps(row))`;
+        const readArchive = async () => JSON.parse((await execFile(pythonExecutable,
+          ["-c", inspection, runId], { env: scratchEnv, timeout: 10_000 })).stdout);
+        const archived = await readArchive();
+        const clonePort = String(await port());
+        async function trial(args) {
+          try {
+            await execFile(pythonExecutable, args, { env: scratchEnv, cwd: repo, timeout: 25_000 });
+            return { exitCode: 0, stderr: "" };
+          } catch (error) {
+            if (!Number.isInteger(error.code)) throw error;
+            return { exitCode: error.code, stderr: error.stderr };
+          }
+        }
+        const cli = await trial(["-m", "jobctrl", "--workspace", workspace, "pipeline-status"]);
+        const api = await trial(["-m", "jobctrl.app.server", "--workspace", workspace, "--port", clonePort]);
+        const worker = await trial(["-m", "jobctrl.app.worker", "--workspace", workspace]);
+        return { archived, afterTrial: await readArchive(), cli, api, worker };
+      },
       async cli(args, { input } = {}) {
         try {
           const pending = execFile(
-            pythonExecutable,
+            sqlitePredecessor && !upgraded ? predecessorPython : pythonExecutable,
             ["-m", "jobctrl", "--workspace", workspace, ...args],
             {
               cwd: repo,
@@ -836,33 +876,27 @@ for index in 0..<document.pageCount {
         // Read actual committed SDK checkpoints/receipts; never seed domain
         // state or infer an acknowledgement from the next outbound request.
         const inspected = await execFile(pythonExecutable, ["-c", `
-import hashlib, json, os, pathlib, sqlite3, sys
+import hashlib, json, os, pathlib, sys
+import psycopg
 root = pathlib.Path(sys.argv[1])
 owner = json.loads((root / ".jobctrl-e2e-owned.json").read_text())
 assert owner["workspace"] == str(root) and owner["token"] == os.environ["JOBCTRL_E2E_TOKEN"]
 run_id = sys.argv[2]
-key = hashlib.sha256(json.dumps(run_id, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
-directory = root / "discovery-checkpoints" / key
-assert not directory.is_symlink() and not directory.parent.is_symlink()
 adapters = []
-for path in directory.glob("*.sqlite3"):
-    assert not path.is_symlink() and path.resolve().is_relative_to(root.resolve())
-    with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
-        conn.execute("PRAGMA query_only=ON")
-        request_fingerprint = conn.execute("SELECT request_fingerprint FROM jobstreaming_search_checkpoint").fetchone()[0]
-        for site, state, emitted, completed in conn.execute("SELECT site,state_json,emitted_count,completed FROM jobstreaming_adapter_checkpoint"):
-            keys = [row[0] for row in conn.execute("SELECT job_key FROM jobstreaming_seen_job_key WHERE site=? ORDER BY position", (site,))]
-            adapters.append({"unitId": path.stem, "site": site, "state": json.loads(state), "emittedCount": emitted, "completed": bool(completed), "requestFingerprint": request_fingerprint, "acknowledgedKeys": keys})
-path = root / "jobctrl.db"
-assert not path.is_symlink()
-with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
-    conn.execute("PRAGMA query_only=ON")
-    receipts = dict(conn.execute("SELECT outcome,COUNT(*) FROM discovery_intake_receipts WHERE run_id=? GROUP BY outcome", (run_id,)))
+with psycopg.connect(os.environ["JOBCTRL_DATABASE_URL"], options="-c default_transaction_read_only=on") as conn:
+    for unit_id, raw in conn.execute("SELECT unit_id,state_json FROM discovery_provider_checkpoints WHERE run_id=%s ORDER BY unit_id", (run_id,)):
+        checkpoint = json.loads(raw)
+        for site, adapter in checkpoint["adapters"].items():
+            keys = [row[0] for row in conn.execute("SELECT job_key FROM discovery_provider_keys WHERE run_id=%s AND unit_id=%s AND site=%s ORDER BY ordinal", (run_id, unit_id, site))]
+            assert len(keys) == adapter["emitted_count"]
+            adapters.append({"unitId": unit_id, "site": site, "state": adapter["state"], "emittedCount": adapter["emitted_count"], "completed": adapter["completed"], "requestFingerprint": checkpoint["request_fingerprint"], "acknowledgedKeys": keys})
+    received = [{"unitId": unit_id, "site": site, "jobKey": job_key, "status": status} for unit_id, site, job_key, status in conn.execute("SELECT unit_id,site,job_key,status FROM discovery_postings WHERE run_id=%s ORDER BY received_order", (run_id,))]
+    receipts = dict(conn.execute("SELECT outcome,COUNT(*) FROM discovery_intake_receipts WHERE run_id=%s GROUP BY outcome", (run_id,)))
     receipt_keys = []
-    for unit_id, data in conn.execute("SELECT unit_id,data_json FROM discovery_intake_receipts WHERE run_id=? ORDER BY created_at,receipt_key", (run_id,)):
+    for unit_id, data in conn.execute("SELECT unit_id,data_json FROM discovery_intake_receipts WHERE run_id=%s ORDER BY created_at,receipt_key", (run_id,)):
         data = json.loads(data)
         receipt_keys.append({"unitId": unit_id, "site": data["sourceId"].removeprefix("jobstreaming:"), "jobKey": data["sourceNativeId"], "isNew": data["isNew"]})
-    saved = conn.execute("SELECT request_json FROM discovery_runs WHERE run_id=?", (run_id,)).fetchone()
+    saved = conn.execute("SELECT request_json FROM discovery_runs WHERE run_id=%s", (run_id,)).fetchone()
     frozen_request = json.loads(saved[0]) if saved else {}
     request = {
         "fingerprint": hashlib.sha256(json.dumps(frozen_request, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest(),
@@ -871,7 +905,7 @@ with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
     }
     units = []
     from jobstreaming import build_search_request
-    for unit_id, status, data, result in conn.execute("SELECT unit_id,status,data_json,result_json FROM discovery_units WHERE run_id=? ORDER BY unit_id", (run_id,)):
+    for unit_id, status, data, result in conn.execute("SELECT unit_id,status,data_json,result_json FROM discovery_units WHERE run_id=%s ORDER BY unit_id", (run_id,)):
         data = json.loads(data)
         if "sites" not in data:
             continue
@@ -880,8 +914,8 @@ with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=1) as conn:
             country_indeed=data["country_indeed"], description_format="markdown", linkedin_fetch_description=data["linkedin_fetch_description"])
         units.append({"unitId": unit_id, "status": status, "resultsPerSite": data["results_per_site"], "sdkFingerprint": sdk.fingerprint(),
             "sdkResultsWanted": sdk.results_wanted, "sdkMaxPages": sdk.max_pages, "result": json.loads(result) if result else None})
-print(json.dumps({"adapters": adapters, "receipts": receipts, "receiptKeys": receipt_keys, "request": request, "units": units}))
-`, workspace, runId], { env, timeout: 5000, maxBuffer: 100_000 });
+print(json.dumps({"adapters": adapters, "received": received, "receipts": receipts, "receiptKeys": receipt_keys, "request": request, "units": units}))
+`, workspace, runId], { env, timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
         return JSON.parse(inspected.stdout);
       },
       async restartWorker(workerFeatures) {
@@ -942,10 +976,10 @@ print(json.dumps({"adapters": adapters, "receipts": receipts, "receiptKeys": rec
   }
 }
 
-export async function startRuntime({ temporalAddress, ...options }) {
-  if (!temporalAddress)
-    throw new Error("startRuntime requires its owned Temporal server address");
-  return applicationStack(temporalAddress, options);
+export async function startRuntime({ databaseURL, ...options }) {
+  if (!databaseURL)
+    throw new Error("startRuntime requires its owned PostgreSQL database URL");
+  return applicationStack(databaseURL, options);
 }
 
 export async function demoStack() {

@@ -107,6 +107,19 @@ integrated parity.
 - [Source Startup Preserves Temporal History Identity](#_2026-10-29-source-startup-preserves-temporal-history-identity) · 2026-10-29
 - [Local LLM Spend Ceiling](#_2026-07-03-local-llm-spend-ceiling) · 2026-07-03
 
+## 2026-11-25: Local PostgreSQL and DBOS
+
+The source candidate uses one local PostgreSQL database per workspace for
+application tables and DBOS system tables. Acceptance and durable enqueue share
+a transaction. Stable action identities, cancellation, external-effect fences,
+model accounting and accepted artifacts remain feature-owned. The current
+Python SQLite workspace is the supported import source; a consistent snapshot,
+staged verification and preserved source are required. Predecessor Temporal
+history is retained but is not replayed. This supersedes earlier SQLite and
+Temporal runtime decisions where they conflict; those entries remain historical.
+The [migration plan](plans/2026-11-25-postgres-dbos.md) defines proof gates;
+source changes alone do not establish a release or live migration.
+
 ## 2026-05-01: Local-First Before SaaS Hardening
 
 Status: accepted

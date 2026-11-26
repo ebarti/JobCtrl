@@ -72,6 +72,13 @@ An accepted model decision can report that no contacts were found. A provider
 failure, spending limit, unverifiable response, or page without readable text
 is shown separately with a next step. A failed attempt retains the last accepted
 review and its candidates.
+
+The task and its queued action are saved together. Stopping a queued action
+marks the research task as cancelled before it contacts a provider. If a worker
+restarts during research, it uses the page saved for that source and the receipt
+for its original model call. An unresolved provider response leaves the charge
+uncertain and stops an automatic repeat of that call.
+
 If an older empty result has no recorded model decision, or its record is
 unavailable, JobCtrl reports that uncertainty instead of claiming no contacts
 were found. Existing proposals remain reviewable.

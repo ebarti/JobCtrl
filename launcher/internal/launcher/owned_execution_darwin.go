@@ -67,7 +67,7 @@ type executionCommand struct {
 	Executable             string
 	Arguments, Environment []string
 	Directory              string
-	TemporalProbe          bool `json:",omitempty"`
+	PostgresProbe          bool `json:",omitempty"`
 }
 type executionControl struct {
 	Signal int `json:"signal"`
@@ -564,7 +564,7 @@ func cleanupExecutionLeftovers(ids [2]uint64) error {
 // A health command has no cooperative shutdown work. Kill only members of
 // its dedicated, verified coalition, including children that escaped a process
 // group or outlived their parent. Repeated censuses cover a final concurrent fork.
-func cleanupTemporalProbeMembers(ids [2]uint64) error {
+func cleanupPostgresProbeMembers(ids [2]uint64) error {
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		members, err := executionMembers(ids)
@@ -580,7 +580,7 @@ func cleanupTemporalProbeMembers(ids [2]uint64) error {
 			}
 		}
 		if time.Now().After(deadline) {
-			return errors.New("Temporal probe members survived cleanup")
+			return errors.New("PostgreSQL probe members survived cleanup")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -674,7 +674,7 @@ func ownedExecutionHelper(args []string) (handled bool, resultErr error) {
 		}
 	}()
 	child := exec.Command(command.Executable, command.Arguments...)
-	if command.TemporalProbe {
+	if command.PostgresProbe {
 		child = payloadCommand(command.Environment, command.Executable, command.Arguments...)
 	}
 	child.Env = command.Environment
@@ -733,8 +733,8 @@ func ownedExecutionHelper(args []string) (handled bool, resultErr error) {
 		}
 	}()
 	cleanup := func() error {
-		if command.TemporalProbe {
-			return cleanupTemporalProbeMembers(ids)
+		if command.PostgresProbe {
+			return cleanupPostgresProbeMembers(ids)
 		}
 		var cleanupErr error
 		if cancellation == nil {
@@ -757,10 +757,10 @@ waiting:
 	for {
 		select {
 		case waitErr = <-waited:
-			if cancellation != nil || isApplyExecution(command.Arguments) || command.TemporalProbe {
+			if cancellation != nil || isApplyExecution(command.Arguments) || command.PostgresProbe {
 				cleanupErr := error(nil)
-				if command.TemporalProbe {
-					cleanupErr = cleanupTemporalProbeMembers(ids)
+				if command.PostgresProbe {
+					cleanupErr = cleanupPostgresProbeMembers(ids)
 				} else {
 					cleanupErr = cleanupExecutionLeftovers(ids)
 				}
@@ -777,9 +777,9 @@ waiting:
 			if cancellation != nil {
 				continue
 			}
-			if command.TemporalProbe {
-				if err := cleanupTemporalProbeMembers(ids); err != nil {
-					return true, errors.Join(errors.New("could not clean Temporal probe"), err)
+			if command.PostgresProbe {
+				if err := cleanupPostgresProbeMembers(ids); err != nil {
+					return true, errors.Join(errors.New("could not clean PostgreSQL probe"), err)
 				}
 				waitErr = <-waited
 				break waiting
@@ -923,10 +923,10 @@ func runInOwnedExecutionWithAdmission(ctx launchContext, args []string, stdout, 
 }
 
 // The probe admits only the already-validated Temporal executable in a fresh scope.
-func runTemporalProbeInOwnedExecution(parent context.Context, ctx launchContext, executable string, args []string, output io.Writer) error {
-	command := &executionCommand{Executable: executable, Arguments: args, Directory: ctx.Instance.StateDir, TemporalProbe: true}
+func runPostgresProbeInOwnedExecution(parent context.Context, ctx launchContext, executable string, args []string, output io.Writer) error {
+	command := &executionCommand{Executable: executable, Arguments: args, Directory: ctx.Instance.StateDir, PostgresProbe: true}
 	err := runOwnedExecution(parent, ctx, nil, output, output, command, nil)
-	var cleanupErr *temporalProbeCleanupError
+	var cleanupErr *postgresProbeCleanupError
 	if parent.Err() != nil && !errors.As(err, &cleanupErr) {
 		return parent.Err()
 	}
@@ -1089,8 +1089,8 @@ func runOwnedExecution(parent context.Context, ctx launchContext, args []string,
 			_ = connection.Close()
 			releaseLock(admission)
 			admission = nil
-			if err := finishTemporalProbeScope(ctx, scope); err != nil {
-				resultErr = errors.Join(resultErr, &temporalProbeCleanupError{err})
+			if err := finishPostgresProbeScope(ctx, scope); err != nil {
+				resultErr = errors.Join(resultErr, &postgresProbeCleanupError{err})
 			}
 		}()
 	}
@@ -1308,20 +1308,20 @@ func attestFinishedOrdinaryExecution(ctx launchContext, scope executionScope) er
 	}
 }
 
-func finishTemporalProbeScope(ctx launchContext, scope executionScope) error {
+func finishPostgresProbeScope(ctx launchContext, scope executionScope) error {
 	exited, err := waitExecutionRoot(scope.RootPID, scope.RootIdentity, 2*time.Second)
 	if err != nil {
 		return err
 	}
 	if !exited {
-		return errors.New("Temporal probe helper did not exit; execution receipt preserved")
+		return errors.New("PostgreSQL probe helper did not exit; execution receipt preserved")
 	}
 	members, err := executionMembers(scope.CoalitionIDs)
 	if err != nil {
 		return err
 	}
 	if len(members) != 0 {
-		return errors.New("Temporal probe execution still has members; execution receipt preserved")
+		return errors.New("PostgreSQL probe execution still has members; execution receipt preserved")
 	}
 	controlPath := ctx.Instance.ControlPath
 	if controlPath == "" {
@@ -1332,7 +1332,7 @@ func finishTemporalProbeScope(ctx launchContext, scope executionScope) error {
 		// The holder may be stopping this supervisor, so never wait for it.
 		// Preserve the joined/zero proof before deferred bootout can reap the
 		// coalition, even if the holder has not made its first census yet.
-		return preserveTemporalProbeCompletion(ctx, scope)
+		return preservePostgresProbeCompletion(ctx, scope)
 	}
 	if err != nil {
 		return err
@@ -1341,16 +1341,16 @@ func finishTemporalProbeScope(ctx launchContext, scope executionScope) error {
 	return retireExecutionScopesWithCompletion(ctx, []executionScope{scope}, false, false, false)
 }
 
-var readTemporalProbeScopes = readOwnedExecutionScopes
+var readPostgresProbeScopes = readOwnedExecutionScopes
 
 // Only the original probe controller calls this after joining its exact helper
 // and verifying zero members. Stop may hold the control lock before its first
 // census. Publishing this scope's same-boot proof cannot admit any new work and
 // lets that later census resolve a reaped coalition without trusting absence.
-func preserveTemporalProbeCompletion(ctx launchContext, scope executionScope) error {
+func preservePostgresProbeCompletion(ctx launchContext, scope executionScope) error {
 	boot, err := executionBootSession()
 	if err != nil || boot != scope.BootSession {
-		return errors.Join(errors.New("Temporal probe boot identity changed"), err)
+		return errors.Join(errors.New("PostgreSQL probe boot identity changed"), err)
 	}
 	raw, err := json.Marshal(scope)
 	if err != nil {
@@ -1360,7 +1360,7 @@ func preserveTemporalProbeCompletion(ctx launchContext, scope executionScope) er
 	matches := func(completion executionCompletion) bool {
 		return completion.Scope == scope && completion.ReceiptSHA256 == expected.ReceiptSHA256 && completion.VerificationBootSession == boot
 	}
-	scopes, err := readTemporalProbeScopes(ctx)
+	scopes, err := readPostgresProbeScopes(ctx)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			// Stop can durably complete and remove a receipt after ReadDir but
@@ -1370,7 +1370,7 @@ func preserveTemporalProbeCompletion(ctx launchContext, scope executionScope) er
 			if completionErr == nil && matches(completion) {
 				return nil
 			}
-			return errors.Join(err, errors.New("Temporal probe receipt disappeared without its exact completion"), completionErr)
+			return errors.Join(err, errors.New("PostgreSQL probe receipt disappeared without its exact completion"), completionErr)
 		}
 		return err
 	}
@@ -1378,7 +1378,7 @@ func preserveTemporalProbeCompletion(ctx launchContext, scope executionScope) er
 	for _, current := range scopes {
 		if current.ID == scope.ID {
 			if current != scope {
-				return errors.New("Temporal probe receipt changed before completion")
+				return errors.New("PostgreSQL probe receipt changed before completion")
 			}
 			active = true
 		}
@@ -1389,7 +1389,7 @@ func preserveTemporalProbeCompletion(ctx launchContext, scope executionScope) er
 	}
 	if errors.Is(completionErr, os.ErrNotExist) {
 		if !active {
-			return errors.New("Temporal probe receipt disappeared without its exact completion")
+			return errors.New("PostgreSQL probe receipt disappeared without its exact completion")
 		}
 		if err := publishExecutionCompletion(ctx, expected); err != nil {
 			return err
@@ -1397,7 +1397,7 @@ func preserveTemporalProbeCompletion(ctx launchContext, scope executionScope) er
 		completion, completionErr = readExecutionCompletion(ctx, scope.ID)
 	}
 	if completionErr != nil || !matches(completion) {
-		return errors.Join(errors.New("Temporal probe completion does not match its exact receipt and boot"), completionErr)
+		return errors.Join(errors.New("PostgreSQL probe completion does not match its exact receipt and boot"), completionErr)
 	}
 	return nil
 }

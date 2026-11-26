@@ -9,7 +9,7 @@ import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
 from email.message import Message
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from urllib.parse import urlsplit
 
 from jobctrl.network.fetch_failures import (
@@ -174,80 +174,90 @@ class PublicHttpUrlRouteGuard:
     def blocked(self) -> bool:
         return self.blocked_reason is not None
 
+    def resolve_route(
+        self, request_url: str, method: str, resource_type: str | None, headers: Mapping[str, str],
+    ) -> Literal["abort", "continue"] | RouteFulfillment:
+        """Return the same read-only route decision for both browser APIs."""
+        try:
+            request_scheme = urlsplit(request_url).scheme.lower()
+        except ValueError:
+            request_scheme = ""
+        if request_scheme in _IGNORABLE_BROWSER_LOCAL_SCHEMES:
+            # Adopted Chrome profiles may start installed extensions while
+            # the job page loads. Keep local extension resources blocked,
+            # but do not misattribute that browser-owned noise to the
+            # remote posting as a fatal unsafe redirect.
+            return "abort"
+        if self._fetch_public_requests and method not in {"GET", "HEAD"}:
+            # Public pages commonly emit analytics, telemetry, or API
+            # writes while loading. We deliberately do not replay those
+            # side-effecting requests through the pinned fetcher, but
+            # aborting one must not poison an otherwise safe top-level
+            # read. Availability captures require complete data evidence:
+            # a blocked API write can instead render a false closed view.
+            # Mark that capture incomplete without sending the write.
+            if self._include_resource_destination and resource_type not in {
+                "image", "font", "media",
+            }:
+                self._record_failure(
+                    request_url, f"browser_resource_method_{method}", PublicFetchFailureKind.FETCH_ERROR,
+                    resource_type=resource_type,
+                )
+            return "abort"
+        decision = validate_public_http_url(request_url, resolver=self._resolver)
+        if not decision.allowed:
+            self._record_failure(
+                request_url,
+                decision.reason or "URL is not a public HTTP(S) destination",
+                decision.failure_kind or PublicFetchFailureKind.UNSAFE_DESTINATION,
+                resource_type=resource_type,
+            )
+            return "abort"
+        if not self._fetch_public_requests:
+            return "continue"
+        headers = dict(headers)
+        if resource_type:
+            # Playwright routing may omit Sec-Fetch-Dest. Its native
+            # resource type still distinguishes passive assets from data.
+            headers = {name: value for name, value in headers.items() if str(name).lower() != "sec-fetch-dest"}
+            headers["sec-fetch-dest"] = {
+                "stylesheet": "style", "media": "video", "xhr": "empty", "fetch": "empty",
+            }.get(resource_type, resource_type)
+        try:
+            fulfillment = self._request_fetcher(request_url, method, headers)
+        except Exception as exc:
+            self._record_failure(
+                getattr(exc, "destination_url", None) or request_url,
+                str(exc) or "Public route fetch failed", classify_public_fetch_failure(exc),
+                resource_type=resource_type,
+            )
+            return "abort"
+        if method == "HEAD":
+            return RouteFulfillment(fulfillment.status, fulfillment.headers, b"")
+        return fulfillment
+
+    @staticmethod
+    def request_values(request: Any) -> tuple[str, str, str | None, dict[str, str]]:
+        return (
+            str(getattr(request, "url", "")),
+            str(getattr(request, "method", "GET") or "GET").upper(),
+            str(getattr(request, "resource_type", "")) or None,
+            dict(getattr(request, "headers", {}) or {}),
+        )
+
     def install(self) -> "PublicHttpUrlRouteGuard":
         route = getattr(self._page, "route", None)
         if not callable(route):
             return self
 
         def handler(playwright_route: Any, request: Any) -> None:
-            request_url = str(getattr(request, "url", ""))
-            resource_type = str(getattr(request, "resource_type", "")) or None
-            try:
-                request_scheme = urlsplit(request_url).scheme.lower()
-            except ValueError:
-                request_scheme = ""
-            if request_scheme in _IGNORABLE_BROWSER_LOCAL_SCHEMES:
-                # Adopted Chrome profiles may start installed extensions while
-                # the job page loads. Keep local extension resources blocked,
-                # but do not misattribute that browser-owned noise to the
-                # remote posting as a fatal unsafe redirect.
+            action = self.resolve_route(*self.request_values(request))
+            if action == "abort":
                 playwright_route.abort("blockedbyclient")
-                return
-            method = str(getattr(request, "method", "GET") or "GET").upper()
-            if self._fetch_public_requests and method not in {"GET", "HEAD"}:
-                # Public pages commonly emit analytics, telemetry, or API
-                # writes while loading. We deliberately do not replay those
-                # side-effecting requests through the pinned fetcher, but
-                # aborting one must not poison an otherwise safe top-level
-                # read. Availability captures require complete data evidence:
-                # a blocked API write can instead render a false closed view.
-                # Mark that capture incomplete without sending the write.
-                if self._include_resource_destination and str(getattr(request, "resource_type", "")) not in {
-                    "image", "font", "media",
-                }:
-                    self._record_failure(
-                        request_url, f"browser_resource_method_{method}", PublicFetchFailureKind.FETCH_ERROR,
-                        resource_type=resource_type,
-                    )
-                playwright_route.abort("blockedbyclient")
-                return
-            decision = validate_public_http_url(request_url, resolver=self._resolver)
-            if not decision.allowed:
-                self._record_failure(
-                    request_url,
-                    decision.reason or "URL is not a public HTTP(S) destination",
-                    decision.failure_kind or PublicFetchFailureKind.UNSAFE_DESTINATION,
-                    resource_type=resource_type,
-                )
-                playwright_route.abort("blockedbyclient")
-                return
-            if not self._fetch_public_requests:
+            elif action == "continue":
                 playwright_route.continue_()
-                return
-            headers = getattr(request, "headers", {}) or {}
-            headers = dict(headers)
-            if resource_type:
-                # Playwright routing may omit Sec-Fetch-Dest. Its native
-                # resource type still distinguishes passive assets from data.
-                headers = {name: value for name, value in headers.items() if str(name).lower() != "sec-fetch-dest"}
-                headers["sec-fetch-dest"] = {
-                    "stylesheet": "style", "media": "video", "xhr": "empty", "fetch": "empty",
-                }.get(resource_type, resource_type)
-            try:
-                fulfillment = self._request_fetcher(request_url, method, headers)
-            except Exception as exc:
-                self._record_failure(
-                    getattr(exc, "destination_url", None) or request_url,
-                    str(exc) or "Public route fetch failed", classify_public_fetch_failure(exc),
-                    resource_type=resource_type,
-                )
-                playwright_route.abort("blockedbyclient")
-                return
-            playwright_route.fulfill(
-                status=fulfillment.status,
-                headers=fulfillment.headers,
-                body=b"" if method == "HEAD" else fulfillment.body,
-            )
+            else:
+                playwright_route.fulfill(status=action.status, headers=action.headers, body=action.body)
 
         self._handler = handler
         route("**/*", handler)
@@ -290,11 +300,11 @@ def _is_public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -
 def _fetch_public_route_request(
     url: str,
     method: str,
-    headers: Mapping[str, str],
+    headers: Mapping[str, str], *, socket_factory=None,
 ) -> RouteFulfillment:
     from jobctrl.network.public_http import build_public_http_opener
 
-    opener = build_public_http_opener(follow_redirects=False)
+    opener = build_public_http_opener(follow_redirects=False, socket_factory=socket_factory)
     request = urllib.request.Request(
         url,
         method=method,

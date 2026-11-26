@@ -18,11 +18,15 @@ import (
 
 const pythonApplicationUserVersion = int64(1)
 const applicationSchemaContractPath = "launcher/application-schema.json"
-const applicationSchemaContractBytes = "{\"schemaVersion\":1,\"application\":\"jobctrl-python\",\"applicationId\":1245926228,\"userVersion\":1}\n"
+const predecessorApplicationSchemaContractBytes = "{\"schemaVersion\":1,\"application\":\"jobctrl-python\",\"applicationId\":1245926228,\"userVersion\":1}\n"
 
 func readPythonApplicationSchemaContract(verified verifiedRelease) error {
 	if !usesPythonApplication(verified.runtime) || verified.runtime.LauncherProtocol != launcherProtocol || !protocolSupports(verified.distribution, launcherProtocol) {
 		return errors.New("release is not a compatible Python application; preserve the source and use explicit Profile-only transfer into a fresh workspace")
+	}
+	applicationSchemaContractBytes := predecessorApplicationSchemaContractBytes
+	if verified.runtime.SchemaVersion == 2 {
+		applicationSchemaContractBytes = "{\"schemaVersion\":2,\"application\":\"jobctrl-python\",\"storage\":\"postgresql\",\"major\":17,\"workflow\":\"dbos\"}\n"
 	}
 	var digest string
 	count := 0
@@ -93,6 +97,9 @@ func admitPythonApplicationLifecycle(ctx launchContext, verified verifiedRelease
 // Pair metadata binds both files and the target identity. Inspect self-contained
 // backup bytes only; an unfamiliar sidecar must not become restore authority.
 func verifyPythonApplicationPair(ctx launchContext, pair databasePair) error {
+	if pair.SchemaVersion == 2 {
+		return verifyPostgresPair(ctx, pair)
+	}
 	if pair.SchemaVersion != 1 || !pair.ReleaseReceipt.Valid() || pair.CreatedAt.IsZero() || len(pair.Files) != 2 ||
 		!filepath.IsLocal(pair.ID) || filepath.Base(pair.ID) != pair.ID || pair.ID == "." {
 		return errors.New("backup is not a complete bound target database pair")
@@ -131,6 +138,12 @@ func verifyPythonApplicationPair(ctx launchContext, pair databasePair) error {
 // Model calls may have charged an external provider even after its process
 // exits. A rollback cannot remove unresolved accounting from the live ledger.
 func refuseUnresolvedPythonSpendRecovery(ctx launchContext) error {
+	if selected, err := readPostgresSelection(ctx, "active.json"); err == nil {
+		_, err := postgresEffects(ctx, selected.path(ctx))
+		return err
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	if err := checkPythonApplicationWorkspace(ctx); err != nil {
 		return err
 	}

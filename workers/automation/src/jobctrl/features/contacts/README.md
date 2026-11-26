@@ -2,7 +2,7 @@
 
 Contacts owns confirmed people, fact provenance, reviewed CSV/vCard imports and
 supervised public-source research. `bootstrap.py` composes the service, its
-feature-owned SQLite store, HTTP routes and the `contacts.research` durable
+feature-owned PostgreSQL store, HTTP routes and the `contacts.research` durable
 action. It has no Outreach or Profile dependency. An employer-linked contact
 works when Jobs is omitted; a job link is checked through the Jobs public port.
 
@@ -34,7 +34,9 @@ The retained capability inventory is:
 
 `http.py` retains `/v1/contacts`, `/import`, `/research`, research detail and
 candidate confirmation, plus contact detail/PATCH/DELETE. Research POST returns
-202 only after the application confirms durable submission. A stable
+202 after the research task, action, and DBOS queue entry commit in one transaction.
+Worker recovery joins each saved page to its original run, source ordinal, and
+model receipt. The action finalizer records a user cancellation on the task. A stable
 `Idempotency-Key` (or optional UUID `requestId`) reuses the same task/run; changing
 the input under that identity conflicts. Other writes return canonical read DTOs.
 GET and HEAD remain read-only. A task's `/determinations` read exposes its exact

@@ -9,7 +9,7 @@ from jobctrl.app.model_capacity import wait_for_model_capacity
 from .domain import CONTRACT_VERSION, RequirementError
 from .http import ConsolidateRequest, CorrectionRequest, OccurrenceCorrectionsRequest, RefreshRequest, RevisionRequest, raise_application_error, routes
 from .model import RequirementModelAdapter
-from .repository import SqliteRequirementStore
+from .repository import PostgresRequirementStore
 from .schema import ATTEMPT_REFUSAL_SCHEMA, SCHEMA
 from .normalization_schema import REFRESH_TRANSPORT_SCHEMA, SCHEMA as NORMALIZATION_SCHEMA
 from .cohort_storage import SCHEMA as COHORT_SCHEMA
@@ -26,7 +26,7 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
     runtime.database.initialize_feature("requirements_normalization_v1", NORMALIZATION_SCHEMA)
     runtime.database.initialize_feature("requirements_refresh_transport_v1", REFRESH_TRANSPORT_SCHEMA)
     runtime.database.initialize_feature("requirements_initial_cohort_v1", COHORT_SCHEMA)
-    store = SqliteRequirementStore(runtime.database, runtime.events)
+    store = PostgresRequirementStore(runtime.database, runtime.events)
     service = RequirementsService(
         store, jobs, RequirementModelAdapter(runtime.model, store, jobs),
     )

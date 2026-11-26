@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from datetime import datetime, timezone
 
-from jobctrl.app.database import Database
+from jobctrl.app.database import Connection, Database
 from jobctrl.app.errors import NotFoundError
 
 
@@ -18,7 +17,7 @@ class EventStore:
     def __init__(self, database: Database):
         self.database = database
 
-    def append(self, connection: sqlite3.Connection, event_type: str, payload: dict,
+    def append(self, connection: Connection, event_type: str, payload: dict,
                *, feature: str, aggregate_id: str | None = None, level: str = "info", stage: str | None = None) -> int:
         if not connection.in_transaction:
             raise RuntimeError("Events must share a canonical write transaction")
@@ -34,11 +33,14 @@ class EventStore:
         encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
         if len(encoded.encode()) > 65536:
             raise ValueError("Event invalidation is too large")
-        cursor = connection.execute(
-            "INSERT INTO app_events(event_type,feature,aggregate_id,occurred_at,payload_json,level,stage) VALUES (?,?,?,?,?,?,?)",
+        # The workspace writer lock is held until commit, so a later cursor
+        # cannot become visible ahead of an earlier cursor still being written.
+        row = connection.execute(
+            "INSERT INTO app_events(event_type,feature,aggregate_id,occurred_at,payload_json,level,stage) "
+            "VALUES (?,?,?,?,?,?,?) RETURNING event_id",
             (event_type, feature, aggregate_id, now(), encoded, level, stage),
-        )
-        return int(cursor.lastrowid)
+        ).fetchone()
+        return row[0]
 
     def since(self, after: int = 0, *, limit: int = 200) -> list[dict]:
         with self.database.connect() as connection:
@@ -59,17 +61,27 @@ class EventStore:
     def page(self, *, before: int | None = None, limit: int = 100, feature: str | None = None,
              event_type: str | None = None, level: str | None = None, stage: str | None = None,
              aggregate_id: str | None = None, since: str | None = None, until: str | None = None, q: str = "") -> dict:
-        pattern = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        filters = []
+        parameters = []
+        for value, predicate in (
+            (before, "event_id<?"), (feature, "feature=?"), (event_type, "event_type=?"),
+            (level, "level=?"), (stage, "stage=?"), (aggregate_id, "aggregate_id=?"),
+            (since, "occurred_at>=?"), (until, "occurred_at<=?"),
+        ):
+            if value is not None:
+                filters.append(predicate)
+                parameters.append(value)
+        if q:
+            pattern = "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            columns = ("event_type", "feature", "aggregate_id", "payload_json")
+            search = " OR ".join(f'{column} COLLATE "C" ILIKE ?' for column in columns)
+            filters.append(f"({search})")
+            parameters.extend([pattern] * len(columns))
+        where = " WHERE " + " AND ".join(filters) if filters else ""
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM app_events WHERE (? IS NULL OR event_id<?) "
-                "AND (? IS NULL OR feature=?) AND (? IS NULL OR event_type=?) AND (? IS NULL OR level=?) "
-                "AND (? IS NULL OR stage=?) AND (? IS NULL OR aggregate_id=?) "
-                "AND (? IS NULL OR occurred_at>=?) AND (? IS NULL OR occurred_at<=?) "
-                "AND (?='' OR event_type LIKE ? ESCAPE '\\' OR feature LIKE ? ESCAPE '\\' "
-                "OR aggregate_id LIKE ? ESCAPE '\\' OR payload_json LIKE ? ESCAPE '\\') ORDER BY event_id DESC LIMIT ?",
-                (before, before, feature, feature, event_type, event_type, level, level, stage, stage,
-                 aggregate_id, aggregate_id, since, since, until, until, q, pattern, pattern, pattern, pattern, limit + 1),
+                "SELECT * FROM app_events" + where + " ORDER BY event_id DESC LIMIT ?",
+                (*parameters, limit + 1),
             ).fetchall()
         more = len(rows) > limit
         events = [{

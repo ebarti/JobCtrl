@@ -2,14 +2,14 @@
 
 Python feature packages own business contracts. The transformed application has
 one explicit composition root and one canonical writer per feature. HTTP, CLI
-and Temporal invoke the same application services; there is no backend JSON-RPC
+and DBOS invoke the same application services; there is no backend JSON-RPC
 hop or second TypeScript business implementation.
 
 ## Ownership and composition
 
 `jobctrl.features.<owner>` contains that owner's domain values, application
 service, real I/O ports/adapters, schema and HTTP adapter. Domain/application
-logic does not depend on HTTP, SQLite or Temporal SDK types. Infrastructure is
+logic does not depend on HTTP, PostgreSQL or DBOS SDK types. Infrastructure is
 injected at composition. Cross-feature consumers use immutable public snapshots,
 not private imports or tables.
 

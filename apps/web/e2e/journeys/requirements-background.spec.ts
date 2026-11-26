@@ -3,12 +3,10 @@ import { baseline, createBaseline } from "./core-data.js";
 import { type NormalizedSnapshot } from "./consolidation-data.js";
 import { qualificationBatchDecision } from "./qualification-data.js";
 import { catalogContext, catalogMatching, modelSources, REFRESH_NORMALIZATION_PROMPT_VERSION,
-  typedExtraction, V9_NORMALIZATION_PROMPT_VERSION, type ReusableDemand } from "./requirements-data.js";
+  typedExtraction, type ReusableDemand } from "./requirements-data.js";
 import { captureReusePosting } from "./reuse-data.js";
 
-test.use({ sourceRevision: "e804fac0cf71f3294a71d77d43cc098f133bab34" });
-
-test("a fresh comparison can retain alternative prior backgrounds as one demand after the predecessor refused them", async ({ api, app }) => {
+test("an explicit new comparison can retain alternative prior backgrounds as one demand after an uncertain result", async ({ api, app }) => {
   test.setTimeout(120_000);
   const authored = structuredClone(baseline);
   authored.resume.experience_entries[0]!.bullets[0] = "Managed collection records for a museum.";
@@ -31,19 +29,15 @@ test("a fresh comparison can retain alternative prior backgrounds as one demand 
   const extraction = await modelCall(app, "requirements.extract");
   extraction.reply(typedExtraction(extraction, { requirements: rows }));
   const previous = await modelCall(app, "requirements.match_catalog");
-  expect(previous.body["prompt_version"]).toBe(V9_NORMALIZATION_PROMPT_VERSION);
-  expect(previous.body["instructions"]).not.toContain("SOURCE-ESTABLISHED ALTERNATIVES IN PRIOR BACKGROUND");
+  expect(previous.body["prompt_version"]).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
   previous.reply(catalogMatching(previous, { prior: { verdict: "uncertain" }, practice: { verdict: "new" } }));
   expect(await terminal(api, original)).toMatchObject({ status: "failed", errorCode: "requirements_consolidation_uncertain" });
   expect(await json(api, "get", path)).toBeNull();
 
-  await app.upgradeSource();
   expect(await start("original-background")).toBe(original);
+  expect(await terminal(api, original)).toMatchObject({ status: "failed", errorCode: "requirements_consolidation_uncertain" });
   expect(app.external.calls.filter(call => call.path === "/model")).toHaveLength(2);
   const fresh = await start("new-background");
-  const currentExtraction = await modelCall(app, "requirements.extract");
-  expect(currentExtraction.body.prompt_version).not.toBe(extraction.body.prompt_version);
-  currentExtraction.reply(typedExtraction(currentExtraction, { requirements: rows }));
   const comparison = await modelCall(app, "requirements.match_catalog");
   expect(comparison.body["prompt_version"]).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
   expect(comparison.body["instructions"]).toContain("SOURCE-ESTABLISHED ALTERNATIVES IN PRIOR BACKGROUND");
@@ -93,7 +87,7 @@ test("a fresh comparison can retain alternative prior backgrounds as one demand 
   expect(await json(api, "get", path)).toEqual(accepted);
   expect(await json(api, "get", `/v1/jobs/${additional.job_id}/requirements`)).toBeNull();
   expect(app.external.calls.filter(call => call.path === "/model").map(call => call.body["operation"])).toEqual([
-    "requirements.extract", "requirements.match_catalog", "requirements.extract", "requirements.match_catalog", "fit.qualification-batch",
+    "requirements.extract", "requirements.match_catalog", "requirements.match_catalog", "fit.qualification-batch",
     "requirements.extract", "requirements.match_catalog",
   ]);
 });

@@ -77,7 +77,6 @@ def routes(service) -> tuple:
         receipt = await application.submit("contacts.research", submitted,
                                            idempotency_key="contacts.research:" + identity if identity else None,
                                            request_id=request.state.request_id)
-        service.queue_research(submitted)
         return JSONResponse({"ok": True, "taskId": task_id, **receipt}, status_code=202)
 
     async def research_detail(request):

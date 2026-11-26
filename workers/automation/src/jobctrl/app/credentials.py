@@ -744,18 +744,11 @@ class CredentialService:
                     result = migrate_explicit_env_credentials(
                         eligible, marker, store=self.store, check_skipped=lambda: _require_absent_sources(skipped))
                 if result.migrated_keys and self.settings is not None:
-                    for attempt in range(5):
-                        saved = self.settings.snapshot()
-                        try:
-                            self.settings.update({"providerConfiguration": saved["providerConfiguration"]},
-                                                 expected_revision=saved["revision"])
-                            break
-                        except ConflictError:
-                            if attempt == 4:
-                                raise AppError("credential_migration_metadata_failed",
-                                               "Credential migration completed, but status could not be refreshed. Check credential status before editing.", 503) from None
-                    if self.runtime:
-                        with self.runtime.database.transaction() as connection:
+                    with self.settings.database.transaction() as connection:
+                        saved = self.settings.snapshot(connection)
+                        self.settings.update({"providerConfiguration": saved["providerConfiguration"]},
+                                             expected_revision=saved["revision"], connection=connection)
+                        if self.runtime:
                             self.runtime.events.append(connection, "CredentialsUpdated", {"keys": list(result.migrated_keys)},
                                                        feature="credentials")
                 return result

@@ -2,12 +2,10 @@ import { expect, json, modelCall, terminal, test, type ExternalCall } from "../h
 import { authoredPartition, requirementsPath, type NormalizedSnapshot } from "./consolidation-data.js";
 import { baseline, createBaseline } from "./core-data.js";
 import { qualificationBatchDecision, qualificationBindings } from "./qualification-data.js";
-import { catalogContext, REFRESH_NORMALIZATION_PROMPT_VERSION, typedExtraction, V10_NORMALIZATION_PROMPT_VERSION } from "./requirements-data.js";
+import { catalogContext, REFRESH_NORMALIZATION_PROMPT_VERSION, typedExtraction } from "./requirements-data.js";
 import { captureReusePosting } from "./reuse-data.js";
 
-test.use({ sourceRevision: "29d571dd2556e4add85964ec35a67a3172f5eb90" });
-
-test("a refused dual occurrence assignment stays refused after upgrade and a new source-cited partition supplies both Fit criteria", async ({ api, app }) => {
+test("a refused dual occurrence assignment stays refused on replay and a new source-cited partition supplies both Fit criteria", async ({ api, app }) => {
   await createBaseline(api, structuredClone(baseline));
   const fields = ["Inspect the first stage of a repair.", "Inspect the final stage of a repair.", "Provide accurate estimates to customers."];
   const job = await captureReusePosting(api, "cited-occurrences", fields.join("\n"));
@@ -35,37 +33,30 @@ test("a refused dual occurrence assignment stays refused after upgrade and a new
     return { raw, occurrence, source, demand: demand!, other };
   };
 
-  const first = await start("v10-contradiction");
+  const first = await start("extra-assignment");
   const extraction = await modelCall(app, "requirements.extract");
   extraction.reply(typedExtraction(extraction, { requirements: ["start", "finish", "estimate"].map((localId, i) =>
     ({ localId, text: fields[i]!, category: "skill" })) }));
-  const old = await modelCall(app, "requirements.match_catalog");
-  expect(old.body.prompt_version).toBe(V10_NORMALIZATION_PROMPT_VERSION);
-  const previous = selection(old);
-  previous.raw.occurrence_slots[previous.occurrence] = { kind: "assigned", demand_group_id: previous.other };
-  old.reply(previous.raw);
+  const firstCall = await modelCall(app, "requirements.match_catalog");
+  expect(firstCall.body.prompt_version).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
+  const previous = selection(firstCall);
+  expect(previous.raw.occurrence_slots[previous.occurrence]).toEqual({ kind: "cited" });
+  Object.assign(previous.raw.occurrence_slots[previous.occurrence]!, { demand_group_id: previous.other });
+  firstCall.reply(previous.raw);
   const refused = await terminal(api, first);
-  expect(refused).toMatchObject({ status: "failed", errorCode: "requirements_demand_partition_invalid" });
+  expect(refused).toMatchObject({ status: "failed", errorCode: "model_schema_violation" });
   expect(await json(api, "get", path)).toBeNull();
   const count = app.external.calls.length;
-  await app.upgradeSource();
-  expect(await start("v10-contradiction")).toBe(first);
-  expect(await terminal(api, first)).toMatchObject({ status: "failed", errorCode: "requirements_demand_partition_invalid" });
+  expect(await start("extra-assignment")).toBe(first);
+  expect(await terminal(api, first)).toMatchObject({ status: "failed", errorCode: "model_schema_violation" });
   expect(app.external.calls).toHaveLength(count);
 
-  for (const choice of ["extra-assignment", "cross-capability", "supported"] as const) {
+  for (const choice of ["cross-capability", "supported"] as const) {
     const fresh = await start(choice);
-    if (choice === "extra-assignment") {
-      const current = await modelCall(app, "requirements.extract");
-      expect(current.body.prompt_version).not.toBe(extraction.body.prompt_version);
-      current.reply(typedExtraction(current, { requirements: ["start", "finish", "estimate"].map((localId, i) =>
-        ({ localId, text: fields[i]!, category: "skill" })) }));
-    }
     const call = await modelCall(app, "requirements.match_catalog");
     expect(call.body.prompt_version).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
     const { raw, occurrence, source, demand, other } = selection(call);
     expect(raw.occurrence_slots[occurrence]).toEqual({ kind: "cited" });
-    if (choice === "extra-assignment") Object.assign(raw.occurrence_slots[occurrence]!, { demand_group_id: other });
     if (choice === "cross-capability") {
       const moved = demand.citations.filter(ref => ref.source_id === source);
       demand.citations = demand.citations.filter(ref => ref.source_id !== source);
@@ -76,7 +67,7 @@ test("a refused dual occurrence assignment stays refused after upgrade and a new
     if (choice === "supported") {
       expect(outcome.status).toBe("succeeded");
     } else {
-      expect(outcome).toMatchObject({ status: "failed", errorCode: choice === "extra-assignment" ? "model_schema_violation" : "requirements_demand_partition_invalid" });
+      expect(outcome).toMatchObject({ status: "failed", errorCode: "requirements_demand_partition_invalid" });
       expect(await json(api, "get", path)).toBeNull();
     }
   }
@@ -91,5 +82,5 @@ test("a refused dual occurrence assignment stays refused after upgrade and a new
   qualification.reply(qualificationBatchDecision(qualification, () => ({ kind: "missing" })));
   expect((await pending).status()).toBe(200);
   expect(await json(api, "get", `/v1/jobs/${job.job_id}/fit`)).toMatchObject({ current: true, qualifications_current: true, score: { summary: { assessed_count: 2 } } });
-  expect(app.external.calls.filter(c => c.body.operation === "requirements.extract")).toHaveLength(2);
+  expect(app.external.calls.filter(c => c.body.operation === "requirements.extract")).toHaveLength(1);
 });
