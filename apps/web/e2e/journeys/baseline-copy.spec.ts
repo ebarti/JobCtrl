@@ -128,7 +128,10 @@ test("approved baseline copy preserves every role, requires exact edit approval 
   const firstArtifact = current(resume!).renders.at(-1)!.artifact_id;
   expect(bytes.subarray(0, 5).toString()).toBe("%PDF-");
   expect(bytes.byteLength).toBeGreaterThan(1_000);
-  const inspected = await app.inspectPdf(bytes);
+  const inspected = await app.inspectPdf(bytes, { selectWithPdfKit: true });
+  if (process.platform === "darwin") {
+    expect(inspected.pdfKitSelection?.replace(/\s+/g, " ")).toContain(wrappedSummary);
+  }
   expect(inspected.pages).toBeGreaterThanOrEqual(1);
   expect(inspected.text).toContain(baseline.personal.full_name);
   expect(inspected.text.replace(/\s+/g, " ")).toContain(wrappedSummary);

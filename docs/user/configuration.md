@@ -347,8 +347,8 @@ and validates a private temporary file before replacing the cache. Missing or
 invalid source credentials leave an existing login intact; write failures report
 failure without exposing credentials. Status checks do not import credentials,
 and ordinary generation only enrolls them when JobCtrl has no cache. Verification
-checks CLI login status; a later provider request can still report expired or
-revoked credentials.
+checks the Codex sign-in. Use **Check connections** to check model access.
+A later provider request can still report expired or revoked credentials.
 
 Advanced operators can set `JOBCTRL_CODEX_BIN` to override the Codex runtime.
 By default, JobCtrl uses its pinned, bundled `openai-codex-cli-bin` binary.

@@ -10,8 +10,7 @@ export function TargetSearchSettingsPanel({ defaultOpen = true }: { readonly def
     <DisclosureSection
       className="target-search-settings"
       defaultOpen={defaultOpen}
-      collapsedSummary="Roles, locations, seniority, and work models"
-      description="Suggest roles and locations, then review your Search preferences before saving"
+      description="Select suggestions to add to your saved search preferences."
       title="Search preference suggestions"
     >
       {profileQuery.error ? <div className="banner inline">{profileQuery.error.message}</div> : null}
@@ -19,7 +18,6 @@ export function TargetSearchSettingsPanel({ defaultOpen = true }: { readonly def
         <ProfileForm
           initial={profileQuery.data}
           section="target-search"
-          showSectionHeading={false}
         />
       ) : (
         <Empty title="Loading discovery settings." />

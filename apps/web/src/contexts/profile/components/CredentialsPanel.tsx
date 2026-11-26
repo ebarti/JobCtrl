@@ -365,7 +365,7 @@ function ProviderCard({
   onConfigurationChange?: (() => void) | undefined;
   statusUnknown?: boolean;
 }) {
-  const statusLabel = statusUnknown ? "Status unknown" : !status ? "Not checked" : status.ready
+  const statusLabel = statusUnknown ? "Status unknown" : !status ? "Connection not checked" : status.ready
     ? "Ready"
     : provider === "codex" && status?.mode === "cli_auth"
       ? "Authenticated · runtime unavailable"
@@ -440,7 +440,9 @@ function CodexProviderSetup({
   const verification = verify.data?.verification;
   const verificationMessage = verify.error
     ? "Codex verification could not be completed. Check provider status before retrying."
-    : verification?.message ?? "";
+    : verification?.ok
+      ? "Codex sign-in verified."
+      : verification?.message ?? "";
 
   async function removeLegacy() {
     setLegacyMessage("");

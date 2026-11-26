@@ -753,7 +753,7 @@ print(json.dumps(result, sort_keys=True))
           throw error;
         }
       },
-      async inspectPdf(bytes) {
+      async inspectPdf(bytes, { selectWithPdfKit = false } = {}) {
         const pdf = path.join(directory, `export-${randomUUID()}.pdf`);
         await writeFile(pdf, bytes, { flag: "wx", mode: 0o600 });
         const inspected = await execFile(
@@ -778,6 +778,21 @@ print(json.dumps(result, sort_keys=True))
               `${prefix}-${String(page).padStart(String(result.pages).length, "0")}.png`,
             ),
           );
+        if (selectWithPdfKit && process.platform === "darwin") {
+          const script = `import Foundation
+import PDFKit
+let document = PDFDocument(url: URL(fileURLWithPath: CommandLine.arguments[1]))!
+for index in 0..<document.pageCount {
+    let page = document.page(at: index)!
+    print(page.selection(for: page.bounds(for: .cropBox))?.string ?? "")
+}`;
+          const selected = await execFile(
+            "/usr/bin/swift",
+            ["-module-cache-path", path.join(directory, "swift-cache"), "-e", script, pdf],
+            { timeout: 30_000, maxBuffer: 2_000_000 },
+          );
+          result.pdfKitSelection = selected.stdout;
+        }
         return { ...result, images };
       },
       async inspectDocx(bytes) {
