@@ -7,6 +7,7 @@ import json
 from datetime import datetime
 from math import ceil
 import os
+import random
 import time
 from uuid import uuid4
 
@@ -621,7 +622,8 @@ class DiscoveryRepository:
                 ) ORDER BY u.run_id,board.value
             """, (ids,time.time())):
                 waits.setdefault(row["run_id"], []).append({
-                    "board": row["board"], "retryAfterSeconds": max(0, ceil(row["retry_at"] - time.time()))})
+                    "board": row["board"], "retryAtEpochSeconds": row["retry_at"],
+                    "retryAfterSeconds": max(0, ceil(row["retry_at"] - time.time()))})
             counts = {}
             for run_id, status, count in conn.execute(
                     "SELECT run_id,status,COUNT(*) FROM discovery_postings WHERE run_id=ANY(?) GROUP BY run_id,status", (ids,)):
@@ -837,9 +839,12 @@ class DiscoveryRepository:
             )
 
     def cooldown(self, board, connection=None):
+        return max(0.0, self.cooldown_deadline(board, connection) - time.time())
+
+    def cooldown_deadline(self, board, connection=None):
         with nullcontext(connection) if connection is not None else self.database.connect() as conn:
             row = conn.execute("SELECT retry_at FROM discovery_provider_cooldowns WHERE board=?", (board,)).fetchone()
-            return max(0.0, row[0] - time.time()) if row else 0.0
+            return row[0] if row else 0.0
 
     def reserve_board_request(self, lease, board, interval):
         """Enforce source pacing across page turns, other runs and worker replacement."""
@@ -876,21 +881,31 @@ class DiscoveryRepository:
                     "board": board, "unitId": unit_id, "phase": phase, "httpStatus": status,
                     "leaseEpoch": lease["epoch"], "responses": counts, "elapsedMs": max(0, round((received - started).total_seconds() * 1000)),
                     "receivedAt": received.isoformat(timespec="milliseconds"), "retryAfterSeconds": delay,
-                }, connection=conn)
+                }, received_at=received.timestamp(), connection=conn)
 
-    def record_rate_limit_response(self, lease, observation, connection=None):
+    def record_rate_limit_response(self, lease, observation, *, received_at=None, connection=None):
         board = observation["board"]
         with nullcontext(connection) if connection is not None else self.database.transaction() as conn:
             self.guard_run(conn, lease)
             row = conn.execute("SELECT consecutive_limits FROM discovery_provider_cooldowns WHERE board=?", (board,)).fetchone()
             count = (row[0] if row else 0) + 1
-            advertised = observation.get("retryAfterSeconds")
-            wait = float(advertised) if advertised else min(900, 4 * 2 ** min(8, count - 1))
-            conn.execute("INSERT INTO discovery_provider_cooldowns(board,retry_at,consecutive_limits,retry_advertised) VALUES(?,?,?,?) "
-                         "ON CONFLICT(board) DO UPDATE SET retry_at=GREATEST(discovery_provider_cooldowns.retry_at,excluded.retry_at), "
-                         "consecutive_limits=excluded.consecutive_limits,retry_advertised=excluded.retry_advertised",
-                         (board, time.time() + max(1, wait), count, int(bool(advertised))))
-            self.events.append(conn, "DiscoverySourceRateLimited", observation, feature="discovery",
+            advertised = float(observation.get("retryAfterSeconds") or 0)
+            base = 4 * 2 ** min(8, count - 1)
+            if advertised > 0:
+                wait = advertised
+            elif board == "linkedin":
+                ceiling = min(120, 2 * base)
+                wait = random.uniform(ceiling / 2, ceiling)
+            else:
+                wait = min(900, base)
+            retry_at = (received_at if received_at is not None else time.time()) + max(1, wait)
+            deadline = conn.execute(
+                "INSERT INTO discovery_provider_cooldowns AS c(board,retry_at,consecutive_limits,retry_advertised) VALUES(?,?,?,?) "
+                "ON CONFLICT(board) DO UPDATE SET retry_at=GREATEST(c.retry_at,c.next_request_at,excluded.retry_at), "
+                "consecutive_limits=excluded.consecutive_limits,retry_advertised=excluded.retry_advertised RETURNING retry_at",
+                (board, retry_at, count, int(advertised > 0)),
+            ).fetchone()[0]
+            self.events.append(conn, "DiscoverySourceRateLimited", {**observation, "retryAtEpochSeconds": deadline}, feature="discovery",
                                aggregate_id=lease["run_id"], level="warn", stage="board_search")
 
     def defer_transient(self, lease, unit, recorded, board, delay):

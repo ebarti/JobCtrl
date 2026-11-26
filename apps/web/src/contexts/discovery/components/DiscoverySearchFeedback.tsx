@@ -31,6 +31,13 @@ function sourceLabel(failure: DiscoverySearchController["sourceFailures"][number
   return failure.boards?.map((board) => boardLabel(board)).join(", ") ?? "Employer source";
 }
 
+function retryTime(epochSeconds: number | undefined) {
+  if (epochSeconds === undefined) return null;
+  const date = new Date(epochSeconds * 1000);
+  if (Number.isNaN(date.getTime())) return null;
+  return <> (<time dateTime={date.toISOString()}>{date.toLocaleString()}</time>)</>;
+}
+
 function groupSourceFailures(failures: DiscoverySearchController["sourceFailures"]) {
   const groups = new Map<string, { key: string; failure: typeof failures[number]; failures: typeof failures }>();
   for (const failure of failures) {
@@ -75,7 +82,7 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
       <div className="discovery-search-status-row" role="status"><h2>{label}</h2>{counts ? <p className="discovery-search-counts">{controller.countsStale ? <span>Last recorded:</span> : null}<span>{counts.newJobs} new jobs</span><span>{counts.observedJobs} observed</span></p> : null}</div>
       {active ? <Progress value={null} aria-label="Job search progress" className="discovery-search-progress" /> : null}
     </div>
-    {controller.cooldowns.map((wait) => <p key={wait.board}>{boardLabel(wait.board)} paused this search. {controller.linkedInPaused ? "You can continue in" : "JobCtrl will check again in"} {Math.ceil(wait.retryAfterSeconds)} seconds. Saved jobs can still be assessed.</p>)}
+    {controller.cooldowns.map((wait) => <p key={wait.board}>{boardLabel(wait.board)} paused this search. {controller.linkedInPaused ? "You can continue in" : "JobCtrl will retry automatically in"} {Math.ceil(wait.retryAfterSeconds)} seconds{retryTime(wait.retryAtEpochSeconds)}. Saved jobs can still be assessed.</p>)}
     {controller.postings && controller.postings.received > 0 ? <p>{controller.postings.received} received · {controller.postings.duplicate} already saved · {controller.postings.excluded} excluded · {controller.postings.pending} pending</p> : null}
     {assessedJobs !== null ? <p>{assessmentProgress?.unavailable && !controller.assessment ? "Last recorded: " : ""}{assessmentProgress?.totalJobs != null ? `${assessedJobs} of ${assessmentProgress.totalJobs} jobs assessed` : `${assessedJobs} jobs assessed`}{failedJobs !== null ? ` · ${failedJobs} failed` : ""}{skippedJobs !== null && skippedJobs > 0 ? ` · ${skippedJobs} skipped` : ""}</p> : null}
     {checkpoint && assessmentProgress?.totalJobs != null ? <p aria-label="Fit preparation progress">

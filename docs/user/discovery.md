@@ -121,9 +121,10 @@ credential has access to its search API. A TLS or proxy diagnostic points to
 the worker’s connection settings. Older runs may show a general access error.
 A board that rate-limits a search appears by name in the progress strip and
 Search details. A board that supplies a retry time pauses its own queries until
-that time. Other boards and assessments of saved jobs can continue. The wait
-survives a worker or app restart. A board that supplies no retry time records
-a rate-limit failure and defers its remaining queries.
+that time. LinkedIn searches also resume automatically when LinkedIn omits the
+retry time. Other boards and assessments of saved jobs can continue during the
+wait, which survives a worker or app restart. Other boards that omit a retry
+time record a rate-limit failure and defer their remaining queries.
 
 **Search details** retains every recorded failure and its query-unit identity;
 different boards, codes or messages remain separate notices.
@@ -343,13 +344,19 @@ JobStreaming performs board searches and retrieves supported posting details. Ea
 minimum interval between request starts across searches and worker restarts.
 
 The activity log records when a LinkedIn listing or detail request receives HTTP
-429, the number of responses received and the requested delay. When LinkedIn
-supplies a valid `Retry-After`, Jobs displays the wait. The same search resumes
-the pending posting or page after that deadline. You can stop it during the
-wait. Without a retry time, JobCtrl records a backoff and stops the remaining
-LinkedIn queries. Once the wait expires, **Continue LinkedIn search** uses
-the unfinished positions, the original criteria and the unspent new-job allowance.
-Jobs already assessed keep their original scores.
+429, the number of responses received and the requested delay. The Jobs page
+shows the next retry in your local time. JobCtrl honors a positive
+`Retry-After`, including waits longer than two minutes. When the header is
+missing, invalid or zero, JobCtrl picks a random delay for each retry. The
+first wait is 4–8 seconds, then 8–16, 16–32, 32–64 and finally 60–120 seconds
+for each further retry. Closing the Jobs browser tab leaves the search running.
+If you quit JobCtrl or turn off the computer, that time counts toward the wait.
+When the worker starts again, it waits only until the saved deadline. If the
+deadline has passed, it resumes the same search as soon as it is ready, with
+the original criteria and remaining job allowance. **Request stop** cancels it.
+Jobs already assessed keep their scores. For an older search that already
+ended because of a rate limit, **Continue LinkedIn search** resumes its saved
+position under the current retry behavior.
 
 For a user-supplied posting URL, Jobs validates the public destination and redirects. The posting transport respects host cooldowns following server deferrals. A failed refresh retains the last accepted posting snapshot. See [Enrichment & Extraction](enrichment-and-extraction.md).
 

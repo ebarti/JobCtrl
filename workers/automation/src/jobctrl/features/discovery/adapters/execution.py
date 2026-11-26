@@ -156,7 +156,8 @@ class DiscoveryExecutionAdapter:
                 advertised = bool(error.retry_after)
                 self.repository.record_rate_limit_response(lease, {"board": board, "unitId": unit["unit_id"],
                     "phase": "acquisition", "retryAfterSeconds": error.retry_after, "leaseEpoch": lease["epoch"]})
-            if advertised:
+            # LinkedIn's cooldown is persisted even when the response omits a retry time.
+            if board == "linkedin" or advertised:
                 self.repository.save_unit(lease, unit, status="waiting_for_source", result=recorded)
                 return True
             raise board_rate_limit_error() from None

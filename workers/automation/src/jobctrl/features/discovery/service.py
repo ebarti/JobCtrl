@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import time
 from contextlib import nullcontext, suppress
 
 from jobctrl.app.errors import AppError, ConflictError
@@ -373,7 +374,7 @@ class DiscoveryService:
             turn = await self.search_turn(context, payload, durable=durable)
             if turn["done"]:
                 return turn["result"]
-            await asyncio.sleep(turn["waitSeconds"])
+            await asyncio.sleep(max(0.0, turn["wakeAt"] - time.time()))
 
     async def search_turn(self, context, payload, *, durable=True, handoff=None):
         """Advance one source page or return the outstanding provider deadline."""
@@ -492,15 +493,16 @@ class DiscoveryService:
                      {"completed", "budget_exhausted", "failed", "deferred"} and not failed_boards.intersection(unit["sites"])]
             remaining = self.repository.budget_remaining(lease, request["settings"]["newJobLimit"])
             if ready and remaining:
-                cooldowns = {site: self.repository.cooldown(site) for site in {s for u in ready for s in u["sites"]}}
-                delays = {u["unit_id"]: max(cooldowns[site] for site in u["sites"]) for u in ready}
-                available = [u for u in ready if not delays[u["unit_id"]]]
+                cooldowns = {site: self.repository.cooldown_deadline(site) for site in {s for u in ready for s in u["sites"]}}
+                deadlines = {u["unit_id"]: max(cooldowns[site] for site in u["sites"]) for u in ready}
+                clock = time.time()
+                available = [u for u in ready if deadlines[u["unit_id"]] <= clock]
                 if not available:
                     for unit in ready:
                         state = states.get(unit["unit_id"], {})
                         if state.get("status") != "waiting_for_source":
                             self.repository.save_unit(lease, unit, status="waiting_for_source", result=state.get("result", {}))
-                    return {"done": False, "waitSeconds": min(3600.0, min(delays.values()))}
+                    return {"done": False, "wakeAt": min(clock + 3600, min(deadlines.values()))}
                 counts = self.repository.board_new_jobs_by_query(lease)
                 candidate = min(available, key=lambda u: (counts.get(u["query"], 0), states.get(u["unit_id"], {}).get("updatedAt", "")))
                 limits = query_allowances(dict.fromkeys(u["query"] for u in available), counts, remaining)
@@ -511,7 +513,7 @@ class DiscoveryService:
                     if error.code == "action_cancelled":
                         raise
                     self.repository.record_board_failure(lease, candidate, error)
-                return {"done": False, "waitSeconds": 0.0}
+                return {"done": False, "wakeAt": 0.0}
             outcome = self.repository.finalize_bounded_units(lease, request["settings"]["newJobLimit"])
             failures = [state["result"]["failure"] for state in states.values() if state["result"].get("failure")]
             represented = {board for failure in failures for board in failure.get("boards", [])}

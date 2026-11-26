@@ -47,8 +47,9 @@ export type ApplicationStack = {
     request: { fingerprint: string; sourceFetchPolicy?: string; settings: { resultsPerSite: number; newJobLimit: number } };
     units: { unitId: string; status: string; resultsPerSite: number | null; sdkFingerprint: string; sdkResultsWanted: number | null; sdkMaxPages: number; result: { termination?: string; sourceTerminations?: Record<string, string> } | null }[];
   }>;
-  restartWorker(features?: string): Promise<{ previous: number; current: number }>;
-  restartApi(options?: { freshWorkspace?: boolean }): Promise<void>;
+  restartWorker(features?: string, afterExit?: () => Promise<void>): Promise<{ previous: number; current: number }>;
+  restartApi(options?: { freshWorkspace?: boolean; afterExit?: () => Promise<void> }): Promise<void>;
+  waitForSearchTimerPause(runId: string): Promise<void>;
   upgradeSqliteToPostgres(): Promise<{ first: { state: string; rows: number; receipt_sha256: string }; repeated: { state: string; rows: number; receipt_sha256: string } }>;
   upgradeSource(): Promise<{ previous: number; current: number; backup: string; candidateOrigin: string; mode: "source" | "installed" }>;
   armFitRecoveryPause(operation: "fit.catalog-impact" | "fit.qualification-batch"): Promise<void>;
@@ -113,6 +114,7 @@ type Fixtures = {
   fitRecoveryDebugger: boolean;
   cohortBoundaryDebugger: boolean;
   modelReceiptDebugger: boolean;
+  searchTimerDebugger: boolean;
   expectedTransportFailures: {
     request: Request;
     errorText: "net::ERR_FAILED";
@@ -139,6 +141,7 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
   fitRecoveryDebugger: [false, { option: true }],
   cohortBoundaryDebugger: [false, { option: true }],
   modelReceiptDebugger: [false, { option: true }],
+  searchTimerDebugger: [false, { option: true }],
   expectedTransportFailures: async ({}, use) => {
     await use([]);
   },
@@ -231,10 +234,10 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
     { scope: "worker", timeout: 60_000 },
   ],
   app: [
-    async ({ postgres, features, discoveryTransport, nativeAccountingPreflight, sourceRevision, sqlitePredecessor, fitRecoveryDebugger, cohortBoundaryDebugger, modelReceiptDebugger }, use, testInfo) => {
+    async ({ postgres, features, discoveryTransport, nativeAccountingPreflight, sourceRevision, sqlitePredecessor, fitRecoveryDebugger, cohortBoundaryDebugger, modelReceiptDebugger, searchTimerDebugger }, use, testInfo) => {
       const runtime: ApplicationStack = await applicationStack(
         await postgres.createDatabase(),
-        { features, discoveryTransport, nativeAccountingPreflight, sourceRevision, sqlitePredecessor, fitRecoveryDebugger, cohortBoundaryDebugger, modelReceiptDebugger, createDatabase: () => postgres.createDatabase() },
+        { features, discoveryTransport, nativeAccountingPreflight, sourceRevision, sqlitePredecessor, fitRecoveryDebugger, cohortBoundaryDebugger, modelReceiptDebugger, searchTimerDebugger, createDatabase: () => postgres.createDatabase() },
       );
       await testInfo.attach("runtime-setup", {
         contentType: "application/json",

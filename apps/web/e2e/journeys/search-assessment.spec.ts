@@ -1,4 +1,5 @@
 import { indeedPage } from "./indeed-data.js";
+import { linkedinCard } from "./linkedin-data.js";
 import { test, expect, json, action, completed, terminal, modelCall, type ApplicationStack, type ExternalCall } from "../harness/fixtures.js";
 import { baseline, createBaseline, createPosting } from "./core-data.js";
 import { serveRoleTarget } from "./discovery-role-scope-data.js";
@@ -17,10 +18,6 @@ const assessments = (app: ApplicationStack) => externalStream(app,
   (call) => !call.path.startsWith("/jobstreaming/") && call.body["operation"] !== "discovery.role_target_match");
 const boardPage = (app: ApplicationStack) => app.external.next({ match: (call) => call.path === "/jobstreaming/indeed" });
 const roleMatches = (app: ApplicationStack) => externalStream(app, (call) => call.body["operation"] === "discovery.role_target_match");
-
-function linkedinCard(id: number) {
-  return `<div class="base-search-card"><a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/synthetic-engineer-${id}"><span class="sr-only">Synthetic Systems Engineer</span></a><h4 class="base-search-card__subtitle">Synthetic Board Company</h4></div>`;
-}
 
 test("saved-role LinkedIn discovery fetches details only for new postings", async ({ api, app }) => {
   const { profile, library } = await createBaseline(api, { ...baseline,
@@ -99,7 +96,7 @@ test("search assesses the exact saved LinkedIn detail after a later posting is t
   expect(throttle.events[0]).toEqual(expect.objectContaining({ occurredAt: expect.any(String), payload: {
     board: "linkedin", unitId: expect.any(String), phase: "detail", httpStatus: 429,
     leaseEpoch: 1, responses: { listing: 1, detail: 2, other: 0 }, elapsedMs: expect.any(Number),
-    receivedAt: expect.any(String), retryAfterSeconds: 601,
+    receivedAt: expect.any(String), retryAfterSeconds: 601, retryAtEpochSeconds: expect.any(Number),
   } }));
   await json(api, "post", `/v1/action-runs/${started.runId}/cancel`, {});
   expect((await terminal(api, started.runId)).status).toBe("cancelled");
@@ -146,17 +143,20 @@ test("saved search checks each LinkedIn page before requesting the next with lit
     phase: "listing", responses: { listing: 2, detail: 2, other: 0 }, retryAfterSeconds: null,
   })]);
   await scoring;
-  expect((await completed(api, started.runId)).result).toMatchObject({ status: "partial", newJobs: 1,
+  const resumed = await app.external.next();
+  expect(resumed.path).toBe(continuation.path);
+  resumed.raw(linkedinCard(1237));
+  expect((await completed(api, started.runId)).result).toMatchObject({ status: "completed", newJobs: 1,
     roleTargetObservations: { match: 1, mismatch: 1 },
-    failures: [{ code: "discovery_provider_rate_limited" }], preparation: { assessedJobs: 1 } });
+    failures: [], preparation: { assessedJobs: 1 } });
   const plan = await json<{ accepted: { queries: unknown[]; provenance: unknown } }>(api, "get", "/v1/discovery/target-search");
   expect(plan.accepted).toMatchObject({ profileRevision: profile.profileVersion, provenance: null,
     queries: [{ query: "Synthetic systems engineer", authority: "literal_authored_target" }] });
-  expect(app.external.calls.filter((call) => call.path.startsWith("/jobstreaming/linkedin"))).toHaveLength(4);
+  expect(app.external.calls.filter((call) => call.path.startsWith("/jobstreaming/linkedin"))).toHaveLength(5);
   expect(app.external.calls.filter((call) => call.body?.["operation"] === "discovery.query_plan")).toHaveLength(0);
 });
 
-test("search retains a listing and makes no automatic posting fetch after LinkedIn throttles", async ({ api, app }) => {
+test("search retains a listing and defers its posting check while LinkedIn is throttling", async ({ api, app }) => {
   await createBaseline(api);
   const started = await action(api, "discovery.search", { queries: ["Synthetic systems engineer"], locations: ["Madrid"],
     boards: ["linkedin"], hoursOld: 0, newJobLimit: 2, resultsPerSite: 2 });
@@ -172,9 +172,12 @@ test("search retains a listing and makes no automatic posting fetch after Linked
   }
   expect(new URL(next.path, "http://localhost").searchParams.get("start")).toBe("10");
   next.raw("Too many requests", { status: 429, headers: { "Retry-After": "0" } });
+  const resumed = await app.external.next();
+  expect(resumed.path).toBe(next.path);
+  resumed.raw(linkedinCard(1236));
   const result = (await completed(api, started.runId)).result as { newJobIds: string[] };
   const job = result.newJobIds[0]!;
-  expect(result).toMatchObject({ status: "partial", newJobs: 1,
+  expect(result).toMatchObject({ status: "partial", acquisitionStatus: "completed", failures: [], newJobs: 1,
     preparation: { assessedJobs: 0, failedJobs: 1, failures: [
       { jobId: job, stage: "enrich", code: earlierPostingCheck ? "posting_fetch_unavailable" : "posting_check_deferred_source_rate_limited" },
     ] } });
@@ -361,12 +364,14 @@ test("search cancellation after a worker kill during fit seals preparation and r
     expect(preparing.cohortFrozen).toBe(true);
     expect(preparing.jobIds).toHaveLength(1);
     cohort = preparing.jobIds;
-    const replacement = await app.restartWorker();
+    // Once restarted, the worker can immediately settle the lost provider reply.
+    // Request cancellation while the old worker has exited and the search is still active.
+    const replacement = await app.restartWorker(undefined, async () => {
+      await expect.poll(() => call.closed).toBe(true);
+      expect(await json(api, "post", `/v1/action-runs/${started.runId}/cancel`, {})).toMatchObject({ runId: started.runId, cancellationRequested: true });
+    });
     expect(replacement.current).not.toBe(replacement.previous);
-    await expect.poll(() => call.closed).toBe(true);
-    expect(await json(api, "post", `/v1/action-runs/${started.runId}/cancel`, {})).toMatchObject({ runId: started.runId, cancellationRequested: true });
     expect(await terminal(api, started.runId)).toMatchObject({ status: "cancelled" });
-    await expect.poll(() => call.closed).toBe(true);
   } });
   const retained = await json<{ status: string; jobIds: string[]; steps: { stage: string; status: string }[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
   expect(retained.status).toBe("cancelled");

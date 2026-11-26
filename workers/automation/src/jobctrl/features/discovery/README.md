@@ -57,7 +57,8 @@ escape hatch.
   Only a committed new Jobs identity spends a slot. On restart, intake receipts
   restore each query's count and the provider checkpoint restores its position.
   Backfill can revisit a partial page, preserving its acknowledged receipts.
-  A 429 without a retry deadline defers that board's remaining units for the run.
+  On LinkedIn, a 429 pauses that board until its saved retry time. Other boards
+  can end their remaining units for the run when they supply no retry time.
   A streamed error and a directly raised detail error use the same safe
   rate-limit diagnostic. The run list explains older generic messages from
   their recorded board rate-limit code, including after an upgrade.
@@ -145,11 +146,12 @@ remains failed. Its action finalizer seals interrupted preparation, and worker
 replay preserves failed job stages until an explicit retry.
 The initial assessment can reuse a complete targeted LinkedIn detail from that
 acquisition when its accepted intake receipt matches the current posting
-revision. Following a terminal LinkedIn rate limit, the initial check for
-remaining LinkedIn listings records `posting_check_deferred_source_rate_limited`.
+revision. An initial check that needs another LinkedIn fetch during the
+cooldown records `posting_check_deferred_source_rate_limited`.
 An explicit retry or selected-job assessment can check those postings later.
-The LinkedIn transport records each observed HTTP 429 as a
-`DiscoverySourceRateLimited` activity event without affecting SDK retry policy.
+The LinkedIn transport records each observed HTTP 429 and its effective Unix
+retry timestamp together. The `DiscoverySourceRateLimited` activity event and
+the run's `cooldowns` expose the same deadline.
 Standalone Discovery remains acquisition-only and reports
 `preparationAvailable: false`. The separate explicit `assess` preparation recipe
 recovers selected saved jobs without another acquisition.
@@ -178,12 +180,16 @@ delays longer than the SDK's internal sleep limit. A DBOS timer releases the
 acquisition step until that deadline. Other ready boards advance before a search
 sleeps. Independent job assessment workflows and the shared provider/model
 accounting remain available. The search can be stopped during its wait.
-A 429 without a server deadline records bounded exponential backoff and defers
-remaining LinkedIn work for explicit continuation.
+A LinkedIn 429 without a positive server deadline uses the same durable wait
+with exponential backoff and equal jitter. The first wait is 4–8 seconds and
+each fallback is at most 120 seconds. Search passes the absolute deadline to
+DBOS so offline time counts even when the worker exits before registering the
+timer. Each new 429 can defer another turn. The original run owns
+its unfinished work, criteria, budget and accepted postings across retries.
 
-An explicit `discovery.search` with only `resumeFromRunId` continues unfinished
-LinkedIn units after a rate limit. Admission verifies the prior outcome, source
-state and server-supplied cooldown. The new run freezes the original criteria
+An explicit `discovery.search` with only `resumeFromRunId` can continue unfinished
+LinkedIn units from an older terminal rate-limit outcome. Admission verifies the
+prior outcome, source state and persisted cooldown. The new run freezes the original criteria
 and remaining budget. Each interrupted unit seeds its own SDK checkpoint with
 the acknowledged cursor and seen keys, including excluded postings. A transactional
 parent-to-child link prevents two successors from spending the same remaining

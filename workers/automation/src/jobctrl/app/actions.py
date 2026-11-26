@@ -369,7 +369,7 @@ class Application:
                         owner = self.services.get("preparation") or self.services["discovery"]
                         turn = await owner.search_turn(context, payload)
                     if not turn["done"]:
-                        return {"done": False, "waitSeconds": turn["waitSeconds"]}
+                        return {"done": False, "wakeAt": turn["wakeAt"]}
                     result = turn["result"]
                 else:
                     result = await self.actions[action](context, payload)
