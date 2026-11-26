@@ -271,8 +271,10 @@ test("Jobs attention follows committed visibility and reviewed deletion events w
       const readsBefore = browserDigests.length;
       const eventsBefore = observedEvents.length;
       await mutate();
-      expect((await json<Digest>(api, "get", "/v1/digest")).staleScores.count).toBe(expected);
+      // A browser click can finish before its write commits. The job's event
+      // is the same commit boundary for browser and direct API mutations.
       await expect.poll(() => observedEvents.slice(eventsBefore).some((event) => event.payload.action === actionName), { message: `committed ${actionName} reaches the existing browser stream` }).toBe(true);
+      expect((await json<Digest>(api, "get", "/v1/digest")).staleScores.count).toBe(expected);
       await expect.poll(() => browserDigests.slice(readsBefore).some((digest) => digest.staleScores.count === expected), { message: `Digest refreshes after ${actionName}` }).toBe(true);
       if (expected) await expect(staleNotice).toBeVisible();
       else await expect(staleNotice).toHaveCount(0);
