@@ -918,11 +918,12 @@ print(json.dumps({"adapters": adapters, "received": received, "receipts": receip
 `, workspace, runId], { env, timeout: 5000, maxBuffer: 4 * 1024 * 1024 });
         return JSON.parse(inspected.stdout);
       },
-      async restartWorker(workerFeatures) {
+      async restartWorker(workerFeatures, afterExit) {
         const previous = worker;
         previous.crash();
         await previous.stop();
         services.splice(services.indexOf(previous), 1);
+        await afterExit?.();
         const next = await startWorker(workerFeatures);
         if (next === previous.pid)
           throw new Error("Worker restart did not change process identity");

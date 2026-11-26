@@ -47,7 +47,7 @@ export type ApplicationStack = {
     request: { fingerprint: string; sourceFetchPolicy?: string; settings: { resultsPerSite: number; newJobLimit: number } };
     units: { unitId: string; status: string; resultsPerSite: number | null; sdkFingerprint: string; sdkResultsWanted: number | null; sdkMaxPages: number; result: { termination?: string; sourceTerminations?: Record<string, string> } | null }[];
   }>;
-  restartWorker(features?: string): Promise<{ previous: number; current: number }>;
+  restartWorker(features?: string, afterExit?: () => Promise<void>): Promise<{ previous: number; current: number }>;
   restartApi(options?: { freshWorkspace?: boolean }): Promise<void>;
   upgradeSqliteToPostgres(): Promise<{ first: { state: string; rows: number; receipt_sha256: string }; repeated: { state: string; rows: number; receipt_sha256: string } }>;
   upgradeSource(): Promise<{ previous: number; current: number; backup: string; candidateOrigin: string; mode: "source" | "installed" }>;

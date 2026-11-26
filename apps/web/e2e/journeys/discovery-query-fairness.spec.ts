@@ -1,4 +1,5 @@
 import { indeedPage } from "./indeed-data.js";
+import { linkedinCard } from "./linkedin-data.js";
 import { action, completed, expect, json, terminal, test, type ApplicationStack } from "../harness/fixtures.js";
 
 test.use({ discoveryTransport: "jobstreaming", features: "profile,jobs,discovery" });
@@ -104,7 +105,7 @@ test("board queries share new-job slots without retrying a rate-limited source f
   expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(1);
 });
 
-test("a LinkedIn rate limit skips the remaining locations while another board continues", async ({ api, app }) => {
+test("a LinkedIn cooldown allows another board to finish and then resumes the remaining locations", async ({ api, app }) => {
   const query = "Synthetic reliability engineer";
   const started = await action(api, "discovery.search", {
     queries: [query], locations: ["Madrid", "Barcelona"], boards: ["linkedin", "indeed"], newJobLimit: 4, hoursOld: 0,
@@ -121,11 +122,17 @@ test("a LinkedIn rate limit skips the remaining locations while another board co
     call.respond(searchPage([]));
   }
 
-  expect((await completed(api, started.runId)).result).toMatchObject({
-    status: "partial",
-    failures: [{ boards: ["linkedin"], code: "discovery_provider_rate_limited" }],
-  });
   expect(app.external.calls.filter((call) => call.path.startsWith("/jobstreaming/linkedin/"))).toHaveLength(1);
+  const resumedLocations = [];
+  for (let index = 0; index < 2; index++) {
+    const call = await app.external.next();
+    const resumed = new URL(call.path, "http://localhost");
+    expect(resumed.pathname).toBe(url.pathname);
+    resumedLocations.push(resumed.searchParams.get("location"));
+    call.raw(linkedinCard(7650 + index));
+  }
+  expect(resumedLocations.sort()).toEqual(["Barcelona", "Madrid"]);
+  expect((await completed(api, started.runId)).result).toMatchObject({ status: "completed", newJobs: 2, failures: [] });
 });
 
 test.describe("paged JobStreaming listings", () => {

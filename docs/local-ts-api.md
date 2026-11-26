@@ -158,22 +158,25 @@ Their optional `diagnostic` is `missing_credential`, `provider_access_denied`,
 An identified HTTP denial includes `httpStatus` (401 or 403). A committed
 `DiscoveryRunUpdated` warning at stage `board_search` includes the same
 failure in `payload.sourceFailure` before the SDK acknowledges the event.
-SDK board rate limits use `discovery_provider_rate_limited` and set
+Terminal SDK board rate limits use `discovery_provider_rate_limited` and set
 `diagnostic` to `rate_limited` in the warning and run result. A terminal board
 rate limit stops that board's remaining query and location units for the run.
-LinkedIn listing and detail requests share four-second pacing in each run.
-A LinkedIn HTTP 429 with a missing, unusable or over-cap `Retry-After` also
-prevents queued detail requests from sending.
+LinkedIn listing and detail requests share a four-second minimum interval across
+runs. Every LinkedIn HTTP 429 pauses that board. A positive `Retry-After` sets
+its deadline, otherwise JobCtrl uses its persisted exponential backoff. While
+the deadline is outstanding, the run stays active and exposes the wait in
+`cooldowns`. A worker restart retains the wait. The same run automatically
+resumes pending acquisition unless cancelled or its job limit is already met.
 The run list also explains rate limits from historical records that stored this
 code with a generic message.
 Historical action receipts and already-published events retain their original fields.
 `GET /v1/events?aggregateId={run_id}&type=DiscoverySourceRateLimited` lists
 individual LinkedIn HTTP 429 responses, including attempts that the SDK recovered
 from. Each event includes `receivedAt` (UTC), `unitId`, `phase` (`listing`,
-`detail`, or `other`), `leaseEpoch`, `elapsedMs` since that lease began querying
-LinkedIn, and `responses` by phase through the reported 429. `retryAfterSeconds`
+`detail`, or `other`), `leaseEpoch`, `elapsedMs` since the discovery run started,
+and cumulative `responses` for that run and board through the reported 429. `retryAfterSeconds`
 is the provider's requested delay or `null` when the header is absent or
-unusable. Counts restart with each lease. The source's `politeness.rateLimitedCount`
+unusable. The source's `politeness.rateLimitedCount`
 continues to describe recent runs that settled with a rate-limit failure.
 `partial` means at least one source unit completed or reached the new-job limit
 while another failed. A completed source may return no jobs. Reaching the limit

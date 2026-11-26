@@ -145,8 +145,8 @@ remains failed. Its action finalizer seals interrupted preparation, and worker
 replay preserves failed job stages until an explicit retry.
 The initial assessment can reuse a complete targeted LinkedIn detail from that
 acquisition when its accepted intake receipt matches the current posting
-revision. Following a terminal LinkedIn rate limit, the initial check for
-remaining LinkedIn listings records `posting_check_deferred_source_rate_limited`.
+revision. An initial check that needs another LinkedIn fetch during the
+cooldown records `posting_check_deferred_source_rate_limited`.
 An explicit retry or selected-job assessment can check those postings later.
 The LinkedIn transport records each observed HTTP 429 as a
 `DiscoverySourceRateLimited` activity event without affecting SDK retry policy.
@@ -178,12 +178,14 @@ delays longer than the SDK's internal sleep limit. A DBOS timer releases the
 acquisition step until that deadline. Other ready boards advance before a search
 sleeps. Independent job assessment workflows and the shared provider/model
 accounting remain available. The search can be stopped during its wait.
-A 429 without a server deadline records bounded exponential backoff and defers
-remaining LinkedIn work for explicit continuation.
+A LinkedIn 429 without a positive server deadline uses the same durable wait
+with the persisted exponential backoff (four seconds initially, capped at 15
+minutes per wait). Each new 429 can defer another turn. The original run owns
+its unfinished work, criteria, budget and accepted postings across retries.
 
-An explicit `discovery.search` with only `resumeFromRunId` continues unfinished
-LinkedIn units after a rate limit. Admission verifies the prior outcome, source
-state and server-supplied cooldown. The new run freezes the original criteria
+An explicit `discovery.search` with only `resumeFromRunId` can continue unfinished
+LinkedIn units from an older terminal rate-limit outcome. Admission verifies the
+prior outcome, source state and persisted cooldown. The new run freezes the original criteria
 and remaining budget. Each interrupted unit seeds its own SDK checkpoint with
 the acknowledged cursor and seen keys, including excluded postings. A transactional
 parent-to-child link prevents two successors from spending the same remaining

@@ -1,5 +1,6 @@
 import type { APIRequestContext } from "@playwright/test";
 import { action, expect, json, terminal, test, type ApplicationStack } from "../harness/fixtures.js";
+import { linkedinCard } from "./linkedin-data.js";
 
 test.use({ discoveryTransport: "jobstreaming", features: "profile,jobs,discovery" });
 
@@ -73,7 +74,7 @@ test.describe("local TLS failure", () => {
 
 test.describe("retained board failures", () => {
 
-  test("board rate limits retain partial search outcomes across restart and explain LinkedIn detail failures", async ({ api, app, page }) => {
+  test("retained board failures survive restart and a LinkedIn cooldown can be stopped from Jobs", async ({ api, app, page }, info) => {
     const code = "discovery_provider_rate_limited";
     const message = "The board rate-limited this search. Wait before running another search on this board.";
     const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
@@ -102,6 +103,8 @@ test.describe("retained board failures", () => {
     await page.goto("/jobs");
     const notice = page.getByRole("list", { name: "Search source failures" });
     await expect(notice).toContainText(`Indeed: ${message}`);
+    const { sources } = await json<{ sources: { sourceId: string; politeness: { rateLimitedCount: number } }[] }>(api, "get", "/v1/discovery/sources");
+    expect(sources.find(source => source.sourceId === "jobstreaming:indeed")?.politeness.rateLimitedCount).toBe(1);
 
     // A known vacancy with a description requests targeted detail before intake.
     // LinkedIn's SDK raises its typed HTTP 429 directly on this path.
@@ -114,14 +117,23 @@ test.describe("retained board failures", () => {
     const detail = await app.external.next();
     expect(detail.path).toBe("/jobstreaming/linkedin/jobs/view/1234");
     detail.raw("Private synthetic response", { status: 429 });
-    expect(await failuresFor(api, app, fresh.runId, code)).toEqual([
-      expect.objectContaining({ boards: ["linkedin"], code, diagnostic: "rate_limited", message }),
-    ]);
-    const { sources } = await json<{ sources: { sourceId: string; politeness: { rateLimitedCount: number } }[] }>(api, "get", "/v1/discovery/sources");
-    expect(sources.find((source) => source.sourceId === "jobstreaming:linkedin")?.politeness.rateLimitedCount).toBe(1);
-    await expect(notice).toContainText(`LinkedIn: ${message}`);
-    await page.getByText("Search details", { exact: true }).click();
-    await expect(page.getByRole("list", { name: "Recorded source failures" })).toContainText(`LinkedIn: ${message}`);
-    expect(app.external.calls.filter((call) => call.path.startsWith("/jobstreaming/linkedin"))).toHaveLength(2);
+    const retry = await app.external.next();
+    expect(retry.path).toBe(detail.path);
+    retry.raw("Too many requests", { status: 429 });
+    await page.reload();
+    const progress = page.getByRole("region", { name: "Job search progress" });
+    await expect(progress).toContainText("JobCtrl will retry automatically in");
+    await expect(progress.getByRole("button", { name: "Continue LinkedIn search" })).toHaveCount(0);
+    await info.attach("automatic-linkedin-retry", { contentType: "image/png", body: await progress.screenshot() });
+    await progress.getByRole("button", { name: "Request stop" }).click();
+    expect((await terminal(api, fresh.runId)).status).toBe("cancelled");
+
+    // The next search still honors the shared cooldown. Only its listing may be requested afterward.
+    const later = await action(api, "discovery.search", { ...search, boards: ["linkedin"], queries: ["After stop"] });
+    const next = await app.external.next();
+    expect(new URL(next.path, "http://localhost").searchParams.get("keywords")).toBe("After stop");
+    next.raw(linkedinCard(7652));
+    expect((await terminal(api, later.runId)).status).toBe("succeeded");
+    expect(app.external.calls.filter(call => call.path === detail.path)).toHaveLength(2);
   });
 });

@@ -4,6 +4,7 @@ import { action, completed, expect, json, terminal, test, type ApplicationStack,
 import { baseline, createBaseline } from "./core-data.js";
 import { serveRoleTarget } from "./discovery-role-scope-data.js";
 import type { FitState } from "./fit-data.js";
+import { linkedinCard } from "./linkedin-data.js";
 import { serveQualification, serveSavedAssessment } from "./search-assessment-data.js";
 
 const targetRole = "Synthetic systems engineer";
@@ -34,17 +35,17 @@ async function configureSearch(api: APIRequestContext, newJobLimit: number) {
   return setup;
 }
 
-async function clickSearch(page: Page, name: string) {
+async function startSearch(page: Page) {
   const admitted = page.waitForResponse((response) => new URL(response.url()).pathname === searchPath
     && response.request().method() === "POST");
-  await page.getByRole("button", { name, exact: true }).click();
+  await page.getByRole("button", { name: "Start search", exact: true }).click();
   const response = await admitted;
   expect(response.status()).toBe(202);
-  return { response, runId: ((await response.json()) as { runId: string }).runId };
+  return await response.json() as { runId: string };
 }
 
 function listingCards(ids: readonly number[], fullPage = false) {
-  const cards = ids.map((id) => `<div class="base-search-card"><a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/synthetic-engineer-${id}"><span class="sr-only">Synthetic Systems Engineer</span></a><h4 class="base-search-card__subtitle">Synthetic Board Company</h4></div>`);
+  const cards = ids.map(linkedinCard);
   return cards.join("") + (fullPage ? '<div class="base-search-card"></div>'.repeat(10 - ids.length) : "");
 }
 
@@ -69,10 +70,10 @@ function description(text: string) {
   return `<div class="show-more-less-html__markup"><p>${text}</p></div>`;
 }
 
-test("Continue LinkedIn search keeps the saved cursor exclusions and remaining job limit", async ({ api, app, page }) => {
+test("LinkedIn automatically resumes a throttled page with the original exclusions and remaining job limit", async ({ api, app, page }) => {
   const { library } = await configureSearch(api, 2);
   await page.goto("/jobs");
-  const original = await clickSearch(page, "Start search");
+  const original = await startSearch(page);
   (await listingAt(app, 0)).raw(listingCards([7611, 7612], true));
   (await detailFor(app, 7611)).raw(description("Maintain durable workflow recovery."));
   await serveRoleTarget(roleModel(app), "match");
@@ -82,12 +83,10 @@ test("Continue LinkedIn search keeps the saved cursor exclusions and remaining j
   (await listingAt(app, 10)).raw("Too many requests", { status: 429 });
   await assessment;
 
-  const prior = (await completed(api, original.runId)).result as { newJobIds: string[] };
-  expect(prior).toMatchObject({ status: "partial", newJobs: 1,
-    roleTargetObservations: { match: 1, mismatch: 1 },
-    failures: [{ code: "discovery_provider_rate_limited" }], preparation: { assessedJobs: 1 },
-  });
-  const initialJob = prior.newJobIds[0]!;
+  const accepted = await json<{ jobs: { job_id: string }[] }>(api, "get", "/v1/jobs");
+  expect(accepted.jobs).toHaveLength(1);
+  const initialJob = accepted.jobs[0]!.job_id;
+  await expect.poll(async () => (await json<FitState>(api, "get", `/v1/jobs/${initialJob}/fit`)).current).toBe(true);
   const initialFit = await json<FitState>(api, "get", `/v1/jobs/${initialJob}/fit`);
   expect(initialFit).toMatchObject({ current: true, score: { score: 10 } });
   const checkpoint = await app.discoveryCheckpoint(original.runId);
@@ -98,10 +97,7 @@ test("Continue LinkedIn search keeps the saved cursor exclusions and remaining j
   await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, newJobLimit: 100 });
   await page.reload();
   const progress = page.getByRole("region", { name: "Job search progress" });
-  await expect(progress.getByText("While LinkedIn is paused, you can still assess jobs you’ve already saved.", { exact: true })).toBeVisible();
-  const continuation = await clickSearch(page, "Continue LinkedIn search");
-  expect(continuation.runId).not.toBe(original.runId);
-  expect(continuation.response.request().postDataJSON()).toEqual({ resumeFromRunId: original.runId });
+  await expect(progress.getByRole("button", { name: "Request stop", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue LinkedIn search", exact: true })).toHaveCount(0);
 
   // The provider repeats both rows from the prior page. Its excluded row was
@@ -110,14 +106,17 @@ test("Continue LinkedIn search keeps the saved cursor exclusions and remaining j
   (await detailFor(app, 7613)).raw(description("Design systems for controlled operations."));
   await serveRoleTarget(roleModel(app), "match");
   await serveSavedAssessment(assessmentModel(app), library);
-  const finished = (await completed(api, continuation.runId)).result as { newJobIds: string[] };
-  expect(finished).toMatchObject({ status: "completed", newJobs: 1, preparation: { status: "succeeded", assessedJobs: 1 } });
-  expect(finished.newJobIds).toHaveLength(1);
-  const newJob = finished.newJobIds[0]!;
-  expect(newJob).not.toBe(initialJob);
+  const finished = (await completed(api, original.runId)).result as { newJobIds: string[] };
+  expect(finished).toMatchObject({ status: "completed", newJobs: 2, failures: [],
+    roleTargetObservations: { match: 2, mismatch: 1 }, preparation: { status: "succeeded", assessedJobs: 2 } });
+  expect(finished.newJobIds).toHaveLength(2);
+  expect(finished.newJobIds).toContain(initialJob);
+  const newJob = finished.newJobIds.find(id => id !== initialJob)!;
   expect(await json(api, "get", `/v1/jobs/${newJob}/fit`)).toMatchObject({ current: true, score: { score: 10 } });
   expect((await json<FitState>(api, "get", `/v1/jobs/${initialJob}/fit`)).score).toEqual(initialFit.score);
-  expect((await app.discoveryCheckpoint(original.runId)).receiptKeys).toEqual(checkpoint.receiptKeys);
+  const finalCheckpoint = await app.discoveryCheckpoint(original.runId);
+  expect(finalCheckpoint.receiptKeys).toEqual(expect.arrayContaining(checkpoint.receiptKeys));
+  expect(finalCheckpoint.request).toEqual(checkpoint.request);
   const saved = await json<{ jobs: { job_id: string }[] }>(api, "get", "/v1/jobs");
   expect(saved.jobs.map((job) => job.job_id).sort()).toEqual([initialJob, newJob].sort());
 
@@ -153,7 +152,7 @@ test("a short positive LinkedIn Retry-After resumes the same detail automaticall
   expect(app.external.calls.filter((call) => call.path.startsWith("/jobstreaming/linkedin/"))).toHaveLength(3);
 });
 
-test("LinkedIn continuation skips already checked postings within an interrupted page", async ({ api, app }) => {
+test("repeated LinkedIn detail throttles back off across worker replacement and resume the same posting", async ({ api, app }) => {
   const { profile, library } = await configureSearch(api, 2);
   const first = await action(api, "discovery.search", { queries: [], locations: [], expectedProfileVersion: profile.profileVersion });
   (await listingAt(app, 0)).raw(listingCards([7631, 7632, 7633]));
@@ -162,25 +161,34 @@ test("LinkedIn continuation skips already checked postings within an interrupted
   const assessment = serveSavedAssessment(assessmentModel(app), library);
   (await detailFor(app, 7632)).raw(description("Audit supplier contracts."));
   await serveRoleTarget(roleModel(app), "mismatch");
-  (await detailFor(app, 7633)).raw("Too many requests", { status: 429 });
+  const blocked = await detailFor(app, 7633);
+  const firstLimitAt = performance.now();
+  blocked.raw("Too many requests", { status: 429 });
+  const retry = await detailFor(app, 7633);
+  expect(performance.now() - firstLimitAt).toBeGreaterThanOrEqual(4_000);
+  const secondLimitAt = performance.now();
+  retry.raw("Too many requests", { status: 429, headers: { "Retry-After": "unknown" } });
+  const nextDetail = detailFor(app, 7633).then(call => ({ call, arrivedAt: performance.now() }));
   await assessment;
-  const prior = (await completed(api, first.runId)).result as { newJobIds: string[] };
-  expect(prior).toMatchObject({ status: "partial", newJobs: 1, preparation: { status: "succeeded", assessedJobs: 1 } });
-
   await expect.poll(async () => {
-    const history = await json<{ runs: { runId: string; cooldowns: unknown[] }[] }>(api, "get", "/v1/discovery/runs");
-    return history.runs.find((run) => run.runId === first.runId)?.cooldowns;
-  }, { timeout: 15_000 }).toEqual([]);
-  const resumed = await action(api, "discovery.search", { resumeFromRunId: first.runId });
-  (await detailFor(app, 7633)).raw(description("Design systems for controlled operations."));
+    const history = await json<{ runs: { runId: string; cooldowns: { retryAfterSeconds: number }[] }[] }>(api, "get", "/v1/discovery/runs");
+    return history.runs.find(run => run.runId === first.runId)?.cooldowns[0]?.retryAfterSeconds ?? 0;
+  }).toBeGreaterThan(4);
+  const pids = await app.restartWorker();
+  expect(pids.current).not.toBe(pids.previous);
+  const { call, arrivedAt } = await nextDetail;
+  expect(arrivedAt - secondLimitAt).toBeGreaterThanOrEqual(8_000);
+  call.raw(description("Design systems for controlled operations."));
   await serveRoleTarget(roleModel(app), "match");
   await serveSavedAssessment(assessmentModel(app), library);
-  const finished = (await completed(api, resumed.runId)).result as { newJobIds: string[] };
-  expect(finished).toMatchObject({ newJobs: 1, preparation: { status: "succeeded", assessedJobs: 1 } });
-  expect(finished.newJobIds).toHaveLength(1);
-  expect(finished.newJobIds[0]).not.toBe(prior.newJobIds[0]);
+  const finished = (await completed(api, first.runId)).result as { newJobIds: string[] };
+  expect(finished).toMatchObject({ status: "completed", failures: [], newJobs: 2, preparation: { status: "succeeded", assessedJobs: 2 } });
+  expect(new Set(finished.newJobIds).size).toBe(2);
+  const throttle = await json<{ events: { payload: { phase: string; retryAfterSeconds: number | null } }[] }>(api, "get",
+    `/v1/events?aggregateId=${first.runId}&type=DiscoverySourceRateLimited`);
+  expect(throttle.events.map(event => [event.payload.phase, event.payload.retryAfterSeconds])).toEqual([["detail", null], ["detail", null]]);
   expect(app.external.calls.filter((call) => call.path.includes("/jobstreaming/linkedin/jobs/view/")).map((call) => call.path.split("/").at(-1)))
-    .toEqual(["7631", "7632", "7633", "7633"]);
+    .toEqual(["7631", "7632", "7633", "7633", "7633"]);
   expect(app.external.calls.filter((call) => call.path === "/model" && call.body?.["operation"] === "discovery.role_target_match")).toHaveLength(3);
 });
 
