@@ -1,8 +1,10 @@
 # Discovery ownership
 
 Lenny’s Jobs and LinkedIn are selected when there is no saved board selection.
-The installed JobStreaming adapter owns listing parsing and per-query filtering.
-Lenny’s Jobs reads the configured `JOBSTREAMING_LENNYSJOBS_LISTINGS_URL` connection.
+JobStreaming owns the TrueUp category IDs, location lookup and resumable listing
+pages for Lenny’s Jobs. JobCtrl sends each saved role and location to the SDK,
+which posts to the worker’s configured `JOBSTREAMING_LENNYSJOBS_LISTINGS_URL`.
+The adapter uses listing update timestamps for the requested lookback.
 
 Discovery is optional. It owns saved search controls, explicit targets/query
 plans, the state of SDK boards, historical capture review lifetimes,

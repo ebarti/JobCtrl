@@ -111,14 +111,20 @@ the progress strip. Repeated failures with the same source identity, error code
 and recorded message appear once with the number of affected query/location
 combinations.
 
-New workspaces start with LinkedIn selected. To use Indeed or ZipRecruiter,
-select them under **Search preferences → Job boards**.
 New workspaces select LinkedIn and Lenny’s Jobs. Existing workspaces keep
-their saved boards. Select **Lenny’s Jobs** in **Search preferences → Job boards**
-to add it to an existing selection. Set `JOBSTREAMING_LENNYSJOBS_LISTINGS_URL`
-in the worker environment to your listing connection and restart the worker.
-Each role query and location is sent separately. The connection accepts the
-[JobStreaming listing format](https://github.com/ebarti/jobstreaming/blob/v0.0.7/README.md#connecting-lennys-jobs).
+their saved boards. You can add Lenny’s Jobs, Indeed or ZipRecruiter under
+**Search preferences → Job boards**. Set `JOBSTREAMING_LENNYSJOBS_LISTINGS_URL`
+in the worker environment to your native TrueUp search connection and restart
+the worker. Each saved role and location gets a separate search.
+
+For Lenny’s Jobs, an exact board category such as **Software Engineering** uses
+the category filter. A role such as **Director of Engineering** uses the
+board’s title/company search. The worker resolves location names through the
+board’s picker. **Spain** and **Spain (remote)** are different choices. Include
+the country when cities share a name. A missing remote location yields zero
+jobs for that combination. The lookback uses the card’s last update because
+the board’s public listings do not supply an original posting date.
+See the [JobStreaming connection format](https://github.com/ebarti/jobstreaming/blob/v0.0.8/README.md#connecting-lennys-jobs).
 
 Indeed uses the worker environment variable `JOBSTREAMING_INDEED_API_KEY`.
 ZipRecruiter uses `JOBSTREAMING_ZIPRECRUITER_AUTHORIZATION`. If Search reports

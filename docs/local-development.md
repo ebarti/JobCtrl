@@ -88,10 +88,10 @@ Source dependency provisioning remains in `scripts/install` and
 `corepack pnpm dev:setup`. Browser installation uses `scripts/install` or the
 explicit pinned Playwright command above, outside provider setup.
 
-Source setup and QA install JobStreaming 0.0.7 from PyPI. The worker pins the
+Source setup and QA install JobStreaming 0.0.8 from PyPI. The worker pins the
 published version in `workers/automation/pyproject.toml` and its distribution
 hashes in `workers/automation/uv.lock`. The SDK provides source traversal,
-explicit completion reasons and query-filtered Lenny’s Jobs listings.
+explicit completion reasons and native TrueUp search for Lenny’s Jobs.
 Set `JOBSTREAMING_LENNYSJOBS_LISTINGS_URL` in the worker environment to connect
 the listing source. See [Discovery](user/discovery.md) for the connection format.
 

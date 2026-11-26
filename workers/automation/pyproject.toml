@@ -46,7 +46,7 @@ dependencies = [
     "opentelemetry-instrumentation-httpx>=0.48b0",
     # Typed, concurrent job-board events plus resumable checkpoints. Pin the
     # integration contract so JobCtrl's durable adapter changes deliberately.
-    "jobstreaming==0.0.7",
+    "jobstreaming==0.0.8",
     # Feature domain schemas and strict structured-model requests use Pydantic
     # directly, independently of the SDKs that also depend on it.
     "pydantic>=2.10",
@@ -134,4 +134,4 @@ default-groups = ["provider-runtime"]
 # as a relative timestamp would make an unchanged lockfile fail `uv --locked`
 # as time passes. Provider runtimes and the audited JobStreaming integration
 # retain their explicit reviewed cutoffs.
-exclude-newer-package = { "google-antigravity" = "2026-11-19T15:45:00Z", "claude-agent-sdk" = "2026-11-19T23:02:00Z", "jobstreaming" = "2026-11-26T19:36:33Z" }
+exclude-newer-package = { "google-antigravity" = "2026-11-19T15:45:00Z", "claude-agent-sdk" = "2026-11-19T23:02:00Z", "jobstreaming" = "2026-11-26T20:28:28Z" }

@@ -18,11 +18,12 @@ def board_search_error(event):
     message = "The source could not complete its search."
     if event.site.value == "lennysjobs" and event.error_type == "AdapterFailureError":
         public_messages = {
-            "Lenny's Jobs listing connection did not confirm the hours_old filter": "The Lenny’s Jobs connection did not confirm the requested posting age. Check the lookback filter on the listing connection.",
-            "Lenny's Jobs listing connection did not confirm the is_remote filter": "The Lenny’s Jobs connection did not confirm the remote-work filter. Check the listing connection.",
-            "Lenny's Jobs returned results for a different query": "The Lenny’s Jobs connection returned results for a different search. Check that it forwards the requested query.",
-            "Lenny's Jobs returned invalid listing or pagination metadata": "The Lenny’s Jobs connection returned an unexpected listing page. Check that it supports the requested page number.",
-            "Lenny's Jobs returned an unreadable listing page": "The Lenny’s Jobs connection returned a page without readable listing data. Check the configured listing URL.",
+            "Lenny's Jobs returned results for a different query": "Lenny’s Jobs returned results for a different role. Check that the connection forwards your search text.",
+            "Lenny's Jobs did not confirm the selected filters": "Lenny’s Jobs returned a page that did not match the selected filters. Check that the connection forwards the category and location.",
+            "Lenny's Jobs needs a more specific location": "Several locations could match this search on Lenny’s Jobs. Enter the city and country in your search preferences.",
+            "Lenny's Jobs returned invalid location suggestions": "Lenny’s Jobs returned unreadable location suggestions. Check the configured search connection.",
+            "Lenny's Jobs returned invalid listing or pagination metadata": "Lenny’s Jobs returned an unexpected results page. Check that the connection forwards the requested page number.",
+            "Lenny's Jobs returned an unreadable search response": "Lenny’s Jobs returned an unreadable search response. Check the configured search connection.",
         }
         message = public_messages.get(event.message, message)
     return AppError("discovery_provider_" + event.code.value, message, 502)
@@ -41,6 +42,11 @@ def board_access_error(event):
             and event.message == "Custom CA files are not supported by tls-client adapters"):
         kind = "tls_configuration"
         message = "The worker could not establish a secure connection to the board. Check its TLS configuration and certificate trust."
+    elif board == "lennysjobs" and event.error_type == "AuthenticationConfigurationError" and event.message in {"Lenny's Jobs returned HTTP 401", "Lenny's Jobs returned HTTP 403"}:
+        kind = "provider_access_denied"
+        status = 401 if event.message.endswith("401") else 403
+        details["httpStatus"] = status
+        message = f"Lenny’s Jobs denied this search (HTTP {status}). Check access on the configured search connection."
     elif board == "lennysjobs" and event.error_type == "AuthenticationConfigurationError" and event.message == "Lenny's Jobs requires JOBSTREAMING_LENNYSJOBS_LISTINGS_URL":
         kind = "missing_connection"
         message = "Connect Lenny’s Jobs by setting JOBSTREAMING_LENNYSJOBS_LISTINGS_URL in the worker environment, then restart the worker."

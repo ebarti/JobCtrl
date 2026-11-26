@@ -67,16 +67,16 @@ def controlled_registry(workspace):
         adapter.session.headers.update({"Authorization": "Bearer " + owner["token"]})
         return adapter
 
-    def lennysjobs(**kwargs):
-        adapter = LennysJobs(listings_url=endpoint + "/lennysjobs", **kwargs)
-        adapter.session.headers["Authorization"] = "Bearer " + owner["token"]
-        if access == "jobstreaming-lennys-missing":
-            adapter.listings_url = None
-        return adapter
+    class LoopbackLennysJobs(LennysJobs):
+        def __init__(self, **kwargs):
+            super().__init__(listings_url=endpoint + "/lennysjobs", **kwargs)
+            self.session.headers["Authorization"] = "Bearer " + owner["token"]
+            if access == "jobstreaming-lennys-missing":
+                self.listings_url = None
 
     registry = AdapterRegistry()
     registry.register("indeed", indeed)
     registry.register("linkedin", linkedin)
-    registry.register("lennysjobs", lennysjobs)
+    registry.register("lennysjobs", LoopbackLennysJobs)
     registry.register("zip_recruiter", zip_recruiter)
     return registry
