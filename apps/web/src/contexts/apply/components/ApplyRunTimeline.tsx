@@ -83,9 +83,6 @@ export function ApplyRunTimeline({ runId, jobId }: ApplyRunTimelineProps) {
           <p>
             Run {action.data.runId} · workflow {action.data.workflowId}
           </p>
-          {action.data.temporalRunId ? (
-            <p>Temporal run {action.data.temporalRunId}</p>
-          ) : null}
           <ol aria-label="Application run timeline">
             <li>
               Accepted:{" "}

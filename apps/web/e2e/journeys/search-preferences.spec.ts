@@ -1,11 +1,11 @@
 import { indeedPage } from "./indeed-data.js";
-import { test, expect, json, completed, terminal, modelCall } from "../harness/fixtures.js";
+import { test, expect, json, completed, terminal } from "../harness/fixtures.js";
 import { baseline, createBaseline, createPosting, type Library, type Profile } from "./core-data.js";
-import { authoredPartition, type NormalizedSnapshot } from "./consolidation-data.js";
-import { untilNormalization } from "./preparation-cohort-data.js";
-import { qualificationBatchDecision, qualificationBindings, qualificationKey } from "./qualification-data.js";
-import { COHORT_NORMALIZATION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
-import { serveRoleTarget } from "./discovery-role-scope-data.js";
+import type { NormalizedSnapshot } from "./consolidation-data.js";
+import { servePostingAssessment } from "./search-assessment-data.js";
+import { qualificationBindings, qualificationKey } from "./qualification-data.js";
+import { catalogContext, catalogMatching } from "./requirements-data.js";
+import { roleTargetStream, serveRoleTarget } from "./discovery-role-scope-data.js";
 
 type LocationBinding = {
   rowIndex: number;
@@ -543,11 +543,11 @@ test("Jobs starts saved searches directly, preserves live progress across naviga
   expect(String(first.body["query"])).toContain('where: "Madrid"');
   expect(String(first.body["query"])).toContain('keys: ["DSQF7"]');
   first.respond(indeedPage({ jobs: [platform, infrastructure], cursor: "next-page", complete: false }));
-  // The SDK can prefetch the next native page while JobCtrl qualifies the first two listings.
-  const next = await app.external.next();
-  expect(next.path).toBe("/jobstreaming/indeed");
-  await serveRoleTarget(app, "match");
-  await serveRoleTarget(app, "match");
+  const roleChecks = roleTargetStream(app);
+  await serveRoleTarget(roleChecks, "match");
+  await serveRoleTarget(roleChecks, "match");
+  const next = await app.external.next({ match: (call) => call.path === "/jobstreaming/indeed" });
+  expect(String(next.body["query"])).toContain("next-page");
   expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/discovery/runs")).runs).toContainEqual(expect.objectContaining({ runId: runId }));
   await expect(progress.getByRole("progressbar")).toBeVisible();
   await expect(progress.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
@@ -575,11 +575,11 @@ test("Jobs starts saved searches directly, preserves live progress across naviga
   } finally { await peer.close(); }
   expect((await json<{ runs: { runId: string }[] }>(api, "get", "/v1/action-runs?action=discovery.search")).runs.map((row) => row.runId)).toEqual([runId]);
   next.respond(indeedPage({ jobs: [systems], cursor: null, complete: true }));
-  await serveRoleTarget(app, "match");
-  // Acquisition has committed while the first assessment boundary is held.
-  await expect.poll(() => app.external.calls.filter((call) => call.path === "/posting-page").length).toBe(1);
-  const acquired = await json<{ runs: { runId: string; status: string }[] }>(api, "get", "/v1/discovery/runs");
-  expect(acquired.runs.find((run) => run.runId === runId)?.status).toBe("completed");
+  await serveRoleTarget(roleChecks, "match");
+  const pages = await Promise.all(postings.map((posting) => app.external.next({ match: (call) =>
+    call.path === "/posting-page" && call.body["url"] === posting.url })));
+  await expect.poll(async () => (await json<{ runs: { runId: string; status: string }[] }>(api, "get", "/v1/discovery/runs"))
+    .runs.find((run) => run.runId === runId)?.status).toBe("completed");
   expect((await json<{ status: string }>(api, "get", `/v1/action-runs/${runId}`)).status).toBe("running");
   await expect(progress.getByRole("heading", { name: "Assessing saved jobs", exact: true })).toBeVisible();
   await expect(progress).toContainText("0 of 3 jobs assessed · 0 failed");
@@ -588,40 +588,30 @@ test("Jobs starts saved searches directly, preserves live progress across naviga
   await expect(start).toBeDisabled();
   await testInfo.attach("jobs-search-assessing-desktop", { contentType: "image/png", body: await page.screenshot() });
 
-  const matching = await untilNormalization(app, postings.map((posting) => ({ ...posting, demand: posting.description })));
-  expect(matching.body["prompt_version"]).toBe(COHORT_NORMALIZATION_PROMPT_VERSION);
-  const input = matching.body["context"] as CatalogContext;
   const { rows: acquiredJobs } = await json<{ rows: { job: { job_id: string; title: string } }[] }>(api, "get", "/v1/jobs/query");
-  const candidates = postings.map((posting) => {
-    const jobId = acquiredJobs.find(({ job }) => job.title === posting.title)?.job.job_id;
-    expect(jobId).toBeTruthy();
-    const incoming = input.incoming.filter((row) => row.job_id === jobId);
-    expect(incoming).toHaveLength(1);
-    return { jobId: jobId!, groupId: posting.job_key, definition: posting.description, memberId: incoming[0]!.member_id };
-  });
-  const jobIds = candidates.map(({ jobId }) => jobId);
-  expect(input.incoming.map(({ job_id }) => job_id).sort()).toEqual([...jobIds].sort());
-  matching.reply(authoredPartition(matching,
-    candidates.map(({ groupId, definition, memberId }) => ({ groupId, definition, name: definition, category: "professional_experience", memberIds: [memberId] })),
-    candidates.map(({ jobId, groupId, definition }) => ({ groupId, definition, jobIds: [jobId] })),
-  ));
-
-  const qualification = await modelCall(app, "fit.qualification-batch");
-  const snapshots = await Promise.all(jobIds.map((jobId) => json<NormalizedSnapshot>(api, "get", `/v1/jobs/${jobId}/requirements`)));
-  const requirements = snapshots.map((snapshot, index) => {
-    expect(snapshot.stale).toBe(false);
-    expect(snapshot.requirements).toHaveLength(1);
-    const requirement = snapshot.requirements[0]!;
-    expect(requirement.normalized_demand.definition).toBe(candidates[index]!.definition);
-    return qualificationKey({ ...requirement, demand_fingerprint: requirement.normalized_demand.demand_fingerprint });
-  });
-  expect(new Set(requirements).size).toBe(postings.length);
-  expect(qualificationBindings(qualification).map(qualificationKey).sort()).toEqual([...requirements].sort());
-  const missing = requirements[candidates.findIndex(({ groupId }) => groupId === infrastructure.job_key)]!;
-  const achievement = library.roles[0]!.achievements[0]!;
-  qualification.reply(qualificationBatchDecision(qualification, (binding) => qualificationKey(binding) === missing
-    ? { kind: "missing" }
-    : { achievementIds: [achievement.achievement_id], evidenceSourceIds: [`evidence:${achievement.source_refs[0]!.source_id}`] }));
+  const jobIds = postings.map(posting => acquiredJobs.find(({ job }) => job.title === posting.title)!.job.job_id);
+  const qualificationKeys = new Set<string>();
+  for (const [index, posting] of postings.entries()) {
+    const jobId = jobIds[index]!;
+    await servePostingAssessment(app, library, posting, {
+      pageRequest: pages[index]!, kind: posting === infrastructure ? "missing" : "matched",
+      catalogDecision(call) {
+        expect(catalogContext(call).incoming.map(row => row.job_id)).toEqual([jobId]);
+        return catalogMatching(call, { capability: { verdict: "new", demandDefinition: posting.description } });
+      },
+      async beforeQualification(call) {
+        const snapshot = await json<NormalizedSnapshot>(api, "get", `/v1/jobs/${jobId}/requirements`);
+        expect(snapshot.stale).toBe(false);
+        expect(snapshot.requirements).toHaveLength(1);
+        const requirement = snapshot.requirements[0]!;
+        expect(requirement.normalized_demand.definition).toBe(posting.description);
+        const key = qualificationKey({ ...requirement, demand_fingerprint: requirement.normalized_demand.demand_fingerprint });
+        expect(qualificationBindings(call).map(qualificationKey)).toEqual([key]);
+        qualificationKeys.add(key);
+      },
+    });
+  }
+  expect(qualificationKeys.size).toBe(postings.length);
   const settled = await completed(api, runId);
   const result = settled["result"] as { newJobIds: string[] };
   expect(result).toMatchObject({ status: "completed", preparationAvailable: true,
@@ -642,8 +632,8 @@ test("Jobs starts saved searches directly, preserves live progress across naviga
     await expect(row.getByText(`${score}/10`, { exact: true })).toBeVisible();
   }
   const operations = app.external.calls.filter((call) => call.path === "/model").map((call) => call.body["operation"]);
-  expect(operations.filter((operation) => operation === "requirements.match_catalog")).toHaveLength(1);
-  expect(operations.filter((operation) => operation === "fit.qualification-batch")).toHaveLength(1);
+  expect(operations.filter((operation) => operation === "requirements.match_catalog")).toHaveLength(postings.length);
+  expect(operations.filter((operation) => operation === "fit.qualification-batch")).toHaveLength(postings.length);
   expect(operations.some((operation) => String(operation).startsWith("fit.coverage") || String(operation).startsWith("profile.wording") || String(operation).startsWith("resumes."))).toBe(false);
   expect((await json<{ runs: unknown[] }>(api, "get", "/v1/action-runs?action=fit.refresh")).runs).toEqual([]);
 });

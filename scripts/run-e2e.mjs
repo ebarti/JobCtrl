@@ -236,13 +236,17 @@ try {
   if (interrupted) throw new Error(`E2E run interrupted by ${interrupted}`);
   preflightStarted = performance.now();
   summary.preflight = { status: "starting" };
-  const { applicationStack } =
+  const { applicationStack, postgresStack } =
     await import("../apps/web/e2e/harness/runtime.mjs");
-  const preflight = await applicationStack("127.0.0.1:9", {
-    preflight: true,
-    pythonExecutable: interpreter,
-  });
-  await preflight.close();
+  const preflightDatabase = await postgresStack();
+  let preflight;
+  try {
+    preflight = await applicationStack(await preflightDatabase.createDatabase(), {
+      preflight: true,
+      pythonExecutable: interpreter,
+    });
+    await preflight.close();
+  } finally { await preflightDatabase.close(); }
   summary.preflight = {
     status: "passed",
     elapsedMs: Math.round(performance.now() - preflightStarted),
@@ -254,12 +258,11 @@ try {
 
   if (interrupted) throw new Error(`E2E run interrupted by ${interrupted}`);
   const buildStarted = performance.now();
-  let code = installed ? 0 : await run(["web:build"]);
+  const staticDir = installed ? environment.JOBCTRL_E2E_STATIC_DIR : path.join(evidence, "web-build");
+  let code = installed ? 0 : await run(["--filter", "@jobctrl/web", "exec", "vite", "build", "--outDir", staticDir]);
+  environment.JOBCTRL_E2E_STATIC_DIR = staticDir;
   summary.buildMs = Math.round(performance.now() - buildStarted);
   if (code === 0 && !interrupted) {
-    const staticDir = installed
-      ? environment.JOBCTRL_E2E_STATIC_DIR
-      : path.join(root, "dist/web");
     summary.webBuild = await sourceInventory(staticDir);
     const testStarted = performance.now();
     code = await run([

@@ -143,7 +143,7 @@ function PreparationRunListContent({ jobIds, commands }: { readonly jobIds?: rea
           <PreparationStatus status={run.status} />
           {["running", "queued", "pending"].includes(run.status) && (!stop || canRequestStop(stop))
             ? <Button type="button" variant="outline" size="sm" disabled={cancel.isPending} onClick={() => cancel.mutate(run.runId)}>{stop?.cancellationDelivery === "pending" ? "Retry stop" : "Cancel run"}</Button> : null}
-          {["failed", "partial", "cancelled"].includes(run.status) && !(run.executionPolicy && resumedRunIds.has(run.runId))
+          {["failed", "partial", "cancelled"].includes(run.status) && !(run.executionPolicy?.version === "search-cohort-v1" && resumedRunIds.has(run.runId))
             ? <Button type="button" variant="outline" size="sm" disabled={submit.isPending || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: run.runId } })}>Retry unfinished</Button> : null}
         </div>
         {expanded ? <div id={outcomesId} className="preparation-run-row__outcomes"><PreparationRunOutcomes run={run} /><Link to="/runs/$runId" params={{ runId: run.runId }}>View run details</Link></div> : null}
@@ -244,12 +244,13 @@ export function JobPreparationActions({ jobId, defaultMode = null, initialMode =
   const incomplete = jobSteps.find((step) => ["failed", "blocked", "cancelled"].includes(step.status));
   const belowThreshold = jobSteps.some((step) => step.result?.skip === "below_fit_threshold");
   const hasResume = jobSteps.some((step) => step.stage === "compose" && step.result?.resume_id);
-  const retryable = current && (incomplete || (current.status === "cancelled" && !hasResume));
+  const failedHandoff = current?.retryableJobIds?.includes(jobId) ?? false;
+  const retryable = current && (failedHandoff || incomplete || (current.status === "cancelled" && !hasResume));
   const activeAssessment = active?.recipe === "search" || active?.recipe === "assess";
   const jobAssessmentComplete = activeAssessment && active?.steps.some((step) => step.jobId === jobId && step.stage === "fit" && step.status === "succeeded");
   const currentAssessment = current?.recipe === "search" || current?.recipe === "assess";
-  const resumeSearch = Boolean(current?.executionPolicy);
-  const retryLabel = resumeSearch ? "Continue fit assessment for all jobs" : currentAssessment ? "Continue unfinished fit assessment" : "Continue unfinished preparation";
+  const resumeSearch = current?.executionPolicy?.version === "search-cohort-v1";
+  const retryLabel = resumeSearch ? "Continue fit assessment for all jobs" : currentAssessment ? "Retry fit assessment for this job" : "Continue unfinished preparation";
   const statusRun = active ?? current;
   const statusSteps = statusRun?.steps.filter((step) => step.jobId === jobId) ?? [];
   const statusTask = (statusRun?.recipe === "search" || statusRun?.recipe === "assess") ? "Fit assessment" : "Preparation";
@@ -271,8 +272,8 @@ export function JobPreparationActions({ jobId, defaultMode = null, initialMode =
         });
       }}>{activeAssessment ? jobAssessmentComplete ? "Fit assessed for this job" : "Assessing fit…" : submit.isPending ? "Starting preparation…" : busy ? "Preparing resume…" : recovery.record?.operation === "preparation.run" ? "Retry same preparation" : localBaseline ? "Prepare resume locally" : "Prepare resume"}</Button>
       {stopRunId && (!stop || canRequestStop(stop)) ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(stopRunId)}>{stop?.cancellationDelivery === "pending" ? "Retry stop" : active && active.jobIds.length > 1 ? `Stop ${activeAssessment ? "fit assessment" : "preparation"} for ${active.jobIds.length} jobs` : "Request stop"}</Button> : null}
-      {current && retryable && ["failed", "partial", "cancelled"].includes(current.status) ? <Button type="button" variant="outline"
-        disabled={busy || blockedByDraft || !recovery.permits("preparation.retry")}
+      {current && retryable && (failedHandoff || ["failed", "partial", "cancelled"].includes(current.status)) ? <Button type="button" variant="outline"
+        disabled={submit.isPending || (busy && !failedHandoff) || blockedByDraft || !recovery.permits("preparation.retry")}
         onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: current.runId, ...(resumeSearch ? {} : { job_ids: [jobId] }) } }, {
           onSuccess: (receipt) => { setStartedRunId(receipt.runId); cancel.reset(); },
         })}>{retryLabel}</Button> : null}

@@ -14,6 +14,7 @@ from dbos import DBOS, DBOSPortableJSONSerializer
 
 from jobctrl.app.actions import encode
 from jobctrl.app.bootstrap import create_application
+from jobctrl.app.credentials import read_process_identity
 from jobctrl.app.dbos_workflows import binding
 from jobctrl.app.errors import AppError
 from jobctrl.app.events import now
@@ -32,6 +33,11 @@ async def run_worker(workspace: Path, *, enabled_features=None):
     identity = application.identity
     executor = identity["taskQueue"]
     worker_id = str(uuid.uuid4())
+    process = read_process_identity(os.getpid())
+    if process.get("state") != "alive":
+        application.close()
+        raise AppError("worker_identity_unavailable", "The worker process identity could not be established.", 503)
+    registration = encode({**identity, "processBirth": process["identity"]})
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
@@ -83,7 +89,7 @@ async def run_worker(workspace: Path, *, enabled_features=None):
             )
             connection.execute(
                 "INSERT INTO app_worker_registrations VALUES(?,?,?) ON CONFLICT(worker_id) DO NOTHING",
-                (worker_id, encode(identity), encode(sorted(application.actions))),
+                (worker_id, registration, encode(sorted(application.actions))),
             )
 
     async def interval():
@@ -113,7 +119,6 @@ async def run_worker(workspace: Path, *, enabled_features=None):
     try:
         if not custody.try_acquire():
             raise AppError("worker_already_running", "This workspace already has a live DBOS worker.", 409)
-        custody.publish_registration(worker_id)
         try:
             await asyncio.to_thread(start)
             # Publish readiness only after this process executes a real queue probe.

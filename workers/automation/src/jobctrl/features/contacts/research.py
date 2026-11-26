@@ -46,6 +46,7 @@ class ResearchPageFetch:
     text: str = ""
     final_url: str = ""
     status: int | None = None
+    attempted_at: str | None = None
 
 
 class _StrictModel(BaseModel):
@@ -197,10 +198,14 @@ async def run_research(service, payload: dict, *, context=None) -> dict:
                     attempt.update(outcome="transport_failed", detail="The public-page fetch provider is unavailable.")
                     continue
             fetched = await asyncio.to_thread(fetcher.fetch, url)
+            _check(context)
             if run_id:
                 with service.store.write() as session:
-                    fetched = ResearchPageFetch(**session.retain_page(run_id, index, asdict(fetched)))
+                    snapshot = {**asdict(fetched), "attempted_at": attempt["attemptedAt"]}
+                    fetched = ResearchPageFetch(**session.retain_page(run_id, index, snapshot))
         _check(context)
+        if run_id and fetched.attempted_at:
+            attempt["attemptedAt"] = fetched.attempted_at
         attempt["outcome"] = fetched.outcome
         if fetched.outcome != "allowed":
             attempt["detail"] = "This source was not acquired; review the source outcome before retrying."
@@ -233,7 +238,7 @@ async def run_research(service, payload: dict, *, context=None) -> dict:
             proposed = []
             for candidate_index, item in enumerate(extraction.candidates):
                 source_provenance = domain.provenance(fetched.final_url or url, source_kind="public_web_page", confirmed=False,
-                                                      confidence=item.confidence, method="llm_assisted")
+                                                      confidence=item.confidence, captured_at=attempt["attemptedAt"], method="llm_assisted")
                 facts = []
                 for field, kind in (("name", "name"), ("title", "title"), ("email", "email"), ("profileUrl", "profile_url")):
                     span = getattr(item, field)

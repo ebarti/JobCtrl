@@ -74,7 +74,7 @@ function markerMatchesDarwinArm64Cpython(marker) {
   }
   if (marker.includes("sys_platform == 'win32'")) return false;
   if (marker.includes("platform_python_implementation != 'PyPy'")) return true;
-  if (marker.includes("implementation_name != 'PyPy'")) return true;
+  if (/^implementation_name != '(?:pypy|PyPy)'$/.test(marker)) return true;
   if (marker.includes("sys_platform != 'emscripten'")) return true;
   throw new Error(`unsupported provider-lock marker for darwin-arm64 CPython: ${marker}`);
 }

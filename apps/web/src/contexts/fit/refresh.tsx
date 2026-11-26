@@ -96,6 +96,7 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
   const client = useQueryClient();
   const identity = useSessionRequestIdentity("affected-matches", ACTION);
   const availability = getApiCapabilityAvailability(featureFlags, "updateAffectedMatches");
+  const [submissionPending, setSubmissionPending] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [fallbackBusy, setFallbackBusy] = useState<z.infer<typeof busyIdentitySchema> | null>(null);
   const [wordingSelection, setWordingSelection] = useState<{ inventory: string; ids: ReadonlySet<string> } | null>(null);
@@ -145,7 +146,7 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
   });
   const requestStatus = useQuery({
     queryKey: ["tenant", tenantId, "fit", "refresh", "request", identity.record?.requestId ?? ""],
-    enabled: identity.ready && Boolean(identity.record), retry: false,
+    enabled: identity.ready && Boolean(identity.record) && !submissionPending, retry: false,
     queryFn: () => {
       if (!identity.record) throw new Error("No earlier update request is recorded.");
       return lookupSessionAction(http, identity.record);
@@ -266,9 +267,10 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
       const latestIdentity = identity.current();
       if (latestIdentity && (!previous || latestIdentity.requestId !== previous.requestId)) throw new Error("Another update request needs review.");
       const saved = previous ?? { version: 1 as const, requestId: requestIdentity.create(), operation: ACTION, fingerprint, ...workspace };
-      identity.save(saved);
       const path = `/v1/actions/${ACTION}`;
+      setSubmissionPending(true);
       try {
+        identity.save(saved);
         const parsed = receiptSchema.safeParse(await http.json<unknown>("POST", path, {
           body, idempotencyKey: saved.requestId, expectedDatabaseInstanceId: saved.databaseInstanceId,
         }));
@@ -291,6 +293,8 @@ function AvailableAffectedMatchesPanel({ jobIds, profileSetup }: { readonly jobI
           try { identity.clear(saved.requestId); } catch { /* Keep an uncertain identity for reconciliation. */ }
         }
         throw error;
+      } finally {
+        setSubmissionPending(false);
       }
     },
     onSettled: () => { void client.invalidateQueries({ queryKey: ["tenant", tenantId, "fit", "refresh"] }); },

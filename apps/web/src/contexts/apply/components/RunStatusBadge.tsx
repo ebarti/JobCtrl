@@ -12,10 +12,10 @@ export interface RunStatusBadgeProps {
 }
 
 /**
- * Badge for the wider workflow-run state set (PR 5 of the Temporal stack).
+ * Badge for the wider workflow-run state set.
  *
  * Reuses the same semantic tone vocabulary as `ApplyRunBadge`. Apply uses a
- * narrower `ApplyRunStatus`; Temporal-driven workflow runs add
+ * narrower `ApplyRunStatus`; the workflow history can add
  * `canceled` / `terminated` / `timed_out` lifecycle terminals.
  */
 export function RunStatusBadge({ status }: RunStatusBadgeProps): JSX.Element {

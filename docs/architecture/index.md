@@ -1,7 +1,7 @@
 # Architecture
 
 JobCtrl's transformed source application is a Python modular application with
-SQLite, a React frontend and Temporal durable execution. It keeps one application
+PostgreSQL, a React frontend and DBOS durable execution. It keeps one application
 authority and independently removable feature owners. This source architecture
 does not imply that a new installed release has been published.
 
@@ -10,8 +10,8 @@ does not imply that a new installed release has been published.
 | HTTP, CLI and worker composition | `workers/automation/src/jobctrl/app/` and explicit runtime entrypoints. |
 | Canonical feature state and actions | `workers/automation/src/jobctrl/features/<owner>/`. |
 | Browser presentation and data access | Feature-owned React panels/queries/actions with a small shared shell. |
-| Durable orchestration | Temporal runs the same Python application actions and explicit preparation recipes. |
-| Process/installed lifecycle | Native launcher, supervised Temporal, runtime selection and deliberate Profile transfer. |
+| Durable orchestration | DBOS runs the same Python application actions and explicit preparation recipes. |
+| Process/installed lifecycle | Native launcher, local PostgreSQL, runtime selection and explicit workspace import. |
 | External provider execution | Source-bound model gateway, isolated SDK adapters and explicit credentials. |
 
 Profile owns facts, sources, confirmations and approved words. Jobs owns posting
@@ -28,6 +28,6 @@ reads or alternate business writers are permitted.
 
 Start with [runtime](runtime.md), [storage](storage.md), and
 [contracts and API boundaries](contracts-types-and-api-boundaries.md). The
-[accepted transformation plan](../plans/2026-11-06-python-transformation.md)
+[PostgreSQL and DBOS migration plan](../plans/2026-11-25-postgres-dbos.md)
 records scope and evidence obligations. [Local API](../local-ts-api.md) documents
 the current transport despite its retained documentation URL.

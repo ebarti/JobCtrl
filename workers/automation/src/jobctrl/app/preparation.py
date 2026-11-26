@@ -106,6 +106,9 @@ class PreparationService:
     def bind_run_reader(self, reader: RunReader):
         self.run_reader = reader
 
+    def pending_child_actions(self, run_id, connection):
+        return self.checkpoints.pending_child_actions(run_id, connection)
+
     def admit(self, run_id, raw, settings, connection):
         # Only initial acquisition owns a new-job cohort. Forced/selected
         # recipes retain their existing explicit single-job semantics.
@@ -445,6 +448,10 @@ class PreparationService:
             if inputs.pop("_defer_source_rate_limit", False):
                 raise AppError("posting_check_deferred_source_rate_limited",
                                "LinkedIn throttled this search. Check the saved posting manually later.", 409)
+            if request.get("_acquisition_run_id") or request.get("search_retry"):
+                posting = self.jobs.snapshot(job_id)
+                if posting["source_id"] == "jobstreaming:linkedin":
+                    await self.discovery.reserve_linkedin_detail(cancelled)
             value = await self.jobs.refresh(job_id, **inputs, receipt_key=op, cancelled=cancelled)
             return {"revision": value["revision"]}
         if stage == "role_analysis":
@@ -857,7 +864,9 @@ class PreparationService:
                         inputs = self.checkpoints.start_step(context.run_id, job_id, stage, inputs)
                         context.heartbeat({"jobId": job_id, "stage": stage})
                         scoped = request.get("_acquired_posting") is not None or request.get("search_retry")
-                        custody = model_call_scope(_operation(context.run_id, job_id, stage)) if scoped else nullcontext()
+                        custody = (model_call_scope(_operation(context.run_id, job_id, stage),
+                                                    allow_settled_replacement=bool(request.get("search_retry")))
+                                   if scoped else nullcontext())
                         with custody, self._capacity_wait(context, job_id, stage):
                             result = await self._execute_stage(context, job_id, stage, inputs, request)
                         status = "warning" if stage == "review" and result.get("review_status") not in {None, "pass", "not_applicable"} else "succeeded"
@@ -1021,6 +1030,8 @@ class PreparationService:
     def _dispatch_discovered(self, search_id, posting, connection):
         if self.action_admitter is None:
             raise AppError("assessment_dispatch_unavailable", "The assessment queue is unavailable.", 503)
+        if self.run_reader(search_id, connection=connection)["cancellationRequested"]:
+            raise AppError("action_cancelled", "The search was stopped.", 409)
         payload = {"search_id": search_id, "job_id": posting["job_id"], "posting_revision": posting["revision"],
                    "source_hash": posting["source_hash"]}
         receipt = self.action_admitter("preparation.assess_discovered", payload, connection=connection,

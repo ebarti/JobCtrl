@@ -75,6 +75,8 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
       <div className="discovery-search-status-row" role="status"><h2>{label}</h2>{counts ? <p className="discovery-search-counts">{controller.countsStale ? <span>Last recorded:</span> : null}<span>{counts.newJobs} new jobs</span><span>{counts.observedJobs} observed</span></p> : null}</div>
       {active ? <Progress value={null} aria-label="Job search progress" className="discovery-search-progress" /> : null}
     </div>
+    {controller.cooldowns.map((wait) => <p key={wait.board}>{boardLabel(wait.board)} paused this search. {controller.linkedInPaused ? "You can continue in" : "JobCtrl will check again in"} {Math.ceil(wait.retryAfterSeconds)} seconds. Saved jobs can still be assessed.</p>)}
+    {controller.postings && controller.postings.received > 0 ? <p>{controller.postings.received} received · {controller.postings.duplicate} already saved · {controller.postings.excluded} excluded · {controller.postings.pending} pending</p> : null}
     {assessedJobs !== null ? <p>{assessmentProgress?.unavailable && !controller.assessment ? "Last recorded: " : ""}{assessmentProgress?.totalJobs != null ? `${assessedJobs} of ${assessmentProgress.totalJobs} jobs assessed` : `${assessedJobs} jobs assessed`}{failedJobs !== null ? ` · ${failedJobs} failed` : ""}{skippedJobs !== null && skippedJobs > 0 ? ` · ${skippedJobs} skipped` : ""}</p> : null}
     {checkpoint && assessmentProgress?.totalJobs != null ? <p aria-label="Fit preparation progress">
       {checkpoint.postingsChecked !== null ? `${checkpoint.postingsChecked} of ${assessmentProgress.totalJobs} postings checked. ` : ""}
@@ -94,7 +96,7 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
     })}</ul> : null}
     {disabledFailures ? <p>Recorded failures from sources no longer enabled are retained in Search details.</p> : null}
     {unknownSources ? <p>Current source selection could not be verified. Recorded failures remain in Search details.</p> : null}
-    {accountingFailure ? <div><p>Search query preparation stopped because the selected model had no configured monetary cost tracking. Job sources were not searched. Review the exact model pricing quote in Budgets, then start again. Your saved preferences and spending cap are unchanged.</p>{spendingAction}</div> : status === "failed" ? <p>The search did not complete. Any jobs already saved remain available.</p> : null}
+    {accountingFailure ? <div><p>Search stopped because the selected model needs monetary cost tracking to check postings against your saved roles. Job sources were not searched. Review the exact model pricing quote in Budgets, then start again. Your saved preferences and spending cap are unchanged.</p>{spendingAction}</div> : status === "failed" ? <p>The search did not complete. Any jobs already saved remain available.</p> : null}
     </> : null}
     {status === "cancel-requested" ? <p>{action?.cancellationDelivery === "pending"
       ? "The workflow service has not confirmed receipt. Retry stop when it is available."

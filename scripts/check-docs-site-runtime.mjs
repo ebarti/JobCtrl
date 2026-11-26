@@ -184,7 +184,7 @@ const EXPLANATION_CONTRACTS = [
     tokens: [
       "workers/automation/src/jobctrl/app/",
       "workers/automation/src/jobctrl/features/<owner>/",
-      "Temporal runs the same Python application actions",
+      "DBOS runs the same Python application actions",
       "no sibling-private-table reads or alternate business writers",
       "Missing wording cannot lower factual qualification",
     ],

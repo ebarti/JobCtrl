@@ -34,9 +34,9 @@ test("board queries share new-job slots across all nineteen queries in a 100-job
   const after = await app.discoveryCheckpoint(started.runId);
   expect(after.receipts).toEqual({ accepted: 100 });
   const counts = after.adapters.map((adapter) => {
-    const keys = after.receiptKeys.filter((row) => row.unitId === adapter.unitId && row.isNew).map((row) => row.jobKey);
-    expect(new Set(adapter.acknowledgedKeys)).toEqual(new Set(keys));
-    return keys.length;
+    const received = after.received.filter((row) => row.unitId === adapter.unitId && row.site === adapter.site);
+    expect(new Set(adapter.acknowledgedKeys)).toEqual(new Set(received.map((row) => row.jobKey)));
+    return after.receiptKeys.filter((row) => row.unitId === adapter.unitId && row.isNew).length;
   });
   expect(counts.sort((a, b) => a - b)).toEqual([...Array(14).fill(5), ...Array(5).fill(6)]);
   expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(19);
@@ -55,12 +55,18 @@ test("board queries share new-job slots and backfill an exhausted query after wo
   expect(before.receiptKeys.filter((row) => row.isNew)).toHaveLength(2);
   const firstUnit = before.receiptKeys[0]!.unitId;
   const paused = before.adapters.find((row) => row.unitId === firstUnit)!;
-  expect(paused.acknowledgedKeys).toHaveLength(2);
+  expect(paused.acknowledgedKeys).toHaveLength(7);
+  expect(before.received.filter((row) => row.unitId === firstUnit)).toHaveLength(7);
 
   await app.restartWorker();
-  (await requestFor(app, queries[1]!, 45_000)).respond(searchPage(["A1", "B1"]));
-  (await requestFor(app, queries[2]!)).respond(searchPage(["A1", "C1", "C2", "C3", "C4"]));
-  (await requestFor(app, queries[0]!)).respond(firstPage);
+  await Promise.all([
+    { query: queries[1]!, jobs: ["A1", "B1"] },
+    { query: queries[2]!, jobs: ["A1", "C1", "C2", "C3", "C4"] },
+  ].map(async ({ query, jobs }) => {
+    const call = await app.external.next({ timeout: 45_000, match: (call) =>
+      call.path === "/jobstreaming/indeed" && String(call.body["query"]).includes(`what: "${query}"`) });
+    call.respond(searchPage(jobs));
+  }));
 
   const result = (await completed(api, started.runId)).result as { newJobIds: string[] };
   expect(result).toMatchObject({ status: "completed", failures: [], newJobs: 6, observedJobs: 8 });
@@ -68,14 +74,18 @@ test("board queries share new-job slots and backfill an exhausted query after wo
   const after = await app.discoveryCheckpoint(started.runId);
   expect(after.request.fingerprint).toBe(before.request.fingerprint);
   expect(after.adapters).toHaveLength(3);
-  for (const adapter of after.adapters) {
+  const admitted = after.adapters.map((adapter) => {
     const receipts = after.receiptKeys.filter((row) => row.unitId === adapter.unitId);
-    expect(new Set(adapter.acknowledgedKeys)).toEqual(new Set(receipts.map((row) => row.jobKey)));
+    expect(new Set(adapter.acknowledgedKeys)).toEqual(new Set(after.received.filter((row) => row.unitId === adapter.unitId && row.site === adapter.site).map((row) => row.jobKey)));
     const newCount = receipts.filter((row) => row.isNew).length;
-    expect(newCount).toBe(adapter.unitId === firstUnit ? 3 : adapter.completed ? 1 : 2);
-  }
+    if (adapter.unitId === firstUnit) expect(newCount).toBe(3);
+    return newCount;
+  });
+  expect(admitted.sort()).toEqual([1, 2, 3]);
   expect(after.adapters.find((row) => row.unitId === firstUnit)!.requestFingerprint).toBe(paused.requestFingerprint);
-  expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(5);
+  const calls = app.external.calls.filter((call) => call.path === "/jobstreaming/indeed");
+  expect(calls).toHaveLength(4);
+  expect(calls.filter((call) => String(call.body["query"]).includes(`what: "${queries[0]}"`))).toHaveLength(1);
 });
 
 test("board queries share new-job slots without retrying a rate-limited source for another query", async ({ api, app }) => {
@@ -83,17 +93,15 @@ test("board queries share new-job slots without retrying a rate-limited source f
   const started = await action(api, "discovery.search", {
     queries, locations: ["Madrid"], boards: ["indeed"], newJobLimit: 4, hoursOld: 0,
   });
-  // The SDK has two bounded retries. A different query cannot bypass their
-  // terminal rate-limit result by starting a fresh SDK invocation on this board.
-  for (let attempt = 0; attempt < 3; attempt++) {
-    (await requestFor(app, queries[0]!, 20_000)).respond({ errors: [{ message: "Too many requests" }] });
-  }
+  // A provider refusal without an advertised retry deadline is terminal for
+  // this search. Changing queries cannot bypass its recorded board cooldown.
+  (await requestFor(app, queries[0]!)).respond({ errors: [{ message: "Too many requests" }] });
   expect((await terminal(api, started.runId)).status).toBe("failed");
   const { runs } = await json<{ runs: { runId: string; failures: unknown[] }[] }>(api, "get", "/v1/discovery/runs");
   expect(runs.find((run) => run.runId === started.runId)!.failures).toEqual([
     expect.objectContaining({ boards: ["indeed"], code: "discovery_provider_rate_limited" }),
   ]);
-  expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(3);
+  expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(1);
 });
 
 test("a LinkedIn rate limit skips the remaining locations while another board continues", async ({ api, app }) => {
@@ -102,15 +110,11 @@ test("a LinkedIn rate limit skips the remaining locations while another board co
     queries: [query], locations: ["Madrid", "Barcelona"], boards: ["linkedin", "indeed"], newJobLimit: 4, hoursOld: 0,
   });
 
-  // Explicit permission to retry immediately lets the SDK exercise its configured
-  // bounded retry policy before returning a terminal rate limit to JobCtrl.
-  for (let attempt = 0; attempt < 3; attempt++) {
-    const call = await app.external.next({ timeout: 20_000 });
-    const url = new URL(call.path, "http://localhost");
-    expect(url.pathname).toBe("/jobstreaming/linkedin/jobs-guest/jobs/api/seeMoreJobPostings/search");
-    expect(url.searchParams.get("location")).toBe("Madrid");
-    call.raw("Too many requests", { status: 429, headers: { "Retry-After": "0" } });
-  }
+  const limited = await app.external.next();
+  const url = new URL(limited.path, "http://localhost");
+  expect(url.pathname).toBe("/jobstreaming/linkedin/jobs-guest/jobs/api/seeMoreJobPostings/search");
+  expect(url.searchParams.get("location")).toBe("Madrid");
+  limited.raw("Too many requests", { status: 429, headers: { "Retry-After": "0" } });
   for (const location of ["Madrid", "Barcelona"]) {
     const call = await requestFor(app, query);
     expect(call.body["query"]).toContain(`where: "${location}"`);
@@ -121,7 +125,7 @@ test("a LinkedIn rate limit skips the remaining locations while another board co
     status: "partial",
     failures: [{ boards: ["linkedin"], code: "discovery_provider_rate_limited" }],
   });
-  expect(app.external.calls.filter((call) => call.path.startsWith("/jobstreaming/linkedin/"))).toHaveLength(3);
+  expect(app.external.calls.filter((call) => call.path.startsWith("/jobstreaming/linkedin/"))).toHaveLength(1);
 });
 
 test.describe("paged JobStreaming listings", () => {
@@ -132,27 +136,30 @@ test.describe("paged JobStreaming listings", () => {
       queries, locations: ["Madrid", "Barcelona"], boards: ["indeed"], newJobLimit: 5, hoursOld: 0,
     });
     async function page(query: string, location: string, cursor: string | null, keys: string[], next: string | null = null) {
-      const call = await app.external.next();
-      expect(call.path).toBe("/jobstreaming/indeed");
-      expect(String(call.body["query"])).toContain(`what: "${query}"`);
-      expect(String(call.body["query"])).toContain(`where: "${location}"`);
-      if (cursor) expect(String(call.body["query"])).toContain(cursor);
+      const call = await app.external.next({ match: (call) => {
+        const request = String(call.body["query"]);
+        return call.path === "/jobstreaming/indeed" && request.includes(`what: "${query}"`)
+          && request.includes(`where: "${location}"`) && (cursor ? request.includes(`cursor: "${cursor}"`) : !request.includes("second-page"));
+      } });
       call.respond(indeedPage({ jobs: keys.map((key) => ({ job_key: key, source_native_id: key, source_id: "synthetic-board",
         url: `https://www.indeed.com/viewjob?jk=${key}`, title: `Synthetic vacancy ${key}`, company: "Synthetic employer",
         description: "Maintain test services.", location })), cursor: next, complete: next === null }));
     }
-    await page(queries[0]!, "Madrid", null, ["A1", "A2"], "second-page");
-    await page(queries[0]!, "Madrid", "second-page", ["A3", "A4", "A5"]);
-    await page(queries[1]!, "Madrid", null, ["A1", "B1"]);
-    await page(queries[1]!, "Barcelona", null, []);
-    await page(queries[0]!, "Barcelona", null, []);
-    await page(queries[0]!, "Madrid", "second-page", ["A3", "A4", "A5"]);
+    await Promise.all([
+      page(queries[0]!, "Madrid", null, ["A1", "A2"], "second-page"),
+      page(queries[0]!, "Madrid", "second-page", ["A3", "A4", "A5"]),
+      page(queries[1]!, "Madrid", null, ["A1", "B1"]),
+      page(queries[1]!, "Barcelona", null, []),
+      page(queries[0]!, "Barcelona", null, []),
+    ]);
     expect((await completed(api, started.runId)).result).toMatchObject({ status: "completed", failures: [], newJobs: 5, observedJobs: 6 });
     const after = await app.discoveryCheckpoint(started.runId);
     expect(after.receipts).toEqual({ accepted: 6 });
     expect(new Set(after.receiptKeys.filter((row) => row.isNew).map((row) => row.jobKey)).size).toBe(5);
     const { jobs } = await json<{ jobs: { url: string }[] }>(api, "get", "/v1/jobs");
     expect(jobs.map(({ url }) => new URL(url).searchParams.get("jk")).sort()).toEqual(["A1", "A2", "A3", "A4", "B1"]);
-    expect(app.external.calls.filter((call) => call.path === "/jobstreaming/indeed")).toHaveLength(6);
+    const calls = app.external.calls.filter((call) => call.path === "/jobstreaming/indeed");
+    expect(calls).toHaveLength(5);
+    expect(calls.filter((call) => String(call.body["query"]).includes('cursor: "second-page"'))).toHaveLength(1);
   });
 });

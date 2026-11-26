@@ -30,7 +30,7 @@ boundary.
 | Local API | Loopback bind, loopback `Host` and peer-address checks, first-party mutation origins, Fetch Metadata validation, and a worker-readiness gate. |
 | Browser extension | Rotatable local capability token, same-origin-only token management, a whitelisted autofill DTO, and no submit capability. |
 | Outbound browsing | Public HTTP(S)-only validation for explicit task/top-level targets and each final URL; paths with an owned interception guard also validate their redirects, popups, and subrequests. Normal subresource loading in the user's Chrome profile remains Chrome/site-owned. |
-| Credentials and files | Secrets stay outside SQLite and `config.json`; status APIs are secret-free; saved passwords and reviewed artifacts can be used only by origin-bound local tools. |
+| Credentials and files | Secrets stay outside the application database and `config.json`; status APIs are secret-free; saved passwords and reviewed artifacts can be used only by origin-bound local tools. |
 | Provider runtimes | JobCtrl-owned provider state, filtered subprocess environments, restricted tool surfaces, and prompt-driven filesystem boundaries isolate model execution from unrelated local data. |
 | Application submission | Model-driven browsers are transport-locked and require manual final submit. The owned Gmail sender requires exact recipient/attachment approval, records durable submit intent immediately before send, and retains at-most-once claiming and `needs_verification` recovery. |
 | Generated content | Structured outputs, source-bound semantic determinations, provenance, and preservation of the last accepted artifact. |
@@ -70,7 +70,7 @@ manually; the page-reading model cannot upload or access them.
 ## What Stays On Your Machine
 
 The local authorities are `jobctrl.db` (profile, jobs, Discovery controls, events and
-projections), bundled `temporal.db`, `config.json` (non-secret Settings
+projections and DBOS state), `config.json` (non-secret Settings
 values), `.env` and `gmail/` (legacy/runtime credentials), `codex_home/` and provider-runtime
 directories, generated material/log directories, browser capability/profile/
 worker state, `backups/`, and legacy resume inputs. Their text may still be sent
@@ -340,8 +340,8 @@ or verify that login.
 
 | Secret | Boundary |
 | --- | --- |
-| Provider/runtime keys | Native OS credential store for guided persistent setup; inherited environment for ephemeral use; legacy `.env` until migrated. Never SQLite. |
-| Codex login | Stable `$JOBCTRL_DIR/codex_home/auth.json`, separate from SQLite and the normal Codex home. Valid normal CLI auth may be reused once only when this file is absent; only `auth.json` is copied, and existing isolated auth is never overwritten. Generation chats are ephemeral. Overlapping app-server clients share temporary SQLite metadata and SQLite logs until the last client closes; their text logs remain independently temporary. An exclusive owner lease protects live stores during abandoned-store reclamation. Prompt-driven reads are limited to the private project rooted at `codex_home/workspace/` plus the exact canonical Codex executable required to start the app server—not its package directory or sibling files. Configuration discovery stops at that generated project boundary. |
+| Provider/runtime keys | Native OS credential store for guided persistent setup; inherited environment for ephemeral use; legacy `.env` until migrated. Never the application database. |
+| Codex login | Stable `$JOBCTRL_DIR/codex_home/auth.json`, separate from the application database and the normal Codex home. Valid normal CLI auth may be reused once only when this file is absent; only `auth.json` is copied, and existing isolated auth is never overwritten. Generation chats are ephemeral. Overlapping app-server clients share temporary SQLite metadata and SQLite logs until the last client closes; their text logs remain independently temporary. An exclusive owner lease protects live stores during abandoned-store reclamation. Prompt-driven reads are limited to the private project rooted at `codex_home/workspace/` plus the exact canonical Codex executable required to start the app server—not its package directory or sibling files. Configuration discovery stops at that generated project boundary. |
 | Claude/Google web entries | Native OS credential store for API keys; `config.json` for cloud activation flags/non-secret identifiers; AWS, Google, and Azure credential files remain in their vendor stores. Status only is returned. |
 | CAPTCHA key | `CAPSOLVER_API_KEY` saved from Settings to the native OS credential store, or supplied by the environment; read by the owned local solver, not the model. |
 | Job-site passwords | Optional local profile value typed through a focused-field credential tool, never returned to the model. |

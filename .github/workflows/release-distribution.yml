@@ -662,10 +662,10 @@ jobs:
           node scripts/released-upgrade-smoke.mjs \
             --release-dir "$RUNNER_TEMP/release" \
             --output "$RUNNER_TEMP/released-upgrade-smoke.json"
-          jq -e '.schemaVersion == 2 and .status == "passed" and .qualification == "signed-latest-stable-and-candidate" and .executables == "actual-latest-stable-and-signed-candidate" and (.results | length == 1) and .results[0].status == "passed"' \
+          jq -e '.schemaVersion == 2 and .status == "passed" and .qualification == "signed-latest-stable-and-candidate" and .executables == "actual-latest-stable-and-signed-candidate" and (.results | length == 1) and .results[0].status == "passed" and .results[0].targetApplication.storage == "postgresql" and .results[0].targetApplication.workflow == "dbos"' \
             "$RUNNER_TEMP/released-upgrade-smoke.json"
 
-      - name: Diagnose a retained predecessor notarization failure
+      - name: Diagnose a retained release notarization failure
         if: ${{ failure() && inputs.channel == 'stable' }}
         shell: bash
         run: |
@@ -679,11 +679,11 @@ jobs:
             [[ -d "$fixture" && ! -L "$fixture" ]] || continue
             while IFS= read -r -d '' binary; do
               found=1
-              echo "Rechecking the retained predecessor with the original notarization requirement"
+              echo "Rechecking a retained launcher with the original notarization requirement"
               /usr/bin/codesign --verify --strict --check-notarization -R=notarized --verbose=4 "$binary" || echo "Notarization recheck failed (exit $?)"
-            done < <(find "$fixture" -type f -path '*/latest-stable/runtime/staging/*/payload/api/node_modules/better-sqlite3/build/Release/better_sqlite3.node' -print0)
+            done < <(find "$fixture" -type f -path '*/latest-stable/runtime/releases/*/payload/launcher/jobctrl' -print0)
           done
-          if [[ "$found" = 0 ]]; then echo "No retained predecessor SQLite binary was available for a notarization recheck"; fi
+          if [[ "$found" = 0 ]]; then echo "No retained launcher was available for a notarization recheck"; fi
 
       - name: Retain credential-free released-binary proof
         if: ${{ inputs.channel == 'stable' }}
@@ -1032,7 +1032,7 @@ jobs:
           brew test "$formula"
           "$formula_bin" start --no-open
           status="$("$formula_bin" status --json)"
-          STATUS="$status" node -e 'const status=JSON.parse(process.env.STATUS); if (status.status !== "running" || !["temporal", "worker", "api"].every((name) => status.components?.[name]?.state === "running")) process.exit(1)'
+          STATUS="$status" node -e 'const status=JSON.parse(process.env.STATUS); if (status.status !== "running" || !["postgres", "worker", "api"].every((name) => status.components?.[name]?.state === "running")) process.exit(1)'
           "$formula_bin" stop
           stopped="$("$formula_bin" status --json)"
           STATUS="$stopped" node -e 'const status=JSON.parse(process.env.STATUS); if (status.status !== "stopped" || Object.values(status.components ?? {}).some((component) => component.state === "running")) process.exit(1)'

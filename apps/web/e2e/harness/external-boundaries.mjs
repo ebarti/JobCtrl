@@ -129,7 +129,8 @@ export async function externalBoundaries(token) {
         item.closed = true;
         inFlight.delete(item);
       });
-      if (waiters.length) waiters.shift().resolve(item);
+      const index = waiters.findIndex((waiter) => waiter.match(item));
+      if (index >= 0) waiters.splice(index, 1)[0].resolve(item);
       else pending.push(item);
     } catch (error) {
       response.writeHead(400, { "Content-Type": "application/json" });
@@ -153,11 +154,13 @@ export async function externalBoundaries(token) {
     setCatalog(value) {
       catalog = value;
     },
-    async next({ timeout = 15_000 } = {}) {
+    async next({ timeout = 15_000, match = () => true } = {}) {
       if (closed) throw new Error("External boundary is closed");
-      if (pending.length) return pending.shift();
+      const index = pending.findIndex(match);
+      if (index >= 0) return pending.splice(index, 1)[0];
       return new Promise((resolve, reject) => {
         const waiter = {
+          match,
           resolve(value) {
             clearTimeout(timer);
             resolve(value);

@@ -14,48 +14,6 @@ async function replyToPay(app: ApplicationStack, field: string, text: string, qu
   });
 }
 
-test.describe("period-grouped posted salary upgrade", () => {
-  test.use({ sourceRevision: "c74d8ae3e43c55ae57c6d2bcb9e024c42f27d708" });
-  test("Jobs publishes the original period-grouped pay receipt and keeps a verified decimal amount", async ({ api, app, page }) => {
-    const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
-    await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });
-    const capture = (slug: string, title: string, salary: string) => json<{ job_id: string }>(api, "post", "/v1/jobs/capture", {
-      url: `https://example.com/jobs/${slug}`, title, salary, company: "Synthetic Employer",
-    });
-    const refresh = (id: string) => action(api, "compensation.refresh", { jobId: id, includeEuroTopTech: false });
-    const posted = (id: string) => json<{ recordStatus: string; determination: { receipt_id: string; created_at: string } }>(api, "get", `/v1/jobs/${id}/compensation/posted`);
-    const decimalText = "Hourly base pay EUR 55.000.";
-    const decimal = await capture("decimal-rate", "Synthetic precision role", decimalText);
-    const decimalRun = await refresh(decimal.job_id);
-    await replyToPay(app, "salary", decimalText, "55.000", 55, 55, "hour");
-    (await modelCall(app, "compensation.classification")).invalidJson();
-    await terminal(api, decimalRun.runId);
-    const original = await posted(decimal.job_id);
-    expect(original).toMatchObject({ recordStatus: "recorded", fact: { minimumAmount: 55, maximumAmount: 55 } });
-    const annualText = "La retribución anual indicada es de 55.000€.";
-    const annual = await capture("period-grouped-rate", "Synthetic posted salary", annualText);
-    const failed = await refresh(annual.job_id);
-    await replyToPay(app, "salary", annualText, annualText, 55000, 55000, "year");
-    expect((await terminal(api, failed.runId)).status).toBe("failed");
-    expect((await posted(annual.job_id)).recordStatus).toBe("not_recorded");
-    const beforeUpgrade = new Date().toISOString();
-    const postedCalls = () => app.external.calls.filter((call) => call.body.operation === "compensation.posted_pay").length;
-    const before = postedCalls();
-    await app.upgradeSource();
-    expect(await posted(decimal.job_id)).toEqual(original);
-    const retry = await refresh(annual.job_id);
-    (await modelCall(app, "compensation.classification")).invalidJson();
-    await terminal(api, retry.runId);
-    const recovered = await posted(annual.job_id);
-    expect(recovered).toMatchObject({ recordStatus: "recorded", sourceCurrent: true,
-      fact: { sourceField: "salary", minimumAmount: 55000, maximumAmount: 55000, annualizedMinimumAmount: 55000, currency: "EUR", period: "year" } });
-    expect(recovered.determination.created_at <= beforeUpgrade).toBe(true);
-    expect(postedCalls()).toBe(before);
-    await page.goto("/jobs?grid=v1&posted_known=source_known");
-    await expect(page.getByRole("row").filter({ hasText: "Synthetic posted salary" })).toContainText("EUR 55000/year");
-  });
-});
-
 test("Jobs validates complete period-grouped title tokens and keeps uncertain numbers unpriced", async ({ api, app, page }) => {
   const settings = await json<{ revision: number }>(api, "get", "/v1/settings");
   await json(api, "patch", "/v1/settings", { expectedRevision: settings.revision, dailyBudgetUsd: 0 });

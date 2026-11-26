@@ -374,7 +374,7 @@ retriggered, and another Discover run is not required. Job-scoped and bulk
 Enrich runs/retries remain available offline. Each site batch prefers the live
 extension after a bounded availability check, or selects anonymous Playwright
 before acquisition. Site and access failures never cause a transport switch.
-The outer Temporal Enrich entry retains its workflow/run identity on both
+The outer durable Enrich entry retains its workflow/run identity on both
 paths, preserving leases, job ownership, and broker authorization. Integrated
 anonymous fallback never adopts a system executable, runs the legacy
 copied-profile pre-pass, or creates a browser-profile snapshot. Anonymous

@@ -74,6 +74,11 @@ Job-specific implications remain with role analysis and interview preparation.
 This first version presents company context for your review; it does not inject
 company claims into generated answers or applicant evidence.
 
+A worker restart during refresh uses the public pages saved for that run. If
+the model response was already recorded, the worker verifies its receipt against
+those pages before publishing the briefing. If the provider outcome is uncertain,
+the refresh keeps the earlier accepted briefing and records the failed attempt.
+
 ## Local retention
 
 Reviewed company links, source configuration, captured public text, accepted

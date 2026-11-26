@@ -4,9 +4,7 @@ import { createBaseline } from "./core-data.js";
 import { posting, respondProducer } from "./preparation-cohort-data.js";
 import { typedExtraction } from "./requirements-data.js";
 
-test.use({ sourceRevision: "17f9ce5be1de2f21735fb27d5dfe8f6d1b7c8118" });
-
-test("the predecessor Jobs grid identifies a run's source-bound language decision before and after it skips Fit", async ({ api, app, page }) => {
+test("the Jobs grid follows the accepted source-bound language decision across Fit skip and reassessment", async ({ api, app, page }) => {
   await createBaseline(api);
   const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
   await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 11, resultsPerSite: 11 });
@@ -16,31 +14,43 @@ test("the predecessor Jobs grid identifies a run's source-bound language decisio
   const source = await app.external.next();
   expect(source.path).toBe("/jobstreaming/indeed");
   source.respond(indeedPage({ jobs: [target, ...siblings], complete: true, cursor: null }));
-  respondProducer(await app.external.next(), [target]);
+  respondProducer(await app.external.next({ match: (call) => call.path === "/posting-page" && call.body.url === target.url }), [target]);
   for (const operation of ["page_interpretation", "posting_extraction", "description_quality", "jobs.role_analysis", "requirements.extract"]) {
-    respondProducer(await modelCall(app, operation), [{ ...target, unsupported: true }]);
+    const call = await app.external.next({ match: (item) => item.path === "/model" && item.body.operation === operation });
+    respondProducer(call, [{ ...target, unsupported: true }]);
   }
-  const held = await app.external.next();
   const runPath = `/v1/preparation/runs/${started.runId}`;
   type Step = { jobId: string; stage: string; status: string; result: Record<string, unknown> | null };
-  const run = await json<{ targetRoute: string; jobIds: string[]; steps: Step[] }>(api, "get", runPath);
-  expect(run.targetRoute).toBe("per_job");
-  const id = run.jobIds[0]!;
-  const saved = await json<{ revision: number; source_hash: string }>(api, "get", `/v1/jobs/${id}`);
+  type Run = { targetRoute: string; jobIds: string[]; steps: Step[] };
+  const snapshot = await json<Run>(api, "get", runPath);
+  expect(snapshot.targetRoute).toBe("per_job");
+  const candidates = await Promise.all(snapshot.jobIds.map(async (jobId) => ({
+    jobId, job: await json<{ url: string; revision: number; source_hash: string }>(api, "get", `/v1/jobs/${jobId}`),
+  })));
+  const selected = candidates.find(({ job }) => job.url === target.url);
+  expect(selected, "the discovered target must be present in the run").toBeDefined();
+  const { jobId: id, job: saved } = selected!;
+  await expect.poll(async () => {
+    const value = await json<Run>(api, "get", runPath);
+    return value.steps.find((step) => step.jobId === id && step.stage === "requirements")?.status;
+  }, { message: "the target's source-bound requirements must commit", timeout: 30_000 }).toBe("succeeded");
+  const run = await json<Run>(api, "get", runPath);
   const requirements = await json<{ revision: number }>(api, "get", `/v1/jobs/${id}/requirements`);
   expect(requirements).toMatchObject({ status: "unsupported_language", posting_revision: saved.revision, posting_hash: saved.source_hash, stale: false });
   expect(run.steps).toContainEqual(expect.objectContaining({ jobId: id, stage: "requirements", status: "succeeded", result: expect.objectContaining({
     revision: requirements.revision, postingRevision: saved.revision, postingHash: saved.source_hash, status: "unsupported_language",
   }) }));
-  expect(run.steps.find((step) => step.jobId === id && step.stage === "fit")).toBeUndefined();
+  const initialFit = run.steps.find((step) => step.jobId === id && step.stage === "fit");
+  if (initialFit) expect(["pending", "skipped"]).toContain(initialFit.status);
+  expect(await json(api, "get", `/v1/jobs/${id}/fit`)).toMatchObject({ score: null });
   let gridRequirementsReads = 0;
   const countRead = (request: { url(): string }) => { if (/^\/v1\/jobs\/[^/]+\/requirements$/.test(new URL(request.url()).pathname)) gridRequirementsReads++; };
   page.on("request", countRead);
   await page.goto("/jobs?fit_state=unassessed");
   const row = page.getByRole("row").filter({ hasText: target.title });
-  await expect(row.getByRole("link", { name: "Non-English in this run", exact: true })).toHaveAttribute("href", `/runs/${started.runId}`);
-  for (const [index, sibling] of siblings.entries()) {
-    const fetch = index === 0 ? held : await app.external.next();
+  await expect(row.getByRole("link", { name: "Skipped · non-English posting", exact: true })).toHaveAttribute("href", `/runs/${started.runId}`);
+  for (const sibling of siblings) {
+    const fetch = await app.external.next({ match: (call) => call.path === "/posting-page" && call.body.url === sibling.url });
     expect(fetch.path).toBe("/posting-page");
     expect(fetch.body.url).toBe(sibling.url);
     fetch.respond({}, 503);
@@ -48,12 +58,13 @@ test("the predecessor Jobs grid identifies a run's source-bound language decisio
   expect((await completed(api, started.runId)).result).toMatchObject({ preparation: { assessedJobs: 0, skippedJobs: 1, failedJobs: 10 } });
   const terminal = await json<{ steps: Step[] }>(api, "get", runPath);
   expect(terminal.steps).toContainEqual(expect.objectContaining({ stage: "fit", status: "skipped", jobId: id, result: expect.objectContaining({ skip: "unsupported_posting_language", requirements_revision: requirements.revision }) }));
-  await expect(row.getByRole("link", { name: "Skipped in this run · non-English", exact: true })).toHaveAttribute("href", `/runs/${started.runId}`);
+  await expect(row.getByRole("link", { name: "Skipped · non-English posting", exact: true })).toHaveAttribute("href", `/runs/${started.runId}`);
   expect(gridRequirementsReads).toBe(0);
   page.off("request", countRead);
   await row.getByRole("link", { name: target.title, exact: true }).click();
   const fitPanel = page.getByRole("region", { name: "Person fit", exact: true });
-  await expect(fitPanel).toContainText("Person fit was skipped because this posting was identified as non-English");
+  await expect(fitPanel).toContainText("Person fit was skipped because this posting was identified as non-English. No zero score was assigned.");
+  await expect(fitPanel.getByText("Score 0/10", { exact: true })).toHaveCount(0);
   await expect(fitPanel.getByRole("link", { name: "View preparation run" })).toHaveAttribute("href", `/runs/${started.runId}`);
 
   const reassessment = json<{ revision: number }>(api, "post", `/v1/jobs/${id}/requirements`, {
@@ -67,7 +78,7 @@ test("the predecessor Jobs grid identifies a run's source-bound language decisio
   await page.reload();
   await expect(fitPanel).toContainText("No person-fit assessment has been recorded yet.");
   await page.goto("/jobs?fit_state=unassessed");
-  await expect(row.getByRole("link", { name: "Skipped in this run · non-English", exact: true })).toHaveAttribute("href", `/runs/${started.runId}`);
+  await expect(row.getByRole("cell", { name: "Not assessed", exact: true })).toBeVisible();
 
   const updated = { ...target, description: "A new source describes a different job." };
   const refresh = await action(api, "jobs.refresh", { job_id: id, expectedRevision: saved.revision });
@@ -77,4 +88,12 @@ test("the predecessor Jobs grid identifies a run's source-bound language decisio
   await expect(row.getByRole("cell", { name: "Not assessed", exact: true })).toBeVisible();
   await row.getByRole("link", { name: target.title, exact: true }).click();
   await expect(fitPanel).toContainText("No person-fit assessment has been recorded yet.");
+
+  // Close the old page before the intentional listener gap, then open the new workspace.
+  await page.goto("about:blank");
+  await app.restartApi({ freshWorkspace: true });
+  expect((await api.get(`/v1/jobs/${id}`)).status()).toBe(404);
+  expect((await api.get(`/v1/action-runs/${started.runId}`)).status()).toBe(404);
+  await page.goto("/jobs");
+  await expect(page.getByRole("link", { name: target.title, exact: true })).toHaveCount(0);
 });

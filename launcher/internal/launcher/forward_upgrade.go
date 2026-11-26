@@ -26,6 +26,9 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 	if err != nil {
 		return true, fmt.Errorf("authenticate update target: %w", err)
 	}
+	if verifiedCandidate.runtime.SchemaVersion != 2 {
+		return true, errors.New("update requires a PostgreSQL target")
+	}
 	if err := admitPythonApplicationLifecycle(ctx, verifiedCandidate); err != nil {
 		return true, err
 	}
@@ -114,11 +117,24 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 		return true, err
 	}
 	// Compatibility checks precede stop, backup, journal and selector mutations.
+	if err := preflightPostgresUpdate(ctx); err != nil {
+		return true, err
+	}
+	wasRunning, err := registeredRuntimeRunning(ctx)
+	if err != nil {
+		return true, err
+	}
 	if err := stop(ctx); err != nil {
 		return true, fmt.Errorf("quiesce workspace before update: %w", err)
 	}
 	if err := admitPythonApplicationLifecycle(ctx, verifiedCandidate); err != nil {
 		return true, err
+	}
+	if err := preflightPostgresUpdate(ctx); err != nil {
+		if resuming {
+			return true, err
+		}
+		return true, restartAfterRefusal(ctx, selection, wasRunning, err)
 	}
 	if !resuming {
 		journal, err = store.Begin("update", &active.Receipt, &candidate, candidate.DescriptorSHA256)
@@ -126,7 +142,7 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 			return true, err
 		}
 		journal.ForwardOnlyUpgrade, journal.PreserveLiveOnFailure = true, true
-		journal.SourceGeneration, journal.SourceSchemaVersion = active.Generation, pythonApplicationUserVersion
+		journal.SourceGeneration, journal.SourceSchemaVersion = active.Generation, int64(old.runtime.SchemaVersion)
 		if err := advance(store, &journal, release.MetadataVerified); err != nil {
 			return true, err
 		}
@@ -198,7 +214,7 @@ func promoteForwardUpdate(ctx launchContext, build, source string, output io.Wri
 
 func targetForwardJournal(journal release.Journal) bool {
 	if !journal.Resumable() || !journal.ForwardOnlyUpgrade || !journal.PreserveLiveOnFailure || journal.SchemaVersion != 2 || journal.Operation != "update" ||
-		journal.Old == nil || journal.Candidate == nil || journal.SourceGeneration == 0 || journal.SourceGeneration == ^uint64(0) || journal.SourceSchemaVersion != pythonApplicationUserVersion ||
+		journal.Old == nil || journal.Candidate == nil || journal.SourceGeneration == 0 || journal.SourceGeneration == ^uint64(0) || (journal.SourceSchemaVersion != 1 && journal.SourceSchemaVersion != 2) ||
 		journal.DescriptorSHA256 != journal.Candidate.DescriptorSHA256 || journal.TargetBackupID != "" {
 		return false
 	}

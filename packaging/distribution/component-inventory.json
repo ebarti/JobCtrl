@@ -90,15 +90,15 @@
       "notes": "Relocatable CPython build. The archive URL and SHA-256 are pinned by the production builder."
     },
     {
-      "id": "temporal-runtime",
+      "id": "postgres-runtime",
       "classification": "core-runtime",
-      "owner": "Temporal Technologies Inc.",
-      "version": "1.7.3",
-      "source": "https://github.com/temporalio/cli/releases/tag/v1.7.3",
-      "license": "MIT",
+      "owner": "PostgreSQL Global Development Group",
+      "version": "17.12",
+      "source": "https://www.postgresql.org/ftp/source/v17.12/",
+      "license": "PostgreSQL",
       "redistribution": "bundle",
       "requiredInCore": true,
-      "notes": "Built for the declared deployment target; a host Homebrew binary is never copied blindly."
+      "notes": "Built from the integrity-pinned upstream PostgreSQL source. Includes the server, matching client tools, and runtime libraries and resources."
     },
     {
       "id": "pdfjs-renderer",

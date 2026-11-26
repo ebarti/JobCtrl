@@ -13,21 +13,28 @@ CREATE TABLE app_model_operation_receipts (
 """
 
 _owner = ContextVar("model_call_owner", default=None)
+_settled_replacement = ContextVar("model_settled_replacement", default=False)
 
 
 @contextmanager
-def model_call_scope(owner_key: str):
+def model_call_scope(owner_key: str, *, allow_settled_replacement=False):
     if not isinstance(owner_key, str) or not owner_key:
         raise ValueError("Model custody requires a durable operation identity.")
     token = _owner.set(owner_key)
+    replacement = _settled_replacement.set(allow_settled_replacement)
     try:
         yield
     finally:
+        _settled_replacement.reset(replacement)
         _owner.reset(token)
 
 
 def current_owner():
     return _owner.get()
+
+
+def may_replace_settled():
+    return _settled_replacement.get()
 
 
 def assert_retryable_owners(owners, connection):

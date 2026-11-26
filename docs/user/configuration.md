@@ -13,7 +13,7 @@ installed availability, not a source build or demo illustration.
 
 Shared non-secret runtime settings are revisioned `app_settings` records in
 `jobctrl.db`. Profile, Discovery, Compensation and other features retain their
-own SQLite settings. Secrets use the native credential/provider boundary.
+own PostgreSQL settings. Secrets use the native credential/provider boundary.
 Appearance and presentation preferences save in this browser. The historical
 `config.json` file is not an alternate current Python settings authority.
 
@@ -58,8 +58,8 @@ newer revision; failed saves retain the draft and previous saved state.
 
 | Surface | Authority | When it applies |
 | --- | --- | --- |
-| Connections, Budgets and shared Automation policy | Revisioned SQLite settings plus separate credential/capability owners | New work or owning reconciliation, as labeled; process-start capacity is explicit. |
-| Profile and Search preferences | Profile or Discovery's versioned SQLite records | Next explicitly admitted task; reads/saves launch no search or matching. |
+| Connections, Budgets and shared Automation policy | Revisioned PostgreSQL settings plus separate credential/capability owners | New work or owning reconciliation, as labeled; process-start capacity is explicit. |
+| Profile and Search preferences | Profile or Discovery's versioned PostgreSQL records | Next explicitly admitted task; reads/saves launch no search or matching. |
 | Compensation-source permissions | Compensation-owned records | Next explicitly authorized refresh or enabled reconciliation. |
 | Appearance | Browser UI preferences | Immediately in this browser; no Profile/document mutation. |
 
@@ -88,7 +88,7 @@ bytes stay under the document owner, independent from app appearance.
 | `~/.jobctrl/.env` | Legacy plaintext provider keys until migration, plus runtime environment configuration. |
 | repo `.env` | Development-only overrides for the current checkout. |
 | shell environment | Ephemeral overrides for commands, CI, and headless operation; not the normal persistent credential store. |
-| JobStreaming board catalog | The installed SDK supplies the boards. Discovery stores selected board IDs, availability and versioned settings in SQLite. |
+| JobStreaming board catalog | The installed SDK supplies the boards. Discovery stores selected board IDs, availability and versioned settings in PostgreSQL. |
 
 The development launcher loads `$JOBCTRL_DIR/.env` (default `~/.jobctrl/.env`),
 repo `.env`, and `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`) before
@@ -96,10 +96,10 @@ starting local services.
 
 **Settings → Connections** is the preferred guided provider setup. It stores
 API keys in macOS Keychain, Windows Credential Manager, or Linux Secret Service.
-Non-secret provider-mode settings are stored in revisioned SQLite settings. Codex uses an
+Non-secret provider-mode settings are stored in revisioned PostgreSQL settings. Codex uses an
 authenticated Codex CLI, and AWS, Google, and Azure credentials stay in their native CLI-managed stores; JobCtrl records only
 the activation flags and non-secret identifiers needed to select those routes
-in revisioned SQLite settings.
+in revisioned PostgreSQL settings.
 
 The in-progress Python target resolves native-store credentials for each new
 provider execution. A nonempty value in the launch environment takes precedence
@@ -160,18 +160,21 @@ never truncated. Migration refuses such a value and preserves its source.
 
 ### Migrating legacy plaintext secrets
 
-Migration is an explicit one-time operation. Stop JobCtrl before running it and
-restart after completion: already running services can retain values inherited
-from their old launch environment. Startup and status reads do not migrate
-files silently.
+Start JobCtrl once to initialize the selected workspace. Stop it before
+migrating, since running services can retain credentials inherited from their
+launch environment. The migration temporarily starts the workspace's private
+PostgreSQL server to record the credential change. The API, worker, and
+scheduled jobs stay stopped. PostgreSQL shuts down when the command finishes.
+Restart JobCtrl after migration completes.
 
-For the installed app, migrate the active JobCtrl-owned environment file:
+Use the installed launcher to migrate the selected workspace's environment file.
 
 ```bash
+jobctrl stop
 jobctrl credentials migrate
 ```
 
-The installed command defaults to the active runtime's owned `.env` file and
+The installed command defaults to the selected workspace's `.env` file and
 does not search the current directory. To include another persistent file,
 repeat `--env-file /absolute/path/to/file` in the intended precedence order;
 later assignments win. Select the complete source set on the first run. The
@@ -191,13 +194,17 @@ interrupted and leaves its lock behind, confirm that it has stopped and inspect
 the recovery state before removing only that stale migration lock; elapsed
 time alone does not establish that a migration is inactive.
 
-From a source checkout, use `uv --project workers/automation run --locked
---all-extras jobctrl credentials migrate` with the same workspace selection as
-the development stack. Without explicit `--env-file` arguments, it considers the
-workspace-owned environment file, the checkout's `.env`, and the configured
-user environment file. Select the complete intended set explicitly when those
-defaults differ from your launch configuration. The [source guide](../local-development.md#native-credential-migration)
-describes the credential context and QA isolation boundary.
+From a source checkout, use the same `JOBCTRL_DIR` as the development stack.
+
+```bash
+scripts/dev stop
+scripts/dev migrate-credentials
+```
+
+The source command considers the workspace `.env`, the checkout `.env`, then
+the file selected by `JOBCTRL_USER_ENV_PATH` (default `~/JobCtrl/.env`). Later
+assignments win. Use the same checkout and environment as the development
+stack. [Source credential configuration](../local-development.md#native-credential-migration)
 
 Only the guided secret allowlist moves: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
 `GEMINI_API_KEY`, and `CAPSOLVER_API_KEY`. Other settings and secret families,
@@ -225,7 +232,7 @@ Most users should leave this location unchanged. Advanced users can set
 `JOBCTRL_DIR` before starting JobCtrl to relocate the entire local data
 directory. See
 [Data, Privacy & Safety](data-and-safety.md) for what stays local and what may
-leave the machine. Contributors who need custom data paths, ports, Temporal
+leave the machine. Contributors who need custom data paths, ports, PostgreSQL
 settings, API/Vite proxy targets, or isolated stacks should use
 [Local Development → Runtime Overrides](../local-development.md#runtime-overrides).
 
@@ -257,7 +264,7 @@ provider runtimes that execute the work: Codex App Server `model/list`, Claude
 Agent SDK initialization metadata, and the Google SDK model list. JobCtrl does
 not maintain a second hard-coded model registry. The picker shows the exact
 runtime model ID alongside a friendly name when they differ. Only provider and
-model IDs are written to revisioned SQLite settings; credentials remain on the credential
+model IDs are written to revisioned PostgreSQL settings; credentials remain on the credential
 boundary. A model absent from the active runtime catalog is intentionally not
 selectable, even if that model exists in the provider's broader product lineup.
 Use **Refresh model catalog** to check current provider availability. A saved ID
@@ -393,7 +400,7 @@ officially loadable ADC types (including `authorized_user`) remain supported.
 
 ### Daily LLM budget {#runtime-setting-daily-llm-budget}
 
-The daily LLM budget is stored in revisioned SQLite settings and edited in **Settings →
+The daily LLM budget is stored in revisioned PostgreSQL settings and edited in **Settings →
 Budgets** (`dailyBudgetUsd`, default `25`; `0` means unlimited). Workflows that spend LLM tokens run a
 budget preflight before their heavy activities and stop with a non-retryable
 budget error once the estimated daily spend reaches the ceiling.
@@ -478,8 +485,8 @@ draft; choose **Save changes** to retry, or edit it to schedule another attempt.
 
 **Concurrent applications** (`applyConcurrency`, default `1`) limits how many
 application jobs the standing Apply loop may process at the same time. The loop
-re-reads the saved value from revisioned SQLite settings on its next poll. It does not control
-Score, Tailor, or the number of Temporal activities the worker can run.
+re-reads the saved value from revisioned PostgreSQL settings on its next poll. It does not control
+Score, Tailor, or the number of durable tasks the worker can run.
 
 ### Pipeline internal concurrency {#runtime-setting-pipeline-internal-concurrency}
 
@@ -493,20 +500,20 @@ Existing admitted work retains its own captured input and allowance.
 ### Worker activity slots {#runtime-setting-worker-activity-slots}
 
 **Worker activity slots** (`workerActivitySlots`, default `4`) is the desired
-total Temporal activity capacity for the Python worker. A saved change requires
+total durable task capacity for the Python worker. A saved change requires
 a worker restart. The saved value is desired capacity; use the loaded worker's
 readiness/diagnostic evidence to establish active capacity. Saving alone cannot
 prove that a running worker adopted it.
 
 This capacity is distinct from **Pipeline internal concurrency**:
 activity slots bound how many activities can execute at once, while internal
-concurrency bounds parallel work inside an activity or batch. Temporal queues
+concurrency bounds parallel work inside an activity or batch. DBOS queues
 work above the active slot count.
 
 ## Compensation Sources
 
 **Settings → Automation → Compensation sources** stores source and
-access-policy choices in Compensation-owned SQLite records. Saving the setting changes policy only;
+access-policy choices in Compensation-owned PostgreSQL records. Saving the setting changes policy only;
 it does not connect to a provider or fetch a feed.
 
 [Compensation Evidence](compensation-evidence.md) owns the source modes,

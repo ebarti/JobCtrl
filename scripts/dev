@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # scripts/dev — JobCtrl local dev fleet launcher.
 #
-# Runs or daemonizes the default temporal / api / web / worker fleet plus
+# Runs or daemonizes the default postgres / api / web / worker fleet plus
 # explicitly selected docs and demo processes. Per-launch owners retain original
 # child handles, with private receipts under .dev/pids/ and output in .dev/logs/.
 # A stale PID never grants authority to signal another process.
@@ -23,7 +23,9 @@
 
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEV_PYTHON="$ROOT/workers/automation/.venv/bin/python"
+[[ -x "$DEV_PYTHON" ]] || DEV_PYTHON="$(command -v python3 || true)"
 DEV_DIR="${JOBCTRL_DEV_DIR:-$ROOT/.dev}"
 PID_DIR="$DEV_DIR/pids"
 LOG_DIR="$DEV_DIR/logs"
@@ -32,12 +34,12 @@ mkdir -p "$PID_DIR" "$LOG_DIR"
 # The default fleet remains the four application processes. Auxiliary docs and
 # demo processes are opt-in so bare `scripts/dev run|start|stop|status` keeps
 # its existing application-stack contract.
-process_names() { echo "temporal api web worker"; }
+process_names() { echo "postgres api web worker"; }
 known_process_names() { echo "$(process_names) docs demo-api demo-web"; }
 
 process_command() {
   case "$1" in
-    temporal) echo 'temporal server start-dev --ip 127.0.0.1 --port "$JOBCTRL_TEMPORAL_GRPC_PORT" --ui-ip 127.0.0.1 --ui-port "$JOBCTRL_TEMPORAL_UI_PORT" --db-filename "$JOBCTRL_TEMPORAL_DB" --disable-config-file --disable-config-env' ;;
+    postgres) echo '"${JOBCTRL_SOURCE_LAUNCHER:?source controller required}" postgres "$ROOT"' ;;
     api)      echo 'uv --project workers/automation run --no-sync python -m jobctrl.app.server --workspace "$JOBCTRL_DIR" --host "$JOBCTRL_API_HOST" --port "$JOBCTRL_API_PORT"' ;;
     web)      echo 'corepack pnpm --filter @jobctrl/web exec vite --host 127.0.0.1 --port "$JOBCTRL_WEB_PORT"' ;;
     worker)   echo 'uv --project workers/automation run --no-sync python -m jobctrl.app.worker --workspace "$JOBCTRL_DIR"' ;;
@@ -79,9 +81,13 @@ rotate_log() {
 }
 
 process_owner() {
+  if [[ -z "$DEV_PYTHON" ]] || ! "$DEV_PYTHON" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))' >/dev/null 2>&1; then
+    echo "dev: Python 3.10 or newer is required for process ownership; run scripts/dev setup." >&2
+    return 1
+  fi
   local action="$1" name="$2"
   shift 2
-  python3 -B "$ROOT/scripts/dev-process-owner.py" "$action" "$PID_DIR" "$name" "$@"
+  "$DEV_PYTHON" -B "$ROOT/scripts/dev-process-owner.py" "$action" "$PID_DIR" "$name" "$@"
 }
 
 process_state() {
@@ -141,48 +147,31 @@ load_env_file() {
   done
 }
 
-temporal_path_conflict=0
 set_default_env() {
   export JOBCTRL_DIR="${JOBCTRL_DIR:-$HOME/.jobctrl}"
+  export JOBCTRL_POSTGRES_BIN_DIR="${JOBCTRL_POSTGRES_BIN_DIR:-$ROOT/.dev/postgres-runtime/bin}"
   export JOBCTRL_API_HOST="${JOBCTRL_API_HOST:-127.0.0.1}"
   export JOBCTRL_API_PORT="${JOBCTRL_API_PORT:-8766}"
-  export JOBCTRL_TEMPORAL_ADDRESS="${JOBCTRL_TEMPORAL_ADDRESS:-${TEMPORAL_ADDRESS:-127.0.0.1:7233}}"
-  export JOBCTRL_TEMPORAL_NAMESPACE="${JOBCTRL_TEMPORAL_NAMESPACE:-${TEMPORAL_NAMESPACE:-default}}"
-  export JOBCTRL_TEMPORAL_GRPC_PORT="${JOBCTRL_TEMPORAL_GRPC_PORT:-${JOBCTRL_TEMPORAL_ADDRESS##*:}}"
-  export JOBCTRL_TEMPORAL_UI_PORT="${JOBCTRL_TEMPORAL_UI_PORT:-8233}"
   export VITE_JOBCTRL_API_BASE_URL="${VITE_JOBCTRL_API_BASE_URL:-http://${JOBCTRL_API_HOST}:${JOBCTRL_API_PORT}}"
   export JOBCTRL_WEB_PORT="${JOBCTRL_WEB_PORT:-5173}"
   export JOBCTRL_DOCS_PORT="${JOBCTRL_DOCS_PORT:-4174}"
   export JOBCTRL_DEMO_API_PORT="${JOBCTRL_DEMO_API_PORT:-8787}"
   export JOBCTRL_DEMO_WEB_PORT="${JOBCTRL_DEMO_WEB_PORT:-5174}"
   export JOBCTRL_DEMO_STATE_DIR="${JOBCTRL_DEMO_STATE_DIR:-$DEV_DIR/demo/wrangler}"
-  # New workspaces use the installed launcher's history path. Preserve the
-  # earlier source-only location when it is the sole existing history; never
-  # silently choose between two histories belonging to the same app database.
-  temporal_path_conflict=0
-  if [[ -z "${JOBCTRL_TEMPORAL_DB:-}" ]]; then
-    local native_temporal="$JOBCTRL_DIR/temporal.db"
-    local legacy_temporal="$JOBCTRL_DIR/temporal/temporal.db"
-    local db_path suffix
-    for db_path in "$native_temporal" "$legacy_temporal"; do
-      if [[ ! -e "$db_path" && ! -L "$db_path" ]]; then
-        for suffix in -wal -shm -journal; do
-          if [[ -e "$db_path$suffix" || -L "$db_path$suffix" ]]; then
-            temporal_path_conflict=1
-          fi
-        done
-      fi
-    done
-    if [[ ( -e "$native_temporal" || -L "$native_temporal" ) && ( -e "$legacy_temporal" || -L "$legacy_temporal" ) ]]; then
-      temporal_path_conflict=1
-      export JOBCTRL_TEMPORAL_DB="$native_temporal"
-    elif [[ -e "$legacy_temporal" || -L "$legacy_temporal" ]]; then
-      export JOBCTRL_TEMPORAL_DB="$legacy_temporal"
-    else
-      export JOBCTRL_TEMPORAL_DB="$native_temporal"
-    fi
+  local workspace_database_url
+  workspace_database_url="$(python3 - "$JOBCTRL_DIR" <<'PYURL'
+import hashlib, os, pathlib, sys
+workspace = str(pathlib.Path(sys.argv[1]).expanduser().resolve())
+digest = hashlib.sha256(workspace.encode()).hexdigest()[:24]
+print(f"postgresql://jobctrl@/jobctrl?host=/private/tmp/jobctrl-pg-{os.getuid()}-{digest}&port=5432")
+PYURL
+)"
+  if [[ -n "${JOBCTRL_DATABASE_URL:-}" && "$JOBCTRL_DATABASE_URL" != "$workspace_database_url" ]]; then
+    echo "dev: JOBCTRL_DATABASE_URL does not match this owned workspace; refusing to attach to another database." >&2
+    return 1
   fi
-  mkdir -p "$(dirname "$JOBCTRL_TEMPORAL_DB")" "$JOBCTRL_DEMO_STATE_DIR"
+  export JOBCTRL_DATABASE_URL="$workspace_database_url"
+  mkdir -p "$JOBCTRL_DEMO_STATE_DIR"
 }
 
 start_detached_command() {
@@ -240,19 +229,19 @@ PY
 }
 
 wait_for_dependencies() {
-  [[ "$1" == "worker" ]] || return 0
-  local deadline=$((SECONDS + 30))
-  echo "worker: waiting for Temporal at $JOBCTRL_TEMPORAL_ADDRESS"
+  case "$1" in api|worker) ;; *) return 0 ;; esac
+  local deadline=$((SECONDS + 60))
+  echo "$1: waiting for owned PostgreSQL workspace"
   while [[ "$SECONDS" -lt "$deadline" ]]; do
     [[ "${run_exit_code:-0}" -eq 0 ]] || return "$run_exit_code"
-    if temporal operator cluster health --address "$JOBCTRL_TEMPORAL_ADDRESS" \
-      --command-timeout 1s \
-      --disable-config-file --disable-config-env >/dev/null 2>&1; then
-      return "${run_exit_code:-0}"
+    if [[ -f "$JOBCTRL_DIR/postgres/active.json" ]] &&
+      "${JOBCTRL_POSTGRES_BIN_DIR:+$JOBCTRL_POSTGRES_BIN_DIR/}pg_isready" -d "$JOBCTRL_DATABASE_URL" -t 1 >/dev/null 2>&1 &&
+      PYTHONPATH="$ROOT/workers/automation/src" "$ROOT/workers/automation/.venv/bin/python" -c 'import os; from pathlib import Path; from jobctrl.app.database import Database; p = Database.probe(Path(os.environ["JOBCTRL_DIR"]), database_url=os.environ["JOBCTRL_DATABASE_URL"]); raise SystemExit(0 if p and p.get("state") == "active" else 1)' >/dev/null 2>&1; then
+      return 0
     fi
     sleep 0.2
   done
-  echo "dev: Temporal was not ready within 30 seconds; worker was not started. See $LOG_DIR/temporal.log." >&2
+  echo "dev: PostgreSQL workspace was not ready; see $LOG_DIR/postgres.log." >&2
   return 1
 }
 
@@ -270,8 +259,8 @@ start_one() {
   rotate_log "$log"
   local pid launch_id managed_command
   launch_id=$(new_launch_id)
-  printf -v managed_command 'exec python3 -B %q launch %q %q %q %q' \
-    "$ROOT/scripts/dev-process-owner.py" "$PID_DIR" "$name" "$launch_id" "$cmd"
+  printf -v managed_command 'exec %q -B %q launch %q %q %q %q' \
+    "$DEV_PYTHON" "$ROOT/scripts/dev-process-owner.py" "$PID_DIR" "$name" "$launch_id" "$cmd"
   pid=$(start_detached_command "$managed_command" "$log")
   wait_for_owner "$name" "$launch_id" "$pid"
   echo "$name: started (pid $pid, logs $log)"
@@ -354,9 +343,7 @@ print_binding_for() {
         echo "demo-web: http://127.0.0.1:${JOBCTRL_DEMO_WEB_PORT}/ (requested; startup log pending)"
       fi
       ;;
-    temporal)
-      echo "temporal: grpc 127.0.0.1:${JOBCTRL_TEMPORAL_GRPC_PORT}, ui http://127.0.0.1:${JOBCTRL_TEMPORAL_UI_PORT}"
-      ;;
+    postgres) echo "postgres: private workspace socket" ;;
   esac
 }
 
@@ -364,7 +351,7 @@ print_binding_summary() {
   local printed=0 n
   for n in "$@"; do
     case "$n" in
-      api|web|temporal|docs|demo-api|demo-web)
+      api|web|postgres|docs|demo-api|demo-web)
         if [[ "$printed" -eq 0 ]]; then
           echo "dev: bindings"
           printed=1
@@ -386,7 +373,7 @@ run_cleanup() {
   trap '' INT TERM
   run_cleaned=1
   local i failed=0
-  for i in "${!run_pids[@]}"; do
+  for (( i=${#run_pids[@]}-1; i>=0; i-- )); do
     stop_one "${run_names[$i]}" "${run_ids[$i]}" || failed=1
   done
   return "$failed"
@@ -401,7 +388,7 @@ start_run_one() {
   wait_for_dependencies "$name"
   (
     cd "$ROOT"
-    exec python3 -B "$ROOT/scripts/dev-process-owner.py" launch "$PID_DIR" "$name" "$launch_id" "$cmd" "$log"
+    exec "$DEV_PYTHON" -B "$ROOT/scripts/dev-process-owner.py" launch "$PID_DIR" "$name" "$launch_id" "$cmd" "$log"
   ) &
   local pid=$!
   run_names+=("$name")
@@ -422,24 +409,15 @@ stop_one() {
 }
 
 prepare_runtime() {
-  load_env_file
-  set_default_env
-  local name
-  for name in "$@"; do
-    if [[ "$name" == "temporal" ]]; then
-      export JOBCTRL_TEMPORAL_UI_URL="http://127.0.0.1:$JOBCTRL_TEMPORAL_UI_PORT"
+  local target
+  for target in "$@"; do
+    if [[ "$target" == "postgres" && "$(uname -s)" != "Darwin" ]]; then
+      echo "dev: managed PostgreSQL workspace custody is currently supported on macOS only." >&2
+      return 1
     fi
   done
-  if [[ "$temporal_path_conflict" -eq 1 ]]; then
-    for name in "$@"; do
-      case "$name" in
-        temporal|api|worker)
-          echo "dev: conflicting Temporal histories or orphaned SQLite companions exist for this workspace; preserve them and resolve their ownership before starting." >&2
-          return 1
-          ;;
-      esac
-    done
-  fi
+  load_env_file
+  set_default_env
   # When switching a managed workspace, probe after its verified owner stops.
   if [[ "${JOBCTRL_DEV_DEFER_API_PROBE:-}" != "1" ]]; then
     check_api_collision "$@"
@@ -491,7 +469,7 @@ reject_incompatible_worker_targets() {
   local name
   for name in "$@"; do
     case "$name" in
-      temporal|api|worker)
+      postgres|api|worker)
         echo "dev: this workspace belongs to the previous application. Run jobctrl profile-transfer --source SOURCE --target NEW_WORKSPACE --confirm-profile-only-reset --browser-sources BROWSER_MANIFEST.json, then select JOBCTRL_DIR=NEW_WORKSPACE. The source is preserved." >&2
         return 1
         ;;
@@ -618,7 +596,7 @@ workspace_targets() {
   [[ $# -gt 0 ]] || return 0
   local name
   for name in "$@"; do
-    case "$name" in temporal|api|worker) return 0 ;; esac
+    case "$name" in postgres|api|worker) return 0 ;; esac
   done
   return 1
 }
@@ -675,7 +653,8 @@ cmd_stop() {
   if [[ ${#targets[@]} -eq 0 ]]; then
     for n in $(process_names); do targets+=("$n"); done
   fi
-  for n in "${targets[@]}"; do stop_one "$n"; done
+  local i
+  for (( i=${#targets[@]}-1; i>=0; i-- )); do stop_one "${targets[$i]}"; done
 }
 
 worker_health_status() {
@@ -761,6 +740,15 @@ cmd_logs() {
 }
 
 cmd_setup() {
+  local pg_root="$ROOT/.dev/postgres-runtime"
+  if [[ -z "${JOBCTRL_POSTGRES_BIN_DIR:-}" ]]; then
+    if [[ ! -e "$pg_root" && ! -L "$pg_root" ]]; then
+      bash "$ROOT/scripts/install-postgres-runtime.sh" "$pg_root"
+    elif [[ ! -x "$pg_root/bin/postgres" || ! -x "$pg_root/bin/initdb" ]]; then
+      echo "dev: existing PostgreSQL runtime is incomplete; inspect $pg_root before setup." >&2
+      return 1
+    fi
+  fi
   ( cd "$ROOT" && corepack pnpm install )
   ( cd "$ROOT" && uv --project workers/automation sync --extra dev )
 }
@@ -770,7 +758,8 @@ cmd_migrate_credentials() {
   local user_env="${JOBCTRL_USER_ENV_PATH:-$HOME/JobCtrl/.env}"
   (
     cd "$ROOT"
-    uv --project workers/automation run --no-sync python -m jobctrl credentials migrate \
+    unset JOBCTRL_DATABASE_URL
+    go -C "$ROOT/launcher" run ./cmd/jobctrl-source migrate-credentials "$ROOT" \
       --env-file "$app_dir/.env" \
       --env-file "$ROOT/.env" \
       --env-file "$user_env" \

@@ -10,7 +10,7 @@ import { outreachKeys } from "../queryKeys.js";
 /**
  * Start a supervised research run. Plain `useMutation` (not
  * `createOptimisticMutation`) by design: the server mints the task id and starts
- * an async Temporal workflow, so the task does not exist client-side until the
+ * a durable action, so the task does not exist client-side until the
  * response returns — there is no meaningful optimistic shape to patch (the
  * documented exception in CLAUDE.md's optimistic-mutation rule). The queued task
  * is invalidated in on settle; its running/needs_review state arrives via SSE.

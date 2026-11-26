@@ -9,7 +9,7 @@ implemented route or an authored test is insufficient.
 ## High-risk regression areas
 
 - Confirm the exact candidate, locked dependencies, actual Python API/worker,
-  Temporal health and owned synthetic workspace. Record preparation and total
+  PostgreSQL and DBOS health and owned synthetic workspace. Record preparation and total
   time, failures and cleanup. Preserve unrelated state and processes.
 - Read canonical source/receipt IDs for every visible evidence, requirement,
   person-fit, wording and document-coverage claim. Prove model authority and
@@ -18,7 +18,7 @@ implemented route or an authored test is insufficient.
   require exact input hashes before external actions. Failed refreshes preserve
   accepted artifact bytes.
 - Kill the actual worker mid-action, replace it with a new PID and inspect the
-  original Temporal run and canonical state. Cancellation remains cancellation.
+  original durable run and canonical state. Cancellation remains cancellation.
 - Receive a synthetic application send without acknowledgement; restart and
   retry must retain Needs verification and make no second send.
 - Exercise actual native/installed/cutover/provider proof separately where the
@@ -118,7 +118,7 @@ backup/rollback and explicit Profile-only transfer.
 ## Durable and operational matrix
 
 Keep worker crash, cancellation, provider failure, ambiguous external effect,
-process-inspection denial, controller interruption and Temporal-history loss as
+process-inspection denial, controller interruption and durable-state unavailability as
 distinct cases. Require original run/receipt identity, retained accepted state,
 verified owned-process exit and a successful subsequent action where applicable.
 Use the actual native platform for credentials, filesystem permissions, launchd

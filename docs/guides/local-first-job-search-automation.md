@@ -12,7 +12,7 @@ automated without making a vendor-hosted account the owner of your career data.
 ## What “Local-first” Means In JobCtrl
 
 JobCtrl runs as a small local system: a web app, a local API, a worker,
-Temporal (the workflow engine), SQLite, and a directory of
+DBOS (the workflow engine), PostgreSQL, and a directory of
 generated artifacts. The normal workspace is under `~/.jobctrl/`. There is no
 JobCtrl account and no hosted JobCtrl backend required to use the product.
 
@@ -20,11 +20,11 @@ That gives the local installation several concrete responsibilities:
 
 | Responsibility | Local source of truth |
 | --- | --- |
-| Candidate facts, preferences, and application answers | Versioned Candidate Profile rows in SQLite |
-| Discovered jobs, source observations, scores, and outcomes | The local `jobctrl.db` database |
+| Candidate facts, preferences, and application answers | Versioned Candidate Profile rows in PostgreSQL |
+| Discovered jobs, source observations, scores, and outcomes | The local workspace database |
 | Tailored resumes and previews | Registered files in the local JobCtrl workspace |
-| Workflow progress, retries, and cancellation | The local Temporal runtime plus durable JobCtrl projections |
-| Non-secret product settings | SQLite or `config.json`, according to the owning setting |
+| Workflow progress, retries, and cancellation | DBOS state in PostgreSQL plus durable JobCtrl projections |
+| Non-secret product settings | Revisioned PostgreSQL settings |
 | Provider credentials | The documented environment, CLI, or OS-backed secret boundary—not browser-readable settings |
 
 The exact inventory, retention rules, and credential boundaries live in
@@ -59,7 +59,7 @@ sources, capture postings, enrich descriptions, analyze requirements, score
 fit, create materials, render files, and wait for review. A laptop can sleep,
 a provider can fail, or a worker can restart while that sequence is running.
 
-JobCtrl routes long-running work through Temporal instead of hiding it in a
+JobCtrl routes long-running work through DBOS instead of hiding it in a
 browser tab or an in-process loop. Stable workflow identities, bounded retries,
 cancellation, and persisted stage events let the Runs and Pipelines surfaces
 show what happened. Broad-board discovery checkpoints each search unit, so an
@@ -70,7 +70,7 @@ This does not make every failure disappear. It makes failure a state you can
 inspect rather than an invisible partial side effect. The exact runtime,
 recovery, and concurrency contracts are documented in
 [Runtime & Processes](../architecture/runtime.md) and
-[Temporal Workflows](../architecture/pipeline/index.md).
+[Durable Workflows](../architecture/pipeline/index.md).
 
 ## The Human Still Owns Risky Decisions
 

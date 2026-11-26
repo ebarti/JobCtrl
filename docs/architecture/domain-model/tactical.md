@@ -36,7 +36,7 @@ with a review finding or timeout.
 
 Applications keep exact-payload approval, durable submit intent, at-most-once
 external effects and an honest ambiguous outcome when acknowledgement is lost.
-Temporal retries cannot grant a fresh external authorization. Learning
+DBOS retries cannot grant a fresh external authorization. Learning
 milestones do not promote facts, qualification or scores. Offer terms preserve
 unknowns and corrections rather than inventing values or overwriting history.
 

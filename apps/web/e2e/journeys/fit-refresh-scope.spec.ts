@@ -6,8 +6,6 @@ import { qualificationBatchDecision, qualificationBindings } from "./qualificati
 import { captureReusePosting, acceptReuseRequirements, type CapturedPosting } from "./reuse-data.js";
 import { catalogMatching, typedExtraction, type ReusableDemand } from "./requirements-data.js";
 
-const B49 = "b49dc52e3d727356870317069304ac6ceb9f1237";
-const DF06 = "df06b08ae201f7a73dc2c359944c06daf517c69e";
 const canonical = (value: unknown): unknown => Array.isArray(value) ? value.map(canonical)
   : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, entry]) => [key, canonical(entry)])) : value;
 const fingerprint = (value: unknown) => createHash("sha256").update(JSON.stringify(canonical(value))).digest("hex");
@@ -16,15 +14,8 @@ const fit = (api: Parameters<typeof json>[0], jobId: string) => json<FitState>(a
 const pending = (api: Parameters<typeof json>[0]) => json<PendingRefresh>(api, "get", "/v1/fit/refresh/pending");
 const scoreOnly = (value: PendingRefresh, ids = value.available_job_ids) => ({ ...refreshPayload(value, ids, { max_model_calls: 2 }), prepare_wording: false, prepare_coverage: false });
 
-async function changedSummary(api: Parameters<typeof json>[0]) {
-  const value = await json<Profile>(api, "get", "/v1/profile");
-  await json(api, "patch", "/v1/profile", { expectedProfileVersion: value.profileVersion,
-    profile: { ...value.profile, resume: { ...value.profile.resume, experience_entries: value.profile.resume.experience_entries.map((row, index) => index ? row : { ...row, summary: "Retained recovery sources with an additional reviewed operational summary." }) } } });
-}
-
-test.describe("large mixed refresh from the actual b49 predecessor", () => {
-  test.use({ sourceRevision: B49 });
-  test("manual Fit retains a structurally oversized current catalog and qualifies only mandatory items after upgrade", async ({ api, app }, testInfo) => {
+test.describe("large mixed refresh", () => {
+  test("manual Fit retains a structurally oversized current catalog and qualifies only mandatory items with bounded inputs", async ({ api, app }, testInfo) => {
     const authored = structuredClone(baseline);
     authored.resume.language_entries = [{ id: "english", language: "English", proficiency: "Fluent" }];
     authored.resume.experience_entries = authored.resume.experience_entries.map((row, role) => ({ ...row,
@@ -42,8 +33,7 @@ test.describe("large mixed refresh from the actual b49 predecessor", () => {
     firstBatch.reply(response);
     expect((await assessing).status()).toBe(200);
     const original = await fit(api, job.job_id);
-    // The old impact wire serializes each complete prior assessment as a source.
-    // This is actual accepted public output, not a recorded response fixture.
+    // The accepted public output is intentionally large; no recorded fixture is used.
     expect(Buffer.byteLength(JSON.stringify(original.score.assessments))).toBeGreaterThan(1024 * 1024);
     const peers: CapturedPosting[] = [];
     const peerScores: FitState[] = [];
@@ -65,14 +55,6 @@ test.describe("large mixed refresh from the actual b49 predecessor", () => {
     await acceptReuseRequirements(api, app, newJob, missing, Object.fromEntries(missing.map((row) => [row.localId, { verdict: "new" as const }])));
     const ids = [job.job_id, ...peers.map((row) => row.job_id)];
     expect((await pending(api)).stale_job_ids).toEqual([job.job_id]);
-    const beforeFailure = app.external.calls.length;
-    const failed = await startRefresh(api, scoreOnly(await pending(api), ids), "large-legacy-input-refusal");
-    expect(await terminal(api, failed.runId)).toMatchObject({ status: "failed", errorCode: "model_input_too_large" });
-    expect(operations(app, beforeFailure)).toEqual([]);
-    const retainedFailure = await json<RefreshOperation>(api, "get", `/v1/fit/refresh/operations/${failed.runId}`);
-    expect(retainedFailure).toMatchObject({ factual_published: false, counters: { model_calls: 1 } });
-    expect((await fit(api, job.job_id)).score).toEqual(original.score);
-    await app.upgradeSource();
     const before = app.external.calls.length;
     const run = await startRefresh(api, scoreOnly(await pending(api), ids), "large-scoped-successor");
     const batch = await modelCall(app, "fit.qualification-batch");
@@ -97,7 +79,6 @@ test.describe("large mixed refresh from the actual b49 predecessor", () => {
     expect(selection.decision.requirements).toHaveLength(59);
     expect(selection.model_decision.requirements).toEqual([]);
     expect(selection.scope_binding.complete_partition_fingerprint).toBe(fingerprint(selection.decision));
-    expect(await json(api, "get", `/v1/fit/refresh/operations/${failed.runId}`)).toEqual(retainedFailure);
     const noCalls = app.external.calls.length;
     const exact = await startRefresh(api, scoreOnly(await pending(api), ids), "large-exact-zero-calls");
     await completed(api, exact.runId);
@@ -188,69 +169,4 @@ test("manual Fit composes exact, mandatory and semantic-subset authority without
   expect(checkpointAfter.calls).toEqual(checkpointBefore.calls);
   expect((await fit(api, job.job_id)).score).toEqual(accepted.score);
   expect(operations(app, restartStart)).toEqual(["fit.catalog-impact", "fit.qualification-batch"]);
-});
-
-for (const predecessor of [DF06, B49]) {
-  test.describe(`retained qualification wire ${predecessor.slice(0, 4)}`, () => {
-    test.use({ sourceRevision: predecessor, fitRecoveryDebugger: true });
-    for (const completion of ["completed", "started"] as const) {
-      test(`manual Fit recovers the ${completion} ${predecessor.slice(0, 4)} qualification call without another allowance`, async ({ api, app }) => {
-        const seed = await createScoredFit(api, app, `qualification-${completion}-${predecessor.slice(0, 4)}`, { legacyPartitionV5: predecessor === DF06 });
-        await changedSummary(api);
-        if (completion === "completed") await app.armFitRecoveryPause("fit.qualification-batch");
-        const before = app.external.calls.length;
-        const run = await startRefresh(api, scoreOnly(await pending(api)), `qualification-${completion}`);
-        const impact = await modelCall(app, "fit.catalog-impact");
-        impact.reply(impactPartition(impact, { [seed.requirements.requirements[0]!.requirement_id]: "affected" }));
-        const batch = await modelCall(app, "fit.qualification-batch");
-        const response = qualificationBatchDecision(batch, () => ({ achievementIds: [seed.library.roles[0]!.achievements[0]!.achievement_id], evidenceSourceIds: [`evidence:${seed.library.roles[0]!.achievements[0]!.source_refs[0]!.source_id}`] }));
-        if (completion === "completed") { batch.reply(response); await app.waitForFitRecoveryPause(); }
-        const prior = await app.fitRefreshCheckpoint(run.runId);
-        expect(Object.values(prior.calls).find((row) => row.kind === "fit.qualification-batch")!.status).toBe(completion);
-        expect(prior.checkpoints["qualification_batch"]).toBeUndefined();
-        expect(prior.qualification_transport_version).toBeUndefined();
-        await app.upgradeSource();
-        if (completion === "started") {
-          expect(await terminal(api, run.runId)).toMatchObject({ status: "failed", errorCode: "fit_refresh_interrupted" });
-          expect((await fit(api, seed.posting.job_id)).score).toEqual(seed.fit.score);
-        } else {
-          await completed(api, run.runId);
-          const accepted = await fit(api, seed.posting.job_id);
-          expect(accepted.current).toBe(true);
-          const provenance = accepted.score.assessments[0]!.provenance as Record<string, unknown>;
-          expect(provenance["context_transport_binding"] !== undefined).toBe(predecessor === B49);
-          expect(provenance["accepted_result_fingerprint"]).toBe(fingerprint(response));
-        }
-        const after = await app.fitRefreshCheckpoint(run.runId);
-        expect(after.calls).toEqual(prior.calls);
-        expect((await json<RefreshOperation>(api, "get", `/v1/fit/refresh/operations/${run.runId}`)).counters.model_calls).toBe(2);
-        expect(operations(app, before)).toEqual(["fit.catalog-impact", "fit.qualification-batch"]);
-      });
-    }
-  });
-}
-
-test.describe("retained b49 impact wire", () => {
-  test.use({ sourceRevision: B49, fitRecoveryDebugger: true });
-  for (const completion of ["completed", "started"] as const) {
-    test(`manual Fit recovers the ${completion} b49 impact call without a new subset request`, async ({ api, app }) => {
-      const seed = await createScoredFit(api, app, `impact-${completion}`);
-      await changedSummary(api);
-      if (completion === "completed") await app.armFitRecoveryPause("fit.catalog-impact");
-      const before = app.external.calls.length;
-      const run = await startRefresh(api, scoreOnly(await pending(api)), `impact-${completion}`);
-      const impact = await modelCall(app, "fit.catalog-impact");
-      if (completion === "completed") { impact.reply(impactPartition(impact, { [seed.requirements.requirements[0]!.requirement_id]: "unchanged" })); await app.waitForFitRecoveryPause(); }
-      const prior = await app.fitRefreshCheckpoint(run.runId);
-      expect(prior.checkpoints["selection"]).toBeUndefined();
-      expect(prior.impact_selection_scope_version).toBeUndefined();
-      expect(Object.values(prior.calls)[0]!.status).toBe(completion);
-      await app.upgradeSource();
-      if (completion === "completed") { await completed(api, run.runId); expect((await fit(api, seed.posting.job_id)).current).toBe(true); }
-      else { expect(await terminal(api, run.runId)).toMatchObject({ status: "failed", errorCode: "fit_refresh_interrupted" }); expect((await fit(api, seed.posting.job_id)).score).toEqual(seed.fit.score); }
-      expect((await app.fitRefreshCheckpoint(run.runId)).calls).toEqual(prior.calls);
-      expect((await json<RefreshOperation>(api, "get", `/v1/fit/refresh/operations/${run.runId}`)).counters.model_calls).toBe(1);
-      expect(operations(app, before)).toEqual(["fit.catalog-impact"]);
-    });
-  }
 });

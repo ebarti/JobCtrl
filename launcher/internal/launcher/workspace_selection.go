@@ -3,6 +3,7 @@ package launcher
 import (
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 )
 
@@ -31,7 +32,7 @@ func CheckWorkspaceSelection(home, payloadRoot string, env []string, initial boo
 		return err
 	}
 	verified := verifiedRelease{payloadRoot: payloadRoot, runtime: target, distribution: distribution}
-	if initial {
+	if _, e := os.Lstat(filepath.Join(inst.StateDir, profileTransferReceiptName)); initial && !errors.Is(e, os.ErrNotExist) {
 		transferred, err := admitInitialProfileTransfer(ctx, verified)
 		if transferred || err != nil {
 			return err
@@ -39,6 +40,16 @@ func CheckWorkspaceSelection(home, payloadRoot string, env []string, initial boo
 	}
 	if err := admitPythonApplicationLifecycle(ctx, verified); err != nil {
 		return err
+	}
+	// Standalone Python CLI workspaces do not always have a Temporal server
+	// history. The verified importer reconciles their action ledger before startup.
+	if initial && target.SchemaVersion == 2 {
+		if _, err := os.Lstat(filepath.Join(inst.StateDir, "jobctrl.db")); err == nil {
+			if err := stop(ctx); err != nil {
+				return err
+			}
+			return admitPythonApplicationLifecycle(ctx, verified)
+		}
 	}
 	unused, err := unusedDatabasePair(inst.StateDir)
 	if err != nil {

@@ -617,7 +617,7 @@ function CredentialPrivacyNotice({
       title="Your provider data stays private"
     >
       <p className="privacy-box-copy">
-        {boundaryCopy} Codex authentication stays in JobCtrl's isolated filesystem home. Credentials are never returned by the API, stored in SQLite, placed in URLs, or written to logs, traces, and generated artifacts. Cloud credential files remain managed by their vendor CLIs.
+        {boundaryCopy} Codex authentication stays in JobCtrl's isolated filesystem home. Credentials are never returned by the API, stored in the workspace database, placed in URLs, or written to logs, traces, and generated artifacts. Cloud credential files remain managed by their vendor CLIs.
       </p>
       <div className="privacy-box-tags">
         <Badge>Local only</Badge>

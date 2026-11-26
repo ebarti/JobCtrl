@@ -42,6 +42,7 @@ FEATURE_SCHEMAS = (
 
 TARGET_ONLY_SCHEMAS = (
     ("model_operation_receipts_v1", "app.model_custody", "SCHEMA"),
+    ("shared_model_work_v1", "app.model_shared_work", "SCHEMA"),
     ("contacts_research_execution_v1", "features.contacts.schema", "RESEARCH_EXECUTION_SCHEMA"),
     ("companies_refresh_execution_v1", "features.companies.schema", "REFRESH_EXECUTION_SCHEMA"),
 )

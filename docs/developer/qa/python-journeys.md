@@ -17,8 +17,7 @@ Dependency installation belongs to runner setup and is included separately
 in the hosted job's total. A listed scenario is not verified until its observed
 result is recorded on the exact candidate.
 
-The suite starts the actual Python HTTP server and worker, real Temporal,
-SQLite, file storage and resume renderer. Browser requests reach the Python
+The suite starts the actual Python HTTP server and worker, real PostgreSQL, DBOS, file storage and resume renderer. Browser requests reach the Python
 application. Only external models, job sources, mail and other external APIs
 are controlled. Model responses are explicit source-bound choices made for each
 journey. They test authority, validation, persistence and failures; they do not
@@ -48,13 +47,18 @@ digest `5f6548760dfc40fe06073b504e4f56b2da9f58de5a9b88fd4c3b97a2a933e006`
 matched the hosted job; build / journeys / total were 7.593 / 29.710 / 38.886
 seconds, with unchanged lock and web bytes. Hosted Linux verification remains
 separate.
-One Temporal server serves bounded, independent per-journey Python workspaces.
+Each Playwright worker owns a PostgreSQL cluster; each journey owns an independent workspace database.
 Processes and state are owned by the run; caller-selected application paths and
 real credentials are never adopted. The IPC-connected process-group leader
 reserves its group identity until cleanup and cleans its group if the harness
 disconnects. Test evidence lives in an owned temporary run directory. Failed
 synthetic state stays local for diagnosis; CI uploads selected logs, timings,
 traces and reports and excludes databases, native HOME and provider state.
+
+The observed results and dated execution records below predate the PostgreSQL
+and DBOS migration unless explicitly labeled otherwise. They describe historical
+evidence, not candidate qualification. Run the applicable journeys again and
+record exact candidate and observed outcomes.
 
 ## Coverage ledger
 

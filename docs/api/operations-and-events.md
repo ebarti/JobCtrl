@@ -2,14 +2,14 @@
 
 The Python foundation and feature adapters are being integrated. This page
 states target semantics, not a completed API inventory or product verification.
-HTTP, CLI and the Temporal worker invoke the same Python application actions;
+HTTP, CLI and the DBOS worker invoke the same Python application actions;
 no JSON-RPC bridge or TypeScript business writer remains at cutover.
 
 ## Starting Work
 
 The foundation reserves `/v1/actions/{action}` for registered durable feature
 actions and `/v1/action-runs/{run_id}` for their runs. A durable submission
-returns 202 only after Temporal accepts it. The receipt identifies accepted
+returns 202 after the action and DBOS enqueue commit together. The receipt identifies accepted
 work; it does not imply completion, external submission or approval. Features
 own validation, idempotency, source fences and external-effect authority.
 

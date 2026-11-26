@@ -1193,7 +1193,7 @@ function parseCommandJson(result, label) {
 
 export function assertRunningStatus(status) {
   invariant(status?.status === "running", "published smoke status must be running");
-  for (const component of ["temporal", "worker", "api"]) invariant(status.components?.[component]?.state === "running", `published smoke ${component} is not running`);
+  for (const component of ["postgres", "worker", "api"]) invariant(status.components?.[component]?.state === "running", `published smoke ${component} is not running`);
   return true;
 }
 

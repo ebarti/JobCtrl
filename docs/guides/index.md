@@ -28,7 +28,7 @@ product or architecture page for exact behavior and current limits.
 - [At-most-once Job Application Submission](at-most-once-job-application-submission.md)
   explains why ambiguous employer-facing work stops for verification instead
   of retrying blindly.
-- [Temporal Workflows In A Desktop App](temporal-workflows-desktop-app.md)
+- [Durable Workflows In A Desktop App](temporal-workflows-desktop-app.md)
   explains how local workflow history makes long-running work recoverable,
   cancelable, and visible.
 

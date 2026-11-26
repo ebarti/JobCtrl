@@ -6,10 +6,10 @@
     "javascriptUniqueRuntimeDirect": 29,
     "javascriptUniqueDevelopmentDirect": 26,
     "pnpmPackageRecords": 1052,
-    "pythonCoreRuntimeDirect": 25,
+    "pythonCoreRuntimeDirect": 27,
     "pythonProviderRuntimeDirect": 4,
     "pythonDevelopmentDirect": 6,
-    "uvPackageRecords": 103
+    "uvPackageRecords": 105
   },
   "referenceFootprint": {
     "status": "observational",

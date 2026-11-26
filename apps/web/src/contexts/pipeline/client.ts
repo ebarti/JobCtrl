@@ -11,7 +11,7 @@ import type { SessionRequestIdentity } from "../../shared/lib/useSessionRequestI
 import type { FeatureEventHandler } from "../../shared/ports/FeatureEvents.js";
 import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
-import { preparationRequestInput, type PreparationRetryRequest, usePreparationRecovery } from "./recovery.js";
+import { preparationAdmissionKey, preparationRequestInput, type PreparationRetryRequest, usePreparationRecovery } from "./recovery.js";
 
 export const recipeSchema = z.enum(["run", "discover", "enrich", "analyze", "score", "tailor", "prepare"]);
 export type PreparationRecipe = z.infer<typeof recipeSchema>;
@@ -33,8 +33,8 @@ const stepSchema = z.object({
 const runSchema = z.object({
   runId: z.string(), status: z.string(), recipe: z.enum([...recipeSchema.options, "search", "assess"]), parentRunId: z.string().nullable(),
   cohortFrozen: z.boolean().optional(), targetRoute: z.string().optional(),
-  executionPolicy: z.object({ version: z.literal("search-cohort-v1") }).optional(),
-  jobIds: z.array(z.string()), createdAt: z.string(), updatedAt: z.string(), steps: z.array(stepSchema),
+  executionPolicy: z.object({ version: z.enum(["search-cohort-v1", "search-jobs-v1"]) }).optional(),
+  jobIds: z.array(z.string()), retryableJobIds: z.array(z.string()).optional(), createdAt: z.string(), updatedAt: z.string(), steps: z.array(stepSchema),
 });
 const executionSchema = z.object({ runId: z.string(), status: z.string(), errorCode: z.string().nullable().optional(),
   cancellationRequested: z.boolean(), cancellationDelivery: cancellationDeliverySchema }).passthrough();
@@ -129,12 +129,13 @@ export function useSearchPreparationProgress({ runId, databaseInstanceId, enable
         postingsChecked: completedChecks("enrich"), requirementsChecked: completedChecks(run.targetRoute === "cohort" ? "requirements_extract" : "requirements"),
         phase: sharedStage === "fit_qualify" ? "qualifying" as const : sharedStage === "requirements_normalize" ? "normalizing" as const : "checking" as const,
       } : null;
+    const haveTargets = run.cohortFrozen === true || run.executionPolicy?.version === "search-jobs-v1";
     return { phase: active ? discovered ? "assessing" as const : "acquiring" as const : null,
       checkpoint,
-      assessedJobs: run.cohortFrozen === true ? fits.size : null,
-      failedJobs: run.cohortFrozen === true ? new Set(failures.map((failure) => failure.jobId)).size : null,
-      skippedJobs: run.cohortFrozen === true ? skipped.length : null, skipped,
-      totalJobs: run.cohortFrozen === true ? targets.size : null, failures };
+      assessedJobs: haveTargets ? fits.size : null,
+      failedJobs: haveTargets ? new Set(failures.map((failure) => failure.jobId)).size : null,
+      skippedJobs: haveTargets ? skipped.length : null, skipped,
+      totalJobs: haveTargets ? targets.size : null, failures };
   }, [runs.data, runId, databaseInstanceId, enabled, active]);
   return { data, isError: runs.isError, error: runs.error };
 }
@@ -184,6 +185,7 @@ export function usePreparationCommands() {
   const { http } = usePorts();
   const recovery = usePreparationRecovery();
   const submit = useMutation({
+    mutationKey: preparationAdmissionKey(tenantId),
     mutationFn: async (input: { action: "preparation.run"; body: PreparationRequest } | { action: "preparation.retry"; body: PreparationRetryRequest }) => {
       const { identity, previous } = await recovery.begin(input.action, input.body);
       const path = `/v1/actions/${input.action}`;

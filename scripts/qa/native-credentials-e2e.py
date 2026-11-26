@@ -13,7 +13,9 @@ import ctypes
 import json
 import os
 import platform
+import re
 import signal
+import shutil
 import secrets
 import socket
 import stat
@@ -84,7 +86,113 @@ raise SystemExit(0)
 '''
 
 
-def recovery_journey(owned: Path, state: Path, client, check) -> None:
+class PostgresStartupError(RuntimeError):
+    """Expose only structured startup diagnostics from the empty synthetic cluster."""
+
+    def __init__(self, log: Path, returncode: int):
+        super().__init__("The credential fixture database could not start.")
+        self.returncode = returncode
+        self.sqlstates = []
+        self.causes = []
+        if not log.is_file():
+            return
+        text = log.read_text(encoding="utf-8", errors="replace")
+        self.sqlstates = sorted(set(re.findall(r"^([0-9A-Z]{5}) (?:FATAL|PANIC|ERROR):", text, re.MULTILINE)))
+        signatures = {
+            "address_in_use": "address already in use", "bind": "could not bind",
+            "shared_memory": "shared memory", "semaphore": "semaphore",
+            "permission": "permission denied", "missing_file": "no such file or directory",
+            "pid_file": "lock file", "memory": "cannot allocate memory",
+            "disk_space": "no space left on device", "locale": "locale",
+            "timezone": "time zone", "socket": "socket", "configuration": "configuration file",
+            "invalid_parameter": "invalid value", "library": "library", "version": "incompatible",
+        }
+        self.causes = sorted(key for key, signature in signatures.items() if signature in text.lower())
+
+
+class PostgresFixture:
+    def __init__(self, owned: Path, tools: Path):
+        self.root = owned / "postgres"
+        self.data = self.root / "data"
+        self.tools = tools
+        self.password = secrets.token_hex(32)
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            self.port = listener.getsockname()[1]
+        self.postmaster = None
+
+    def tool(self, name, *arguments, timeout=30):
+        executable = self.tools / (name + (".exe" if os.name == "nt" else ""))
+        return subprocess.run([executable, *arguments], capture_output=True, text=True, check=True, timeout=timeout)
+
+    def url(self, database):
+        return f"postgresql://jobctrl:{self.password}@127.0.0.1:{self.port}/{database}?connect_timeout=3"
+
+    def _postmaster_identity(self):
+        path = self.data / "postmaster.pid"
+        try:
+            with path.open(encoding="utf-8") as record:
+                pid, directory, started, port = (record.readline().rstrip("\n") for _ in range(4))
+        except FileNotFoundError:
+            return None
+        if not pid.isdecimal() or not started.isdecimal() or Path(directory).resolve() != self.data or port != str(self.port):
+            raise RuntimeError("Owned PostgreSQL process identity changed.")
+        return pid, directory, started, port
+
+    def start(self):
+        import psycopg
+
+        self.root.mkdir(mode=0o700)
+        if os.name == "nt":
+            # pg_ctl drops the Administrators group from the postmaster token.
+            # Give only the current principal direct access to this owned root.
+            principal = subprocess.check_output(["whoami"], text=True, timeout=5).strip()
+            subprocess.run(["icacls", self.root, "/grant", f"{principal}:(OI)(CI)F", "/Q"],
+                           capture_output=True, check=True, timeout=10)
+        passfile = self.root / "password"
+        fd = os.open(passfile, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(fd, "w", encoding="ascii") as stream:
+                stream.write(self.password + "\n")
+            self.tool("initdb", "-D", self.data, "-U", "jobctrl", "--no-locale", "--encoding=UTF8",
+                      "--auth=scram-sha-256", "--pwfile", passfile, timeout=60)
+        finally:
+            passfile.unlink(missing_ok=True)
+        with (self.data / "postgresql.conf").open("a", encoding="ascii") as config:
+            config.write(f"\nlisten_addresses = '127.0.0.1'\nport = {self.port}\nunix_socket_directories = ''\nlog_line_prefix = '%e '\n")
+        try:
+            self.tool("pg_ctl", "-D", self.data, "-l", self.root / "postgres.log", "-t", "20", "-w", "start")
+        except subprocess.CalledProcessError as error:
+            raise PostgresStartupError(self.root / "postgres.log", error.returncode) from error
+        finally:
+            self.postmaster = self._postmaster_identity()
+        with psycopg.connect(self.url("postgres")) as connection:
+            directory = connection.execute("SHOW data_directory").fetchone()[0]
+            version = connection.execute("SHOW server_version_num").fetchone()[0]
+            if self.postmaster is None or Path(directory).resolve() != self.data or int(version) < 160000:
+                raise RuntimeError("The credential journey requires its own PostgreSQL 16 or newer cluster.")
+
+    def new_database(self):
+        import psycopg
+        from psycopg import sql
+
+        name = "qa_" + uuid.uuid4().hex
+        with psycopg.connect(self.url("postgres"), autocommit=True) as connection:
+            connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        return self.url(name)
+
+    def close(self):
+        current = self._postmaster_identity()
+        if current is None:
+            return
+        if current != self.postmaster:
+            raise RuntimeError("Refusing to stop a different PostgreSQL process.")
+        self.tool("pg_ctl", "-D", self.data, "-m", "fast", "-t", "20", "-w", "stop")
+        if self._postmaster_identity() is not None:
+            raise RuntimeError("Owned PostgreSQL remained active after shutdown.")
+
+
+def recovery_journey(owned: Path, state: Path, client, postgres: PostgresFixture, check) -> None:
     """Use independent real API processes and exact owned process handles."""
     import httpx
     from jobctrl.app.credentials import read_process_identity
@@ -118,6 +226,7 @@ uvicorn.run(create_http_app(application,port=port,credential_service=service),ho
         listener.close()
         environment = {**os.environ, "PYTHONPATH": str(ROOT / "workers/automation/src"), "JOBCTRL_DIR": str(workspace),
                        "JOBCTRL_E2E_TOKEN": token, "JOBCTRL_E2E_CREDENTIAL_HELPER": str(helper),
+                       "JOBCTRL_DATABASE_URL": postgres.new_database(),
                        "JOBCTRL_E2E_SHARED_LOCK": str(owned / "mutations.sqlite3"), "JOBCTRL_E2E_API_PORT": str(port)}
         process = subprocess.Popen([sys.executable, "-c", server_code], env=environment,
                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -294,6 +403,8 @@ def credential_metadata(client) -> dict:
 def error_metadata(error: Exception) -> dict:
     """Report allowlisted execution metadata without response bodies or locals."""
     metadata = {"errorType": type(error).__name__}
+    if isinstance(error, PostgresStartupError):
+        metadata.update(returnCode=error.returncode, sqlstates=error.sqlstates, causes=error.causes)
     if isinstance(error, CredentialInspectionError):
         metadata.update(httpStatus=error.http_status, errorCode=error.error_code,
                         credentialStoreReason=error.store_reason)
@@ -347,7 +458,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform-native", action="store_true")
     parser.add_argument("--linux-session", action="store_true")
+    parser.add_argument("--postgres-bin", type=Path, default=os.environ.get("JOBCTRL_POSTGRES_BIN_DIR"),
+                        help="PostgreSQL 16+ binaries for a disposable owned server.")
     args = parser.parse_args()
+    if args.postgres_bin is None:
+        parser.error("Set JOBCTRL_POSTGRES_BIN_DIR or pass --postgres-bin.")
+    postgres_bin = args.postgres_bin.resolve(strict=True)
     if args.platform_native and not (os.environ.get("GITHUB_ACTIONS") == "true"
             and os.environ.get("RUNNER_ENVIRONMENT") == "github-hosted"):
         raise RuntimeError("Platform-native QA requires a fresh GitHub-hosted runner.")
@@ -395,16 +511,19 @@ def main() -> int:
     server = None
     thread = None
     service = None
+    application = None
+    postgres = None
     cleanup_owned = False
     phase = "allocate"
     allocated = None
+    allocated_identity = None
     success = False
     cleanup_ok = True
     try:
         temporary_root = Path("/private/tmp/jobctrl-transform-1428") if sys.platform == "darwin" else Path(tempfile.gettempdir())
         temporary_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        allocated = tempfile.TemporaryDirectory(prefix="native-credentials-e2e-", dir=temporary_root)
-        owned = Path(allocated.name).resolve()
+        owned = allocated = Path(tempfile.mkdtemp(prefix="native-credentials-e2e-", dir=temporary_root)).resolve()
+        allocated_identity = allocated.stat()
         workspace = owned / "workspace"
         workspace.mkdir(mode=0o700)
         for key, name in (("HOME", "home"), ("USERPROFILE", "home"), ("APPDATA", "appdata"),
@@ -444,6 +563,10 @@ def main() -> int:
                 if daemon.poll() is not None or time.monotonic() >= deadline:
                     raise RuntimeError("Owned Secret Service did not become ready.")
                 time.sleep(0.05)
+        phase = "postgres"
+        postgres = PostgresFixture(owned, postgres_bin)
+        postgres.start()
+        os.environ["JOBCTRL_DATABASE_URL"] = postgres.new_database()
         phase = "application"
         application = create_application(workspace, enabled_features=[])
         service_type = ObservedCredentialService if args.platform_native and platform.system() == "Windows" else CredentialService
@@ -524,7 +647,7 @@ def main() -> int:
                 marker.unlink()
                 if os.name != "nt":
                     phase = "independent_process_recovery"
-                    recovery_journey(owned, workspace, client, check)
+                    recovery_journey(owned, workspace, client, postgres, check)
             phase = "remove"
             response = batch([{"operation": "delete", "key": "GEMINI_API_KEY"}])
             check("http_native_remove", response.status_code == 200 and service.execution_environment(provider="google").get("GEMINI_API_KEY") is None)
@@ -535,14 +658,44 @@ def main() -> int:
             security = file_security(source)
             before = metadata()["revision"]
             marker = workspace / ".native-credentials-migrated.json"
-            migrated = service.migrate_persistent_env([source], marker)
-            check("explicit_migration_uses_native_boundary", migrated.migrated_keys == ("GEMINI_API_KEY",)
+            def migration_events():
+                return sum(event["type"] == "CredentialsUpdated" for event in application.runtime.events.since())
+
+            def migrate_cli(check_name):
+                outcome = subprocess.run([sys.executable, "-m", "jobctrl", "credentials", "migrate",
+                                          "--env-file", source, "--marker", marker],
+                                         capture_output=True, text=True, timeout=25)
+                check(check_name, outcome.returncode == 0
+                      and secret not in outcome.stdout + outcome.stderr)
+                return outcome.stdout
+
+            event_count = migration_events()
+            if args.platform_native:
+                # The real native test owns a random OS store namespace. The
+                # public subprocess test runs only with our synthetic helper.
+                migrated = service.migrate_persistent_env([source], marker).migrated_keys == ("GEMINI_API_KEY",)
+            else:
+                migrated = "Credential migration completed" in migrate_cli("migration_cli_exit_and_secret_free")
+            check("explicit_migration_uses_native_boundary", migrated
                   and service.execution_environment(provider="google").get("GEMINI_API_KEY") == secret)
             check("migration_source_preserved_without_plaintext", secret not in source.read_text()
                   and "KEEP_SYNTHETIC=yes" in source.read_text() and secret not in marker.read_text())
             check("migration_source_permissions_preserved", file_security(source) == security)
-            check("migration_fences_credential_edits", metadata()["revision"] > before)
-            check("migration_is_once", service.migrate_persistent_env([source], marker).already_completed)
+            check("migration_fences_credential_edits", metadata()["revision"] == before + 1
+                  and migration_events() == event_count + 1)
+            saved = [(file.read_bytes(), file.stat().st_mtime_ns) for file in (source, marker)]
+            if args.platform_native:
+                repeated = service.migrate_persistent_env([source], marker).already_completed
+            else:
+                # A read or write to the synthetic native helper would append
+                # a line. Replay must stop at its completion marker.
+                calls = workspace / "calls.jsonl"
+                before_replay = calls.read_bytes()
+                repeated = ("Credential migration already completed" in migrate_cli("migration_replay_cli_exit_and_secret_free")
+                            and calls.read_bytes() == before_replay)
+            check("migration_is_once", repeated and metadata()["revision"] == before + 1
+                  and migration_events() == event_count + 1
+                  and [(file.read_bytes(), file.stat().st_mtime_ns) for file in (source, marker)] == saved)
             if not args.platform_native:
                 phase = "codex_explicit_login"
                 key = "synthetic-codex-api-key"
@@ -605,8 +758,25 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 daemon.kill()
                 daemon.wait(timeout=3)
-        if allocated is not None:
-            allocated.cleanup()
+        if application is not None:
+            application.close()
+        if postgres is not None:
+            try:
+                postgres.close()
+                checks.append("postgres_stopped")
+            except Exception as error:
+                cleanup_ok = False
+                print(json.dumps({"status": "cleanup_failed", "phase": "postgres", **error_metadata(error)}), file=sys.stderr)
+        if allocated is not None and cleanup_ok:
+            try:
+                current = allocated.lstat()
+                if (not stat.S_ISDIR(current.st_mode) or allocated.resolve() != allocated
+                        or (current.st_dev, current.st_ino) != (allocated_identity.st_dev, allocated_identity.st_ino)):
+                    raise RuntimeError("Owned credential test directory identity changed.")
+                shutil.rmtree(allocated)
+            except Exception as error:
+                cleanup_ok = False
+                print(json.dumps({"status": "cleanup_failed", "phase": "workspace", **error_metadata(error)}), file=sys.stderr)
     if success and cleanup_ok:
         print(json.dumps({"status": "passed", "platform": platform.system(), "boundary": "native_disposable_namespace" if args.platform_native else "owned_external_helper",
                           "checks": checks, "count": len(checks), "cleanup": True,
