@@ -199,6 +199,18 @@ class Application:
                 "SELECT * FROM app_action_runs ORDER BY created_at DESC,run_id DESC LIMIT ?", (min(limit, 1000),)
             )]
 
+    def job_action_run_id(self, job_id: str, payload_id: str | None, action_names: tuple[str, ...], *, connection) -> str | None:
+        """Read the job's active action first, then its latest settled action."""
+        names = ",".join("?" for _ in action_names)
+        row = connection.execute(
+            f"SELECT run_id FROM app_action_runs WHERE action IN ({names}) "
+            "AND json_extract(payload_json,'$.jobId')=? "
+            "AND (json_extract(payload_json,'$.payloadId') IS NULL OR json_extract(payload_json,'$.payloadId')=?) "
+            "ORDER BY (status IN ('pending','queued','running')) DESC, created_at DESC, run_id DESC LIMIT 1",
+            (*action_names, job_id, payload_id),
+        ).fetchone()
+        return row["run_id"] if row else None
+
     def run_page(self, *, before: str | None = None, limit: int = 100, status: str | None = None,
                  action: str | None = None, since: str | None = None, until: str | None = None) -> dict:
         conditions = ["(? IS NULL OR status=?)", "(? IS NULL OR action=?)",

@@ -55,6 +55,12 @@ test("a refused dual occurrence assignment stays refused after upgrade and a new
 
   for (const choice of ["extra-assignment", "cross-capability", "supported"] as const) {
     const fresh = await start(choice);
+    if (choice === "extra-assignment") {
+      const current = await modelCall(app, "requirements.extract");
+      expect(current.body.prompt_version).not.toBe(extraction.body.prompt_version);
+      current.reply(typedExtraction(current, { requirements: ["start", "finish", "estimate"].map((localId, i) =>
+        ({ localId, text: fields[i]!, category: "skill" })) }));
+    }
     const call = await modelCall(app, "requirements.match_catalog");
     expect(call.body.prompt_version).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
     const { raw, occurrence, source, demand, other } = selection(call);
@@ -85,5 +91,5 @@ test("a refused dual occurrence assignment stays refused after upgrade and a new
   qualification.reply(qualificationBatchDecision(qualification, () => ({ kind: "missing" })));
   expect((await pending).status()).toBe(200);
   expect(await json(api, "get", `/v1/jobs/${job.job_id}/fit`)).toMatchObject({ current: true, qualifications_current: true, score: { summary: { assessed_count: 2 } } });
-  expect(app.external.calls.filter(c => c.body.operation === "requirements.extract")).toHaveLength(1);
+  expect(app.external.calls.filter(c => c.body.operation === "requirements.extract")).toHaveLength(2);
 });

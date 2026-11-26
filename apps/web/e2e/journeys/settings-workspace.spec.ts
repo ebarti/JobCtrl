@@ -9,13 +9,14 @@ type Settings = {
 };
 
 test("Codex sign-in verification is separate from the connection check", async ({ page, app }) => {
-  app.external.setCatalog({
+  const catalog = (codexReady: boolean) => app.external.setCatalog({
     providers: [
-      { provider: "codex", configured: true, ready: true, models: [] },
-      { provider: "claude", configured: false, ready: false, models: [] },
+      { provider: "codex", configured: codexReady, ready: codexReady, models: [] },
+      { provider: "claude", configured: true, ready: true, models: [] },
       { provider: "google", configured: false, ready: false, models: [] },
     ],
   });
+  catalog(true);
   const readinessReads: string[] = [];
   page.on("request", (request) => {
     if (new URL(request.url()).pathname === "/v1/providers/status") readinessReads.push(request.method());
@@ -23,15 +24,58 @@ test("Codex sign-in verification is separate from the connection check", async (
 
   await page.goto("/settings");
   const codex = page.locator("article[data-provider='codex']");
+  const claude = page.locator("article[data-provider='claude']");
+  const verify = codex.getByRole("button", { name: "Reuse existing login or verify", exact: true });
+  const check = page.getByRole("button", { name: "Check connections", exact: true });
   await codex.getByRole("button", { name: "Configure Codex", exact: true }).click();
-  await codex.getByRole("button", { name: "Reuse existing login or verify", exact: true }).click();
+  await verify.click();
   await expect(codex.getByText("Codex sign-in verified.", { exact: true })).toBeVisible();
   await expect(codex.getByText("Connection not checked", { exact: true })).toBeVisible();
   expect(readinessReads).toEqual([]);
 
-  await page.getByRole("button", { name: "Check connections", exact: true }).click();
+  await check.click();
   await expect(codex.getByText("Ready", { exact: true })).toBeVisible();
   expect(readinessReads).toEqual(["GET"]);
+
+  catalog(false);
+  await verify.click();
+  await expect(codex.getByText("Codex CLI is not authenticated.", { exact: true })).toBeVisible();
+  await expect(codex.getByText("Connection not checked", { exact: true })).toBeVisible();
+  await expect(claude.getByText("Ready", { exact: true })).toBeVisible();
+  expect(readinessReads).toEqual(["GET"]);
+
+  // A genuine readiness check observed before a later sign-in result cannot
+  // replace that result just because its response reaches the browser later.
+  catalog(true);
+  let reportForwarded!: () => void;
+  const forwarded = new Promise<void>((resolve) => { reportForwarded = resolve; });
+  let releaseStatus!: () => void;
+  const waitForRelease = new Promise<void>((resolve) => { releaseStatus = resolve; });
+  await page.route("**/v1/providers/status", async (route) => {
+    const response = await route.fetch();
+    expect(response.status()).toBe(200);
+    expect((await response.json()).providers).toContainEqual(expect.objectContaining({ provider: "codex", ready: true }));
+    reportForwarded();
+    await waitForRelease;
+    await route.fulfill({ response });
+  }, { times: 1 });
+  try {
+    await check.click();
+    await forwarded;
+    // Exercise a successful sign-in too. This operation can replace the login,
+    // and establishes sign-in only even when the earlier probe was positive.
+    await verify.click();
+    await expect(codex.getByText("Codex sign-in verified.", { exact: true })).toBeVisible();
+  } finally {
+    releaseStatus();
+  }
+  await expect(claude.getByText("Ready", { exact: true })).toBeVisible();
+  await expect(codex.getByText("Connection not checked", { exact: true })).toBeVisible();
+  expect(readinessReads).toEqual(["GET", "GET"]);
+
+  await check.click();
+  await expect(codex.getByText("Ready", { exact: true })).toBeVisible();
+  expect(readinessReads).toEqual(["GET", "GET", "GET"]);
 });
 
 test("Settings saves a budget before model setup, retains another pane's invalid draft, and checks connection readiness only on request", async ({

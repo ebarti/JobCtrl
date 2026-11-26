@@ -154,6 +154,7 @@ class SqliteJobsRepository:
         on_accepted=None,
         connection=None,
         discovery_observation=False,
+        existing_only=False,
     ):
         incoming = canonical_posting(data)
         receipt_fingerprint = receipt_fingerprint or digest(data)
@@ -177,6 +178,8 @@ class SqliteJobsRepository:
                 raise ConflictError("Posting identity points to different saved jobs; review the source identity.")
             existing_id = next(iter(owners), None)
             previous = self._snapshot(conn, existing_id, include_deleted=True) if existing_id else None
+            if existing_only and previous is None:
+                return None
             if previous and expected_revision is not None and previous["revision"] != expected_revision:
                 raise ConflictError(
                     "The posting changed before the capture was saved.", current_revision=previous["revision"]
@@ -192,11 +195,12 @@ class SqliteJobsRepository:
                     "INSERT INTO jobs_jobs(job_id,created_at,updated_at) VALUES(?,?,?)", (job_id, timestamp, timestamp)
                 )
             if previous and (
-                discovery_observation and previous["content_state"] == "accepted_detail"
+                existing_only
+                or discovery_observation and previous["content_state"] == "accepted_detail"
                 and incoming["content_state"] != "accepted_detail"
                 or previous["description"] and not incoming["description"]
             ):
-                # Search cards are observations even when they contain a description.
+                # Record the observation without replacing the accepted posting.
                 accepted = previous
                 changed = False
             elif (

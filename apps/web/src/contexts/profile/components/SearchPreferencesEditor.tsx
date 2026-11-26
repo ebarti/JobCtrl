@@ -45,7 +45,6 @@ export interface SearchPreferencesState {
   readonly ready: boolean;
   readonly pending: boolean;
   readonly hasTargets: boolean;
-  readonly needsModel: boolean;
   readonly profileVersion: number | null;
   readonly hasSearchLocation: boolean;
   readonly hasRemote: boolean;
@@ -65,7 +64,7 @@ export function useSavedSearchPreferencesState(workspaceIdentity?: string) {
       pending, ready: query.data.profileVersion !== null && !query.error,
       profileVersion: query.data.profileVersion,
     })
-    : { ready: false, pending, hasTargets: false, needsModel: false, profileVersion: null,
+    : { ready: false, pending, hasTargets: false, profileVersion: null,
       hasSearchLocation: false, hasRemote: false, hasRemoteWithLocation: false, locationIssue: null };
   return { state, loading: query.isPending || query.isFetching, error: query.error, refetch: query.refetch };
 }
@@ -276,8 +275,7 @@ function PreferenceDraftObserver({ values, remember }: { values: Preferences; re
 }
 
 function describeSearchPreferences(values: Preferences, lifecycle: Pick<SearchPreferencesState, "pending" | "ready" | "profileVersion">): SearchPreferencesState {
-  const hasTargets = values.roles.some((role) => Boolean(role.trim())) || values.tracks.length > 0 || values.levels.length > 0 || values.functions.some((value) => Boolean(value.trim())) || values.specializations.some((value) => Boolean(value.trim()));
-  const needsModel = values.tracks.length > 0 || values.levels.length > 0 || values.functions.some((value) => Boolean(value.trim())) || values.specializations.some((value) => Boolean(value.trim()));
+  const hasTargets = values.roles.some((role) => Boolean(role.trim()));
   // These are the literal saved work-model enum values accepted by Discovery,
   // including its retained wire aliases. No place or role meaning is inferred.
   const remote = (row: LocationRow) => row.models.some((model) => ["remote", "work_model.remote"].includes(model.toLowerCase()));
@@ -287,12 +285,12 @@ function describeSearchPreferences(values: Preferences, lifecycle: Pick<SearchPr
   const missingLocation = values.locations.some((row) => !row.text.trim() && row.models.some((model) => ["hybrid", "on-site", "onsite", "work_model.hybrid", "work_model.onsite"].includes(model.toLowerCase())));
   const unsupportedModel = values.locations.some((row) => row.models.some((model) => !["remote", "work_model.remote", "hybrid", "on-site", "onsite", "work_model.hybrid", "work_model.onsite"].includes(model.toLowerCase())));
   const locationIssue = missingLocation ? "Hybrid and On-site targets need an explicit location. Add a location or choose only Remote for that row." : unsupportedModel ? "A saved work arrangement is unsupported. Review the Other saved values in Locations before searching." : null;
-  return { ...lifecycle, hasTargets, needsModel, hasSearchLocation, hasRemote, hasRemoteWithLocation, locationIssue };
+  return { ...lifecycle, hasTargets, hasSearchLocation, hasRemote, hasRemoteWithLocation, locationIssue };
 }
 
 function SearchPreferencesStateObserver({ values, pending, ready, profileVersion, onStateChange }: { values: Preferences; pending: boolean; ready: boolean; profileVersion: number | null; onStateChange?: ((state: SearchPreferencesState) => void) | undefined }) {
-  const { hasTargets, needsModel, hasSearchLocation, hasRemote, hasRemoteWithLocation, locationIssue } = describeSearchPreferences(values, { pending, ready, profileVersion });
-  useEffect(() => { onStateChange?.({ ready, pending, hasTargets, needsModel, profileVersion, hasSearchLocation, hasRemote, hasRemoteWithLocation, locationIssue }); }, [hasRemote, hasRemoteWithLocation, hasSearchLocation, hasTargets, locationIssue, needsModel, onStateChange, pending, profileVersion, ready]);
+  const { hasTargets, hasSearchLocation, hasRemote, hasRemoteWithLocation, locationIssue } = describeSearchPreferences(values, { pending, ready, profileVersion });
+  useEffect(() => { onStateChange?.({ ready, pending, hasTargets, profileVersion, hasSearchLocation, hasRemote, hasRemoteWithLocation, locationIssue }); }, [hasRemote, hasRemoteWithLocation, hasSearchLocation, hasTargets, locationIssue, onStateChange, pending, profileVersion, ready]);
   return null;
 }
 

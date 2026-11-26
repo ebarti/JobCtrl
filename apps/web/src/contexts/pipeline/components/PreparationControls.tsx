@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../shared/ui/tab
 import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { getApiCapabilityAvailability } from "../../../shared/lib/apiCapabilityAvailability.js";
 import { useRuntimeHealth } from "../../runtime/index.js";
-import { recipeSchema, type PreparationRecipe, type PreparationRequest, type PreparationResumeMode, type PreparationRun, usePreparationCommands, usePreparationExecution, usePreparationRun, usePreparationRuns } from "../client.js";
+import { recipeSchema, type PreparationRecipe, type PreparationRequest, type PreparationResumeMode, type PreparationRun, usePreparationCommands, usePreparationExecution, usePreparationRun, usePreparationRuns, usePreviousPreparationRetry } from "../client.js";
 import "../../../styles/jobs-selection.css";
 
 const labels: Record<PreparationRecipe, string> = {
@@ -57,14 +57,32 @@ function PreparationRunOutcomes({ run }: { readonly run: PreparationRun }) {
   </div>;
 }
 
-function PreparationRecoveryNotice({ recovery }: { readonly recovery: PreparationCommands["recovery"] }) {
-  if (!recovery.ready) return <p role="alert">{recovery.error ? "Preparation recovery storage is unavailable or invalid. Restore it before starting work." : "Checking preparation recovery storage…"}</p>;
+function PreviousPreparationRetry({ record, submit, jobId }: {
+  readonly record: NonNullable<PreparationCommands["recovery"]["record"]>;
+  readonly submit: PreparationCommands["submit"];
+  readonly jobId?: string | undefined;
+}) {
+  const earlier = usePreviousPreparationRetry(record, jobId);
+  const body = earlier.data;
+  if (body) return <Button type="button" variant="outline" disabled={submit.isPending}
+    onClick={() => submit.mutate({ action: "preparation.retry", body })}>Recover earlier retry</Button>;
+  if (earlier.isPending) return null;
+  return <p>Open the job you originally retried to try it again.</p>;
+}
+
+function PreparationRecoveryNotice({ commands, jobId }: { readonly commands: PreparationCommands; readonly jobId?: string }) {
+  const { recovery, submit } = commands;
+  if (!recovery.ready) return recovery.error ? <p role="alert">{recovery.error.message}</p> : null;
+  const status = recovery.status;
+  const retrying = recovery.record?.operation === "preparation.retry";
   return <>
-    {recovery.record ? <div role="alert">
-      <p>A previous preparation request needs review. {recovery.status ? `Recorded status: ${recovery.status.status}.` : "Its admission has not been confirmed."} Check it before starting different work. If the exact request can be retried, re-enter the same inputs; request contents are not stored.</p>
-      <details><summary>Recovery identity</summary><p>Request {recovery.record.requestId}{recovery.status ? ` · run ${recovery.status.runId}` : ""}.</p></details>
-      <Button type="button" variant="outline" disabled={recovery.checking} onClick={() => void recovery.check()}>Check previous preparation</Button>
-      {recovery.statusError ? <p>Its current status could not be confirmed. Only the exact previous command may be retried when reconciliation permits.</p> : null}
+    {recovery.record && !submit.isPending ? <div role="alert">
+      <p>{recovery.summary}</p>
+      {recovery.canRetry && !retrying ? <p>To retry, use the same selections as before.</p> : null}
+      {recovery.canRetry && retrying
+        ? <PreviousPreparationRetry record={recovery.record} submit={submit} jobId={jobId} /> : null}
+      <Button type="button" variant="outline" disabled={recovery.checking} onClick={() => void recovery.check()}>Check previous request</Button>
+      <details><summary>Request details</summary><p>Request {recovery.record.requestId}{status ? ` · run ${status.runId}` : ""}.</p></details>
     </div> : null}
     {recovery.message ? <p role="status">{recovery.message}</p> : null}
   </>;
@@ -74,13 +92,14 @@ export function PreparationRunDetail({ runId, showStop = true }: { readonly runI
   const run = usePreparationRun(runId);
   const active = showStop && ["running", "queued", "pending"].includes(run.data?.status ?? "");
   const execution = usePreparationExecution(active ? runId : null);
-  const { submit, cancel, recovery } = usePreparationCommands();
+  const commands = usePreparationCommands();
+  const { submit, cancel, recovery } = commands;
   if (run.isLoading && !run.data) return <p>Loading preparation outcomes…</p>;
   if (!run.data) return run.isError
     ? <p role="alert">{run.error.message} <Button type="button" variant="outline" onClick={() => void run.refetch()}>Retry</Button></p>
     : <p>Preparation details have not been recorded yet. <Button type="button" variant="outline" onClick={() => void run.refetch()}>Check again</Button></p>;
   return <section aria-label="Preparation outcomes" className="preparation-run-detail">
-    <PreparationRecoveryNotice recovery={recovery} />
+    <PreparationRecoveryNotice commands={commands} />
     {run.isError ? <p role="alert">{run.error.message} Showing the last recorded outcomes. <Button type="button" variant="outline" onClick={() => void run.refetch()}>Check again</Button></p> : null}
     <div className="preparation-run-detail__heading"><h3>{runLabels[run.data.recipe]}</h3><PreparationStatus status={run.data.status} /></div>
     <PreparationRunOutcomes run={run.data} />
@@ -89,7 +108,7 @@ export function PreparationRunDetail({ runId, showStop = true }: { readonly runI
     {active && (!execution.data || canRequestStop(execution.data)) ? <Button type="button" variant="outline" disabled={cancel.isPending || run.isError}
       onClick={() => cancel.mutate(runId)}>{execution.data?.cancellationDelivery === "pending" ? "Retry stop" : "Cancel run"}</Button> : null}
     {["failed", "partial", "cancelled"].includes(run.data.status) ? <Button type="button" variant="outline" disabled={submit.isPending || run.isError || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: runId } })}>Retry all unfinished jobs</Button> : null}
-    {submit.isError ? <p role="alert">{submit.error.message} Retry unchanged to reconcile an uncertain acknowledgement.</p> : null}
+    {submit.isError ? <p role="alert">{submit.error.message}</p> : null}
     {submit.isSuccess ? <p role="status">Retry queued. Follow its progress in preparation history.</p> : null}
     {cancel.isError ? <p role="alert">{cancel.error.message}</p> : null}
   </section>;
@@ -100,7 +119,9 @@ function PreparationRunListContent({ jobIds, commands }: { readonly jobIds?: rea
   const id = useId();
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const { submit, cancel, recovery } = commands;
-  const visible = (runs.data ?? []).filter(run => !jobIds || run.jobIds.some(id => jobIds.includes(id)));
+  const history = runs.data ?? [];
+  const visible = history.filter(run => !jobIds || run.jobIds.some(id => jobIds.includes(id)));
+  const resumedRunIds = new Set(history.map(run => run.parentRunId));
   return <section aria-label="Preparation runs" className="preparation-run-list">
     <h3>Preparation runs</h3>
     {runs.isLoading ? <p>Loading preparation runs…</p> : null}
@@ -112,7 +133,7 @@ function PreparationRunListContent({ jobIds, commands }: { readonly jobIds?: rea
       const stop = cancel.data?.runId === run.runId ? cancel.data : undefined;
       return <article key={run.runId} className="preparation-run-row">
         <div className="preparation-run-row__summary">
-          <Button type="button" variant="ghost" className="preparation-run-row__toggle" aria-expanded={expanded} aria-controls={expanded ? outcomesId : undefined}
+          <Button type="button" variant="ghost" size="content" className="preparation-run-row__toggle" aria-expanded={expanded} aria-controls={expanded ? outcomesId : undefined}
             onClick={() => setExpandedRunId(expanded ? null : run.runId)}>
             <span className="preparation-run-row__name"><span data-typography="label">{runLabels[run.recipe]}</span>
               <span className="preparation-run-row__metadata" data-typography="metadata">{run.jobIds.length} {run.jobIds.length === 1 ? "job" : "jobs"} · <time dateTime={run.updatedAt}>{new Date(run.updatedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</time></span>
@@ -122,19 +143,22 @@ function PreparationRunListContent({ jobIds, commands }: { readonly jobIds?: rea
           <PreparationStatus status={run.status} />
           {["running", "queued", "pending"].includes(run.status) && (!stop || canRequestStop(stop))
             ? <Button type="button" variant="outline" size="sm" disabled={cancel.isPending} onClick={() => cancel.mutate(run.runId)}>{stop?.cancellationDelivery === "pending" ? "Retry stop" : "Cancel run"}</Button> : null}
-          {["failed", "partial", "cancelled"].includes(run.status) ? <Button type="button" variant="outline" size="sm" disabled={submit.isPending || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: run.runId } })}>Retry unfinished</Button> : null}
+          {["failed", "partial", "cancelled"].includes(run.status) && !(run.executionPolicy && resumedRunIds.has(run.runId))
+            ? <Button type="button" variant="outline" size="sm" disabled={submit.isPending || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: run.runId } })}>Retry unfinished</Button> : null}
         </div>
         {expanded ? <div id={outcomesId} className="preparation-run-row__outcomes"><PreparationRunOutcomes run={run} /><Link to="/runs/$runId" params={{ runId: run.runId }}>View run details</Link></div> : null}
       </article>;
     })}</div>
-    {submit.isError ? <p role="alert">{submit.error.message} Retry the same action to reconcile an uncertain acknowledgement.</p> : null}
-    {cancel.isError ? <p role="alert">{cancel.error.message}</p> : null}
   </section>;
 }
 
 export function PreparationRunList({ jobIds }: { readonly jobIds?: readonly string[] }) {
   const commands = usePreparationCommands();
-  return <><PreparationRecoveryNotice recovery={commands.recovery} /><PreparationRunListContent {...(jobIds ? { jobIds } : {})} commands={commands} /></>;
+  const error = commands.submit.error ?? commands.cancel.error;
+  return <><PreparationRecoveryNotice commands={commands} />
+    <PreparationRunListContent {...(jobIds ? { jobIds } : {})} commands={commands} />
+    {error ? <p role="alert">{error.message}</p> : null}
+  </>;
 }
 
 function RecipeButtons({ jobIds, commands }: { readonly jobIds: readonly string[]; readonly commands: PreparationCommands }) {
@@ -152,16 +176,16 @@ function RecipeButtons({ jobIds, commands }: { readonly jobIds: readonly string[
     </div>
     {!availability.available ? <p>{availability.reason}</p> : null}
     <label className="preparation-actions__option"><input type="checkbox" checked={allowBelow} disabled={submit.isPending} onChange={event => setAllowBelow(event.target.checked)} /> Prepare selected jobs below the saved fit threshold</label>
-    {submit.isError ? <p role="alert">{submit.error.message} Retry the same action to reconcile an uncertain acknowledgement.</p> : null}
     {submit.isSuccess ? <p role="status">Preparation queued. Follow its progress in history. <Button type="button" variant="outline" size="sm" disabled={cancel.isPending} onClick={() => cancel.mutate(submit.data.runId)}>Cancel queued run</Button></p> : null}
-    {cancel.isError ? <p role="alert">{cancel.error.message}</p> : null}
   </div>;
 }
 
 export function PipelineBulkActions({ jobIds }: { readonly jobIds: readonly string[] }) {
   const commands = usePreparationCommands();
+  const error = commands.submit.error ?? commands.cancel.error;
   return <section aria-label="Selected jobs preparation" className="selected-job-preparation">
-    <PreparationRecoveryNotice recovery={commands.recovery} />
+    <PreparationRecoveryNotice commands={commands} />
+    {error ? <p role="alert">{error.message}</p> : null}
     <Tabs defaultValue="tools">
       <TabsList aria-label="Preparation workspace"><TabsTrigger value="tools">Tools</TabsTrigger><TabsTrigger value="history">History</TabsTrigger></TabsList>
       <TabsContent value="tools" forceMount><RecipeButtons jobIds={jobIds} commands={commands} /></TabsContent>
@@ -224,6 +248,8 @@ export function JobPreparationActions({ jobId, defaultMode = null, initialMode =
   const activeAssessment = active?.recipe === "search" || active?.recipe === "assess";
   const jobAssessmentComplete = activeAssessment && active?.steps.some((step) => step.jobId === jobId && step.stage === "fit" && step.status === "succeeded");
   const currentAssessment = current?.recipe === "search" || current?.recipe === "assess";
+  const resumeSearch = Boolean(current?.executionPolicy);
+  const retryLabel = resumeSearch ? "Continue fit assessment for all jobs" : currentAssessment ? "Continue unfinished fit assessment" : "Continue unfinished preparation";
   const statusRun = active ?? current;
   const statusSteps = statusRun?.steps.filter((step) => step.jobId === jobId) ?? [];
   const statusTask = (statusRun?.recipe === "search" || statusRun?.recipe === "assess") ? "Fit assessment" : "Preparation";
@@ -245,7 +271,11 @@ export function JobPreparationActions({ jobId, defaultMode = null, initialMode =
         });
       }}>{activeAssessment ? jobAssessmentComplete ? "Fit assessed for this job" : "Assessing fit…" : submit.isPending ? "Starting preparation…" : busy ? "Preparing resume…" : recovery.record?.operation === "preparation.run" ? "Retry same preparation" : localBaseline ? "Prepare resume locally" : "Prepare resume"}</Button>
       {stopRunId && (!stop || canRequestStop(stop)) ? <Button type="button" variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(stopRunId)}>{stop?.cancellationDelivery === "pending" ? "Retry stop" : active && active.jobIds.length > 1 ? `Stop ${activeAssessment ? "fit assessment" : "preparation"} for ${active.jobIds.length} jobs` : "Request stop"}</Button> : null}
-      {current && retryable && ["failed", "partial", "cancelled"].includes(current.status) ? <Button type="button" variant="outline" disabled={busy || blockedByDraft || !recovery.permits("preparation.retry")} onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: current.runId, job_ids: [jobId] } }, { onSuccess: (receipt) => { setStartedRunId(receipt.runId); cancel.reset(); } })}>{currentAssessment ? "Continue unfinished fit assessment" : "Continue unfinished preparation"}</Button> : null}
+      {current && retryable && ["failed", "partial", "cancelled"].includes(current.status) ? <Button type="button" variant="outline"
+        disabled={busy || blockedByDraft || !recovery.permits("preparation.retry")}
+        onClick={() => submit.mutate({ action: "preparation.retry", body: { run_id: current.runId, ...(resumeSearch ? {} : { job_ids: [jobId] }) } }, {
+          onSuccess: (receipt) => { setStartedRunId(receipt.runId); cancel.reset(); },
+        })}>{retryLabel}</Button> : null}
     </div>
     {profileVersion === null ? <p role="status">Save your profile before preparing a resume. {renderProfileSetup?.(mode) ?? <Link to="/profile">Open My profile</Link>}</p> : null}
     {blockedByDraft ? <p role="status">Save your unsaved resume edits before preparing another version. <Button type="button" variant="link" onClick={() => onReviewReady?.()}>Review unsaved edits</Button></p> : null}
@@ -253,12 +283,12 @@ export function JobPreparationActions({ jobId, defaultMode = null, initialMode =
     {!ready ? <p role="status">{runtime.isPending ? "Checking preparation readiness…" : runtime.error ? "Preparation readiness could not be checked." : "Preparation is unavailable while the worker reconnects."} <Link to="/settings">Review connections</Link></p> : null}
     {localBaseline ? <p role="status">{baselineCapability.reason}</p> : null}
     <p className="job-preparation-task__scope" data-typography="metadata">{activeAssessment ? "Assess requirements and fit using your saved model and spending limits. No resume is generated by this task." : <>{mode === "baseline" ? "Copy the complete saved profile and render it for review. No model calls are needed." : "Compose and render approved wording. If requirements or Fit need assessment, JobCtrl uses your saved model and spending limits."} You review and accept the result.</>}</p>
-    {busy ? <p role="status">{jobAssessmentComplete ? "This job’s fit assessment is complete. Other jobs in this run are still being assessed." : waiting ? `${statusTask} ${execution.error ? "status unavailable" : execution.data?.status ?? "queued"}.` : statusRun ? `${statusTask} ${statusRun.status}${statusSteps.find((step) => step.status === "running") ? ` · ${statusSteps.find((step) => step.status === "running")?.stage.replaceAll("_", " ")}` : ""}.` : "Starting preparation."}</p> : current ? <p role="status">{statusTask} {current.status === "succeeded" ? hasResume ? "ready for review" : "complete" : current.status}.{incomplete ? ` ${incomplete.errorCode?.replaceAll("_", " ") ?? "A step needs attention"}.` : ""}</p> : execution.data ? <p role="status">Preparation {execution.data.status}{execution.data.errorCode ? ` · ${execution.data.errorCode.replaceAll("_", " ")}` : ""}.</p> : null}
+    {busy ? <p role="status">{jobAssessmentComplete ? "This job’s fit assessment is complete. Other jobs in this run are still being assessed." : waiting ? `${statusTask} ${execution.error ? "status unavailable" : execution.data?.status ?? "queued"}.` : statusRun ? `${statusTask} ${statusRun.status}${statusSteps.find((step) => step.status === "running") ? ` · ${statusSteps.find((step) => step.status === "running")?.stage.replaceAll("_", " ")}` : ""}.` : "Starting preparation."}</p> : current ? <p role="status">{statusTask} {current.status === "succeeded" ? hasResume ? "ready for review" : "complete" : current.status}.{incomplete && incomplete.errorCode !== "action_cancelled" ? ` ${incomplete.errorCode?.replaceAll("_", " ") ?? "A step needs attention"}.` : ""}</p> : execution.data ? <p role="status">Preparation {execution.data.status}{execution.data.errorCode ? ` · ${execution.data.errorCode.replaceAll("_", " ")}` : ""}.</p> : null}
     {belowThreshold ? <p role="status">This job is below your saved fit threshold. Choose the explicit exception below to prepare it.</p> : null}
     {stop?.cancellationRequested && ["pending", "queued", "running"].includes(stop.status) ? <p role="status">Stop requested. {stop.cancellationDelivery === "pending"
       ? "The workflow service has not confirmed receipt." : "Waiting for this run to settle."}</p> : null}
-    {submit.error || cancel.error ? <p role="alert">{(submit.error ?? cancel.error)?.message} Previously accepted resumes remain available.</p> : null}
-    <PreparationRecoveryNotice recovery={recovery} />
+    {submit.error || cancel.error ? <p role="alert">{(submit.error ?? cancel.error)?.message}</p> : null}
+    <PreparationRecoveryNotice commands={commands} jobId={jobId} />
     <details className="job-preparation-inspection"><summary>Preparation options and history</summary>
       <label><input type="checkbox" checked={allowBelow} disabled={busy || Boolean(recovery.record && !recovery.canRetry)} onChange={(event) => setAllowBelow(event.currentTarget.checked)} /> Prepare this job below the saved fit threshold</label>
       <PreparationRunListContent jobIds={[jobId]} commands={commands} />
@@ -283,7 +313,7 @@ export function PipelineRecipePanel({ stageRunBlockReasons = {} }: { readonly st
     },
   });
   return <section aria-label="Pipeline controls" className="grid gap-4">
-    <PreparationRecoveryNotice recovery={recovery} />
+    <PreparationRecoveryNotice commands={commands} />
     <form onSubmit={event => { event.preventDefault(); void form.handleSubmit(); }} className="grid gap-3">
       <form.Field name="recipe">{field => <label htmlFor={`${id}-recipe`}>Work to run
         <select id={`${id}-recipe`} value={field.state.value} disabled={submit.isPending} onChange={event => field.handleChange(recipeSchema.parse(event.target.value))}>
@@ -299,7 +329,7 @@ export function PipelineRecipePanel({ stageRunBlockReasons = {} }: { readonly st
       <form.Field name="override">{field => <label><input type="checkbox" checked={field.state.value} disabled={submit.isPending} onChange={event => field.handleChange(event.target.checked)} /> Prepare below the selected fit threshold</label>}</form.Field>
       <Button type="submit" disabled={submit.isPending || !recovery.permits("preparation.run")}>{submit.isPending ? "Starting…" : recovery.record ? "Retry the same request" : "Start work"}</Button>
     </form>
-    {submit.isError ? <p role="alert">{submit.error.message} Retry unchanged to reconcile an uncertain acknowledgement.</p> : null}
+    {submit.isError ? <p role="alert">{submit.error.message}</p> : null}
     {submit.isSuccess ? <p role="status">Queued preparation run {submit.data.runId}. <Button type="button" variant="outline" size="sm" disabled={cancel.isPending} onClick={() => cancel.mutate(submit.data.runId)}>Cancel queued run</Button></p> : null}
     {cancel.isError ? <p role="alert">{cancel.error.message}</p> : null}
     <PreparationRunListContent commands={commands} />

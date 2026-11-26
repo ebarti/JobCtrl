@@ -20,6 +20,7 @@ import {
 import { catalogMatching, typedExtraction } from "./requirements-data.js";
 import { qualificationBatchDecision } from "./qualification-data.js";
 import {
+  createScoredFit,
   groupedCoverageDecision,
   type GroupedCoverageContext,
 } from "./fit-data.js";
@@ -531,5 +532,71 @@ test("approved wording composes the full baseline and failed model or render ref
     // interception; removing it first auto-continues responses still in flight.
     await page.unrouteAll({ behavior: "wait" });
     await Promise.all(forwardingReads);
+  }
+});
+
+
+test("advisory review and PDF rendering both complete for the same revision across tabs", async ({ page, api, app }) => {
+  const { posting, profile } = await createScoredFit(api, app, "concurrent-resume-review-render");
+  const drafted = (await json<{ resume: Resume }>(api, "post", "/v1/resumes", {
+    job_id: posting.job_id,
+    expected_profile_revision: profile.profileVersion,
+    mode: "tailored",
+  })).resume;
+  const route = `/jobs/${posting.job_id}?jobTab=resume`;
+  const reviewPath = `/v1/resumes/${drafted.resume_id}/review`;
+  const renderPath = `/v1/resumes/${drafted.resume_id}/render`;
+  const openTools = async (tab: typeof page) => {
+    await tab.goto(route);
+    await tab.locator("summary").filter({ hasText: /^Document validation and recovery tools$/ }).click();
+  };
+  const waitForWrite = (tab: typeof page, path: string) => tab.waitForResponse(
+    (response) => new URL(response.url()).pathname === path && response.request().method() === "POST",
+  );
+  await openTools(page);
+  const providerCallCount = app.external.calls.length;
+  const reviewed = waitForWrite(page, reviewPath);
+  await page.getByRole("button", { name: "Review coherence", exact: true }).click();
+  const proof = await modelCall(app, "resumes.coherence");
+  const other = await page.context().newPage();
+  try {
+    await openTools(other);
+    await expect(other.getByText("Status: running.", { exact: true })).toBeVisible();
+    const checking = waitForWrite(other, reviewPath);
+    await other.getByRole("button", { name: "Check coherence review", exact: true }).click();
+    const checked = await checking;
+    expect(checked.status()).toBe(200);
+    expect(current((await checked.json()).resume as Resume).review.status).toBe("running");
+
+    const rendering = waitForWrite(other, renderPath);
+    await other.getByRole("button", { name: "Render resume", exact: true }).click();
+    const renderedResponse = await rendering;
+    expect(renderedResponse.status()).toBe(200);
+    const rendered = (await renderedResponse.json()).resume as Resume;
+    const revision = current(rendered);
+    expect(revision.revision_id).toBe(drafted.current_revision);
+    expect(revision.review.status).toBe("running");
+    expect(revision.renders).toHaveLength(1);
+
+    proof.reply({ verdict: "pass", findings: [] });
+    const reviewedResponse = await reviewed;
+    expect(reviewedResponse.status()).toBe(200);
+    const saved = await getResume(api, drafted.resume_id);
+    expect(saved.current_revision).toBe(drafted.current_revision);
+    expect(saved.version).toBe(rendered.version + 1);
+    expect(current(saved).review).toMatchObject({ status: "pass", determination_id: expect.any(String) });
+    expect(current(saved).renders).toEqual(revision.renders);
+    expect(app.external.calls.slice(providerCallCount).filter((call) => call.path === "/model")
+      .map((call) => call.body["operation"])).toEqual(["resumes.coherence"]);
+
+    await expect(other.getByText("Status: pass.", { exact: true })).toBeVisible();
+    await other.getByRole("button", { name: "Accept resume", exact: true }).click();
+    await expect.poll(async () => (await getResume(api, drafted.resume_id)).accepted_revision_id)
+      .toBe(drafted.current_revision);
+    const pdf = await api.get(`/v1/resumes/${drafted.resume_id}/export?format=pdf&accepted=true`);
+    expect(pdf.status()).toBe(200);
+    expect(createHash("sha256").update(await pdf.body()).digest("hex")).toBe(revision.renders[0]!.sha256);
+  } finally {
+    await other.close();
   }
 });

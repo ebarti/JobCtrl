@@ -4,7 +4,7 @@ The shell owns one subscription to the Python application's committed-event stre
 
 ## 7.1 The Endpoint — `GET /v1/events/stream`
 
-The stream emits named events with an integer `id:` and a JSON envelope containing `eventId`, `type`, `feature`, `aggregateId`, `tenantId`, `occurredAt`, recorded `level` and `stage`, and object `payload`. The browser requests `?envelope=1&after=latest`, which emits each new event as an ordinary `message` carrying its type in the envelope; this lets the shell observe events without a registered handler and avoids replaying the whole history on a fresh mount. Events are published only after the associated transaction commits. `Last-Event-ID` takes precedence on reconnect; a numeric `after` also selects replay after a cursor, in ascending order. Heartbeat comments keep the stream alive. Payloads carry bounded identifiers and invalidation information, never credentials, profile evidence or generated documents. The application contract is recorded in [Python integration](../../plans/2026-11-06-python-contracts.md).
+Event envelopes contain the numeric `eventId`, `type`, `feature`, `aggregateId`, `tenantId`, `occurredAt`, recorded `level` and `stage`, and object `payload`. The browser requests `?envelope=1&after=latest&cursor=workspace`. The stream opens with a `stream_cursor` frame carrying a database-scoped resume ID and emits committed events as ordinary `message` frames. This lets the shell observe events without a registered handler and avoids replaying the whole history on a fresh mount. `Last-Event-ID` takes precedence on reconnect. Heartbeat comments keep the stream alive. Payloads carry bounded identifiers and invalidation information. See the [server event contract](../data-events-and-projections.md#server-sent-events).
 
 ## 7.2 Typed Event Schemas
 
@@ -28,9 +28,13 @@ The application composition supplies feature handlers to the provider. Every com
 
 The browser `EventSource` supplies reconnect and cursor handling. The shared
 worker retains that EventSource across page subscription changes, and an idle
-upstream reopen uses its last recorded numeric event cursor. A terminated worker
-starts a fresh stream and every reconnected page reconciles canonical reads.
-An observed workspace change remains terminal for each affected page subscription.
+upstream reopen uses its last recorded database-scoped cursor. Each page retains
+that cursor across worker loss. When the server rejects the cursor's database
+identity, it sends `workspace_changed` before any replay. This remains terminal
+for each affected page subscription. A reconnect to the same database reconciles
+canonical reads after the cursor check.
+An older API can supply numeric event IDs until the browser receives a
+database-scoped cursor. A bound connection refuses a return to numeric IDs.
 Connection status is visible; a gap causes reconciliation rather than an assumption
 that all events arrived. A workspace identity change must be surfaced as such
 rather than silently accepting an unrelated history.

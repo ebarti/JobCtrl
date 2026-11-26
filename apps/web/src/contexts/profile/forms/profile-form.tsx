@@ -33,6 +33,7 @@ import {
 import { RequiredBulletSuggestions } from "../components/RequiredBulletSuggestions.js";
 import { TargetRoleSuggestions } from "../components/TargetRoleSuggestions.js";
 import { useUpdateProfileMutation } from "../hooks/useUpdateProfileMutation.js";
+import type { ProfileSnapshot } from "../client.js";
 import { useWordingLibrary } from "../hooks/useWordingLibrary.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import {
@@ -59,7 +60,7 @@ export interface ProfileFormValues {
 }
 
 export interface ProfileFormProps {
-  initial: ProfileConfigResponse;
+  initial: ProfileSnapshot;
   activeSection?: ProfileActiveSection;
   roleId?: string;
   achievementId?: string;
@@ -999,7 +1000,7 @@ function TenantProfileForm({
   formBaseVersionRef.current = formBaseVersion;
   const [suggestionDerivedDraft, setSuggestionDerivedDraft] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
-  const formBaseResponseRef = useRef<ProfileConfigResponse>(initial);
+  const formBaseResponseRef = useRef(initial);
   const formBaseValuesRef = useRef<ProfileFormValues>(
     structuredClone(toProfileFormValues(initial)),
   );
@@ -1047,6 +1048,16 @@ function TenantProfileForm({
       : section === "target-search"
         ? "Discovery settings saved"
         : "Preferences saved";
+
+  const checkBaseWorkspace = useCallback(() => {
+    const databaseInstanceId = formBaseResponseRef.current.databaseInstanceId;
+    if (!databaseInstanceId || databaseInstanceId !== initial.databaseInstanceId) {
+      setStatusTone("warning");
+      setStatusMessage("This draft belongs to an earlier workspace. Return to that workspace to save your changes.");
+      return undefined;
+    }
+    return databaseInstanceId;
+  }, [initial.databaseInstanceId]);
 
   const clearTransientStatus = useCallback(() => {
     setStatusMessage("");
@@ -1098,6 +1109,8 @@ function TenantProfileForm({
       onSubmit: ({ value }) => validateProfileForm(value),
     },
     onSubmit: async ({ value, formApi }) => {
+      const expectedDatabaseInstanceId = checkBaseWorkspace();
+      if (!expectedDatabaseInstanceId) return;
       if (recoveryPending) {
         setStatusTone("warning");
         setStatusMessage(
@@ -1187,6 +1200,7 @@ function TenantProfileForm({
             // actually supplied this form, including an empty profile.
             {
               ...toUpdateRequest(value, formBaseVersion),
+              expectedDatabaseInstanceId,
               ...((submittedSuggestions.roles.length > 0 ||
                 submittedSuggestions.preferences.length > 0) &&
               acceptedCandidateInterpretationRef.current
@@ -1385,6 +1399,7 @@ function TenantProfileForm({
     // or clear the version fence/reviewed suggestion.
     if (
       savedFence !== undefined &&
+      initial.databaseInstanceId === formBaseResponseRef.current.databaseInstanceId &&
       (initial.profileVersion === null || initial.profileVersion <= savedFence)
     ) {
       return;
@@ -1416,6 +1431,7 @@ function TenantProfileForm({
   }, [form, initial, onPreviewSourceChange]);
 
   const rebaseOntoSavedProfile = useCallback(() => {
+    if (!checkBaseWorkspace()) return;
     if (
       initial.profileVersion === null ||
       (formBaseVersionRef.current !== null &&
@@ -1506,9 +1522,10 @@ function TenantProfileForm({
         ? "Draft rebased and stale suggestions removed. Regenerate and review suggestions before saving."
         : "Draft rebased onto the latest saved profile.",
     );
-  }, [form, initial, reconcileSuggestionProvenance]);
+  }, [checkBaseWorkspace, form, initial, reconcileSuggestionProvenance]);
 
   const rebaseProfileDraft = useCallback(() => {
+    if (!checkBaseWorkspace()) return;
     if (
       initial.profileVersion === null ||
       (formBaseVersionRef.current !== null &&
@@ -1560,7 +1577,7 @@ function TenantProfileForm({
     setStatusMessage(
       "Draft rebased onto the latest saved profile. Review and save your pending edits.",
     );
-  }, [form, initial, onPreviewSourceChange]);
+  }, [checkBaseWorkspace, form, initial, onPreviewSourceChange]);
 
   const resolveSuggestionReviewWithoutAcceptance = useCallback(
     (expectedProfileVersion: number) => {
@@ -1591,6 +1608,8 @@ function TenantProfileForm({
       suggestion: RequiredBulletSuggestion,
       expectedProfileVersion: number,
     ): Promise<boolean> => {
+      const expectedDatabaseInstanceId = checkBaseWorkspace();
+      if (!expectedDatabaseInstanceId) return false;
       if (
         requiredAcceptPendingRef.current ||
         requiredPinConflictRef.current !== null ||
@@ -1659,9 +1678,10 @@ function TenantProfileForm({
       requiredAcceptPendingRef.current = true;
       profileSaveVersionFenceRef.current = expectedProfileVersion;
       try {
-        const response = await updateProfile.mutateAsync(
-          toUpdateRequest(nextValues, expectedProfileVersion),
-        );
+        const response = await updateProfile.mutateAsync({
+          ...toUpdateRequest(nextValues, expectedProfileVersion),
+          expectedDatabaseInstanceId,
+        });
         // The optimistic query patch can show either snapshot while the request
         // is pending. Neither one is a manual edit to the accepted bullet.
         const baselineBulletTexts = new Set([
@@ -1922,6 +1942,7 @@ function TenantProfileForm({
       }
     },
     [
+      checkBaseWorkspace,
       form,
       formBaseVersion,
       initial.profileVersion,
@@ -1946,7 +1967,9 @@ function TenantProfileForm({
         acceptedCandidateInterpretationRef.current = undefined;
         requiredPinConflictRef.current = null;
         const savedFence = profileSaveVersionFenceRef.current;
+        const sameWorkspace = initial.databaseInstanceId === formBaseResponseRef.current.databaseInstanceId;
         const useSavedResponse =
+          sameWorkspace &&
           savedFence !== undefined &&
           formBaseVersionRef.current === savedFence &&
           (initial.profileVersion === null ||
@@ -1958,9 +1981,10 @@ function TenantProfileForm({
           toProfileFormValues(baseResponse),
         );
         if (
-          savedFence !== undefined &&
-          initial.profileVersion !== null &&
-          initial.profileVersion > savedFence
+          !sameWorkspace ||
+          (savedFence !== undefined &&
+            initial.profileVersion !== null &&
+            initial.profileVersion > savedFence)
         ) {
           profileSaveVersionFenceRef.current = undefined;
         }
@@ -2048,11 +2072,14 @@ function TenantProfileForm({
               isSubmitting={isSubmitting}
               onRecoveryPendingChange={handleRecoveryPending}
               {...(onDirtyChange ? { onDirtyChange } : {})}
-              onRestore={(record, sessionDraft, force) => {
-                // Every retained patch is reviewed against the current canonical
-                // snapshot. Secrets/unknown unchanged fields come from that
-                // snapshot, never a browser recovery payload.
-                const canonical = initial;
+              onRestore={(record, sessionDraft, force, canonical) => {
+                // Secrets and untouched fields come from the freshly read
+                // saved Profile, never a browser recovery payload.
+                if (record.baseDatabaseInstanceId && record.baseDatabaseInstanceId !== canonical.databaseInstanceId) {
+                  setStatusTone("warning");
+                  setStatusMessage("This draft belongs to an earlier workspace. Return to that workspace to restore your changes.");
+                  return false;
+                }
                 const current = toProfileFormValues(canonical);
                 const restored = restoreProfileChanges(record, current, force);
                 if (restored.conflicts.length) {
@@ -2079,6 +2106,7 @@ function TenantProfileForm({
                 form.setFieldValue("profile", recovered.profile);
                 form.setFieldValue("style", recovered.style);
                 form.setFieldValue("templateText", recovered.templateText);
+                onPreviewSourceChange?.(canonical);
                 setResetToken((token) => token + 1);
                 setStatusTone("warning");
                 setStatusMessage(

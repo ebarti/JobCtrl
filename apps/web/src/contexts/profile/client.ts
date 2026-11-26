@@ -62,14 +62,25 @@ function parseWrite<T>(method: string, path: string, parse: () => T): T {
   catch (error) { throw createUnconfirmedWriteError(method, path, error); }
 }
 
-export async function readProfile(http: HttpPort, expectedDatabaseInstanceId?: string): Promise<ProfileConfigResponse> {
-  return profileResponse.parse(await http.json<unknown>("GET", "/v1/profile", expectedDatabaseInstanceId ? { expectedDatabaseInstanceId } : {})) as ProfileConfigResponse;
+/** Browser-side source binding for the exact Profile loaded or saved. */
+export type ProfileSnapshot = ProfileConfigResponse & { readonly databaseInstanceId?: string };
+
+function withProfileSource(value: unknown, databaseInstanceId: string | undefined): ProfileSnapshot {
+  const profile = profileResponse.parse(value) as ProfileConfigResponse;
+  return databaseInstanceId ? { ...profile, databaseInstanceId } : profile;
 }
 
-export async function updateProfile(http: HttpPort, body: ProfileUpdateRequest, expectedDatabaseInstanceId?: string): Promise<ProfileConfigResponse> {
+export async function readProfile(http: HttpPort, expectedDatabaseInstanceId?: string): Promise<ProfileSnapshot> {
+  return withProfileSource(
+    await http.json<unknown>("GET", "/v1/profile", expectedDatabaseInstanceId ? { expectedDatabaseInstanceId } : {}),
+    expectedDatabaseInstanceId,
+  );
+}
+
+export async function updateProfile(http: HttpPort, body: ProfileUpdateRequest, expectedDatabaseInstanceId?: string): Promise<ProfileSnapshot> {
   const path = "/v1/profile";
   const value = await http.json<unknown>("PATCH", path, { body, ...(expectedDatabaseInstanceId ? { expectedDatabaseInstanceId } : {}) });
-  return parseWrite("PATCH", path, () => profileResponse.parse(value) as ProfileConfigResponse);
+  return parseWrite("PATCH", path, () => withProfileSource(value, expectedDatabaseInstanceId));
 }
 
 export async function importResume(http: HttpPort, body: ProfileImportRequest): Promise<ProfileImportResponse> {

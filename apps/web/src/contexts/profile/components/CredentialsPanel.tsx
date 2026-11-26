@@ -45,7 +45,14 @@ export function CredentialsPanel({ onSecretDraftChange }: { readonly onSecretDra
   const isDemo = featureFlags.get("demoMode", false);
   const credentialsQuery = useCredentialsQuery();
   const providerStatusQuery = useProviderStatusQuery();
-  const [checkedRevision, setCheckedRevision] = useState<number | null>(null);
+  const [checked, setChecked] = useState<{ revision: number; codexCurrent: boolean } | null>(null);
+  const codexVerification = useRef({ pending: false });
+  const markCodexVerification = useCallback((pending: boolean) => {
+    // Reuse may change the isolated sign-in without changing the saved
+    // settings revision. It cannot establish runtime readiness on its own.
+    codexVerification.current = { pending };
+    setChecked((previous) => previous?.codexCurrent ? { ...previous, codexCurrent: false } : previous);
+  }, []);
   const [checkMessage, setCheckMessage] = useState("");
   const secretDrafts = useRef(new Set<string>());
   const reportSecret = useCallback((source: string, dirty: boolean) => {
@@ -66,9 +73,10 @@ export function CredentialsPanel({ onSecretDraftChange }: { readonly onSecretDra
   // A previously observed readiness result is useful only for the credential
   // revision it was checked against. Writes and failed reads do not establish
   // present readiness or trigger another provider check.
-  const statusCurrent = checkedRevision !== null && checkedRevision === credentialsQuery.data?.revision &&
+  const statusCurrent = checked !== null && checked.revision === credentialsQuery.data?.revision &&
     !credentialsQuery.isError && !providerStatusQuery.isError;
-  const statuses = statusCurrent ? providerStatusQuery.data?.providers ?? [] : [];
+  const statuses = statusCurrent ? (providerStatusQuery.data?.providers ?? [])
+    .filter((entry) => entry.provider !== "codex" || checked.codexCurrent) : [];
   const configured = (keys: readonly CredentialKey[]) =>
     keys.some((key) => {
       const source = credentials.find((entry) => entry.key === key)?.effectiveSource;
@@ -119,14 +127,18 @@ export function CredentialsPanel({ onSecretDraftChange }: { readonly onSecretDra
         />
         <Button size="sm" type="button" variant="outline" disabled={credentialsQuery.isFetching || providerStatusQuery.isFetching} onClick={() => {
           void (async () => {
-            setCheckedRevision(null);
+            const verification = codexVerification.current;
+            setChecked(null);
             setCheckMessage("");
             const before = await credentialsQuery.refetch();
             if (!before.isSuccess) { setCheckMessage("Saved connection settings could not be checked. Try again."); return; }
             const statusResult = await providerStatusQuery.refetch();
             const after = await credentialsQuery.refetch();
             if (statusResult.isSuccess && after.isSuccess && before.data.revision === after.data.revision) {
-              setCheckedRevision(after.data.revision);
+              setChecked({
+                revision: after.data.revision,
+                codexCurrent: !verification.pending && verification === codexVerification.current,
+              });
             } else if (!statusResult.isSuccess || !after.isSuccess) {
               setCheckMessage("Connection readiness could not be confirmed. Try again.");
             } else {
@@ -151,6 +163,7 @@ export function CredentialsPanel({ onSecretDraftChange }: { readonly onSecretDra
             >
               <CodexProviderSetup
                 isolatedAuthDetected={codexStatus?.mode === "cli_auth"}
+                onVerificationChange={markCodexVerification}
                 legacyOpenAiKeyConfigured={
                   !credentialsQuery.isError && Boolean(store?.available) && configured(["OPENAI_API_KEY"])
                 }
@@ -430,9 +443,11 @@ function visibleProviderStatusMessage(
 function CodexProviderSetup({
   isolatedAuthDetected,
   legacyOpenAiKeyConfigured,
+  onVerificationChange,
 }: {
   isolatedAuthDetected: boolean;
   legacyOpenAiKeyConfigured: boolean;
+  onVerificationChange: (pending: boolean) => void;
 }) {
   const verify = useVerifyCodexProviderMutation();
   const removeLegacyKey = useUpdateCredentialsBatchMutation();
@@ -443,6 +458,17 @@ function CodexProviderSetup({
     : verification?.ok
       ? "Codex sign-in verified."
       : verification?.message ?? "";
+
+  async function verifySignIn() {
+    onVerificationChange(true);
+    try {
+      await verify.mutateAsync();
+    } catch {
+      // The mutation exposes the failure in the provider card.
+    } finally {
+      onVerificationChange(false);
+    }
+  }
 
   async function removeLegacy() {
     setLegacyMessage("");
@@ -480,7 +506,7 @@ function CodexProviderSetup({
         <Button
           disabled={verify.isPending}
           type="button"
-          onClick={() => verify.mutate()}
+          onClick={() => void verifySignIn()}
         >
           {verify.isPending
             ? "Verifying…"
@@ -615,7 +641,8 @@ function providerSetupSummary(
     : store.unavailableReason === "unsupported_platform"
       ? "Environment-managed secrets"
       : "Storage inspection unavailable";
-  return `${readyCount} of 3 providers ready · ${storage}`;
+  const checked = statuses.length === 3 ? "3 providers" : `${statuses.length} checked providers`;
+  return `${readyCount} of ${checked} ready · ${storage}`;
 }
 
 function credentialStatusLabel(

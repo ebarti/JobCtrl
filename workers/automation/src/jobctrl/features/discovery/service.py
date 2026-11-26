@@ -34,7 +34,7 @@ class DiscoveryService:
     ):
         self.repository, self.jobs, self.model = repository, jobs, model
         self.profile, self.execution = profile, execution
-        self.targets = TargetPlanner(repository, profile, model)
+        self.targets = TargetPlanner(repository, profile)
 
     def get_settings(self):
         return self.repository.read_settings()
@@ -304,6 +304,21 @@ class DiscoveryService:
         """Read this exact acquisition's committed outcome, including failure."""
         return self.repository.run_outcome(run_id)
 
+    def has_acquired_linkedin_detail(self, run_id, posting):
+        """Check whether the current description came from this search's targeted fetch."""
+        provenance = posting["provenance"]
+        return bool(
+            posting["source_id"] == "jobstreaming:linkedin"
+            and posting["content_state"] == "provider_detail"
+            and posting["description"] and posting["description"] == posting["full_description"]
+            and provenance.get("authority") == "provider"
+            and provenance.get("provider") == "jobstreaming"
+            and provenance.get("sourceKind") == "provider_detail"
+            and provenance.get("detailMethod") == "jobstreaming.fetch_job_detail"
+            and provenance.get("sourceUrl") == posting["url"]
+            and self.repository.acquired_posting_revision(run_id, posting["job_id"], posting["revision"], posting["source_id"])
+        )
+
     async def review_role_target(self, run_id, job_id, *, expected_revision=None, read_only=False):
         request = self.repository.run_request(run_id)
         if request is None or not self.repository.observed_job(run_id, job_id):
@@ -330,6 +345,10 @@ class DiscoveryService:
             return {**binding, "decision": None, "reason": "posting_description_missing"}
         return {**binding, "decision": reviewed}
 
+    def check_search_admission(self, run_id, payload, connection):
+        if "resumeFromRunId" in payload:
+            self.repository.continuation_request(payload, connection)
+
     async def search(self, context, payload, *, durable=True):
         run_id = context.run_id
         saved = self.repository.run_request(run_id)
@@ -337,6 +356,10 @@ class DiscoveryService:
             if saved.get("command_hash") != fingerprint(payload):
                 raise ConflictError("A restarted Discovery action must retain its original command.")
             request = saved
+        elif "resumeFromRunId" in payload:
+            if not durable:
+                raise AppError("invalid_discovery_resume", "Continue the paused search through the search action.")
+            request = self.repository.continuation_request(payload)
         else:
             settings = self.get_settings()["settings"]
             # Explicit action-scoped controls are frozen with the run, never saved
@@ -399,6 +422,13 @@ class DiscoveryService:
             unit["sites"] = [board for board in unit["sites"] if board in self.repository.boards
                              and board_states.get("jobstreaming:" + board, "active") in {"active", "experimental"}]
         units = [unit for unit in units if unit["sites"]]
+        if "resumeUnits" in request:
+            units = [unit for unit in units if unit["unit_id"] in request["resumeUnits"]]
+            execution_settings["_resumeUnits"] = request["resumeUnits"]
+        if units and not saved and "resumeFromRunId" not in request and request.get("roleTargetPolicy"):
+            # Saved-role queries are literal. Admission of new postings can
+            # require a role decision, so check its accounting before reading a board.
+            self.model.preflight_cost_accounting()
         lease = self.repository.claim_run(run_id, request)
         if lease["completed"]:
             return lease["result"]
@@ -543,6 +573,13 @@ class DiscoveryService:
             if settled is not None:
                 return settled
             plan = settings["targetPlan"]
+            if fetch_detail is not None:
+                known = self.repository.accept_posting(
+                    lease, unit, posting, jobs=self.jobs, receipt_key=key, existing_only=True,
+                    limit=limit, cancelled=context.cancelled,
+                )
+                if known is not None:
+                    return known
             if not posting_role_evidence(posting)["description"].strip() and fetch_detail is not None:
                 details = await fetch_detail()
                 if details:

@@ -6,6 +6,7 @@ import { usePorts } from "../../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../../shared/providers/TenantProvider.js";
 import type { SessionPort } from "../../../shared/ports/SessionPort.js";
 import type { ProfileFormValues } from "../forms/profile-form.js";
+import type { ProfileSnapshot } from "../client.js";
 import { isJsonRecord, sameJson } from "./json-record.js";
 
 // Recovery serializes only the explicitly declared editable projection below.
@@ -173,6 +174,7 @@ export const profileRecoverySchema = z
   .object({
     version: z.literal(2),
     baseProfileVersion: z.number().nullable(),
+    baseDatabaseInstanceId: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     changes: z.array(recoveryChangeSchema).max(5000),
   })
   .strict()
@@ -206,7 +208,7 @@ export function profileSnapshotValues(
 }
 export interface ProfileSessionDraft {
   ownerId: string;
-  base: ProfileConfigResponse;
+  base: ProfileSnapshot;
   values: ProfileFormValues;
   durable?: boolean;
 }

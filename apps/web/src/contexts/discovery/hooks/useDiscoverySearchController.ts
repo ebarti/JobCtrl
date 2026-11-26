@@ -28,6 +28,7 @@ const SourceFailureSchema = z.object({ boards: z.array(z.string()).optional(), s
 const RunListSchema = z.object({ ok: z.literal(true), runs: z.array(z.object({
   runId: z.string().min(1), status: z.string(), newJobs: z.number().int().nonnegative(),
   failures: z.array(SourceFailureSchema).optional(), observedJobs: z.number().int().nonnegative(), failureCode: z.string().nullable(), createdAt: z.string(), updatedAt: z.string(),
+  continuedByRunId: z.string().min(1).nullish(),
 }).passthrough()) });
 const ResultSchema = z.object({ failures: z.array(SourceFailureSchema).optional(), status: z.string().optional(), acquisitionStatus: z.string().optional(),
   preparationAvailable: z.boolean().optional(), preparation: z.object({ status: z.string(), assessedJobs: z.number().int().nonnegative(), failedJobs: z.number().int().nonnegative(),
@@ -35,7 +36,12 @@ const ResultSchema = z.object({ failures: z.array(SourceFailureSchema).optional(
     failures: z.array(z.object({ jobId: z.string(), stage: z.string(), code: z.string().nullable() })) }).optional(),
   newJobs: z.number().int().nonnegative().optional(), observedJobs: z.number().int().nonnegative().optional() }).passthrough();
 const ScopeBusySchema = z.object({ error: z.object({ code: z.literal("action_scope_busy") }) });
-export type DiscoverySearchPayload = { queries?: string[]; locations?: { location: string; remote: boolean }[]; expectedProfileVersion?: number };
+const ContinuationRefusalSchema = z.object({ error: z.object({
+  code: z.enum(["discovery_retry_too_early", "discovery_resume_unavailable", "invalid_discovery_resume"]),
+  details: z.object({ retryAfterSeconds: z.number().nonnegative().optional() }).optional(),
+}) });
+type DiscoveryStartPayload = { queries?: string[]; locations?: { location: string; remote: boolean }[]; expectedProfileVersion?: number };
+type DiscoverySearchPayload = DiscoveryStartPayload | { resumeFromRunId: string };
 type SearchAction = z.infer<typeof SearchActionSchema>;
 type Workspace = Awaited<ReturnType<typeof requestWorkspace>>;
 type SearchActions = { workspace: Workspace; active: SearchAction[]; latest: SearchAction | null };
@@ -93,11 +99,14 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
     }, refetchInterval: actions.data?.active.length || recovery.record ? 3000 : false,
     meta: { suppressGlobalErrorToast: true } });
   const recordMatchesWorkspace = Boolean(recovery.record && actions.data && sameWorkspace(recovery.record, actions.data.workspace));
+  const recoverySourceRunId = recovery.record?.resumeFromRunId;
   const localStatus = recordMatchesWorkspace && !recovery.statusError ? SearchActionSchema.safeParse(recovery.status) : null;
   const ownAction = localStatus?.success ? localStatus.data : null;
   const receiptAction: SearchAction | null = pending?.receipt && actions.data && sameWorkspace(pending, actions.data.workspace)
     ? { ...pending.receipt, action: "discovery.search" as const, cancellationRequested: false } : null;
-  const selected = actions.data?.active[0] ?? (recovery.record ? ownAction ?? receiptAction : actions.data?.latest) ?? null;
+  const latest = actions.data?.latest;
+  const continuationSource = recordMatchesWorkspace && latest?.runId === recoverySourceRunId ? latest : null;
+  const selected = actions.data?.active[0] ?? (recovery.record ? ownAction ?? receiptAction ?? continuationSource : latest) ?? null;
   const detail = useQuery({ queryKey: discoveryKeys.searchAction(tenant, actions.data?.workspace.databaseInstanceId ?? "", selected?.runId ?? ""),
     enabled: Boolean(selected && actions.data), retry: false,
     queryFn: async () => {
@@ -110,8 +119,8 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
   const action = detail.data?.runId === selected?.runId ? detail.data : selected;
   const result = ResultSchema.safeParse(action?.result);
   const recorded = runs.data && actions.data && sameWorkspace(runs.data.workspace, actions.data.workspace) ? runs.data.runs.find((run) => run.runId === action?.runId) : undefined;
-  const terminalOutcome = result.success && ["completed", "partial"].includes(result.data.status ?? "") ? result.data.status
-    : recorded && ["completed", "partial"].includes(recorded.status) ? recorded.status : null;
+  const terminalOutcome = result.success && ["completed", "partial", "failed"].includes(result.data.status ?? "") ? result.data.status
+    : recorded && ["completed", "partial", "failed"].includes(recorded.status) ? recorded.status : null;
   const outcomeUnavailable = action?.status === "succeeded" && !terminalOutcome;
 
   if (ownAction && recovery.record) confirmedRequest.current = recovery.record.requestId;
@@ -137,9 +146,13 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
       try {
         const fresh = await client.fetchQuery({ queryKey: discoveryKeys.searchActions(tenant), queryFn: () => readSearchActions(http), staleTime: 0 });
         const earlier = recoveryRef.current;
-        const expectedDatabase = earlier.record?.databaseInstanceId ?? workspaceIdentity;
-        if (savedPreferences && (!expectedDatabase || fresh.workspace.databaseInstanceId !== expectedDatabase)) {
+        const continuing = "resumeFromRunId" in body;
+        const expectedDatabase = earlier.record?.databaseInstanceId ?? (continuing ? actions.data?.workspace.databaseInstanceId : workspaceIdentity);
+        if ((savedPreferences || continuing) && (!expectedDatabase || fresh.workspace.databaseInstanceId !== expectedDatabase)) {
           throw new Error("The saved search criteria belong to a different workspace. Reload and review them before starting.");
+        }
+        if (continuing && !earlier.record && fresh.latest?.runId !== body.resumeFromRunId) {
+          throw new Error("A newer search result is available. Review it before continuing.");
         }
         const earlierRun = earlier.status?.runId;
         if (fresh.active.some((run) => run.runId !== earlierRun || !["pending", "start_failed"].includes(run.status))) {
@@ -148,7 +161,7 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
         const payload = JSON.stringify(body);
         const previous = memoryFor(session, tenant)?.pending;
         if (previous && earlier.record?.requestId === previous.requestId && previous.payload !== payload) throw new Error("Retry the exact earlier search inputs first.");
-        const identity = await earlier.begin(body, body.expectedProfileVersion, expectedDatabase);
+        const identity = await earlier.begin(body, continuing ? undefined : body.expectedProfileVersion, expectedDatabase);
         attemptRequest.current = identity.requestId;
         const request: PendingSearch = { ...identity, payload, body: structuredClone(body), uncertain: false };
         updateMemory(session, tenant, (current) => ({ ...current, pending: request }));
@@ -159,7 +172,10 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
           updateMemory(session, tenant, (current) => current.pending?.requestId === identity.requestId ? { ...current, pending: { ...request, receipt: parsed.data } } : current);
           return parsed.data;
         } catch (error) {
-          if (error instanceof JobCtrlApiError && error.status === 409 && ScopeBusySchema.safeParse(error.responseBody).success) {
+          const scopeBusy = error instanceof JobCtrlApiError && error.status === 409 && ScopeBusySchema.safeParse(error.responseBody).success;
+          const continuationRefusal = continuing && error instanceof JobCtrlApiError && [400, 409].includes(error.status)
+            ? ContinuationRefusalSchema.safeParse(error.responseBody) : null;
+          if (scopeBusy || continuationRefusal?.success) {
             // An exact refusal settles this first attempt only. A retry may
             // still have an older delivery-uncertain attempt in transit.
             if (!identity.reused && await recoveryRef.current.releaseUnadmitted(identity.requestId)) {
@@ -167,8 +183,15 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
             } else if (identity.reused) {
               updateMemory(session, tenant, (current) => current.pending?.requestId === identity.requestId ? { ...current, pending: { ...request, uncertain: true } } : current);
             }
-            setStartMessage("Another search is already active. Its progress is shown here.");
-            await client.fetchQuery({ queryKey: discoveryKeys.searchActions(tenant), queryFn: () => readSearchActions(http), staleTime: 0 });
+            if (continuationRefusal?.success) {
+              const refusal = continuationRefusal.data.error;
+              const wait = refusal.details?.retryAfterSeconds;
+              setStartMessage(refusal.code === "discovery_retry_too_early" ? `LinkedIn is still paused. ${wait === undefined ? "Try again later." : `Try again in ${Math.ceil(wait)} seconds.`}`
+                : "This LinkedIn search is no longer available to continue. Check the latest search result.");
+            } else {
+              setStartMessage("Another search is already active. Its progress is shown here.");
+              await client.fetchQuery({ queryKey: discoveryKeys.searchActions(tenant), queryFn: () => readSearchActions(http), staleTime: 0 });
+            }
             return null;
           }
           updateMemory(session, tenant, (current) => current.pending?.requestId === identity.requestId ? { ...current, pending: { ...request, uncertain: true } } : current);
@@ -188,7 +211,7 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
   }, onSettled: () => { recoveryRef.current.refresh(); void client.invalidateQueries({ queryKey: discoveryKeys.searchActions(tenant) }); void client.invalidateQueries({ queryKey: discoveryKeys.runs(tenant) }); } });
 
   const otherActive = actions.data?.active.some((run) => run.runId !== ownAction?.runId || !["pending", "start_failed"].includes(run.status)) ?? false;
-  const needsPreviousInputs = Boolean(recovery.record && !pending && !recovery.record.sourceRevision);
+  const needsPreviousInputs = Boolean(recovery.record && !pending && !recoverySourceRunId && !recovery.record.sourceRevision);
   let blockedReason: string | undefined;
   if (!recovery.ready) blockedReason = recovery.error ? "Session recovery storage is unavailable. Restore it before searching." : "Checking session recovery storage…";
   else if (memory?.busy) blockedReason = "Queueing your search…";
@@ -200,18 +223,29 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
   else if (reconcileError) blockedReason = reconcileError;
   else if (recovery.record && !recovery.canRetry) blockedReason = "An earlier search is still active or awaiting an exact status check.";
   else if (otherActive) blockedReason = "A search is already active. Follow its progress before starting another.";
-  else if (savedPreferences && needsPreviousInputs) blockedReason = "In Search preferences, open Search plans, schedules and source behavior → One-off search with temporary criteria. Re-enter the earlier inputs there to retry the same request.";
-  else if (!recovery.record && disabledReason) blockedReason = disabledReason;
-  else if (!recovery.record && savedPreferences && !profileVersion) blockedReason = "Save your Search preferences before starting a search.";
-  else if (!recovery.record && savedPreferences && !workspaceIdentity) blockedReason = "Checking the saved search workspace…";
+  const continuationBlocked = Boolean(blockedReason);
+  if (!blockedReason) {
+    if (savedPreferences && needsPreviousInputs) blockedReason = "In Search preferences, open Search plans, schedules and source behavior → One-off search with temporary criteria. Re-enter the earlier inputs there to retry the same request.";
+    else if (!recovery.record && disabledReason) blockedReason = disabledReason;
+    else if (!recovery.record && savedPreferences && !profileVersion) blockedReason = "Save your Search preferences before starting a search.";
+    else if (!recovery.record && savedPreferences && !workspaceIdentity) blockedReason = "Checking the saved search workspace…";
+  }
 
   const resultCounts = result.success && result.data.newJobs !== undefined && result.data.observedJobs !== undefined ? { newJobs: result.data.newJobs, observedJobs: result.data.observedJobs } : null;
   const counts = action && terminal(action.status) && resultCounts ? resultCounts : recorded ? { newJobs: recorded.newJobs, observedJobs: recorded.observedJobs } : resultCounts;
   const recordedFailures = recorded && ["completed", "partial", "failed", "cancelled"].includes(recorded.status) ? recorded.failures : undefined;
   const sourceFailures = recordedFailures ?? (result.success ? result.data.failures : undefined) ?? [];
+  const acquisitionStatus = recorded?.status ?? (result.success ? result.data.acquisitionStatus ?? result.data.status : undefined);
+  const linkedInPaused = Boolean(action && ["succeeded", "failed"].includes(action.status) && ["partial", "failed"].includes(acquisitionStatus ?? "")
+    && sourceFailures.some((failure) => failure.code === "discovery_provider_rate_limited" && failure.boards?.includes("linkedin")));
+  const admittedParent = start.data && start.variables && "resumeFromRunId" in start.variables ? start.variables.resumeFromRunId : undefined;
+  const resumeFromRunId = recovery.record
+    ? recordMatchesWorkspace && recovery.canRetry ? recoverySourceRunId : undefined
+    : linkedInPaused && action?.runId === latest?.runId && action?.runId !== admittedParent && !recorded?.continuedByRunId ? action?.runId : undefined;
+  const canContinue = Boolean(resumeFromRunId && actions.data && !continuationBlocked && !start.isPending);
   const statusUnavailable = Boolean(actions.error || detail.error || outcomeUnavailable || (recovery.record && recovery.statusError && !recovery.canRetry) || reconcileError);
   const status = memory?.busy ? "queueing" : statusUnavailable ? "status-unavailable" : action
-    ? action.cancellationRequested && active(action.status) ? "cancel-requested" : action.status === "succeeded" ? terminalOutcome === "partial" ? "partial" : "completed" : action.status
+    ? action.cancellationRequested && active(action.status) ? "cancel-requested" : action.status === "succeeded" ? terminalOutcome ?? "completed" : action.status
     : recovery.record ? recovery.canRetry ? "unconfirmed" : "checking" : actions.isPending ? "checking" : "idle";
 
   return {
@@ -220,15 +254,17 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
     assessment: result.success ? result.data.preparation : undefined,
     acquisitionStatus: result.success ? result.data.acquisitionStatus : undefined,
     action, counts, status, sourceFailures, statusUnavailable, countsStale: Boolean(runs.error || statusUnavailable),
-    blockedReason, canStart: !blockedReason && !start.isPending, isPending: Boolean(memory?.busy || start.isPending),
-    pendingBody: pending?.body, uncertain: Boolean(pending?.uncertain && !ownAction), recovery,
+    blockedReason, canStart: !blockedReason && !start.isPending && !recoverySourceRunId, isPending: Boolean(memory?.busy || start.isPending),
+    linkedInPaused, resumeFromRunId, canContinue, recoveringContinuation: Boolean(recoverySourceRunId),
+    pendingBody: pending && !("resumeFromRunId" in pending.body) ? pending.body : undefined,
+    uncertain: Boolean(pending?.uncertain && !ownAction), recovery,
     hasUnconfirmedRequest: Boolean(recovery.record && !ownAction && (pending?.uncertain || recovery.statusError)),
     startError: attemptRequest.current && attemptRequest.current === confirmedRequest.current ? null : start.error,
     startMessage, stopError: stop.error, isStopping: stop.isPending,
     canStop: Boolean(action && active(action.status) && canRequestStop(action) && !statusUnavailable),
     history: runs.data?.runs ?? [], historyLoading: runs.isPending, historyError: runs.error,
-    launch(overrides: Pick<DiscoverySearchPayload, "queries" | "locations"> = {}) {
-      if (blockedReason || start.isPending) return;
+    launch(overrides: Pick<DiscoveryStartPayload, "queries" | "locations"> = {}) {
+      if (blockedReason || start.isPending || recoverySourceRunId) return;
       const previous = recovery.record;
       const revision = previous?.sourceRevision ?? profileVersion;
       const body = pending?.body ?? {
@@ -237,6 +273,7 @@ export function useDiscoverySearchController({ disabledReason, profileVersion, w
       };
       start.mutate(body);
     },
+    continueSearch() { if (resumeFromRunId && canContinue) start.mutate({ resumeFromRunId }); },
     requestStop(runId = action?.runId) { if (runId && !stop.isPending) stop.mutate(runId); },
     async checkPrevious() {
       const requestId = recovery.record?.requestId;

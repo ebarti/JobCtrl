@@ -28,7 +28,7 @@ export function DiscoveryTargetPlan({ defaultOpen = true }: { readonly defaultOp
   const plan = query.data?.accepted;
   const status = recovery.status?.status;
   return <DisclosureSection className="discovery-target-plan" aria-label="Profile search plan" title="Profile search plan" defaultOpen={defaultOpen} description="Inspect the saved queries, locations and source provenance for your preferences.">
-    <p>These queries use the target fields you saved. A query expands search recall; it does not establish job fit.</p>
+    <p>New searches use the role titles and locations you save. The last saved plan is shown here for reference.</p>
     {query.error ? <p role="alert">Search plan could not be refreshed. {plan ? "The last loaded plan remains below." : ""}</p> : null}
     {refresh.error ? <p role="alert">Search plan refresh could not be confirmed: {refresh.error.message}.{plan ? " The previous plan remains available." : ""}</p> : null}
     {recovery.record || runId ? <p role="status">Plan refresh: {recovery.statusError ? "status unavailable" : status ?? "checking status"}{recovery.status?.errorCode ? ` (${recovery.status.errorCode})` : ""}</p> : null}
@@ -36,7 +36,7 @@ export function DiscoveryTargetPlan({ defaultOpen = true }: { readonly defaultOp
     {recovery.message ? <p role="status">{recovery.message}</p> : null}
     {status === "failed" || status === "cancelled" ? <p role="alert">Plan refresh did not complete.{plan ? " The previous accepted plan remains available." : ""}</p> : null}
     {plan ? <>
-      <p role="status">{query.data?.current ? "Current" : "Profile changed; this saved plan needs refresh"} · Profile revision {plan.profileRevision} · {plan.createdAt}</p>
+      <p role="status">{query.data?.current ? "Current" : "Saved plan from an earlier search"} · Profile revision {plan.profileRevision} · {plan.createdAt}</p>
       <ul>{plan.queries.map((item, index) => <li key={`${item.query}:${index}`}>
         <strong>{item.query}</strong> · tier {item.tier}{item.authority === "literal_authored_target" ? " · your saved target" : " · model-proposed recall"}
         {item.source_scope.length ? ` · sources: ${item.source_scope.join(", ")}` : ""}

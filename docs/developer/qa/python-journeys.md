@@ -1863,12 +1863,12 @@ complete-suite or hosted qualification.
 
 ### Unlimited monetary accounting classification
 
-`model-accounting.spec.ts` completes two real source-bound query-plan actions
+`model-accounting.spec.ts` completes two real source-bound job role analyses
 through the worker and controlled external model with known tokens but no dollar
 receipt. Unlimited mode accepts repeated work, retains accepted provenance,
 shows no reconciliation task, and keeps aggregate dollars null. Restoring a
 finite monetary cap refuses another action before external dispatch and preserves
-the accepted plan. The opposing case supplies reported cost but no token counts:
+the accepted analysis. The opposing case supplies reported cost but no token counts:
 monetary completeness remains intact, while enabling a token-lane limit refuses
 further work. The actual worker-kill recovery journey independently asserts
 `costStatus=unresolved`, a retained unresolved call and null monetary total.

@@ -24,18 +24,6 @@ shared spend policy.
 
 <DiscoveryPipeline />
 
-When saved tracks, levels or areas of interest need a fresh model-generated
-query plan, **Start search** checks the selected model's recorded cost-accounting
-capability. If a finite daily cap has no supported cost source, the action opens
-an explicit setup dialog. **Review spending setup** opens Budgets and preserves
-the originating Jobs filters or Search preferences view. Add an exact sourced
-`provider:model` pricing quote, save, and use the return link to start deliberately.
-The app does not guess a price, switch providers, remove the cap or retry the
-search automatically. A saved quote establishes accounting configuration, not
-provider sign-in or live model availability. Literal role queries and current accepted plans do not
-need this query-planning setup. A prior `cost_accounting_unavailable` failure is
-shown as a cost-tracking setup problem, before job-source acquisition.
-
 ## Saved Search Preferences
 
 Add target roles as independent repeatable inputs; Enter adds a row and moves
@@ -61,12 +49,9 @@ conflicting save retains the draft; check saved state before retrying.
 
 ### How target search controls are used
 
-Literal role queries and location/work-arrangement rows retain their authored
-meaning. Track/function/seniority-based recall plans use explicit source-bound
-model determinations with source IDs, revisions and persisted receipts; a
-failed or stale plan preserves the prior accepted one. Search indexes, word
-lists and token similarity cannot infer meanings or turn suggestions into
-consent.
+Each saved role title becomes a search query. The saved locations and work
+arrangements supply the source filters. Tracks, seniority, areas of interest and
+specializations guide the role match after a source returns a posting.
 
 The ordinary **Start search** path uses the current Profile Search preferences
 and saved Discovery board/limit policy. It explicitly sets empty one-run
@@ -98,10 +83,14 @@ The run's `newJobs` counts newly created job identities. `observedJobs` includes
 accepted observations of previously saved jobs. `roleTargetObservations` shows
 the number of role checks by verdict and the count missing a posting description.
 Filtered listings are recorded separately from observations admitted to Jobs.
+During a saved-role search, JobCtrl finishes checking each page of LinkedIn
+keyword matches before requesting the next page.
+During a saved-role LinkedIn search, an exact match to a saved posting is
+recorded as a listing observation. The search keeps the saved revision and
+skips the detail request and role check. Use the job's manual checks to refresh it.
 
-Search may make model-backed query preparation only after the explicit launch
-admits that work. Preference saves, reads, navigation and connection remedies
-start no query preparation, match refresh, scoring or resume generation.
+Saved role titles are sent to the board as written. Model-backed role checks
+begin when the search receives candidate postings.
 Remote and posting age remain valid search preferences. Each board runs with
 its own supported request and checkpoint. Indeed Remote requests retain Remote
 and apply the age cutoff locally using the provider's reported publication date;
@@ -146,10 +135,8 @@ The new-job limit is not a promise that enough new or suitable postings exist.
 
 The primary launch also binds the saved `expectedProfileVersion`. Queued or
 replayed planning refuses a changed Profile instead of silently absorbing new
-criteria. A current accepted target plan can be reused without another model
-connection. Otherwise the task shows known local blockers; provider auth,
-lane/spend and dispatch checks run only after deliberate **Start search**, not
-as navigation probes. Unsaved search drafts survive Preferences ↔ Search within
+criteria. A current literal query plan can be reused. Model and spending checks apply when
+a posting needs a role decision or assessment. Unsaved search drafts survive Preferences ↔ Search within
 the same session, tenant and database incarnation; saved values persist through
 reload. The offline demo clears those transient drafts on reset.
 
@@ -196,7 +183,7 @@ Opening a disclosure preserves its draft and starts no search or model work.
 The task invokes the existing `discovery.search` action with a retained
 idempotency key and database identity. Queued means Temporal accepted the request,
 not that acquisition or person-fit assessment completed. The complete application
-keeps that one action active while the preparation owner enriches each newly
+keeps that one action active while the preparation owner checks each newly
 saved job, records role context and extracts its requirements. It completes this
 work for all newly saved jobs before assessing person fit, so a later posting's
 capability consolidation cannot invalidate an earlier score from the same search.
@@ -237,6 +224,10 @@ unavailable rather than implying that saved jobs were assessed.
 If every source eventually fails after saving jobs, those retained new jobs
 still receive initial assessment. The overall search reports a partial outcome,
 while its acquisition status and source failures remain failed and inspectable.
+When the same search saved a full LinkedIn description through its targeted
+detail request, assessment uses that exact posting revision. If LinkedIn
+throttles the search, saved listings that still need detail can be checked
+manually after the source is available again.
 
 Assessment reuses exact accepted results before making another model request.
 Requirements keeps content-based result reuse separate from each job's actual
@@ -393,7 +384,21 @@ owns how the accepted analysis supplies qualified requirements and person fit.
 
 ## Crawl Politeness
 
-JobStreaming performs board searches and retrieves supported posting details. Each board has its own access requirements, supported search filters, native page sizes and safety limits. JobCtrl records board-specific authentication failures and rate limits alongside accepted jobs. A terminal rate limit defers the board's remaining queries in that run.
+JobStreaming performs board searches and retrieves supported posting details. Each board has its own access requirements, supported search filters, native page sizes and safety limits. JobCtrl records board-specific authentication failures and rate limits alongside accepted jobs. LinkedIn listing requests and targeted detail requests share a four-second
+minimum interval between request starts. A terminal rate limit defers remaining
+queries for that board. A response without a usable retry delay, or with one
+above the retry cap, also stops queued LinkedIn detail requests.
+
+The activity log records each LinkedIn HTTP 429 seen during search. The event
+shows when it occurred, whether a listing or posting-detail request was
+throttled, how many responses the worker had received and how long LinkedIn
+asked it to wait when a valid `Retry-After` was supplied.
+
+If LinkedIn pauses a search, JobCtrl can still assess the matches already saved.
+**Continue LinkedIn search** resumes with the original roles, locations and
+remaining new-job allowance. It resumes the saved page position, skips postings
+already checked on that page and honors any outstanding wait supplied by LinkedIn.
+Short waits within the worker's retry window are also supported for posting details.
 
 JobCtrl freezes the selected boards and search criteria at launch. Its worker checkpoints the provider cursor, saves an admission or exclusion receipt, and acknowledges the provider. Only a newly created job uses one place in the requested limit. Cancellation and worker recovery keep the same run identity.
 

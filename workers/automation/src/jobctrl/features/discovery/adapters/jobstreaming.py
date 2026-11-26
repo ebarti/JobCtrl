@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 import threading
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 import pandas as pd
@@ -77,11 +78,30 @@ class UnsupportedRemoteSearch(InvalidRequestError):
     """A board cannot apply the selected Remote search scope exactly."""
 
 
+class _ReviewedPageContext:
+    """Let the board advance only after the consumer commits the current page."""
+
+    def __init__(self, context: Any, page_accepted: threading.Event) -> None:
+        self._context = context
+        self._page_accepted = page_accepted
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._context, name)
+
+    def emit_progress(self, *args: Any, **kwargs: Any) -> None:
+        self._page_accepted.clear()
+        self._context.emit_progress(*args, **kwargs)
+        while not self._context.cancelled:
+            if self._page_accepted.wait(0.1):
+                return
+
+
 class _RemoteScopeAdapter:
     """Check the actual adapter before it can issue a broadened request."""
 
-    def __init__(self, delegate: Any) -> None:
+    def __init__(self, delegate: Any, page_accepted: threading.Event | None = None) -> None:
         self._delegate = delegate
+        self._page_accepted = page_accepted
         self.site = delegate.site
         self.capabilities = delegate.capabilities
 
@@ -98,6 +118,8 @@ class _RemoteScopeAdapter:
         if not required.issubset(self.capabilities.filters):
             raise UnsupportedRemoteSearch("The board cannot apply the selected search filters.")
         normalized = scraper_input.model_copy(update={"hours_old": scope["hours_old"]})
+        if context is not None and self._page_accepted is not None:
+            context = _ReviewedPageContext(context, self._page_accepted)
         return self._delegate.scrape(normalized, context=context)
 
     def close(self) -> None:
@@ -106,7 +128,10 @@ class _RemoteScopeAdapter:
             close()
 
 
-def _remote_safe_registry(spec: JobStreamingSearchSpec, registry: AdapterRegistry | None) -> AdapterRegistry:
+def _remote_safe_registry(
+    spec: JobStreamingSearchSpec, registry: AdapterRegistry | None,
+    linkedin_page_accepted: threading.Event | None,
+) -> AdapterRegistry:
     """Retain unsupported boards as failures instead of broadening a search."""
     normalized = _normalize_tls_adapter_timeouts(registry)
     guarded = normalized.copy()
@@ -117,7 +142,10 @@ def _remote_safe_registry(spec: JobStreamingSearchSpec, registry: AdapterRegistr
         cursor_version = normalized.cursor_schema_version(site)
 
         def guarded_factory(*, _site: str = site, **kwargs: Any) -> _RemoteScopeAdapter:
-            return _RemoteScopeAdapter(normalized.create(_site, **kwargs))
+            return _RemoteScopeAdapter(
+                normalized.create(_site, **kwargs),
+                linkedin_page_accepted if _site == Site.LINKEDIN.value else None,
+            )
 
         # The provider's public cursor-version contract must remain unchanged
         # for existing checkpoints. Version 1 is the registry default.
@@ -203,6 +231,22 @@ class JobStreamingGateway:
     """Build and consume the pinned JobStreaming event contract."""
 
     @staticmethod
+    def configure_linkedin_transport(registry, send):
+        source = registry or default_registry()
+        observed = source.copy()
+
+        def factory(**kwargs):
+            adapter = source.create(Site.LINKEDIN, **kwargs)
+            for transport in set(adapter.session.adapters.values()):
+                transport.send = partial(send, transport.send)
+            return adapter
+
+        cursor_version = source.cursor_schema_version(Site.LINKEDIN)
+        options = {"cursor_schema_version": cursor_version} if cursor_version != 1 else {}
+        observed.register(Site.LINKEDIN, factory, replace=True, **options)
+        return observed
+
+    @staticmethod
     def build_request(spec: JobStreamingSearchSpec) -> SearchRequest:
         if spec.results_per_site is None:
             try:
@@ -242,6 +286,7 @@ class JobStreamingGateway:
         retry_backoff: float = 5.0,
         cancel_event: threading.Event | None = None,
         registry: AdapterRegistry | None = None,
+        linkedin_page_accepted: threading.Event | None = None,
     ) -> SearchStream:
         """Open an explicit-ack stream without consuming any event.
 
@@ -266,7 +311,7 @@ class JobStreamingGateway:
             retry_backoff=retry_backoff,
             ack_mode=AckMode.EXPLICIT,
             cancel_event=cancel_event,
-            registry=_remote_safe_registry(spec, registry),
+            registry=_remote_safe_registry(spec, registry, linkedin_page_accepted),
         )
 
     @classmethod

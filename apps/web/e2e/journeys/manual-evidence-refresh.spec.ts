@@ -200,14 +200,39 @@ test("Profile manually updates the previously missing match, reuses unaffected a
   await page.setViewportSize({ width: 1440, height: 1000 });
   await start.focus();
   await expect(start).toBeFocused();
-  const admitted = page.waitForResponse(
-    (response) =>
-      response.url() === `${app.baseURL}/v1/actions/fit.refresh` &&
-      response.request().method() === "POST",
-  );
-  await start.press("Enter");
+  const actionPath = `${app.baseURL}/v1/actions/fit.refresh`;
+  const lookupPath = `${app.baseURL}/v1/action-runs/by-idempotency-key?action=fit.refresh`;
+  const lookupsDuringAdmission: string[] = [];
+  let releaseAdmission!: () => void;
+  const release = new Promise<void>(resolve => { releaseAdmission = resolve; });
+  let admissionAcknowledged = false;
+  page.on("request", request => {
+    if (!admissionAcknowledged && request.url() === lookupPath) {
+      lookupsDuringAdmission.push(request.headers()["idempotency-key"] ?? "");
+    }
+  });
+  await page.route(actionPath, async route => {
+    await release;
+    const response = await route.fetch();
+    admissionAcknowledged = true;
+    try {
+      await route.fulfill({ response });
+    } finally {
+      await response.dispose();
+    }
+  }, { times: 1 });
+  const submitted = page.waitForRequest(request => request.url() === actionPath && request.method() === "POST");
+  const admitted = page.waitForResponse(response => response.url() === actionPath && response.request().method() === "POST");
+  try {
+    await start.press("Enter");
+    await submitted;
+    await expect(panel.getByRole("button", { name: "Starting update…", exact: true })).toBeDisabled();
+  } finally {
+    releaseAdmission();
+  }
   const admission = await admitted;
   expect(admission.status(), await admission.text()).toBe(202);
+  expect(lookupsDuringAdmission).toEqual([]);
   const receipt = (await admission.json()) as { runId: string };
   const request = admission.request();
   const payload = request.postDataJSON() as ReturnType<typeof refreshPayload>;

@@ -13,16 +13,21 @@ from .domain import ApplicationFailure, automatic_source_allowed, copied, confir
 from .ports import RehearsalAdmission, SubmissionAdmission
 
 
+_REVIEW_ACTIONS = ("applications.rehearse", "applications.repeat_check", "applications.execute")
+
+
 class SqliteApplicationStore:
     def __init__(self, repository, sources, *, screening, repeat, inspection, feedback, validate_mail, fit=None):
         self.repository, self.sources = repository, sources
         self.screening, self.repeat, self.inspection, self.feedback, self.fit = screening, repeat, inspection, feedback, fit
         self.validate_mail = validate_mail
         self._action_reader = None
+        self._job_action_run_id = None
 
-    def set_action_reader(self, reader):
+    def set_action_reader(self, reader, *, job_action_run_id):
         """Composition injects the orchestration owner's public read query."""
         self._action_reader = reader
+        self._job_action_run_id = job_action_run_id
 
     def _assert_revision(self, state, expected):
         if state["version"] != expected:
@@ -325,7 +330,11 @@ class SqliteApplicationStore:
     def read(self, job, tenant_id="local"):
         self.sources.job_snapshot(job)
         with self.repository.read() as conn:
-            return {"ok": True, "application": self._view(conn, tenant_id, self.repository.state(conn, tenant_id, job))}
+            state = self.repository.state(conn, tenant_id, job)
+            view = self._view(conn, tenant_id, state)
+            if self._job_action_run_id is not None:
+                view["actionRunId"] = self._job_action_run_id(job, state["payloadId"], _REVIEW_ACTIONS, connection=conn)
+            return {"ok": True, "application": view}
 
     def read_apply_review(self, tenant_id="local"):
         with self.repository.read() as conn:

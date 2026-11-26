@@ -8,11 +8,12 @@ import type {
 } from "../../ports/EventStreamPort.js";
 import { parseDomainEvent } from "../../ports/lib/parseDomainEvent.js";
 import type { SharedStreamCommand } from "./SseEventStreamWorker.js";
+import { cursorDatabase, isStreamCursor } from "./sseCursor.js";
 
 const STREAM_PATH = "/v1/events/stream";
 const WORKER_HEARTBEAT_MS = 5_000;
 const WORKER_DEADLINE_MS = 20_000;
-const WORKER_RETRY_MAX_MS = 30_000;
+const RETRY_MAX_MS = 30_000;
 
 export class SseEventStreamAdapter implements EventStreamPort {
   private readonly baseUrl: string;
@@ -39,7 +40,7 @@ export class SseEventStreamAdapter implements EventStreamPort {
   private streamUrl(tenantId: TenantId): string {
     // A fresh mount reconciles current reads on open; avoid replaying all
     // historical events. EventSource sends Last-Event-ID on later reconnects.
-    const search = new URLSearchParams({ tenantId, envelope: "1", after: "latest" }).toString();
+    const search = new URLSearchParams({ tenantId, envelope: "1", after: "latest", cursor: "workspace" }).toString();
     return `${this.baseUrl}${STREAM_PATH}?${search}`;
   }
 }
@@ -49,6 +50,7 @@ class SseSubscription implements EventStreamSubscription {
   private readonly invalidHandlers = new Set<() => void>();
   private readonly statusHandlers = new Set<(status: EventStreamStatus) => void>();
   private currentStatus: EventStreamStatus = "connecting";
+  private cursor: string | null = null;
   private closed = false;
   private workspaceChanged = false;
   private pagePaused = false;
@@ -57,12 +59,12 @@ class SseSubscription implements EventStreamSubscription {
   private worker: SharedWorker | null = null;
   private workerCleanup: (() => void) | null = null;
   private workerHeartbeat: ReturnType<typeof setInterval> | undefined;
-  private workerRetry: ReturnType<typeof setTimeout> | undefined;
+  private transportRetry: ReturnType<typeof setTimeout> | undefined;
   private retryDelayMs = 1_000;
   private readonly onPageHide = () => {
     this.pagePaused = true;
-    clearTimeout(this.workerRetry);
-    this.workerRetry = undefined;
+    clearTimeout(this.transportRetry);
+    this.transportRetry = undefined;
     this.closeWorker();
     this.closeSource();
     if (!this.workspaceChanged) this.setStatus("closed");
@@ -112,8 +114,8 @@ class SseSubscription implements EventStreamSubscription {
     this.closed = true;
     globalThis.removeEventListener("pagehide", this.onPageHide);
     globalThis.removeEventListener("pageshow", this.onPageShow);
-    clearTimeout(this.workerRetry);
-    this.workerRetry = undefined;
+    clearTimeout(this.transportRetry);
+    this.transportRetry = undefined;
     this.closeWorker();
     this.closeSource();
     this.setStatus("closed");
@@ -143,7 +145,7 @@ class SseSubscription implements EventStreamSubscription {
       });
     } catch (error) {
       if (error instanceof DOMException && error.name === "NotSupportedError") this.open();
-      else this.retryShared();
+      else this.retryTransport(() => this.openShared());
       return;
     }
     this.worker = worker;
@@ -151,7 +153,7 @@ class SseSubscription implements EventStreamSubscription {
     let lastActivity = Date.now();
     const current = () => this.worker === worker && !this.closed && !this.workspaceChanged && !this.pagePaused;
     const send = (command: SharedStreamCommand) => worker.port.postMessage(command);
-    const failed = () => { if (current()) this.retryShared(); };
+    const failed = () => { if (current()) this.retryTransport(() => this.openShared()); };
     const onMessage = (event: MessageEvent<unknown>) => {
       if (!current()) return;
       lastActivity = Date.now();
@@ -159,21 +161,24 @@ class SseSubscription implements EventStreamSubscription {
       if (!message || typeof message !== "object" || !("type" in message)) {
         this.invalidFrame(); failed(); return;
       }
-      if (message.type === "frame" && "data" in message && typeof message.data === "string") {
-        this.handleEvent({ data: message.data } as MessageEvent); return;
+      if ((message.type === "cursor" || message.type === "frame")
+        && "cursor" in message && typeof message.cursor === "string") {
+        if (!this.rememberCursor(message.cursor)) { failed(); return; }
+        if (message.type === "cursor") return;
+        if ("data" in message && typeof message.data === "string") {
+          this.handleEvent(message.data); return;
+        }
       }
       if (message.type === "heartbeat") return;
       if (message.type === "unsupported") {
         // Only an unavailable platform primitive permits the per-page fallback.
         this.closeWorker(); this.open(); return;
       }
-      if (message.type === "expired") { failed(); return; }
+      if (message.type === "expired" || message.type === "transport_error") { failed(); return; }
       if (message.type === "status" && "status" in message) {
         const next = message.status;
         if (next === "workspace_changed") {
-          this.workspaceChanged = true;
-          this.closeWorker();
-          this.setStatus("workspace_changed");
+          this.changedWorkspace();
           return;
         }
         if (next === "open" || next === "connecting" || next === "closed") {
@@ -200,7 +205,7 @@ class SseSubscription implements EventStreamSubscription {
       if (Date.now() - lastActivity > WORKER_DEADLINE_MS) { failed(); return; }
       try { send({ type: "ping" }); } catch { failed(); }
     }, WORKER_HEARTBEAT_MS);
-    try { send({ type: "subscribe", url: new URL(this.url, globalThis.location.href).href }); }
+    try { send({ type: "subscribe", url: new URL(this.url, globalThis.location.href).href, cursor: this.cursor }); }
     catch { failed(); }
   }
 
@@ -212,13 +217,14 @@ class SseSubscription implements EventStreamSubscription {
     this.workerCleanup = null;
   }
 
-  private retryShared(): void {
+  private retryTransport(reopen: () => void): void {
     this.closeWorker();
-    if (this.closed || this.workspaceChanged || this.pagePaused || this.workerRetry !== undefined) return;
+    this.closeSource();
+    if (this.closed || this.workspaceChanged || this.pagePaused || this.transportRetry !== undefined) return;
     this.setStatus("closed");
     const delay = this.retryDelayMs;
-    this.retryDelayMs = Math.min(WORKER_RETRY_MAX_MS, delay * 2);
-    this.workerRetry = setTimeout(() => { this.workerRetry = undefined; this.openShared(); }, delay);
+    this.retryDelayMs = Math.min(RETRY_MAX_MS, delay * 2);
+    this.transportRetry = setTimeout(() => { this.transportRetry = undefined; reopen(); }, delay);
   }
 
   private open(): void {
@@ -227,54 +233,68 @@ class SseSubscription implements EventStreamSubscription {
       this.setStatus("closed");
       return;
     }
-    const source = new EventSource(this.url);
+    const url = new URL(this.url, globalThis.location.href);
+    if (this.cursor !== null) url.searchParams.set("after", this.cursor);
+    const source = new EventSource(url);
     this.source = source;
     this.setStatus("connecting");
 
-    const onOpen = () => {
-      if (!this.workspaceChanged) this.setStatus("open");
+    const failed = () => this.retryTransport(() => this.open());
+    const onError = () => {
+      if (this.workspaceChanged) return;
+      this.setStatus("closed");
+      if (source.readyState === EventSource.CLOSED) failed();
     };
-    // A changed workspace requires an explicit fresh subscription. A network
-    // reconnect on the old EventSource must not hide that recovery instruction.
-    const onError = (event: Event) => {
-      if (isWorkspaceChanged(event)) {
-        this.workspaceChanged = true;
-        this.setStatus("workspace_changed");
-      } else if (!this.workspaceChanged) {
-        this.setStatus("closed");
-      }
+    const onCursor = (event: MessageEvent) => {
+      if (!this.rememberCursor(event.lastEventId)) { failed(); return; }
+      this.retryDelayMs = 1_000;
+      this.setStatus("open");
     };
-    source.addEventListener("open", onOpen);
+    source.addEventListener("stream_cursor", onCursor);
     source.addEventListener("error", onError);
-    this.listenerCleanup.push(() => source.removeEventListener("open", onOpen));
+    this.listenerCleanup.push(() => source.removeEventListener("stream_cursor", onCursor));
     this.listenerCleanup.push(() => source.removeEventListener("error", onError));
 
     // Envelope mode delivers every producer's event on one channel. A new or
     // unregistered event must still reach the shell's conservative fallback.
-    const onMessage = (raw: MessageEvent) => this.handleEvent(raw);
+    const onMessage = (raw: MessageEvent) => {
+      if (!this.rememberCursor(raw.lastEventId)) { failed(); return; }
+      // An older API may send a numeric event before any scoped cursor exists.
+      this.retryDelayMs = 1_000;
+      this.setStatus("open");
+      this.handleEvent(raw.data);
+    };
     source.addEventListener("message", onMessage);
     this.listenerCleanup.push(() => source.removeEventListener("message", onMessage));
 
-    const onWorkspaceChanged = () => {
-      this.workspaceChanged = true;
-      source.close();
-      this.setStatus("workspace_changed");
-    };
+    const onWorkspaceChanged = () => this.changedWorkspace();
     source.addEventListener("workspace_changed", onWorkspaceChanged);
     this.listenerCleanup.push(() => source.removeEventListener("workspace_changed", onWorkspaceChanged));
-
-    const heartbeatListener = () => {
-      if (!this.workspaceChanged) this.setStatus("open");
-    };
-    source.addEventListener("heartbeat", heartbeatListener);
-    this.listenerCleanup.push(() => source.removeEventListener("heartbeat", heartbeatListener));
   }
 
-  private handleEvent(raw: MessageEvent): void {
+  private rememberCursor(cursor: string): boolean {
+    if (!isStreamCursor(cursor)) return false;
+    const expectedDatabase = this.cursor === null ? undefined : cursorDatabase(this.cursor);
+    if (expectedDatabase && expectedDatabase !== cursorDatabase(cursor)) {
+      this.changedWorkspace();
+      return false;
+    }
+    this.cursor = cursor;
+    return true;
+  }
+
+  private changedWorkspace(): void {
+    this.workspaceChanged = true;
+    this.closeWorker();
+    this.closeSource();
+    this.setStatus("workspace_changed");
+  }
+
+  private handleEvent(raw: unknown): void {
     if (this.closed || this.workspaceChanged) {
       return;
     }
-    const data = typeof raw.data === "string" ? raw.data : null;
+    const data = typeof raw === "string" ? raw : null;
     let eventType: unknown;
     try {
       const envelope: unknown = JSON.parse(data ?? "");
@@ -307,18 +327,5 @@ class SseSubscription implements EventStreamSubscription {
     for (const handler of this.statusHandlers) {
       handler(next);
     }
-  }
-}
-
-
-function isWorkspaceChanged(event: Event): boolean {
-  const data = (event as MessageEvent<unknown>).data;
-  if (typeof data !== "string") return false;
-  try {
-    const parsed: unknown = JSON.parse(data);
-    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
-      && (parsed as Record<string, unknown>).code === "event_stream_workspace_changed";
-  } catch {
-    return false;
   }
 }

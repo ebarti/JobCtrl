@@ -217,6 +217,10 @@ safe patch never clears an existing saved password. Valid older editor recovery
 migrates to the safe projection before its original key is removed; unreadable
 copies remain paused for retry or explicit discard.
 
+Profile edits stay bound to the database that supplied their saved version.
+If this tab reconnects to a replacement workspace, return to the original
+workspace to save or restore its unfinished Profile changes.
+
 The Resume section embeds the real Plate editor. Editing Profile or removing a
 record never silently overwrites a manual document draft or accepted resume.
 Full-width search controls and repeated fields reflow at narrow sizes rather

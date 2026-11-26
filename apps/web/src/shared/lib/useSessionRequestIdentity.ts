@@ -15,7 +15,8 @@ const IdentitySchema = z.object({
   fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   workspaceId: z.string().min(1),
   databaseInstanceId: z.string().min(1),
-  sourceRevision: z.number().int().positive().optional(),
+  sourceRevision: z.number().int().nonnegative().optional(),
+  resumeFromRunId: z.string().min(1).max(200).optional(),
   requestKind: z.enum(["preview", "compare", "choose", "update"]).optional(),
   sourceFingerprint: z.string().regex(/^[a-f0-9]{64}$/).optional(),
 }).strict();

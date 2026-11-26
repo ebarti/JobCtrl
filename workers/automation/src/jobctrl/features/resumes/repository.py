@@ -100,7 +100,11 @@ class SqliteResumeRepository:
             self._receipt(conn, operation, state)
         return state
 
-    def change(self, resume_id, expected_version, mutate, *, event, operation=None):
+    def change(self, resume_id, expected_version, mutate, *, event, operation=None, revision_id=None):
+        """Publish against the observed version, or an explicitly pinned current revision.
+
+        A mutation may return False when its exact result is already settled.
+        """
         if type(expected_version) is not int or expected_version < 1:
             raise ResumeError("expected_version_required")
         with self.runtime.database.transaction() as conn:
@@ -108,14 +112,18 @@ class SqliteResumeRepository:
             if previous is not None:
                 return previous
             state = self.get(resume_id, connection=conn)
-            if state["version"] != expected_version:
+            version = state["version"]
+            if revision_id is None and version != expected_version:
                 raise ResumeError("resume_version_conflict")
-            mutate(state, conn)
-            state["version"] += 1
+            if revision_id is not None and (state["current_revision"] != revision_id or version < expected_version):
+                raise ResumeError("resume_version_conflict")
+            if mutate(state, conn) is False:
+                return state
+            state["version"] = version + 1
             state["updated_at"] = now()
             count = conn.execute(
                 "UPDATE resumes_documents SET state_json = ?,version = ?,updated_at = ? WHERE resume_id = ? AND version = ?",
-                (canonical(state), state["version"], state["updated_at"], resume_id, expected_version),
+                (canonical(state), state["version"], state["updated_at"], resume_id, version),
             ).rowcount
             if count != 1:
                 raise ResumeError("resume_version_conflict")

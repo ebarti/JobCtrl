@@ -24,7 +24,11 @@ catalog and its retained posting sources, including sources from deleted jobs.
 It may use your configured model; opening the library does not start it. The
 existing catalog and accepted artifacts remain available if the action is
 refused, cancelled or cannot finish. Check the recorded run before retrying an
-unconfirmed request. A prior requirement link resolves to its recorded current
+unconfirmed request. **Retry the same consolidation** keeps the original catalog
+revision. If the catalog changed before the request started, review the current
+catalog. For requests saved by older versions, **Use current catalog** or
+**Consolidate current catalog** keeps the earlier request available for status
+checks. A prior requirement link resolves to its recorded current
 identity when that meaning is in the active library; its original source history
 is retained. Open **Earlier consolidated identities** in the current record to
 inspect each earlier identity's definition and posting history.
@@ -44,6 +48,11 @@ reusable library, achievement links or wording preparation. Personal traits,
 certifications and licenses, job conditions and detailed tenure analysis are
 excluded from this iteration; structured certification support is tracked in
 [#1476](https://github.com/ebarti/JobCtrl/issues/1476).
+
+A subject mentioned in an interview agenda enters scoring only when the employer
+independently states it as a job responsibility or a candidate qualification.
+The app extracts separately stated responsibilities as separate capabilities
+when they can be demonstrated independently.
 
 When a posting accepts prior work in any of several fields, one Professional
 Experience requirement can preserve the full choice. Fit can assess it once

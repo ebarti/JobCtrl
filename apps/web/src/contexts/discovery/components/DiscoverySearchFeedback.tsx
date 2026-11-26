@@ -87,13 +87,14 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
     {assessmentProgress?.unavailable && !controller.assessment ? <p role="alert">Fit assessment progress could not be checked. Recorded search status remains visible.</p> : null}
     {status === "idle" && !controller.blockedReason ? <p>Uses your saved Search preferences. Saving preferences does not start a search.</p> : null}
     {status === "partial" ? <p>{controller.sourceFailures.length ? "Some sources did not finish." : failedJobs !== null && failedJobs > 0 ? "Some fit assessments did not finish." : "Some search work did not finish."} Jobs already saved by the search remain available.</p> : null}
+    {controller.linkedInPaused ? <p>While LinkedIn is paused, you can still assess jobs you’ve already saved.</p> : null}
     {displayedFailures.length > 0 ? <ul aria-label="Search source failures">{displayedFailures.map(({ key, failure, failures }) => {
       const unitCount = failures.every((item) => item.unitId) ? new Set(failures.map((item) => item.unitId)).size : null;
       return <li key={key}><strong>{sourceLabel(failure)}</strong>: {failure.message ?? failure.code}<span> · {unitCount === null ? `${failures.length} recorded ${failures.length === 1 ? "failure" : "failures"}` : `${unitCount} ${unitCount === 1 ? "query/location combination" : "query/location combinations"} affected`}</span></li>;
     })}</ul> : null}
     {disabledFailures ? <p>Recorded failures from sources no longer enabled are retained in Search details.</p> : null}
     {unknownSources ? <p>Current source selection could not be verified. Recorded failures remain in Search details.</p> : null}
-    {accountingFailure ? <div><p>Search query preparation stopped because the selected model had no configured monetary cost tracking. Job sources were not searched. Review the exact model pricing quote in Budgets, then start again. Your saved preferences and spending cap are unchanged.</p>{spendingAction}</div> : status === "failed" ? <p>The search did not complete. Any jobs already saved remain available.</p> : null}
+    {accountingFailure ? <div><p>Search stopped because the selected model needs monetary cost tracking to check postings against your saved roles. Job sources were not searched. Review the exact model pricing quote in Budgets, then start again. Your saved preferences and spending cap are unchanged.</p>{spendingAction}</div> : status === "failed" ? <p>The search did not complete. Any jobs already saved remain available.</p> : null}
     </> : null}
     {status === "cancel-requested" ? <p>{action?.cancellationDelivery === "pending"
       ? "The workflow service has not confirmed receipt. Retry stop when it is available."
@@ -106,6 +107,7 @@ export function DiscoverySearchFeedback({ controller, spendingAction, assessment
     {controller.startError ? <p role="alert">Search could not be confirmed: {controller.startError.message}</p> : null}
     {controller.startMessage ? <p role="status">{controller.startMessage}</p> : null}
     <div className="discovery-search-actions">
+      {controller.resumeFromRunId ? <Button type="button" size="sm" variant="outline" disabled={!controller.canContinue} onClick={controller.continueSearch}>Continue LinkedIn search</Button> : null}
       {feedback.canDismiss ? <Button type="button" size="sm" variant="ghost" aria-label={feedback.dismissed ? "Show last search result" : "Dismiss last search result"} onClick={feedback.dismissed ? feedback.show : feedback.dismiss}>{feedback.dismissed ? "Show last search result" : "Dismiss result"}</Button> : null}
       {controller.canStop ? <Button type="button" size="sm" variant="outline" disabled={controller.isStopping} onClick={() => controller.requestStop()}>{controller.isStopping ? "Requesting stop…" : action?.cancellationDelivery === "pending" ? "Retry stop" : "Request stop"}</Button> : null}
       {controller.statusUnavailable || controller.historyError ? <Button type="button" size="sm" variant="outline" onClick={controller.refresh}>Check search status</Button> : null}

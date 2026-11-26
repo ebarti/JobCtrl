@@ -159,5 +159,5 @@ class ApplicationsService:
     def delete_job_data(self, job_id, connection=None, tenant_id="local"):
         return self.store.delete_job_data(job_id, connection=connection, tenant_id=tenant_id)
 
-    def set_action_reader(self, reader):
-        return self.store.set_action_reader(reader)
+    def set_action_reader(self, reader, *, job_action_run_id):
+        return self.store.set_action_reader(reader, job_action_run_id=job_action_run_id)

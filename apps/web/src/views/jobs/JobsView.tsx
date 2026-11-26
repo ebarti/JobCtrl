@@ -131,6 +131,7 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
   const previousJob = useRef(activeJobId);
   const streamStatus = useEventStreamStatus();
   const selection = useJobGridSelectionStore((state) => state.current);
+  const cleanupRequests = useJobGridSelectionStore((state) => state.pendingCleanups);
   const updateSelection = useJobGridSelectionStore((state) => state.update);
   const clearStoredSelection = useJobGridSelectionStore((state) => state.clear);
   const selectionScope = JSON.stringify({ criteria, filters, sort, pageSize });
@@ -174,6 +175,10 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
   const preview = previewScope === selectionFingerprint ? previewDelete.data : undefined;
   const clearSelection = () => { clearStoredSelection(session, tenant); previewDelete.reset(); setPreviewScope(null); setConfirmation(""); };
   const pending = bulk.isPending || previewDelete.isPending || permanentDelete.isPending;
+  const pendingCleanups = cleanupRequests.filter((item) => item.session === session && item.tenant === tenant);
+  const cleanupError = pendingCleanups.some(({ request }) => request.selectionId === permanentDelete.variables?.selectionId)
+    ? permanentDelete.error : null;
+  const selectionError = bulk.error ?? previewDelete.error ?? (cleanupError ? null : permanentDelete.error);
   const onBulk = (action: "hide" | "unhide" | "delete" | "restore") => {
     const submittedSelection = selection;
     bulk.mutate({ action, selected: selectedRows }, { onSuccess: () => { if (useJobGridSelectionStore.getState().current === submittedSelection) clearSelection(); } });
@@ -229,13 +234,24 @@ export function JobsView({ optionalBulkActions, optionalGlobalActions, navigatio
           {selectedRows.some((job) => job.deleted) ? <Button type="button" variant="ghost" size="sm" disabled={pending || selectedRows.some((job) => !job.deleted)} onClick={() => { setConfirmation(""); setPreviewScope(selectionFingerprint); previewDelete.mutate(selectedIds); }}>Review permanent deletion</Button> : null}
         </div>
       </div> : null}
-      {bulk.error || previewDelete.error || permanentDelete.error ? <p role="alert">{(bulk.error ?? previewDelete.error ?? permanentDelete.error)?.message} The saved job selection remains available.</p> : null}
+      {selectionError ? <p role="alert">{selectionError.message} The saved job selection remains available.</p> : null}
+      {pendingCleanups.map(({ request }) => <section key={request.selectionId} aria-label="Pending file cleanup">
+        <p role="alert">The job records were deleted. Files for {request.jobIds.length} deleted {request.jobIds.length === 1 ? "job still need" : "jobs still need"} cleanup.</p>
+        {cleanupError && request.selectionId === permanentDelete.variables?.selectionId ? <p role="alert">{cleanupError.message}</p> : null}
+        <Button type="button" variant="outline" disabled={pending || streamStatus === "workspace_changed"} onClick={() => permanentDelete.mutate(request)}>Retry file cleanup</Button>
+      </section>)}
+      {permanentDelete.data?.replayed && !permanentDelete.data.cleanupPending ? <p role="status">File cleanup completed.</p> : null}
       {preview ? <section aria-label="Review permanent deletion"><h2>Review permanent deletion</h2>
         <p>This permanently removes {preview.count} selected job(s) and their job-owned records. The selection expires at {preview.expiresAt}.</p>
         <p>{preview.retentionNotice}</p>
         <ul>{preview.jobs.map((job) => <li key={job.job_id}>{job.title}{job.company ? ` · ${job.company}` : ""} ({job.job_id})</li>)}</ul>
         <label>Type DELETE to confirm<input value={confirmation} onChange={(event) => setConfirmation(event.currentTarget.value)} /></label>
-        <Button type="button" disabled={pending || confirmation !== "DELETE"} onClick={() => { const submittedSelection = selection; permanentDelete.mutate({ selectionId: preview.selectionId, jobIds: preview.jobIds }, { onSuccess: () => { if (useJobGridSelectionStore.getState().current === submittedSelection) clearSelection(); } }); }}>Permanently delete reviewed jobs</Button>
+        <Button type="button" disabled={pending || confirmation !== "DELETE"} onClick={() => {
+          const submittedSelection = selection;
+          permanentDelete.mutate({ selectionId: preview.selectionId, jobIds: preview.jobIds, databaseInstanceId: preview.databaseInstanceId }, {
+            onSuccess: () => { if (useJobGridSelectionStore.getState().current === submittedSelection) clearSelection(); },
+          });
+        }}>Permanently delete reviewed jobs</Button>
       </section> : null}
       {jobs.error ? <div role="alert">{jobs.error.message}{unavailableFields.success ? ` Unavailable criteria: ${unavailableFields.data.error.details.fields.join(", ")}.` : ""}{currentJobs ? " Showing the previously loaded page." : ""}{" "}<Button type="button" variant="outline" disabled={jobs.isFetching} onClick={() => void jobs.refetch()}>Retry loading jobs</Button>{offset > 0 ? <Button type="button" variant="outline" onClick={() => { changeQuery(gridQuery(criteria, filters, sort, 0, pageSize, null), false); }}>Reload from first page</Button> : null}</div> : null}
       </div>

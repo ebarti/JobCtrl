@@ -226,6 +226,10 @@ action when work is unavailable. Individual maintenance tools remain under
 **Preparation options and history**; ordinary preparation does not need a tour of
 operations pages.
 
+If a search’s Fit assessment was interrupted, choose **Continue fit assessment
+for all jobs**. JobCtrl resumes the original group of jobs and reuses work that
+already finished.
+
 For several selected jobs, open **Preparation tools** in Jobs. Its **Tools** tab
 contains the individual preparation actions and explicit fit-threshold exception;
 **History** shows compact run rows with status, job count and update time. Open a

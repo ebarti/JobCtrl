@@ -1,3 +1,4 @@
+import type { Request, Route } from "@playwright/test";
 import { test, expect, json } from "../harness/fixtures.js";
 import { browserStorage } from "../harness/browser-storage.js";
 import {
@@ -479,4 +480,80 @@ test("conflicting Profile saves and stale exact-wording approval retain the newe
     secondaryErrors,
     "Browser errors in the independent Profile tabs",
   ).toEqual([]);
+});
+
+
+test("a delayed save keeps an equal-version Profile draft with its original workspace", async ({
+  page, api, app, allowResponseError,
+}) => {
+  const health = () => json<{ databaseInstanceId: string }>(api, "get", "/v1/health");
+  const { profile: original } = await createBaseline(api);
+  const originalId = (await health()).databaseInstanceId;
+  const name = page.getByRole("textbox", { name: "Full name", exact: true });
+  const draft = "Synthetic draft from original workspace";
+  const profilePath = (url: URL) => url.pathname === "/v1/profile";
+  const readPaths = new Set(["/v1/health", "/v1/resume-templates", "/v1/profile/wording"]);
+  const workspaceReads = (url: URL) => url.origin === app.baseURL && (profilePath(url) || readPaths.has(url.pathname));
+  let release!: () => void;
+  const continueSave = new Promise<void>((resolve) => { release = resolve; });
+  let heldSave: Route | undefined;
+  let swapping = false;
+  const inFlightReads = new Set<Request>();
+  const finishRead = (request: Request) => { inFlightReads.delete(request); };
+  page.on("requestfinished", finishRead);
+  page.on("requestfailed", finishRead);
+  const delaySave = async (route: Route) => {
+    const request = route.request();
+    if (request.method() === "PATCH" && profilePath(new URL(request.url()))) {
+      heldSave = route;
+      await continueSave;
+    } else if (request.method() === "GET") {
+      // Queue reads during the deliberate listener gap and drain any already
+      // sent to the original API before restarting it.
+      if (swapping) await continueSave;
+      inFlightReads.add(request);
+    }
+    await route.continue();
+  };
+  await page.route(workspaceReads, delaySave);
+  try {
+    await page.goto("/profile");
+    await page.getByRole("navigation", { name: "My profile sections", exact: true })
+      .getByRole("link", { name: "Personal details", exact: true }).click();
+    await expect(name).toHaveValue(original.profile.personal.full_name);
+    await name.fill(draft);
+    await expect.poll(() => browserStorage(page)).toContain(draft);
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect.poll(() => heldSave?.request().postDataJSON()?.expectedProfileVersion).toBe(original.profileVersion);
+
+    swapping = true;
+    await expect.poll(() => inFlightReads.size).toBe(0);
+    await app.restartApi({ freshWorkspace: true });
+    expect((await health()).databaseInstanceId).not.toBe(originalId);
+    const { profile: replacement } = await createBaseline(api, {
+      ...baseline, personal: { ...baseline.personal, full_name: "Synthetic replacement Profile" },
+    });
+    expect(replacement.profileVersion).toBe(original.profileVersion);
+    const delayedSave = heldSave!.request();
+    const response = page.waitForResponse((value) => value.request() === delayedSave);
+    swapping = false;
+    release();
+    const refused = await response;
+    await allowResponseError(refused, {
+      method: "PATCH", status: 409, code: "workspace_changed", databaseInstanceId: originalId,
+    });
+    await expect(name).toHaveValue(draft);
+    expect(await json<Profile>(api, "get", "/v1/profile")).toEqual(replacement);
+  } finally {
+    swapping = false;
+    release();
+    await page.unroute(workspaceReads, delaySave);
+    page.off("requestfinished", finishRead);
+    page.off("requestfailed", finishRead);
+  }
+
+  await page.reload();
+  await expect(page.getByText("Unfinished Profile changes belong to an earlier workspace.", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Restore unfinished Profile changes", exact: true })).toHaveCount(0);
+  await expect.poll(() => browserStorage(page)).toContain(draft);
 });

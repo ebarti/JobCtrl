@@ -23,7 +23,7 @@ there is no Fastify business authority or TypeScript/Python JSON-RPC hop.
 | `GET /v1/action-runs/summary` | Recorded status counts, total, active and pending cancellation counts. |
 | `GET /v1/action-runs/by-idempotency-key?action=...` | Exact `Idempotency-Key` header lookup without returning its request payload; a missing row is only an observation at read time. |
 | `POST /v1/action-runs/{runId}/cancel` | Empty object. Records Stop for the selected run and returns its current receipt. A 202 means delivery is pending. A 200 returns an acknowledged request or a terminal receipt. |
-| `GET /v1/events/stream` | Committed SSE, replay cursors and optional ordinary-message envelopes. |
+| `GET /v1/events/stream` | Committed SSE, replay cursors, optional database-scoped resume IDs and ordinary-message envelopes. |
 | `GET /v1/activity` or `/v1/events` | Newest-first `{events,nextCursor,hasMore}`; optional `before` event ID and bounded `limit`. |
 | `GET /v1/activity/{eventId}` | One committed event envelope or 404. |
 
@@ -143,6 +143,11 @@ Profile revision and the database incarnation used to read its preferences.
 
 `GET /v1/discovery/sources` returns boards from the installed JobStreaming registry and their local state. Change an existing board with `PATCH /v1/discovery/sources/{source_id}/state` and its `expectedRevision`. A preview reads saved observations. Automatic searches run exclusively through JobStreaming. Jobs independently owns the durable `jobs.capture_url` action for a supplied posting URL.
 
+New saved searches use the exact role titles and location/work-arrangement
+filters from the pinned Profile revision. `discovery.refresh_targets` records
+those literal inputs for inspection. Role matching uses the saved preferences
+when a posting is returned.
+
 `GET /v1/discovery/settings` defaults to `boards: ["linkedin"]` when a workspace
 has no saved board selection. Saved selections and explicit per-run overrides
 can include Indeed and ZipRecruiter.
@@ -158,9 +163,20 @@ failure in `payload.sourceFailure` before the SDK acknowledges the event.
 SDK board rate limits use `discovery_provider_rate_limited` and set
 `diagnostic` to `rate_limited` in the warning and run result. A terminal board
 rate limit stops that board's remaining query and location units for the run.
+LinkedIn listing and detail requests share four-second pacing in each run.
+A LinkedIn HTTP 429 with a missing, unusable or over-cap `Retry-After` also
+prevents queued detail requests from sending.
 The run list also explains rate limits from historical records that stored this
 code with a generic message.
 Historical action receipts and already-published events retain their original fields.
+`GET /v1/events?aggregateId={run_id}&type=DiscoverySourceRateLimited` lists
+individual LinkedIn HTTP 429 responses, including attempts that the SDK recovered
+from. Each event includes `receivedAt` (UTC), `unitId`, `phase` (`listing`,
+`detail`, or `other`), `leaseEpoch`, `elapsedMs` since that lease began querying
+LinkedIn, and `responses` by phase through the reported 429. `retryAfterSeconds`
+is the provider's requested delay or `null` when the header is absent or
+unusable. Counts restart with each lease. The source's `politeness.rateLimitedCount`
+continues to describe recent runs that settled with a rate-limit failure.
 `partial` means at least one source unit completed or reached the new-job limit
 while another failed. A completed source may return no jobs. Reaching the limit
 records `budget_exhausted`, without asserting upstream provider completion.

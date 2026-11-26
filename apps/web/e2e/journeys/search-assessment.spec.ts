@@ -1,12 +1,181 @@
 import { indeedPage } from "./indeed-data.js";
-import { test, expect, json, action, completed, terminal } from "../harness/fixtures.js";
-import { createBaseline, createPosting } from "./core-data.js";
+import { test, expect, json, action, completed, terminal, modelCall } from "../harness/fixtures.js";
+import { baseline, createBaseline, createPosting } from "./core-data.js";
+import { serveRoleTarget } from "./discovery-role-scope-data.js";
 import type { FitState } from "./fit-data.js";
 import { servePostingAssessment, serveSavedAssessment, serveQualification } from "./search-assessment-data.js";
 import { authoredPartition, retainedCapability, type NormalizedSnapshot } from "./consolidation-data.js";
-import { modelSources, NORMALIZATION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
+import { citeSources, modelSources, NORMALIZATION_PROMPT_VERSION, type CatalogContext } from "./requirements-data.js";
 import { qualificationBindings } from "./qualification-data.js";
 import { respondProducer, untilNormalization } from "./preparation-cohort-data.js";
+
+function linkedinCard(id: number) {
+  return `<div class="base-search-card"><a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/synthetic-engineer-${id}"><span class="sr-only">Synthetic Systems Engineer</span></a><h4 class="base-search-card__subtitle">Synthetic Board Company</h4></div>`;
+}
+
+test("saved-role LinkedIn discovery fetches details only for new postings", async ({ api, app }) => {
+  const { profile, library } = await createBaseline(api, { ...baseline,
+    experience: { target_role: "Synthetic systems engineer", target_locations: "Madrid" } });
+  const saved = await json<{ job_id: string; revision: number }>(api, "post", "/v1/jobs/capture", {
+    url: "https://www.linkedin.com/jobs/view/1234", title: "Saved Synthetic Engineer",
+    company: "Synthetic Board Company", description: "Previously accepted posting details.",
+  });
+  const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 1 });
+
+  const search = await action(api, "discovery.search", { queries: [], locations: [], expectedProfileVersion: profile.profileVersion });
+  const listing = await app.external.next();
+  expect(listing.path).toContain("/jobstreaming/linkedin/jobs-guest/jobs/api/seeMoreJobPostings/search?");
+  listing.raw(linkedinCard(1234) + linkedinCard(1235));
+  const detail = await app.external.next();
+  expect(detail.path).toBe("/jobstreaming/linkedin/jobs/view/1235");
+  detail.raw('<div class="show-more-less-html__markup"><p>Maintain durable workflow recovery.</p></div>');
+  await serveRoleTarget(app, "match");
+  await serveSavedAssessment(app, library);
+
+  const result = (await completed(api, search.runId)).result as { newJobIds: string[] };
+  expect(result).toMatchObject({
+    status: "completed", newJobs: 1, observedJobs: 2,
+    jobIds: expect.arrayContaining([saved.job_id]),
+    roleTargetObservations: { match: 1 },
+    preparation: { status: "succeeded", assessedJobs: 1 },
+  });
+  expect(result.newJobIds).toHaveLength(1);
+  expect(result.newJobIds).not.toContain(saved.job_id);
+  expect(await json(api, "get", `/v1/jobs/${saved.job_id}`)).toMatchObject({
+    revision: saved.revision, title: "Saved Synthetic Engineer", description: "Previously accepted posting details.",
+  });
+  expect((await app.discoveryCheckpoint(search.runId)).receipts).toEqual({ accepted: 2 });
+  expect(app.external.calls.filter((call) => call.path.includes("/jobstreaming/linkedin/jobs/view/")).map((call) => call.path))
+    .toEqual(["/jobstreaming/linkedin/jobs/view/1235"]);
+  expect(app.external.calls.filter((call) => call.path === "/model" && call.body?.["operation"] === "discovery.role_target_match")).toHaveLength(1);
+});
+
+test("search assesses the exact saved LinkedIn detail after a later posting is throttled", async ({ api, app }) => {
+  const { profile, library } = await createBaseline(api, { ...baseline,
+    experience: { target_role: "Synthetic systems engineer", target_locations: "Madrid" } });
+  const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 2 });
+  const started = await action(api, "discovery.search", { queries: [], locations: [], expectedProfileVersion: profile.profileVersion });
+  const listing = await app.external.next();
+  expect(listing.path).toContain("/jobstreaming/linkedin/jobs-guest/jobs/api/seeMoreJobPostings/search?");
+  listing.raw(linkedinCard(1234) + linkedinCard(1235));
+  const firstDetail = await app.external.next();
+  expect(firstDetail.path).toBe("/jobstreaming/linkedin/jobs/view/1234");
+  const description = "Maintain durable workflow recovery.";
+  firstDetail.raw(`<div class="show-more-less-html__markup"><p>${description}</p></div>`);
+  await serveRoleTarget(app, "match");
+  const secondDetail = await app.external.next();
+  expect(secondDetail.path).toBe("/jobstreaming/linkedin/jobs/view/1235");
+  secondDetail.raw("Private synthetic response", { status: 429, headers: { "Retry-After": "601" } });
+  await serveSavedAssessment(app, library);
+
+  const result = (await completed(api, started.runId)).result as { newJobIds: string[] };
+  expect(result).toMatchObject({ status: "partial", newJobs: 1, observedJobs: 1,
+    failures: [{ boards: ["linkedin"], code: "discovery_provider_rate_limited" }],
+    preparation: { status: "succeeded", assessedJobs: 1, failedJobs: 0 } });
+  const job = result.newJobIds[0]!;
+  const posting = await json<{ revision: number }>(api, "get", `/v1/jobs/${job}`);
+  expect(posting).toMatchObject({ content_state: "provider_detail", needs_enrichment: true, full_description: description });
+  const run = await json<{ steps: unknown[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
+  expect(run.steps).toContainEqual(expect.objectContaining({ jobId: job, stage: "enrich", status: "skipped",
+    result: { skip: "saved_provider_detail", revision: posting.revision } }));
+  const fit = await json<FitState>(api, "get", `/v1/jobs/${job}/fit`);
+  expect(fit).toMatchObject({ current: true, score: { score: 10 } });
+  expect(fit.score.assessments[0]!.provenance).toMatchObject({ receipt_id: expect.any(String), lane: "scoring" });
+  expect(app.external.calls.filter((call) => call.path === "/posting-page")).toHaveLength(0);
+  const throttle = await json<{ events: { occurredAt: string; payload: unknown }[] }>(api, "get",
+    `/v1/events?aggregateId=${started.runId}&type=DiscoverySourceRateLimited`);
+  expect(throttle.events).toHaveLength(1);
+  expect(throttle.events[0]).toEqual(expect.objectContaining({ occurredAt: expect.any(String), payload: {
+    board: "linkedin", unitId: expect.any(String), phase: "detail", httpStatus: 429,
+    leaseEpoch: 1, responses: { listing: 1, detail: 2, other: 0 }, elapsedMs: expect.any(Number),
+    receivedAt: expect.any(String), retryAfterSeconds: 601,
+  } }));
+});
+
+test("saved search checks each LinkedIn page before requesting the next with literal roles", async ({ api, app, page }) => {
+  const { profile, library } = await createBaseline(api, { ...baseline, experience: {
+    target_role: "Synthetic systems engineer", target_functions: "Synthetic workflow reliability",
+    target_locations: "Madrid", target_work_models: "remote",
+  } });
+  const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+  await json(api, "patch", "/v1/discovery/settings", { expectedRevision: settings.revision, boards: ["linkedin"], hoursOld: 0, newJobLimit: 100 });
+  await page.goto("/jobs");
+  const admitted = page.waitForResponse((response) => new URL(response.url()).pathname === "/v1/actions/discovery.search" && response.request().method() === "POST");
+  await page.getByRole("button", { name: "Start search", exact: true }).click();
+  const actionResponse = await admitted;
+  expect(actionResponse.status()).toBe(202);
+  const started = await actionResponse.json() as { runId: string };
+  const listing = await app.external.next();
+  const listingStart = performance.now();
+  const listingParams = new URL(listing.path, "http://localhost").searchParams;
+  expect(listingParams.get("keywords")).toBe("Synthetic systems engineer");
+  expect(listingParams.get("location")).toBe("Madrid");
+  expect(listingParams.get("f_WT")).toBe("2");
+  listing.raw(linkedinCard(1237) + linkedinCard(1238) + '<div class="base-search-card"></div>'.repeat(8));
+  const detail = await app.external.next();
+  const detailStart = performance.now();
+  expect(detail.path).toBe("/jobstreaming/linkedin/jobs/view/1237");
+  expect(detailStart - listingStart).toBeGreaterThan(3500);
+  detail.raw('<div class="show-more-less-html__markup"><p>Maintain durable workflow recovery.</p></div>');
+  await serveRoleTarget(app, "match");
+  const secondDetail = await app.external.next();
+  expect(secondDetail.path).toBe("/jobstreaming/linkedin/jobs/view/1238");
+  secondDetail.raw('<div class="show-more-less-html__markup"><p>Review supplier contracts.</p></div>');
+  await serveRoleTarget(app, "mismatch");
+  const continuation = await app.external.next();
+  expect(new URL(continuation.path, "http://localhost").searchParams.get("start")).toBe("10");
+  expect(performance.now() - detailStart).toBeGreaterThan(3500);
+  continuation.raw("Too many requests", { status: 429 });
+  const throttles = () => json<{ events: { payload: unknown }[] }>(api, "get", `/v1/events?aggregateId=${started.runId}&type=DiscoverySourceRateLimited`);
+  await expect.poll(async () => (await throttles()).events.map((event) => event.payload)).toEqual([expect.objectContaining({
+    phase: "listing", responses: { listing: 2, detail: 2, other: 0 }, retryAfterSeconds: null,
+  })]);
+  await serveSavedAssessment(app, library);
+  expect((await completed(api, started.runId)).result).toMatchObject({ status: "partial", newJobs: 1,
+    roleTargetObservations: { match: 1, mismatch: 1 },
+    failures: [{ code: "discovery_provider_rate_limited" }], preparation: { assessedJobs: 1 } });
+  const plan = await json<{ accepted: { queries: unknown[]; provenance: unknown } }>(api, "get", "/v1/discovery/target-search");
+  expect(plan.accepted).toMatchObject({ profileRevision: profile.profileVersion, provenance: null,
+    queries: [{ query: "Synthetic systems engineer", authority: "literal_authored_target" }] });
+  expect(app.external.calls.filter((call) => call.path.startsWith("/jobstreaming/linkedin"))).toHaveLength(4);
+  expect(app.external.calls.filter((call) => call.body?.["operation"] === "discovery.query_plan")).toHaveLength(0);
+});
+
+test("search retains a listing and makes no automatic posting fetch after LinkedIn throttles", async ({ api, app }) => {
+  await createBaseline(api);
+  const started = await action(api, "discovery.search", { queries: ["Synthetic systems engineer"], locations: ["Madrid"],
+    boards: ["linkedin"], hoursOld: 0, newJobLimit: 2, resultsPerSite: 2 });
+  const listing = await app.external.next();
+  expect(listing.path).toContain("/jobstreaming/linkedin/jobs-guest/jobs/api/seeMoreJobPostings/search?");
+  listing.raw(linkedinCard(1236) + '<div class="base-search-card"></div>'.repeat(9));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const next = await app.external.next({ timeout: 20_000 });
+    expect(new URL(next.path, "http://localhost").searchParams.get("start")).toBe("10");
+    next.raw("Too many requests", { status: 429, headers: { "Retry-After": "0" } });
+  }
+  const result = (await completed(api, started.runId)).result as { newJobIds: string[] };
+  const job = result.newJobIds[0]!;
+  expect(result).toMatchObject({ status: "partial", newJobs: 1,
+    preparation: { assessedJobs: 0, failedJobs: 1, failures: [
+      { jobId: job, stage: "enrich", code: "posting_check_deferred_source_rate_limited" },
+    ] } });
+  const run = await json<{ steps: unknown[] }>(api, "get", `/v1/preparation/runs/${started.runId}`);
+  expect(run.steps).toContainEqual(expect.objectContaining({ jobId: job, stage: "enrich", status: "failed", postingRevision: 1 }));
+  expect(app.external.calls.filter((call) => call.path === "/posting-page" || call.path === "/model")).toHaveLength(0);
+  const throttle = await json<{ events: { payload: unknown }[] }>(api, "get",
+    `/v1/events?aggregateId=${started.runId}&type=DiscoverySourceRateLimited`);
+  expect(throttle.events.map((event) => event.payload)).toEqual([4, 3, 2].map((listing) => expect.objectContaining({
+    phase: "listing", responses: { listing, detail: 0, other: 0 }, retryAfterSeconds: 0,
+  })));
+
+  const retry = await action(api, "preparation.retry", { run_id: started.runId });
+  const manual = await app.external.next();
+  expect(manual.path).toBe("/posting-page");
+  manual.respond({}, 503);
+  expect(await terminal(api, retry.runId)).toMatchObject({ status: "failed", errorCode: "preparation_partial" });
+});
 
 test("search reports a saved job's refused person fit separately from successful source acquisition", async ({ api, app, page }) => {
   const { library } = await createBaseline(api);

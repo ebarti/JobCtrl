@@ -186,4 +186,5 @@ def build_feature(runtime, *, jobs, profile=None):
         # Admission is atomic before planning or acquisition starts. Separate
         # tabs, schedules and clients share one active search per workspace.
         action_scopes={"discovery.search": lambda _payload: "workspace"},
+        action_admissions={"discovery.search": service.check_search_admission},
     )

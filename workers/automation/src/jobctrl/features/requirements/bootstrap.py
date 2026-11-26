@@ -37,14 +37,32 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
     def admit_manual(run_id, payload, connection):
         service.admit_manual_catalog_prompt(run_id, connection)
 
-    async def consolidate(context, payload):
+    def consolidation_request(payload):
         from pydantic import ValidationError
         try:
             body = ConsolidateRequest.model_validate(payload)
-            if body.operation_id is not None:
-                raise AppError("invalid_request", "Durable consolidation uses the action run identity.")
         except (ValidationError, AttributeError):
             raise AppError("invalid_request", "The catalog consolidation fields are invalid.") from None
+        if body.operation_id is not None:
+            raise AppError("invalid_request", "Durable consolidation uses the action run identity.")
+        return body
+
+    def admit_consolidation(run_id, payload, connection):
+        body = consolidation_request(payload)
+        try:
+            current_revision = store.catalog_revision(connection)
+        except RequirementError as failure:
+            raise_application_error(failure)
+        if body.expected_catalog_revision != current_revision:
+            raise AppError(
+                "requirements_consolidation_catalog_changed",
+                "The skills catalog changed before this request started. Review the current catalog and try again.",
+                409, {"currentCatalogRevision": current_revision},
+            )
+        admit_manual(run_id, payload, connection)
+
+    async def consolidate(context, payload):
+        body = consolidation_request(payload)
         try:
             return await service.consolidate_catalog(expected_catalog_revision=body.expected_catalog_revision,
                 operation_id=context.run_id, cancelled=context.cancelled, heartbeat=context.heartbeat,
@@ -125,7 +143,8 @@ def build_feature(runtime: Runtime, **ports) -> Feature:
         name="requirements", service=service, routes=routes(service),
         actions={"requirements.consolidate": consolidate, "requirements.refresh": refresh, "requirements.revise": revise, "requirements.correct_binding": correct_binding,
                  "requirements.correct_occurrences": correct_occurrences},
-        action_admissions={"requirements.refresh": admit_refresh, "requirements.consolidate": admit_manual,
+        action_scopes={"requirements.consolidate": lambda _payload: "workspace"},
+        action_admissions={"requirements.refresh": admit_refresh, "requirements.consolidate": admit_consolidation,
                            "requirements.revise": admit_manual, "requirements.correct_binding": admit_manual,
                            "requirements.correct_occurrences": admit_manual},
         action_versions={name: CONTRACT_VERSION + ":" + NORMALIZATION_VERSION + ":" + NORMALIZATION_PROMPT_VERSION for name in (

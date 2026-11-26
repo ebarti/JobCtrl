@@ -1,5 +1,5 @@
 import { useForm } from "@tanstack/react-form";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { z } from "zod";
 
 import { Button } from "../../../shared/ui/button.js";
@@ -7,12 +7,10 @@ import { Checkbox } from "../../../shared/ui/checkbox.js";
 import { Field, FieldLabel } from "../../../shared/ui/field.js";
 import { Textarea } from "../../../shared/ui/textarea.js";
 import { useDiscoverySearchController } from "../hooks/useDiscoverySearchController.js";
-import { DiscoverySearchSetup } from "./DiscoverySearchSetup.js";
 import { DiscoverySearchFeedback, type DiscoverySearchFeedbackRenderer } from "./DiscoverySearchFeedback.js";
 
-export function DiscoveryRunsPanel({ compact = false, disabledReason, readiness, profileVersion, workspaceIdentity, accountingSetupReason, spendingAction, renderFeedback }: {
+export function DiscoveryRunsPanel({ compact = false, disabledReason, readiness, profileVersion, workspaceIdentity, spendingAction, renderFeedback }: {
   readonly compact?: boolean;
-  readonly accountingSetupReason?: string | undefined;
   readonly spendingAction?: ReactNode;
   readonly renderFeedback?: DiscoverySearchFeedbackRenderer;
   readonly disabledReason?: string | undefined;
@@ -21,7 +19,6 @@ export function DiscoveryRunsPanel({ compact = false, disabledReason, readiness,
   readonly workspaceIdentity?: string | undefined;
 } = {}) {
   const controller = useDiscoverySearchController({ disabledReason, profileVersion, workspaceIdentity, savedPreferences: compact });
-  const [setupOpen, setSetupOpen] = useState(false);
   const { recovery, pendingBody } = controller;
   const lines = (value: string) => value.split("\n").map((line) => line.trim()).filter(Boolean);
   const schema = z.object({ queries: z.string().max(10000), locations: z.string().max(10000), remoteOnly: z.boolean() });
@@ -29,7 +26,6 @@ export function DiscoveryRunsPanel({ compact = false, disabledReason, readiness,
     defaultValues: { queries: pendingBody?.queries?.join("\n") ?? "", locations: pendingBody?.locations?.map((item) => item.location).filter(Boolean).join("\n") ?? "", remoteOnly: pendingBody?.locations?.some((item) => item.remote) ?? false },
     validators: { onSubmit: ({ value }) => schema.safeParse(value).success ? undefined : "Search inputs are too long." },
     onSubmit: ({ value }) => {
-      if (accountingSetupReason && !controller.recovery.record) { setSetupOpen(true); return; }
       const parsed = schema.safeParse(value); if (!parsed.success) return;
       const queries = lines(parsed.data.queries); const locations = lines(parsed.data.locations);
       controller.launch({ ...(queries.length ? { queries } : {}),
@@ -47,10 +43,9 @@ export function DiscoveryRunsPanel({ compact = false, disabledReason, readiness,
         <form.Field name="remoteOnly">{(field) => <Field orientation="horizontal" className="search-tool-choice"><Checkbox id={compact ? "search-previous-remote" : "discovery-run-remote"} checked={field.state.value} disabled={controller.uncertain} onCheckedChange={field.handleChange} /><FieldLabel htmlFor={compact ? "search-previous-remote" : "discovery-run-remote"}>Remote only for this run</FieldLabel></Field>}</form.Field>
       </div>
       <form.Subscribe selector={(state) => state.errors}>{(errors) => errors.length ? <p role="alert">{errors.join(" ")}</p> : null}</form.Subscribe>
-      <div className="search-launch-action"><Button type="submit" disabled={!controller.canStart}>{controller.isPending ? "Queueing search…" : recovery.record && recovery.canRetry ? "Retry the same request" : compact ? "Start search" : "Run discovery"}</Button>{compact ? readiness : null}</div>
+      <div className="search-launch-action"><Button type="submit" disabled={!controller.canStart}>{controller.isPending ? "Queueing search…" : recovery.record && recovery.canRetry && !controller.recoveringContinuation ? "Retry the same request" : compact ? "Start search" : "Run discovery"}</Button>{compact ? readiness : null}</div>
     </form>
     {renderFeedback ? renderFeedback(controller, (progress) => <DiscoverySearchFeedback controller={controller} spendingAction={spendingAction} assessmentProgress={progress} />) : <DiscoverySearchFeedback controller={controller} spendingAction={spendingAction} />}
-    <DiscoverySearchSetup open={setupOpen} onOpenChange={setSetupOpen} reason={accountingSetupReason} action={spendingAction} />
     <details className="search-run-history"><summary>Recent searches{controller.history.length ? ` (${controller.history.length})` : ""}</summary>
       {!controller.history.length && !controller.historyError ? <p>{controller.historyLoading ? "Loading searches…" : "No searches have been started yet."}</p> : null}
       <ul>{controller.history.map((run) => <li key={run.runId}>{run.status} · {run.newJobs} new, {run.observedJobs} observed · {run.createdAt}{run.failureCode ? ` · ${run.failureCode}` : ""}</li>)}</ul>

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 import json
+from math import ceil
 import os
 import time
 from uuid import uuid4
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
-from jobctrl.features.discovery.domain import BOARD_RATE_LIMIT_CODE, DEFAULT_SETTINGS, fingerprint, now, public_board_failure, validate_settings
+from jobctrl.features.discovery.domain import BOARD_RATE_LIMIT_CODE, DEFAULT_SETTINGS, fingerprint, now, public_board_failure, search_units, validate_settings
 from jobctrl.features.discovery.qualification import posting_role_evidence, role_binding
 
 
@@ -423,6 +424,71 @@ class DiscoveryRepository:
             }
         return {"ok": True, **result}
 
+    def continuation_request(self, payload, connection=None):
+        """Freeze unfinished LinkedIn units and the unspent portion of the original budget."""
+        if connection is None:
+            with self.database.connect() as conn:
+                return self.continuation_request(payload, conn)
+        parent = payload.get("resumeFromRunId")
+        if set(payload) != {"resumeFromRunId"} or not isinstance(parent, str) or not 0 < len(parent) <= 120:
+            raise AppError("invalid_discovery_resume", "Choose one previous search to continue with its saved criteria.")
+        row = connection.execute("SELECT * FROM discovery_runs WHERE run_id=?", (parent,)).fetchone()
+        if not row or row["status"] not in {"failed", "partial"}:
+            raise AppError("discovery_resume_unavailable", "Only a finished search paused by LinkedIn can be continued.", 409)
+        prior = json.loads(row["request_json"])
+        source = connection.execute(
+            "SELECT error_code FROM discovery_source_runs WHERE run_id=? AND source_id='jobstreaming:linkedin'", (parent,)
+        ).fetchone()
+        if not source or source["error_code"] not in {BOARD_RATE_LIMIT_CODE, "rate_limited"}:
+            raise AppError("discovery_resume_unavailable", "This search has no paused LinkedIn source.", 409)
+        self._require_no_continuation(connection, parent)
+        if self.source("jobstreaming:linkedin", connection=connection)["state"] not in {"active", "experimental"}:
+            raise AppError("discovery_resume_unavailable", "Enable the LinkedIn source before continuing this search.", 409)
+        wait = connection.execute(
+            """SELECT MAX(json_extract(payload_json, '$.retryAfterSeconds')
+                    - (julianday('now') - julianday(occurred_at)) * 86400)
+               FROM app_events WHERE event_type='DiscoverySourceRateLimited'
+                 AND json_extract(payload_json, '$.board')='linkedin'
+                 AND json_type(payload_json, '$.retryAfterSeconds')='integer'"""
+        ).fetchone()[0]
+        if wait is not None and wait > 0:
+            seconds = ceil(wait)
+            raise AppError("discovery_retry_too_early", f"LinkedIn asked JobCtrl to wait. Try again in {seconds} seconds.",
+                           409, {"retryAfterSeconds": seconds})
+        remaining = prior["settings"]["newJobLimit"] - row["new_jobs"]
+        if remaining <= 0:
+            raise AppError("discovery_resume_unavailable", "This search already reached its new-job limit.", 409)
+        states = {r["unit_id"]: r for r in connection.execute(
+            "SELECT unit_id,status,result_json FROM discovery_units WHERE run_id=?", (parent,)
+        )}
+        inherited = prior.get("resumeUnits")
+        checkpoints = {}
+        for unit in search_units(prior["settings"], isolate_boards=prior.get("boardUnitsVersion") == 1,
+                                 source_fetch_policy=prior.get("sourceFetchPolicy")):
+            key = unit["unit_id"]
+            if unit["sites"] != ["linkedin"] or inherited is not None and key not in inherited:
+                continue
+            state = states.get(key)
+            if state is None:
+                checkpoints[key] = (inherited or {}).get(key)
+                continue
+            failure = json.loads(state["result_json"] or "{}").get("failure", {})
+            if state["status"] in {"deferred", "waiting_for_query_turn", "running"} or (
+                state["status"] == "failed" and failure.get("code") in {BOARD_RATE_LIMIT_CODE, "rate_limited"}
+            ):
+                checkpoints[key] = parent
+        if not checkpoints:
+            raise AppError("discovery_resume_unavailable", "This search has no resumable LinkedIn positions.", 409)
+        return {**prior, "settings": {**prior["settings"], "newJobLimit": remaining},
+                "command_hash": fingerprint(payload), "resumeFromRunId": parent, "resumeUnits": checkpoints}
+
+    @staticmethod
+    def _require_no_continuation(connection, parent):
+        if connection.execute(
+            "SELECT 1 FROM discovery_operations WHERE operation_id=?", ("linkedin-continuation:" + parent,)
+        ).fetchone():
+            raise AppError("discovery_resume_unavailable", "This search was already continued. Open the latest result.", 409)
+
     def claim_run(self, run_id, request):
         request_hash, token, clock = fingerprint(request), str(uuid4()), time.time()
         with self.database.transaction() as conn:
@@ -442,6 +508,10 @@ class DiscoveryRepository:
                 )
                 epoch = row["epoch"] + 1
             else:
+                if parent := request.get("resumeFromRunId"):
+                    self._require_no_continuation(conn, parent)
+                    conn.execute("INSERT INTO discovery_operations VALUES(?,'linkedin_continuation',?,?,?)",
+                                 ("linkedin-continuation:" + parent, request_hash, json.dumps(run_id), now()))
                 conn.execute(
                     "INSERT INTO discovery_runs(run_id,status,request_hash,request_json,owner_token,epoch,lease_until,created_at,updated_at) VALUES(?,'running',?,?,?,1,?,?,?)",
                     (run_id, request_hash, json.dumps(request), token, clock + 120, now(), now()),
@@ -505,13 +575,19 @@ class DiscoveryRepository:
                         "status": r["status"],
                         "newJobs": r["new_jobs"],
                         "observedJobs": r["observed_jobs"],
+                        **({"resumeFromRunId": r["parent"]} if r["parent"] else {}),
+                        **({"continuedByRunId": r["child"]} if r["child"] else {}),
                         "failureCode": r["failure_code"],
                         "failures": [public_board_failure(failure) for failure in
                                      (json.loads(r["result_json"]) if r["result_json"] else {}).get("failures", [])],
                         "createdAt": r["created_at"],
                         "updatedAt": r["updated_at"],
                     }
-                    for r in conn.execute("SELECT * FROM discovery_runs ORDER BY created_at DESC LIMIT 100")
+                    for r in conn.execute("""SELECT recent.*, json_extract(recent.request_json, '$.resumeFromRunId') AS parent,
+                        json_extract(link.result_json, '$') AS child
+                        FROM (SELECT * FROM discovery_runs ORDER BY created_at DESC LIMIT 100) recent
+                        LEFT JOIN discovery_operations link ON link.operation_id='linkedin-continuation:' || recent.run_id
+                        ORDER BY recent.created_at DESC""")
                 ],
             }
 
@@ -701,6 +777,14 @@ class DiscoveryRepository:
                 ),
             )
 
+    def record_rate_limit_response(self, lease, observation):
+        with self.database.transaction() as conn:
+            self.guard_run(conn, lease)
+            self.events.append(
+                conn, "DiscoverySourceRateLimited", observation, feature="discovery",
+                aggregate_id=lease["run_id"], level="warn", stage="board_search",
+            )
+
     def record_board_failure(self, lease, unit, error, *, board=None):
         """Persist the safe unit and source outcome together, before SDK acknowledgement."""
         with self.database.transaction() as conn:
@@ -774,7 +858,7 @@ class DiscoveryRepository:
         return decision
 
     def accept_posting(self, lease, unit, posting, *, jobs, receipt_key, excluded=False, limit=None, cancelled=None,
-                       role_target_decision=None, role_target_unavailable=None):
+                       role_target_decision=None, role_target_unavailable=None, existing_only=False):
         with self.database.transaction() as conn:
             run = self.guard_run(conn, lease)
             if cancelled and cancelled():
@@ -796,7 +880,10 @@ class DiscoveryRepository:
                     receipt_key=receipt_key,
                     connection=conn,
                     guard=lambda current_conn: self.guard_run(current_conn, lease),
+                    existing_only=existing_only,
                 )
+                if saved is None:
+                    return None
                 if saved.get("deleted"):
                     outcome = "operator_deleted"
                 created = outcome == "accepted" and saved.get("capture_created") is True
@@ -875,6 +962,17 @@ class DiscoveryRepository:
         with self.database.connect() as conn:
             return conn.execute("SELECT 1 FROM discovery_intake_receipts WHERE run_id=? AND job_id=? LIMIT 1",
                                 (run_id, job_id)).fetchone() is not None
+
+    def acquired_posting_revision(self, run_id, job_id, revision, source_id):
+        with self.database.connect() as conn:
+            return conn.execute(
+                """SELECT 1 FROM discovery_intake_receipts
+                   WHERE run_id=? AND job_id=? AND outcome='accepted'
+                   AND json_extract(data_json,'$.isNew')=1
+                   AND json_extract(data_json,'$.postingRevision')=?
+                   AND json_extract(data_json,'$.sourceId')=? LIMIT 1""",
+                (run_id, job_id, revision, source_id),
+            ).fetchone() is not None
 
     def source_result(self, lease, source_id, status, *, new_jobs=0, observed_jobs=0, error_code=None, connection=None):
         with nullcontext(connection) if connection is not None else self.database.transaction() as conn:

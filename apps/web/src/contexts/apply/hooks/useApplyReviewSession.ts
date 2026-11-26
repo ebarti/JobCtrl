@@ -64,9 +64,8 @@ export function useApplyReviewSession(jobId: string) {
   const lastRunId = useApplicationDraftStore((state) => state.activeRuns[key]);
   const mutation = useApplicationCommands(jobId);
   const application = query.data;
-  const actionRun = useApplicationActionRun(
-    lastRunId ?? application?.runId ?? null,
-  );
+  const actionRunId = application?.actionRunId ?? lastRunId ?? application?.runId ?? null;
+  const actionRun = useApplicationActionRun(actionRunId);
   useEffect(() => {
     if (
       actionRun.data &&
@@ -91,7 +90,7 @@ export function useApplyReviewSession(jobId: string) {
     rehearsal?.inspection?.status === "manual";
   const approval = application ? payloadApproval(application) : null;
   const active = Boolean(
-    (lastRunId && actionRun.isPending) ||
+    (actionRunId && actionRun.isPending) ||
     (actionRun.data &&
       ["pending", "queued", "running"].includes(actionRun.data.status)),
   );

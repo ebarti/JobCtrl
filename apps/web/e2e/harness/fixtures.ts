@@ -47,6 +47,7 @@ export type ApplicationStack = {
     units: { unitId: string; status: string; resultsPerSite: number | null; sdkFingerprint: string; sdkResultsWanted: number | null; sdkMaxPages: number; result: { termination?: string; sourceTerminations?: Record<string, string> } | null }[];
   }>;
   restartWorker(features?: string): Promise<{ previous: number; current: number }>;
+  restartApi(options?: { freshWorkspace?: boolean }): Promise<void>;
   alternateNamespaceApi(namespace: string): Promise<string>;
   upgradeSource(): Promise<{ previous: number; current: number; backup: string; candidateOrigin: string; mode: "source" | "installed" }>;
   armFitRecoveryPause(operation: "fit.catalog-impact" | "fit.qualification-batch"): Promise<void>;
@@ -111,8 +112,11 @@ type Fixtures = {
   allowResponseError: (
     response: Response,
     expected:
-      | { method: "GET" | "POST" | "PATCH"; status: 409; code: string }
-      | { method: "GET"; status: 404; code: "not_found"; action: "preparation.run"; idempotencyKey: string; databaseInstanceId: string },
+      | { method: "GET" | "POST"; status: 409; code: string }
+      | { method: "PATCH"; status: 409; code: "revision_conflict" }
+      | { method: "PATCH"; status: 409; code: "workspace_changed"; databaseInstanceId: string }
+      | { method: "GET"; status: 404; code: "not_found"; action: "preparation.run" | "preparation.retry" | "requirements.consolidate"; idempotencyKey: string; databaseInstanceId: string },
+    forwardedResponse?: APIResponse,
   ) => Promise<void>;
 };
 
@@ -129,15 +133,14 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
   expectedResponseErrors: async ({}, use) => {
     await use([]);
   },
-  allowResponseError: async ({ app, expectedResponseErrors }, use) => {
-    await use(async (response, expected) => {
+  allowResponseError: async ({ api, app, expectedResponseErrors }, use) => {
+    await use(async (response, expected, forwardedResponse) => {
       expect(response.status()).toBe(expected.status);
       expect(response.request().method()).toBe(expected.method);
       const url = new URL(response.url());
       expect(url.origin).toBe(app.baseURL);
       if (expected.status === 404) {
         expect(expected.method).toBe("GET");
-        expect(expected.action).toBe("preparation.run");
         expect(expected.code).toBe("not_found");
         expect(url.pathname).toBe("/v1/action-runs/by-idempotency-key");
         expect([...url.searchParams.entries()]).toEqual([["action", expected.action]]);
@@ -150,10 +153,27 @@ export const test = base.extend<Fixtures, WorkerFixtures>({
         expect(expected.status).toBe(409);
         if (expected.method === "PATCH") {
           expect(url.pathname).toBe("/v1/profile");
-          expect(expected.code).toBe("revision_conflict");
+          expect(url.search).toBe("");
+          if (expected.code === "workspace_changed") {
+            const headers = await response.request().allHeaders();
+            expect(expected.databaseInstanceId).toMatch(/^[a-f0-9]{64}$/);
+            expect(headers["expected-database-instance-id"]).toBe(expected.databaseInstanceId);
+            const health = await api.get("/v1/health");
+            expect(health.ok()).toBe(true);
+            const current = (await health.json() as { databaseInstanceId?: string }).databaseInstanceId;
+            expect(current).toMatch(/^[a-f0-9]{64}$/);
+            expect(current).not.toBe(expected.databaseInstanceId);
+          } else {
+            expect(expected.code).toBe("revision_conflict");
+          }
         }
       }
-      const body = (await response.json()) as { error?: { code?: unknown } };
+      if (forwardedResponse) {
+        expect(expected.status).toBe(404);
+        expect(forwardedResponse.url()).toBe(response.url());
+        expect(forwardedResponse.status()).toBe(response.status());
+      }
+      const body = (await (forwardedResponse ?? response).json()) as { error?: { code?: unknown } };
       expect(
         body.error?.code,
         "Only the explicitly expected domain refusal may allow its native console entry",

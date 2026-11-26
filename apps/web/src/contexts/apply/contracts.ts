@@ -156,6 +156,7 @@ export const applicationSchema = z.object({
   status: z.string(),
   payloadId: nullableIdentity,
   runId: nullableIdentity,
+  actionRunId: nullableIdentity.optional(),
   latestDecision: decisionSchema.nullable(),
   stopped: z.boolean(),
   updatedAt: z.string().nullable(),

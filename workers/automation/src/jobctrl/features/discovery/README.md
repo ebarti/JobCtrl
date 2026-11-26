@@ -31,6 +31,9 @@ escape hatch.
   accepted job records the receipt and frozen plan identity. A listing without
   a description requires native detail or records a missing source. Explicit query
   overrides and earlier runs retain their respective acquisition contracts.
+  An exact saved LinkedIn card records an observation at the existing Jobs
+  revision before targeted detail or role qualification. It uses no new-job
+  slot and provides no role verdict for the current run.
   Gateway admission atomically records the paid receipt for the run and candidate,
   or for the exact historical review revision. Recovery resolves that receipt
   before any provider call. A matching interrupted legacy receipt also blocks
@@ -54,7 +57,7 @@ escape hatch.
   Only a committed new Jobs identity spends a slot. On restart, intake receipts
   restore each query's count and the provider checkpoint restores its position.
   Backfill can revisit a partial page, preserving its acknowledged receipts.
-  A terminal SDK rate limit defers that board's remaining units for the run.
+  An exhausted SDK retry defers that board's remaining units for the run.
   A streamed error and a directly raised detail error use the same safe
   rate-limit diagnostic. The run list explains older generic messages from
   their recorded board rate-limit code, including after an upgrade.
@@ -138,6 +141,13 @@ that already saved jobs. Preparation assesses only those recorded new IDs and
 does not repeat acquisition to recover them. Source failure with no new jobs
 remains failed. Its action finalizer seals interrupted preparation, and worker
 replay preserves failed job stages until an explicit retry.
+The initial assessment can reuse a complete targeted LinkedIn detail from that
+acquisition when its accepted intake receipt matches the current posting
+revision. Following a terminal LinkedIn rate limit, the initial check for
+remaining LinkedIn listings records `posting_check_deferred_source_rate_limited`.
+An explicit retry or selected-job assessment can check those postings later.
+The LinkedIn transport records each observed HTTP 429 as a
+`DiscoverySourceRateLimited` activity event without affecting SDK retry policy.
 Standalone Discovery remains acquisition-only and reports
 `preparationAvailable: false`. The separate explicit `assess` preparation recipe
 recovers selected saved jobs without another acquisition.
@@ -155,9 +165,19 @@ tables.
 
 `JOBCTRL_JOBSTREAMING_PROVIDER_ENDPOINT` confines registered SDK board traffic to the authenticated loopback boundary of an owned synthetic workspace. Journeys exercise native Indeed responses, LinkedIn listing and detail pages, and the SDK's missing-credential refusal. The installed SDK owns parsing, checkpointing, limits and cancellation throughout these journeys.
 
-Saved-search launch composes model accounting capability from the read-only
-settings snapshot when a fresh semantic query plan is needed. Missing native
-accounting under a finite cap opens a setup action rather than disabling Start
-search or submitting a known-to-fail action. The ModelGateway admission gate
-remains authoritative. Pricing setup preserves criteria, provider, cap and the
-originating route; saving never retries the search.
+Saved searches freeze literal role titles and location/work-arrangement filters.
+Model admission and accounting apply to source-bound role matching and Fit.
+LinkedIn listings and targeted posting details share four-second pacing per run.
+A missing or over-cap retry delay on HTTP 429 stops pending details before
+the stream delivers its error. For saved-role searches the adapter waits for
+the durable page acknowledgement before requesting another listing page.
+Targeted detail reads use the shared pacing deadline and allow two retries
+for an explicit in-window server delay.
+
+An explicit `discovery.search` with only `resumeFromRunId` continues unfinished
+LinkedIn units after a rate limit. Admission verifies the prior outcome, source
+state and server-supplied cooldown. The new run freezes the original criteria
+and remaining budget. Each interrupted unit seeds its own SDK checkpoint with
+the acknowledged cursor and seen keys, including excluded postings. A transactional
+parent-to-child link prevents two successors from spending the same remaining
+budget. Completed jobs retain their original assessment history.

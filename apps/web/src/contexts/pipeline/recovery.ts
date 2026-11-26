@@ -1,5 +1,5 @@
 import { JobCtrlApiError } from "@jobctrl/api-client";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useIsMutating, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { lookupSessionAction, requestWorkspace, useSessionRequestIdentity, type SessionRequestIdentity } from "../../shared/lib/useSessionRequestIdentity.js";
@@ -7,6 +7,23 @@ import { usePorts } from "../../shared/providers/PortsProvider.js";
 import { useTenantId } from "../../shared/providers/TenantProvider.js";
 
 type PreparationAction = "preparation.run" | "preparation.retry";
+export type PreparationRetryRequest = { run_id: string; job_ids?: readonly string[] };
+
+export function preparationRequestInput(action: PreparationAction, body: object) {
+  return JSON.stringify({ action, body });
+}
+
+const requestSummary = {
+  pending: "The previous request is saved. JobCtrl couldn’t confirm it started.",
+  start_failed: "The previous request is saved. JobCtrl couldn’t confirm it started.",
+  queued: "The previous request is queued.",
+  running: "The previous request is running.",
+  succeeded: "The previous request completed.",
+  failed: "The previous request failed.",
+  cancelled: "The previous request was cancelled.",
+};
+
+export const preparationAdmissionKey = (tenantId: string) => ["tenant", tenantId, "preparation", "admission"] as const;
 
 /** A single tab may reconcile one unresolved preparation admission at a time. */
 export function usePreparationRecovery() {
@@ -21,8 +38,9 @@ export function usePreparationRecovery() {
   const multiple = Boolean(run.record && retry.record);
   const ready = run.ready && retry.ready && !multiple;
   const statusKey = ["tenant", tenantId, "preparation", "request-status", record?.operation ?? "", record?.requestId ?? ""] as const;
+  const submitting = useIsMutating({ mutationKey: preparationAdmissionKey(tenantId) }) > 0;
   const status = useQuery({
-    queryKey: statusKey, enabled: ready && Boolean(record), retry: false,
+    queryKey: statusKey, enabled: ready && Boolean(record) && !submitting, retry: false,
     queryFn: () => {
       if (!record) throw new Error("No earlier preparation request is recorded.");
       return lookupSessionAction(http, record);
@@ -32,8 +50,16 @@ export function usePreparationRecovery() {
     meta: { suppressGlobalErrorToast: true },
   });
   const notRecorded = status.error instanceof JobCtrlApiError && status.error.status === 404;
-  const canRetry = Boolean(record && !status.isFetching && !status.data?.cancellationRequested
-    && (notRecorded || ["pending", "start_failed"].includes(status.data?.status ?? "")));
+  const awaitingStart = ["pending", "start_failed"].includes(status.data?.status ?? "");
+  const canRetry = Boolean(record && !submitting && !checkingManual && !status.data?.cancellationRequested
+    && (notRecorded || (!status.error && awaitingStart)));
+  let summary = "Checking whether the previous request started…";
+  if (notRecorded) summary = "JobCtrl has no record of the previous request yet.";
+  else if (status.error) summary = "JobCtrl couldn’t check the previous request. Try checking again.";
+  else if (status.data) {
+    const stopping = status.data.cancellationRequested && (awaitingStart || ["queued", "running"].includes(status.data.status));
+    summary = stopping ? "The previous request is stopping." : requestSummary[status.data.status];
+  }
 
   function current(): SessionRequestIdentity | null {
     const a = run.current();
@@ -45,15 +71,17 @@ export function usePreparationRecovery() {
 
   return {
     ready, error: multiple ? new Error("Multiple preparation requests need reconciliation.") : run.error ?? retry.error,
-    record, status: status.data, statusError: status.error, checking: status.isFetching || checkingManual, canRetry, message,
-    permits(action: PreparationAction) { return ready && (!record || (record.operation === action && canRetry)); },
+    record, status: status.data, summary, checking: status.isFetching || checkingManual, canRetry, message,
+    permits(action: PreparationAction) {
+      return ready && (!record || (action === "preparation.run" && record.operation === action && canRetry));
+    },
     async begin(action: PreparationAction, body: object) {
       if (!ready) throw new Error("Session recovery storage is unavailable. Restore it before starting preparation.");
-      const fingerprint = await requestIdentity.fingerprint(JSON.stringify({ action, body }));
+      const fingerprint = await requestIdentity.fingerprint(preparationRequestInput(action, body));
       const workspace = await requestWorkspace(http);
       const previous = current();
       if (previous && (previous.operation !== action || previous.fingerprint !== fingerprint)) {
-        throw new Error("These inputs do not match the earlier preparation request. Check that request before starting different work.");
+        throw new Error("The previous request used a different selection. Check its status or return to its original selections.");
       }
       if (previous && (previous.workspaceId !== workspace.workspaceId || previous.databaseInstanceId !== workspace.databaseInstanceId)) {
         throw new Error("This request belongs to a different workspace or database. Return there to reconcile it.");
@@ -61,8 +89,8 @@ export function usePreparationRecovery() {
       if (previous) {
         try {
           const observed = await lookupSessionAction(http, previous);
-          if (!["pending", "start_failed"].includes(observed.status)) {
-            throw new Error(`The previous request is recorded as ${observed.status}. Check it before starting more work.`);
+          if (observed.cancellationRequested || !["pending", "start_failed"].includes(observed.status)) {
+            throw new Error("The previous request now has a recorded status. Check it before starting more work.");
           }
         } catch (error) {
           if (!(error instanceof JobCtrlApiError && error.status === 404)) throw error;
@@ -82,22 +110,21 @@ export function usePreparationRecovery() {
     refresh() { void client.invalidateQueries({ queryKey: ["tenant", tenantId, "preparation", "request-status"] }); },
     async check() {
       setCheckingManual(true);
+      setMessage(null);
       try {
         const previous = current();
-        if (!previous) return;
-        const observed = await lookupSessionAction(http, previous);
+        if (!previous || previous.requestId !== record?.requestId) return;
+        const checked = await status.refetch();
+        const observed = checked.data;
+        if (checked.error || !observed) return;
         if (["queued", "running", "succeeded", "failed", "cancelled"].includes(observed.status)) {
-          if (current()?.requestId !== previous.requestId) throw new Error("The earlier request changed while its status was checked.");
+          if (current()?.requestId !== previous.requestId) return;
           identityFor(previous.operation).clear(previous.requestId);
-          setMessage(`Previous preparation is recorded as ${observed.status}. Its admission has been reconciled.`);
-        } else {
-          setMessage(`Previous preparation is ${observed.status}. Retry only the same command with its saved identity.`);
+          setMessage(`${requestSummary[observed.status]} See preparation history for details.`);
+          void client.invalidateQueries({ queryKey: ["tenant", tenantId, "preparation"] });
         }
-        void client.invalidateQueries({ queryKey: ["tenant", tenantId, "preparation"] });
       } catch (error) {
-        setMessage(error instanceof JobCtrlApiError && error.status === 404
-          ? "No admission is recorded at this instant. Retry only the exact previous command with its saved identity."
-          : error instanceof Error ? `Request status is unavailable: ${error.message}` : "Request status is unavailable.");
+        setMessage(error instanceof Error ? error.message : "Couldn’t check the previous request.");
       } finally {
         setCheckingManual(false);
       }
