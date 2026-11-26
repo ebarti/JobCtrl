@@ -3,7 +3,7 @@ import { baseline, createBaseline } from "./core-data.js";
 
 test.use({ nativeAccountingPreflight: true, features: "profile,jobs,discovery" });
 
-test("native Discovery preflight explains missing accounting and Start search opens contextual pricing setup without spending", async ({ api, app, page }, testInfo) => {
+test("native Discovery preflight explains missing accounting and links to contextual pricing setup without spending", async ({ api, app, page }, testInfo) => {
   // Ordinary native gateway, no model boundary replacement. The missing quote
   // must refuse before a native provider/credential call. Never launch a model
   // after saving the deliberately synthetic quote used to test the editor.
@@ -38,13 +38,10 @@ test("native Discovery preflight explains missing accounting and Start search op
   const originalSearch = new URL(page.url()).search;
   const start = page.getByRole("button", { name: "Start search", exact: true });
   await expect(start).toBeEnabled();
-  await start.click();
-  const dialog = page.getByRole("dialog", { name: "Set up search cost tracking" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("codex:gpt-6");
-  await expect(dialog).toContainText("$25 daily budget");
+  const feedback = page.getByRole("region", { name: "Job search progress" });
+  await expect(feedback.getByText("selected model needs monetary cost tracking", { exact: false })).toBeVisible();
   await testInfo.attach("actionable-accounting-setup", { contentType: "image/png", body: await page.screenshot({ animations: "disabled" }) });
-  await dialog.getByRole("link", { name: "Review spending setup" }).click();
+  await feedback.getByRole("link", { name: "Review spending setup" }).click();
   await expect(page.getByRole("heading", { name: "Budgets and pricing", exact: true })).toBeVisible();
   const quote = { "codex:gpt-6": { inputUsdPerMillion: 1, outputUsdPerMillion: 2, source: "Owned synthetic QA quote; not provider pricing", revision: "synthetic-accounting-journey-v1" } };
   await page.getByRole("textbox", { name: "Model pricing quotes", exact: true }).fill(JSON.stringify(quote));

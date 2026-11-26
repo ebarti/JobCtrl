@@ -425,6 +425,10 @@ class DiscoveryService:
         if "resumeUnits" in request:
             units = [unit for unit in units if unit["unit_id"] in request["resumeUnits"]]
             execution_settings["_resumeUnits"] = request["resumeUnits"]
+        if units and not saved and "resumeFromRunId" not in request and request.get("roleTargetPolicy"):
+            # Saved-role queries are literal. Admission of new postings can
+            # require a role decision, so check its accounting before reading a board.
+            self.model.preflight_cost_accounting()
         lease = self.repository.claim_run(run_id, request)
         if lease["completed"]:
             return lease["result"]

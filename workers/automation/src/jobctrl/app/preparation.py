@@ -28,7 +28,7 @@ STAGES = {
     "prepare": ("requirements", "fit", "compose", "review", "render"),
 }
 DISCOVERY_RECIPES = {"run", "discover", "search"}
-DISCOVERY_KEYS = {"queries", "locations", "boards", "newJobLimit", "resultsPerSite", "hoursOld", "expectedProfileVersion"}
+DISCOVERY_KEYS = {"queries", "locations", "boards", "newJobLimit", "resultsPerSite", "hoursOld", "expectedProfileVersion", "resumeFromRunId"}
 TERMINAL_STEPS = {"succeeded", "skipped", "warning"}
 COHORT_POLICY = "search-cohort-v1"
 COHORT_PRODUCERS = ("enrich", "role_analysis", "requirements_extract")

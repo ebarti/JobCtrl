@@ -62,29 +62,36 @@ class _LinkedInRequests:
             try:
                 return fetch()
             except RateLimitError as error:
-                if attempt == 2 or error.retry_after is None or error.retry_after > self.pacing.max_retry_after_seconds:
+                if self.deferred.is_set() or attempt == 2 or error.retry_after is None or error.retry_after > self.pacing.max_retry_after_seconds:
                     raise
 
     def send(self, unit_id, send_request, request, *args, **kwargs):
-        from jobstreaming.exception import RateLimitError, StreamCancelledError, parse_retry_after
+        from jobstreaming.exception import RateLimitError, StreamCancelledError
+
+        def deferred_error():
+            error = RateLimitError("LinkedIn deferred this search.")
+            # The workspace owns continuation of this cursor, outside the SDK retry loop.
+            error.retryable = False
+            return error
 
         if self.deferred.is_set():
-            raise RateLimitError("LinkedIn deferred this search.")
+            raise deferred_error()
         try:
             with self.pacing.slot("linkedin", min_interval_seconds=LINKEDIN_REQUEST_INTERVAL_SECONDS,
                                   max_concurrency=1, cancel_event=self.stop):
                 if self.deferred.is_set():
-                    raise RateLimitError("LinkedIn deferred this search.")
+                    raise deferred_error()
                 response = send_request(request, *args, **kwargs)
                 self.observe(unit_id, response)
                 if response.status_code == 429:
-                    retry_after = parse_retry_after(response.headers.get("Retry-After"))
-                    # A bare or over-cap 429 is terminal in the SDK. Stop queued
-                    # detail requests as well, before the stream error is consumed.
+                    retry_after = _retry_after_seconds(response.headers.get("Retry-After"), datetime.now(timezone.utc))
+                    # The SDK caps long Retry-After values before classifying them.
+                    # Preserve the original deadline and release the worker to assess saved jobs.
                     if retry_after is None or retry_after > self.pacing.max_retry_after_seconds:
                         self.deferred.set()
-                    else:
-                        self.pacing.note_retry_after("linkedin", retry_after)
+                        response.close()
+                        raise deferred_error()
+                    self.pacing.note_retry_after("linkedin", retry_after)
                 return response
         except CancelledError:
             raise StreamCancelledError("Discovery stopped.") from None

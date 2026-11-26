@@ -41,6 +41,9 @@ test("a fresh comparison can retain alternative prior backgrounds as one demand 
   expect(await start("original-background")).toBe(original);
   expect(app.external.calls.filter(call => call.path === "/model")).toHaveLength(2);
   const fresh = await start("new-background");
+  const currentExtraction = await modelCall(app, "requirements.extract");
+  expect(currentExtraction.body.prompt_version).not.toBe(extraction.body.prompt_version);
+  currentExtraction.reply(typedExtraction(currentExtraction, { requirements: rows }));
   const comparison = await modelCall(app, "requirements.match_catalog");
   expect(comparison.body["prompt_version"]).toBe(REFRESH_NORMALIZATION_PROMPT_VERSION);
   expect(comparison.body["instructions"]).toContain("SOURCE-ESTABLISHED ALTERNATIVES IN PRIOR BACKGROUND");
@@ -90,7 +93,7 @@ test("a fresh comparison can retain alternative prior backgrounds as one demand 
   expect(await json(api, "get", path)).toEqual(accepted);
   expect(await json(api, "get", `/v1/jobs/${additional.job_id}/requirements`)).toBeNull();
   expect(app.external.calls.filter(call => call.path === "/model").map(call => call.body["operation"])).toEqual([
-    "requirements.extract", "requirements.match_catalog", "requirements.match_catalog", "fit.qualification-batch",
+    "requirements.extract", "requirements.match_catalog", "requirements.extract", "requirements.match_catalog", "fit.qualification-batch",
     "requirements.extract", "requirements.match_catalog",
   ]);
 });
