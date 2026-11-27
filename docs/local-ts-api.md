@@ -180,6 +180,16 @@ from. Each event includes `receivedAt` (UTC), `unitId`, `phase` (`listing`,
 and cumulative `responses` for that run and board through the reported 429. `retryAfterSeconds`
 is the provider's requested delay or `null` when the header is absent or
 unusable. New events also record the effective deadline in `retryAtEpochSeconds`.
+New LinkedIn HTTP 429 events also include `ordinaryRequestIntervalSeconds`,
+the workspace-wide spacing for ordinary requests after this response (4–16 seconds).
+The saved retry deadline controls the interrupted request.
+On an observed LinkedIn 429, `requestedAt` is the UTC transport dispatch time.
+When an earlier request sample is available in that run for the same board,
+`previousRunBoardRequest` contains its dispatch time, phase and HTTP status,
+and `requestStartIntervalMs` gives the difference between the two dispatches.
+The first request and older records can lack a previous sample. The timing
+covers the Discovery search transport. Its response counters retain their
+listing, detail and other totals.
 For targeted posting details, `receiptKey` identifies the saved listing.
 `DiscoverySourceRetryResponse` joins the subsequent HTTP response to that
 deadline, unit and phase, with the receipt key when available. Its UTC

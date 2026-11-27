@@ -1,10 +1,24 @@
 import type { APIRequestContext } from "@playwright/test";
-import { action, completed, expect, json, test, type ApplicationStack } from "../harness/fixtures.js";
+import { action, completed, expect, json, test as appTest, type ApplicationStack } from "../harness/fixtures.js";
 import { linkedinCard } from "./linkedin-data.js";
 import { indeedPage } from "./indeed-data.js";
 
 const listing = "/jobstreaming/linkedin/jobs-guest/jobs/api/seeMoreJobPostings/search";
 const detail = "/jobstreaming/linkedin/jobs/view/8122";
+
+// These acquisition journeys leave supervised assessments enabled. An admitted
+// assessment that needs its posting page gets a real, terminal HTTP response.
+const test = appTest.extend<{ unavailableAssessmentPages: void }>({
+  unavailableAssessmentPages: [async ({ app }, use) => {
+    const finished = use().then(() => null);
+    while (true) {
+      const page = await Promise.race([finished,
+        app.external.next({ timeout: 95_000, match: (call) => call.path === "/posting-page" })]);
+      if (!page) return;
+      page.raw("This synthetic posting is unavailable.", { status: 404 });
+    }
+  }, { auto: true }],
+});
 
 async function nextLinkedIn(app: ApplicationStack) {
   const call = await app.external.next({ timeout: 35_000, match: (request) => request.path.startsWith("/jobstreaming/linkedin/") });

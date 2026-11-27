@@ -12,9 +12,12 @@ import time
 from uuid import uuid4
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
-from jobctrl.features.discovery.domain import BOARD_RATE_LIMIT_CODE, DEFAULT_SETTINGS, fingerprint, now, posting_receipt_key, public_board_failure, search_units, validate_settings
+from jobctrl.features.discovery.domain import (
+    BOARD_RATE_LIMIT_CODE, DEFAULT_SETTINGS, LINKEDIN_MAX_ORDINARY_INTERVAL_SECONDS, LINKEDIN_REQUEST_INTERVAL_SECONDS,
+    fingerprint, now, posting_receipt_key, public_board_failure, search_units, validate_settings,
+)
 from jobctrl.features.discovery.qualification import posting_role_evidence, role_binding
-from jobctrl.features.discovery.retry_turns import record_retry_turn
+from jobctrl.features.discovery.retry_turns import due_retry, record_retry_turn
 
 
 class DiscoveryRepository:
@@ -847,7 +850,26 @@ class DiscoveryRepository:
             row = conn.execute("SELECT retry_at FROM discovery_provider_cooldowns WHERE board=?", (board,)).fetchone()
             return row[0] if row else 0.0
 
-    def reserve_board_request(self, lease, board, interval):
+    @staticmethod
+    def _linkedin_interval(conn):
+        row = conn.execute("SELECT result_json FROM discovery_operations WHERE operation_id='request-spacing:linkedin'").fetchone()
+        return json.loads(row[0]) if row else LINKEDIN_REQUEST_INTERVAL_SECONDS
+
+    def _observe_linkedin_interval(self, conn, status):
+        previous = self._linkedin_interval(conn)
+        if status == 429:
+            seconds = min(LINKEDIN_MAX_ORDINARY_INTERVAL_SECONDS, previous + LINKEDIN_REQUEST_INTERVAL_SECONDS)
+        else:
+            seconds = max(LINKEDIN_REQUEST_INTERVAL_SECONDS, previous - 1)
+        if seconds != previous:
+            conn.execute(
+                "INSERT INTO discovery_operations VALUES('request-spacing:linkedin','board_spacing','linkedin',?,?) "
+                "ON CONFLICT(operation_id) DO UPDATE SET result_json=excluded.result_json",
+                (json.dumps(seconds), now()),
+            )
+        return seconds
+
+    def reserve_board_request(self, lease, board, interval, *, unit_id=None, phase=None, receipt_key=None):
         """Enforce source pacing across page turns, other runs and worker replacement."""
         with self.database.transaction() as conn:
             if lease is not None:
@@ -859,6 +881,15 @@ class DiscoveryRepository:
                     return {"cooldown": row["retry_at"] - clock, "pace": 0}
                 if row["next_request_at"] > clock:
                     return {"cooldown": 0, "pace": row["next_request_at"] - clock}
+                if board == "linkedin":
+                    # Only the recorded interrupted request bypasses the extra ordinary spacing.
+                    # The provider deadline and native minimum have already elapsed for every caller.
+                    ordinary_at = row["next_request_at"] + self._linkedin_interval(conn) - LINKEDIN_REQUEST_INTERVAL_SECONDS
+                    if ordinary_at > clock:
+                        state = (self._linkedin_retry_state(conn, lease["run_id"], self._board_responses(conn, lease["run_id"], board))
+                                 if lease is not None and unit_id else {})
+                        if not due_retry(state, unit_id, phase, receipt_key, clock):
+                            return {"cooldown": 0, "pace": ordinary_at - clock}
             conn.execute("INSERT INTO discovery_provider_cooldowns(board,next_request_at) VALUES(?,?) "
                          "ON CONFLICT(board) DO UPDATE SET next_request_at=excluded.next_request_at", (board, clock + interval))
         return {"cooldown": 0, "pace": 0}
@@ -922,6 +953,20 @@ class DiscoveryRepository:
             state = self._linkedin_retry_state(conn, lease["run_id"], observations) if board == "linkedin" else None
             counts = {key: observations[key] for key in ("listing", "detail", "other")}
             counts[phase] += 1
+            ordinary_interval = None
+            if board == "linkedin" and (status == 429 or 200 <= status < 300):
+                ordinary_interval = self._observe_linkedin_interval(conn, status)
+            timing = {}
+            if board == "linkedin":
+                requested_at = requested.isoformat(timespec="milliseconds")
+                previous = observations.get("lastRequest")
+                timing["requestedAt"] = requested_at
+                # A late response to an earlier dispatch cannot replace the latest sample.
+                if not previous or previous["requestedAt"] <= requested_at:
+                    if status == 429 and previous:
+                        delta = datetime.fromisoformat(requested_at) - datetime.fromisoformat(previous["requestedAt"])
+                        timing.update(previousRunBoardRequest=previous, requestStartIntervalMs=round(delta.total_seconds() * 1000))
+                    observations["lastRequest"] = {"requestedAt": requested_at, "phase": phase, "httpStatus": status}
             deadline = None
             if status == 429:
                 started = datetime.fromisoformat(run["created_at"])
@@ -929,6 +974,8 @@ class DiscoveryRepository:
                     "board": board, "unitId": unit_id, "phase": phase, "httpStatus": status,
                     "leaseEpoch": lease["epoch"], "responses": counts, "elapsedMs": max(0, round((received - started).total_seconds() * 1000)),
                     "receivedAt": received.isoformat(timespec="milliseconds"), "retryAfterSeconds": delay,
+                    **timing,
+                    **({"ordinaryRequestIntervalSeconds": ordinary_interval} if ordinary_interval is not None else {}),
                     **({"receiptKey": receipt_key} if receipt_key else {}),
                 }, received_at=received.timestamp(), connection=conn)
             if state is not None:
@@ -939,6 +986,8 @@ class DiscoveryRepository:
                         "requestedAt": requested.isoformat(timespec="milliseconds"), "receivedAt": received.isoformat(timespec="milliseconds")},
                         feature="discovery", aggregate_id=lease["run_id"], stage="board_search")
             stored = {**counts, **({"retryTurns": state} if state is not None else {})}
+            if board == "linkedin":
+                stored["lastRequest"] = observations["lastRequest"]
             self._save_board_responses(conn, run, board, stored)
 
     def record_rate_limit_response(self, lease, observation, *, received_at=None, connection=None):

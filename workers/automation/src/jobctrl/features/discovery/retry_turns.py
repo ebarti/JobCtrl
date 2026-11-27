@@ -16,12 +16,16 @@ def select_retry_turn(fair_units, state):
     return eligible[queued[0]], None
 
 
+def due_retry(state, unit_id, phase, receipt_key, requested_at):
+    return next((item for item in state.get("pending", []) if item["unitId"] == unit_id
+                 and item["phase"] in (phase, "acquisition")
+                 and (not item.get("receiptKey") or item["receiptKey"] == receipt_key)
+                 and requested_at >= item["retryAtEpochSeconds"]), None)
+
+
 def record_retry_turn(state, unit_id, phase, receipt_key, requested_at, deadline):
     pending = list(state.get("pending", []))
-    previous = next((item for item in pending if item["unitId"] == unit_id
-                     and item["phase"] in (phase, "acquisition")
-                     and (not item.get("receiptKey") or item["receiptKey"] == receipt_key)
-                     and requested_at >= item["retryAtEpochSeconds"]), None)
+    previous = due_retry(state, unit_id, phase, receipt_key, requested_at)
     yielded = state.get("yieldToPeerOf")
     if yielded != unit_id and any(item["unitId"] == yielded and requested_at >= item["retryAtEpochSeconds"] for item in pending):
         yielded = None

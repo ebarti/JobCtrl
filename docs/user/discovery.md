@@ -348,6 +348,11 @@ owns how the accepted analysis supplies qualified requirements and person fit.
 
 JobStreaming performs board searches and retrieves supported posting details. Each board has its own access requirements, supported search filters, native page sizes and safety limits. JobCtrl records board-specific authentication failures and rate limits alongside accepted jobs. LinkedIn listing requests and targeted detail requests share a four-second
 minimum interval between request starts across searches and worker restarts.
+Each LinkedIn HTTP 429 adds four seconds to ordinary request spacing, up to
+16 seconds. Each successful LinkedIn search HTTP response reduces the spacing
+by one second until it reaches four again. JobCtrl remembers the interval
+across searches and restarts. The interrupted request can retry at its saved
+deadline once the four-second minimum has passed.
 
 The activity log records when a LinkedIn listing or detail request receives HTTP
 429, the number of responses received and the requested delay. The Jobs page
