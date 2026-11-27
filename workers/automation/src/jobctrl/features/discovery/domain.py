@@ -49,6 +49,10 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def excluded_title(settings, title):
+    return (title or "").strip().casefold() in {str(item).strip().casefold() for item in settings["exactTitleExclusions"]}
+
+
 def fingerprint(value):
     return hashlib.sha256(
         json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()

@@ -84,7 +84,10 @@ accepted observations of previously saved jobs. `roleTargetObservations` shows
 the number of role checks by verdict and the count missing a posting description.
 Filtered listings are recorded separately from observations admitted to Jobs.
 During a saved-role search, JobCtrl finishes checking each page of LinkedIn
-keyword matches before requesting the next page.
+keyword matches before requesting the next page. While one role check runs,
+JobCtrl can retrieve the next description on that page when at least two
+new-job places remain for the search and query. Role checks and saved results
+follow the order in which the cards arrived.
 During a saved-role LinkedIn search, an exact match to a saved posting is
 recorded as a listing observation. The search keeps the saved revision and
 skips the detail request and role check. Use the job's manual checks to refresh it.

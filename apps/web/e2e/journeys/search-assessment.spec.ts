@@ -2,7 +2,7 @@ import { indeedPage } from "./indeed-data.js";
 import { linkedinCard } from "./linkedin-data.js";
 import { test, expect, json, action, completed, terminal, modelCall, type ApplicationStack, type ExternalCall } from "../harness/fixtures.js";
 import { baseline, createBaseline, createPosting } from "./core-data.js";
-import { serveRoleTarget } from "./discovery-role-scope-data.js";
+import { replyRoleTarget, roleTargetStream, serveRoleTarget } from "./discovery-role-scope-data.js";
 import type { FitState } from "./fit-data.js";
 import { servePostingAssessment, serveSavedAssessment } from "./search-assessment-data.js";
 import type { NormalizedSnapshot } from "./consolidation-data.js";
@@ -17,7 +17,6 @@ function externalStream(app: ApplicationStack, match: (call: ExternalCall) => bo
 const assessments = (app: ApplicationStack) => externalStream(app,
   (call) => !call.path.startsWith("/jobstreaming/") && call.body["operation"] !== "discovery.role_target_match");
 const boardPage = (app: ApplicationStack) => app.external.next({ match: (call) => call.path === "/jobstreaming/indeed" });
-const roleMatches = (app: ApplicationStack) => externalStream(app, (call) => call.body["operation"] === "discovery.role_target_match");
 
 test("saved-role LinkedIn discovery fetches details only for new postings", async ({ api, app }) => {
   const { profile, library } = await createBaseline(api, { ...baseline,
@@ -32,7 +31,7 @@ test("saved-role LinkedIn discovery fetches details only for new postings", asyn
   const search = await action(api, "discovery.search", { queries: [], locations: [], expectedProfileVersion: profile.profileVersion });
   const listing = await app.external.next();
   expect(listing.path).toContain("/jobstreaming/linkedin/jobs-guest/jobs/api/seeMoreJobPostings/search?");
-  listing.raw(linkedinCard(1234) + linkedinCard(1235));
+  listing.raw(linkedinCard(1234) + linkedinCard(1235) + linkedinCard(1236));
   const detail = await app.external.next();
   expect(detail.path).toBe("/jobstreaming/linkedin/jobs/view/1235");
   detail.raw('<div class="show-more-less-html__markup"><p>Maintain durable workflow recovery.</p></div>');
@@ -70,10 +69,13 @@ test("search assesses the exact saved LinkedIn detail after a later posting is t
   expect(firstDetail.path).toBe("/jobstreaming/linkedin/jobs/view/1234");
   const description = "Maintain durable workflow recovery.";
   firstDetail.raw(`<div class="show-more-less-html__markup"><p>${description}</p></div>`);
-  await serveRoleTarget(app, "match");
+  const firstReview = await modelCall(roleTargetStream(app), "discovery.role_target_match");
   const secondDetail = await app.external.next({ match: (call) => call.path === "/jobstreaming/linkedin/jobs/view/1235" });
   expect(secondDetail.path).toBe("/jobstreaming/linkedin/jobs/view/1235");
   secondDetail.raw("Private synthetic response", { status: 429, headers: { "Retry-After": "601" } });
+  await expect.poll(async () => (await json<{ events: unknown[] }>(api, "get",
+    `/v1/events?aggregateId=${started.runId}&type=DiscoverySourceRateLimited`)).events.length).toBe(1);
+  replyRoleTarget(firstReview, "match");
   await serveSavedAssessment(app, library);
 
   const jobs = await json<{ jobs: { job_id: string }[] }>(api, "get", "/v1/jobs");
@@ -128,12 +130,15 @@ test("saved search checks each LinkedIn page before requesting the next with lit
   expect(detail.path).toBe("/jobstreaming/linkedin/jobs/view/1237");
   expect(detailStart - listingStart).toBeGreaterThan(3500);
   detail.raw('<div class="show-more-less-html__markup"><p>Maintain durable workflow recovery.</p></div>');
-  await serveRoleTarget(roleMatches(app), "match");
-  const scoring = serveSavedAssessment(assessments(app), library);
-  const secondDetail = await app.external.next({ match: (call) => call.path === "/jobstreaming/linkedin/jobs/view/1238" });
-  expect(secondDetail.path).toBe("/jobstreaming/linkedin/jobs/view/1238");
+  const firstReview = await modelCall(roleTargetStream(app), "discovery.role_target_match");
+  const secondDetail = await app.external.next({ timeout: 12_000, match: (call) => call.path === "/jobstreaming/linkedin/jobs/view/1238" });
+  expect(performance.now() - detailStart).toBeGreaterThan(3500);
   secondDetail.raw('<div class="show-more-less-html__markup"><p>Review supplier contracts.</p></div>');
-  await serveRoleTarget(roleMatches(app), "mismatch");
+  expect(app.external.calls.filter((call) => call.path.includes("/seeMoreJobPostings/search"))).toHaveLength(1);
+  expect(app.external.calls.filter((call) => call.body?.["operation"] === "discovery.role_target_match")).toHaveLength(1);
+  replyRoleTarget(firstReview, "match");
+  const scoring = serveSavedAssessment(assessments(app), library);
+  await serveRoleTarget(roleTargetStream(app), "mismatch");
   const continuation = await app.external.next({ match: (call) => call.path.includes("/seeMoreJobPostings/search") });
   expect(new URL(continuation.path, "http://localhost").searchParams.get("start")).toBe("10");
   expect(performance.now() - detailStart).toBeGreaterThan(3500);

@@ -103,7 +103,11 @@ escape hatch.
 - The pinned JobStreaming explicit-ack stream saves provider cursor headers,
   ordered seen keys and each received posting in PostgreSQL. A listing and
   its acknowledgement commit together. The adapter drains pending postings
-  before opening the next page. Accepting a new job, its intake receipt, the
+  before opening the next page. During saved-role LinkedIn intake, one targeted
+  detail read may overlap the preceding card's role review within that page.
+  The read uses the same source pacing and persists to its own receipt. The
+  worker settles the current intake before acting on a later detail failure
+  and joins the read within its lease. Accepting a new job, its intake receipt, the
   new-job count and its independent DBOS assessment enqueue share a transaction.
   Cursor schema/fingerprint errors fail explicitly. Epoch checks fence stale writers.
 - When LinkedIn returns the same native posting ID to overlapping queries in one run,
