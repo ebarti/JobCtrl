@@ -7,15 +7,13 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
-from math import ceil
 from pathlib import Path
 import threading
 from urllib.parse import urlsplit
 
 from jobctrl.app.errors import AppError
 from jobctrl.features.discovery.adapters.board_diagnostics import board_access_error, board_rate_limit_error
-from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, excluded_title, posting_receipt_key
+from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, excluded_title, posting_receipt_key, retry_after_seconds
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY
 from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
 from jobctrl.features.discovery.adapters.checkpoints import ProviderCheckpointStore
@@ -28,21 +26,6 @@ class _Listing:
     excluded_by_age: bool
     needs_role_check: bool
     fetch_detail: Callable[[], Awaitable[str | None]]
-
-
-def _retry_after_seconds(value, received_at):
-    if not value or len(value) > 128:
-        return None
-    value = value.strip()
-    if value.isascii() and value.isdecimal():
-        return int(value)
-    try:
-        retry_at = parsedate_to_datetime(value)
-        if retry_at.tzinfo is not None:
-            return max(0, ceil((retry_at - received_at).total_seconds()))
-    except (TypeError, ValueError, OverflowError):
-        pass
-    return None
 
 
 class _BoardRequests:
@@ -58,10 +41,27 @@ class _BoardRequests:
         self.advertised = False
         self.transient_delay = None
 
+    def _coordinates(self, url):
+        from jobctrl.features.discovery.adapters.jobstreaming import detail_job_key
+
+        if self.board != "linkedin":
+            return "listing", None
+        path = urlsplit(url or "").path
+        if path.endswith("/jobs-guest/jobs/api/seeMoreJobPostings/search"):
+            return "listing", None
+        if "/jobs/view/" in path:
+            key = detail_job_key.get()
+            receipt = posting_receipt_key(self.lease["run_id"], self.unit_id, self.board, key) if key else None
+            return "detail", receipt
+        return "other", None
+
     def send(self, send_request, *args, **kwargs):
         from jobstreaming.exception import RateLimitError, StreamCancelledError
+        request = args[0] if args else kwargs.get("request")
+        phase, receipt = self._coordinates(getattr(request, "url", None))
         while not self.stop.is_set() and not self.cancelled():
-            slot = self.repository.reserve_board_request(self.lease, self.board, self.interval)
+            slot = self.repository.reserve_board_request(self.lease, self.board, self.interval,
+                                                         unit_id=self.unit_id, phase=phase, receipt_key=receipt)
             if slot["cooldown"] > 0:
                 self.limited = self.advertised = True
                 raise RateLimitError("The source is cooling down.", retry_after=slot["cooldown"])
@@ -76,22 +76,14 @@ class _BoardRequests:
         raise StreamCancelledError("Discovery stopped.")
 
     def observe(self, response, requested):
-        from jobctrl.features.discovery.adapters.jobstreaming import detail_job_key
-
-        path = urlsplit(getattr(response, "url", "") or "").path
-        phase = "listing"
-        if self.board == "linkedin":
-            phase = ("listing" if path.endswith("/jobs-guest/jobs/api/seeMoreJobPostings/search")
-                     else "detail" if "/jobs/view/" in path else "other")
+        phase, receipt = self._coordinates(getattr(response, "url", None))
         observed = datetime.now(timezone.utc)
-        delay = _retry_after_seconds(response.headers.get("Retry-After"), observed)
+        delay = retry_after_seconds(response.headers.get("Retry-After"), observed)
         if response.status_code == 429:
             self.limited = True
             self.advertised = delay is not None and delay > 0
         elif response.status_code in {408, 425} or 500 <= response.status_code < 600:
             self.transient_delay = delay
-        key = detail_job_key.get() if phase == "detail" else None
-        receipt = posting_receipt_key(self.lease["run_id"], self.unit_id, self.board, key) if key else None
         self.repository.provider_response(self.lease, self.board, self.unit_id, phase,
                                           response.status_code, observed, delay, self.interval, requested, receipt)
 

@@ -12,6 +12,7 @@ import {
 import { applicationStack, postgresStack } from "./runtime.mjs";
 
 export type ExternalCall = {
+  receivedAtMs: number;
   method: string;
   path: string;
   body: Record<string, unknown>;

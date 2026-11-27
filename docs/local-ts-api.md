@@ -175,11 +175,25 @@ code with a generic message.
 Historical action receipts and already-published events retain their original fields.
 `GET /v1/events?aggregateId={run_id}&type=DiscoverySourceRateLimited` lists
 individual LinkedIn HTTP 429 responses, including attempts that the SDK recovered
-from. Each event includes `receivedAt` (UTC), `unitId`, `phase` (`listing`,
-`detail`, or `other`), `leaseEpoch`, `elapsedMs` since the discovery run started,
+from. Each HTTP event includes `receivedAt` (UTC), `phase` (`listing`,
+`detail`, `other` or `assessment`), `elapsedMs` since the discovery run started,
 and cumulative `responses` for that run and board through the reported 429. `retryAfterSeconds`
 is the provider's requested delay or `null` when the header is absent or
 unusable. New events also record the effective deadline in `retryAtEpochSeconds`.
+New LinkedIn HTTP 429 events also include `ordinaryRequestIntervalSeconds`,
+the workspace-wide spacing for ordinary requests after this response (4–16 seconds).
+The saved retry deadline controls the interrupted request.
+On an observed LinkedIn 429, `requestedAt` is the UTC transport dispatch time.
+When an earlier request sample is available in that run for the same board,
+`previousRunBoardRequest` contains its dispatch time, phase and HTTP status,
+and `requestStartIntervalMs` gives the difference between the two dispatches.
+The first request and older records can lack a previous sample. The
+`listing`, `detail` and `other` counts cover JobStreaming. A search that
+checks a posting through its initial assessment also counts observed top-level
+LinkedIn navigation responses under `assessment`. On a 429, that phase identifies
+the accepted intake `receiptKey`, `jobId` and `postingRevision`. The event
+belongs to the search and shares its durable board deadline. SDK requests
+carry their `unitId` and `leaseEpoch`. The event omits the posting URL and headers.
 For targeted posting details, `receiptKey` identifies the saved listing.
 `DiscoverySourceRetryResponse` joins the subsequent HTTP response to that
 deadline, unit and phase, with the receipt key when available. Its UTC

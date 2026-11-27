@@ -160,6 +160,12 @@ An explicit retry or selected-job assessment can check those postings later.
 The LinkedIn transport records each observed HTTP 429 and its effective Unix
 retry timestamp together. The `DiscoverySourceRateLimited` activity event and
 the run's `cooldowns` expose the same deadline.
+An initial assessment can observe a 429 on the top-level LinkedIn posting
+itself. Its accepted intake receipt binds the response to the search, job and
+posting revision even after acquisition has finished. Discovery counts these
+responses under `assessment` and applies the shared board cooldown and spacing.
+The assessment keeps the ordinary Jobs refresh failure and explicit retry.
+SDK listing and detail retry turns continue to belong to their interrupted unit.
 Standalone Discovery remains acquisition-only and reports
 `preparationAvailable: false`. The separate explicit `assess` preparation recipe
 recovers selected saved jobs without another acquisition.
@@ -189,6 +195,13 @@ acquisition step until that deadline. Other ready boards advance before a search
 sleeps. Independent job assessment workflows and the shared provider/model
 accounting remain available. The search can be stopped during its wait.
 A LinkedIn 429 without a positive server deadline uses the same durable wait
+as other throttles. An observed HTTP 429 raises the board's ordinary request
+spacing by four seconds, capped at 16. Each HTTP 2xx returned to the search
+transport reduces it by one second, down to four. The shared reservation gate
+applies this interval to listing, detail and search-assessment requests using
+the persisted source request clock. Only the interrupted unit, phase and
+available detail receipt may resume at the saved retry deadline with the
+original minimum interval. A headerless 429 chooses its retry delay
 with exponential backoff and equal jitter. The first wait is 4–8 seconds and
 each fallback is at most 120 seconds. Search passes the absolute deadline to
 DBOS so offline time counts even when the worker exits before registering the

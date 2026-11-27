@@ -4,13 +4,31 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import hashlib
 import json
+from math import ceil
 
 
 LINKEDIN_REQUEST_INTERVAL_SECONDS = 4.0
+LINKEDIN_MAX_ORDINARY_INTERVAL_SECONDS = 16.0
 BOARD_RATE_LIMIT_CODE = "discovery_provider_rate_limited"
 BOARD_RATE_LIMIT_MESSAGE = "The board rate-limited this search. Wait before running another search on this board."
+
+
+def retry_after_seconds(value, received_at):
+    if not value or len(value) > 128:
+        return None
+    value = value.strip()
+    if value.isascii() and value.isdecimal():
+        return int(value)
+    try:
+        retry_at = parsedate_to_datetime(value)
+        if retry_at.tzinfo is not None:
+            return max(0, ceil((retry_at - received_at).total_seconds()))
+    except (TypeError, ValueError, OverflowError):
+        pass
+    return None
 
 
 def public_board_failure(failure):

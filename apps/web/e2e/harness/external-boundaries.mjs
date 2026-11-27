@@ -51,6 +51,7 @@ export async function externalBoundaries(token) {
   };
   let closed = false;
   const server = http.createServer(async (request, response) => {
+    const receivedAtMs = Date.now();
     try {
       if (request.headers.authorization !== `Bearer ${token}`) {
         response.writeHead(401);
@@ -67,6 +68,7 @@ export async function externalBoundaries(token) {
       }
       const body = Buffer.concat(parts).toString("utf8");
       const call = {
+        receivedAtMs,
         method: request.method,
         path: request.url,
         body: body ? JSON.parse(body) : null,
