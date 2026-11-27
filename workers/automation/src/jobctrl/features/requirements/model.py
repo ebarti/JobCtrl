@@ -71,12 +71,19 @@ class RequirementModelAdapter:
                 budget.reused += 1
             return parsed, self._bind(provenance, publication_posting, source_binding)
 
-        def checked_value(value):
+        def checked_value(value, receipt):
             try:
                 parsed = schema.model_validate(value)
             except ValidationError:
                 raise RequirementError("schema_violation") from None
-            validate(parsed)
+            try:
+                validate(parsed)
+            except RequirementError as failure:
+                receipt_id = receipt.get("receipt_id")
+                if (kind == "requirements.extract" and isinstance(receipt_id, str) and receipt_id
+                        and receipt.get("input_fingerprint") == input_fingerprint):
+                    raise RequirementError(failure.code, details={"receiptId": receipt_id}) from None
+                raise
             return parsed
 
         # A worker may stop after the canonical receipt settles but before the
@@ -90,7 +97,7 @@ class RequirementModelAdapter:
                     or recovered.get("lane") != "requirements"):
                 raise RequirementError("model_cache_receipt_invalid")
             try:
-                parsed = checked_value(recovered["value"])
+                parsed = checked_value(recovered["value"], recovered)
             except (ValueError, RequirementError):
                 if refused_receipt_id:
                     raise  # This operation's own receipt proves the original refusal.
@@ -127,7 +134,7 @@ class RequirementModelAdapter:
             self._raise_catalog_refusal(failure, kind, context)
             raise
         try:
-            parsed = checked_value(result.value)
+            parsed = checked_value(result.value, result.provenance)
         except (ValueError, RequirementError) as failure:
             receipt_id = result.provenance.get("receipt_id")
             if receipt_id:

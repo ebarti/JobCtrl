@@ -90,6 +90,39 @@ const firstFit = (api: APIRequestContext, jobId: string) =>
 const modelCount = (app: ApplicationStack, operation: string) =>
   app.external.calls.filter(call => call.body["operation"] === operation).length;
 
+test("an unresolved posting demand retains its extraction receipt and blocks Fit", async ({ api, app }) => {
+  await createBaseline(api);
+  const source = { ...posting(1), description: "Review incident reports using the protocol named in the appendix." };
+  const job = await json<CapturedPosting>(api, "post", "/v1/jobs/capture", {
+    url: source.url, title: source.title, company: source.company, description: source.description,
+  });
+  const run = await action(api, "preparation.run", { recipe: "assess", job_ids: [job.job_id], scope: "selected" });
+  respondProducer(await modelCall(app, "jobs.role_analysis"), [source]);
+  const extraction = await modelCall(app, "requirements.extract");
+  const decision = typedExtraction(extraction, { status: "needs_review" });
+  extraction.reply({ ...decision, unresolved: [{
+    question: "Which review protocol is required?", reason: "The source does not include the referenced appendix.",
+    evidence_refs: decision.language.evidence_refs,
+  }] });
+  expect(await terminal(api, run.runId)).toMatchObject({ status: "failed", errorCode: "preparation_partial" });
+  const preparation = await json(api, "get", `/v1/preparation/runs/${run.runId}`);
+  expect(preparation).toMatchObject({ steps: expect.arrayContaining([
+    expect.objectContaining({ jobId: job.job_id, stage: "requirements", status: "failed",
+      postingRevision: job.revision, errorCode: "extraction_uncertain" }),
+    expect.objectContaining({ jobId: job.job_id, stage: "fit", status: "blocked", errorCode: "upstream_stage_failed" }),
+  ]) });
+  const receipts = await app.requirementsExtractionReceipts();
+  expect(receipts).toMatchObject([{ status: "succeeded", inputFingerprint: normalizationFingerprint(extraction.body) }]);
+  const attempt = await requirementsAttempt(api, job.job_id);
+  expect(attempt).toMatchObject({ job_id: job.job_id, posting_revision: job.revision,
+    expected_revision: 0, state: "blocked", failure_code: "extraction_uncertain" });
+  expect(attempt.failure_details).toEqual({ receiptId: receipts[0]!.receiptId });
+  expect(await json(api, "get", `/v1/jobs/${job.job_id}/requirements`)).toBeNull();
+  expect(await json(api, "get", `/v1/jobs/${job.job_id}/fit`)).toMatchObject({ score: null });
+  expect(app.external.calls.filter(call => call.path === "/model").map(call => call.body["operation"]))
+    .toEqual(["jobs.role_analysis", "requirements.extract"]);
+});
+
 test("a refused extraction and cancellation settle only the corresponding Requirements attempts", async ({ api, app }) => {
   await createBaseline(api);
   const rejectedJob = await captureReusePosting(api, "refused-extraction", COMMON_DEMAND);

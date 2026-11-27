@@ -244,7 +244,8 @@ latest attempt for an existing job, or null before its first attempt. It also
 works before the first accepted snapshot. `failure_code` identifies a refusal.
 Where recorded, `failure_details` preserves the source-free counts, catalog
 revision, reason and model error from a complete-input refusal, or the gateway
-receipt ID for a dispatched provider failure. Historical attempts report only
+receipt ID for a dispatched provider failure or an extraction rejected during
+source validation. Historical attempts report only
 the fields that were recorded. The original Requirements read remains an
 optional accepted snapshot.
 

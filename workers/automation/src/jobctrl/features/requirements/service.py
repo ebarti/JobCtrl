@@ -77,8 +77,8 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         if isinstance(failure, RequirementError) and code == "requirements_catalog_unavailable":
             # The Requirements owner provides only accounting and catalog-shape metadata.
             details = failure.details
-        elif isinstance(failure, AppError) and failure.details and failure.details.get("receiptId"):
-            # Preserve the exact gateway refusal reference, never provider messages.
+        elif isinstance(failure, (AppError, RequirementError)) and failure.details and failure.details.get("receiptId"):
+            # The receipt identifies the rejected call without exposing its content.
             details = {"receiptId": failure.details["receiptId"]}
         self.store.finish_attempt(attempt_id, "cancelled" if code == "cancelled" else "blocked", code, details=details)
 

@@ -525,7 +525,8 @@ are 422, contract/revision/cancellation conflicts are 409, and complete-input
 catalog refusal is 503 `requirements_catalog_unavailable` with safe metadata.
 The attempt stores these details transactionally under its exact completion.
 `GET /v1/jobs/{job_id}/requirements/attempts/latest` reports them for first-use
-and refresh failures, including the gateway receipt ID when available. A
+and refresh failures, including the gateway receipt ID when a provider fails
+or a settled extraction fails source validation. A
 legacy attempt without recorded details keeps its original failure code.
 
 ## Verification
