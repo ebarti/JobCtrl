@@ -9,6 +9,9 @@ import type { NormalizedSnapshot } from "./consolidation-data.js";
 import { catalogMatching, NORMALIZATION_PROMPT_VERSION } from "./requirements-data.js";
 import { respondProducer } from "./preparation-cohort-data.js";
 
+// Each journey owns its database, worker and external requests.
+test.describe.configure({ mode: "parallel" });
+
 // Source pages and independent Fit actions may be at external boundaries simultaneously.
 function externalStream(app: ApplicationStack, match: (call: ExternalCall) => boolean): ApplicationStack {
   return { ...app, external: { ...app.external, next: (options) => app.external.next({ ...options, match }) } };
