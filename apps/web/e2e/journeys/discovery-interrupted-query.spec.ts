@@ -85,17 +85,43 @@ test("the interrupted LinkedIn detail gets the next board request and yields one
   }
 });
 
-test("two interrupted LinkedIn listing queries both resume ahead of a fresh query", async ({ api, app }) => {
+appTest("two interrupted LinkedIn listing queries both resume ahead of a fresh query", async ({ api, app }, info) => {
   const queries = ["Listing A", "Listing B", "Listing C"];
   const { runId } = await action(api, "discovery.search", { queries, locations: ["Madrid"], boards: ["linkedin"], newJobLimit: 6, hoursOld: 0 });
   const sequence = [queries[0], queries[0], queries[1], queries[0], queries[1], queries[2]];
-  for (const [index, query] of sequence.entries()) {
-    const next = await nextLinkedIn(app);
-    expect(next.url.pathname).toBe(listing);
-    expect(next.url.searchParams.get("keywords")).toBe(query);
-    if (index < 3) next.call.raw("Too many requests", { status: 429, headers: { "Retry-After": "1" } });
-    else next.call.raw(linkedinCard(8220 + index).replace("Synthetic Systems Engineer", `Synthetic vacancy ${index}`));
+  const pendingAssessments = new Set<string>();
+  const arrivals: { kind: string; at: number }[] = [];
+  let index = 0;
+  while (index < sequence.length || pendingAssessments.size) {
+    // A saved posting's assessment shares the next ordinary slot with a fresh listing.
+    // Require progress on every real request, including when both assessments go first.
+    const call = await app.external.next({ timeout: 25_000 });
+    if (index >= 5) {
+      const minimum = index === 5 ? 14_000 : 13_000;
+      expect(call.receivedAtMs - arrivals.at(-1)!.at).toBeGreaterThanOrEqual(minimum - 100);
+    }
+    if (call.path === "/posting-page") {
+      expect(index).toBeGreaterThanOrEqual(5);
+      const url = String(call.body["url"]);
+      expect(pendingAssessments.delete(url), `unexpected assessment ${url}`).toBe(true);
+      arrivals.push({ kind: new URL(url).pathname, at: call.receivedAtMs });
+      call.raw("This synthetic posting is unavailable.", { status: 404 });
+      continue;
+    }
+    const url = new URL(call.path, "http://localhost");
+    expect(url.pathname).toBe(listing);
+    expect(index).toBeLessThan(sequence.length);
+    expect(url.searchParams.get("keywords")).toBe(sequence[index]);
+    arrivals.push({ kind: sequence[index]!, at: call.receivedAtMs });
+    if (index < 3) call.raw("Too many requests", { status: 429, headers: { "Retry-After": "1" } });
+    else {
+      const id = 8220 + index;
+      pendingAssessments.add(`https://www.linkedin.com/jobs/view/${id}`);
+      call.raw(linkedinCard(id).replace("Synthetic Systems Engineer", `Synthetic vacancy ${index}`));
+    }
+    index++;
   }
+  await info.attach("linkedin-shared-request-order", { contentType: "application/json", body: JSON.stringify(arrivals) });
   expect((await completedAcquisition(api, runId)).newJobs).toBe(3);
   const retries = await json<{ events: { payload: { phase: string; httpStatus: number; unitId: string } }[] }>(api, "get",
     `/v1/events?aggregateId=${runId}&type=DiscoverySourceRetryResponse`);
