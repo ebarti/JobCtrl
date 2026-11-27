@@ -104,7 +104,7 @@ test("Start search for 100 keeps Jobs current while a URL import waits for enric
     const frozen = await json<{ targetRoute: string; jobIds: string[] }>(api, "get", "/v1/preparation/runs/" + runId);
     expect(frozen.targetRoute).toBe("per_job");
     expect(new Set(frozen.jobIds).size).toBe(100);
-    await expect(page.getByRole("row").filter({ hasText: positions.at(-1)!.title }).getByRole("link", { name: "Waiting for job checks" }))
+    await expect(page.getByRole("row").filter({ hasText: positions.at(-1)!.title }).getByRole("link", { name: "Fit queued", exact: true }))
       .toHaveAttribute("href", `/runs/${runId}`);
     await page.getByText("Add a job by URL or text", { exact: true }).click();
     await page.getByText("Import posting URL", { exact: true }).click();
