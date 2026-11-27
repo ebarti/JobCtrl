@@ -41,13 +41,13 @@ jobs:
           python-version: '3.12'
       - name: Set up pinned Go
         if: inputs.surface == 'backend'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5
         with:
           go-version: 1.26.4
           cache-dependency-path: launcher/go.mod
       - name: Set up pinned uv
         if: inputs.surface == 'backend'
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d
         with:
           version: 0.11.7
           enable-cache: true
