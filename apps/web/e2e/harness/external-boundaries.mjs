@@ -102,6 +102,10 @@ export async function externalBoundaries(token) {
         disconnect() {
           response.destroy();
         },
+        holdResponseBody() {
+          response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+          response.flushHeaders();
+        },
         invalidJson() {
           response.writeHead(200, { "Content-Type": "application/json" });
           response.end("{invalid");

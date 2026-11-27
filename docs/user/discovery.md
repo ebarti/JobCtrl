@@ -374,6 +374,8 @@ search's next available LinkedIn turn. If the same request is throttled again, o
 ready LinkedIn query or location can take a turn before it is retried. Other
 boards continue while LinkedIn waits. When other queries are ready, a retry
 can use one remaining new-job slot, including the last one.
+If the worker stops while reading the retry response, it resumes the same page
+or posting until its progress is saved.
 
 For a user-supplied posting URL, Jobs validates the public destination and redirects. The posting transport respects host cooldowns following server deferrals. A failed refresh retains the last accepted posting snapshot. See [Enrichment & Extraction](enrichment-and-extraction.md).
 

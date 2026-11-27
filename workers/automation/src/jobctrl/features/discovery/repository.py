@@ -942,6 +942,28 @@ class DiscoveryRepository:
             conn.execute("""UPDATE discovery_operations SET result_json=(result_json::jsonb #- '{retryTurns,yieldToPeerOf}')::text
                             WHERE operation_id=? AND result_json::jsonb#>>'{retryTurns,yieldToPeerOf}'=?""", (operation, yielded))
 
+    def commit_linkedin_retry_progress(self, conn, lease, unit_id, phase, progress, *, receipt_key=None, **facts):
+        """Release a retry in the same transaction as its page acknowledgement or detail write."""
+        operation = f"board-responses:{lease['run_id']}:linkedin"
+        row = conn.execute("""SELECT result_json FROM discovery_operations WHERE operation_id=?
+                              AND jsonb_array_length(result_json::jsonb#>'{retryTurns,pending}')>0""", (operation,)).fetchone()
+        if not row:
+            return
+        observations = json.loads(row[0])
+        state = observations["retryTurns"]
+        completed = [item for item in state["pending"] if item["unitId"] == unit_id and item["phase"] in (phase, "acquisition")
+                     and (not item.get("receiptKey") or item["receiptKey"] == receipt_key)]
+        if not completed:
+            return
+        state["pending"] = [item for item in state["pending"] if item not in completed]
+        if not any(item["unitId"] == state.get("yieldToPeerOf") for item in state["pending"]):
+            state.pop("yieldToPeerOf", None)
+        conn.execute("UPDATE discovery_operations SET result_json=? WHERE operation_id=?", (json.dumps(observations), operation))
+        for item in completed:
+            self.events.append(conn, "DiscoverySourceRetryProgressCommitted", {**item, "board": "linkedin", "phase": phase,
+                "leaseEpoch": lease["epoch"], "progress": progress, **facts},
+                feature="discovery", aggregate_id=lease["run_id"], stage="board_search")
+
     def provider_response(self, lease, board, unit_id, phase, status, received, delay, interval, requested, receipt_key):
         """Commit source pacing and cumulative response counts before the SDK consumes the response."""
         with self.database.transaction() as conn:
@@ -979,7 +1001,10 @@ class DiscoveryRepository:
                     **({"receiptKey": receipt_key} if receipt_key else {}),
                 }, received_at=received.timestamp(), connection=conn)
             if state is not None:
-                state, previous = record_retry_turn(state, unit_id, phase, receipt_key, requested.timestamp(), deadline)
+                # The transport has headers here. The SDK still needs to read and
+                # parse the body before it can commit the detail or page position.
+                state, previous = record_retry_turn(state, unit_id, phase, receipt_key, requested.timestamp(), deadline,
+                                                    awaiting_progress=200 <= status < 300 and phase in ("listing", "detail"))
                 if previous:
                     self.events.append(conn, "DiscoverySourceRetryResponse", {**previous,
                         "board": board, "phase": phase, "httpStatus": status, "leaseEpoch": lease["epoch"],
@@ -1058,26 +1083,32 @@ class DiscoveryRepository:
         return [(r["receipt_key"],json.loads(r["listing_json"]),json.loads(r["detail_json"]) if r["detail_json"] else None)
                 for r in rows]
 
-    def reusable_linkedin_description(self, lease, job_key):
+    def reusable_linkedin_detail(self, lease, job_key):
         with self.database.connect() as conn:
             self.guard_run(conn, lease)
             rows = conn.execute(
-                "SELECT detail_json FROM discovery_postings "
+                "SELECT receipt_key,detail_json FROM discovery_postings "
                 "WHERE run_id=? AND site='linkedin' AND job_key=? AND detail_json IS NOT NULL "
                 "ORDER BY received_order",
                 (lease["run_id"], job_key),
             )
             for row in rows:
-                description = json.loads(row["detail_json"]).get("description")
+                detail = json.loads(row["detail_json"])
+                description = detail.get("description")
                 if description and description.strip():
-                    return description
+                    return {"description": description, "reusedFromReceiptKey": detail.get("reusedFromReceiptKey", row["receipt_key"])}
         return None
 
     def save_posting_detail(self, lease, key, detail):
         with self.database.transaction() as conn:
             self.guard_run(conn, lease)
-            conn.execute("UPDATE discovery_postings SET detail_json=? WHERE run_id=? AND receipt_key=? AND status='pending'",
-                         (json.dumps(detail),lease["run_id"],key))
+            saved = conn.execute("UPDATE discovery_postings SET detail_json=? WHERE run_id=? AND receipt_key=? AND status='pending' "
+                                 "RETURNING unit_id,site", (json.dumps(detail),lease["run_id"],key)).fetchone()
+            if saved and saved["site"] == "linkedin":
+                reused = detail.get("reusedFromReceiptKey")
+                self.commit_linkedin_retry_progress(conn, lease, saved["unit_id"], "detail", "detail_reused" if reused else "detail_saved",
+                    receipt_key=key, hasDescription=bool((detail.get("description") or "").strip()),
+                    **({"sourceReceiptKey": reused} if reused else {}))
 
     def posting_counts(self, run_id, connection=None):
         with nullcontext(connection) if connection is not None else self.database.connect() as conn:
@@ -1238,6 +1269,9 @@ class DiscoveryRepository:
             )
             state = "saved" if created else "duplicate" if outcome == "accepted" else "excluded" if excluded else outcome
             conn.execute("UPDATE discovery_postings SET status=? WHERE run_id=? AND receipt_key=?", (state, lease["run_id"], receipt_key))
+            if posting["source_id"] == "jobstreaming:linkedin":
+                self.commit_linkedin_retry_progress(conn, lease, unit["unit_id"], "detail", "intake_settled",
+                                                    receipt_key=receipt_key, postingStatus=state)
             if created and handoff is not None:
                 handoff(lease["run_id"], saved, conn)
             budget_reached = limit is not None and conn.execute(

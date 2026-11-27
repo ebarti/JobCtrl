@@ -195,6 +195,13 @@ For targeted posting details, `receiptKey` identifies the saved listing.
 deadline, unit and phase, with the receipt key when available. Its UTC
 `requestedAt` and `receivedAt` distinguish dispatch from response time, and
 `httpStatus` records the board's reply.
+The HTTP event records receipt of the headers. `DiscoverySourceRetryProgressCommitted`
+identifies the committed outcome in `progress`. A `page_acknowledged` advances
+the SDK checkpoint. A `detail_saved` or `detail_reused` includes
+`hasDescription`. Reused details also join the original `sourceReceiptKey`.
+`intake_settled` records a terminal `postingStatus` when an identity already
+settled the intake. A worker that exits while
+reading the body can produce multiple HTTP responses for one committed result.
 The source's `politeness.rateLimitedCount`
 continues to describe recent runs that settled with a rate-limit failure.
 `partial` means at least one source unit completed or reached the new-job limit

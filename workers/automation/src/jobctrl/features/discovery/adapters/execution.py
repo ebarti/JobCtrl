@@ -212,6 +212,8 @@ class DiscoveryExecutionAdapter:
             def acknowledge(connection):
                 with store.writing(connection):
                     stream.ack(event)
+                if isinstance(event, (ProgressEvent, SiteCompleteEvent)) and event.site.value == "linkedin":
+                    self.repository.commit_linkedin_retry_progress(connection, lease, unit["unit_id"], "listing", "page_acknowledged")
 
             for event in stream:
                 if context.cancelled():
@@ -328,15 +330,13 @@ class DiscoveryExecutionAdapter:
             nonlocal cached
             if cached is not None:
                 return cached.get("description")
-            description = None
             if event.site == Site.LINKEDIN and event.job.id:
-                description = self.repository.reusable_linkedin_description(lease, event.job_key)
-            if description is None:
+                cached = self.repository.reusable_linkedin_detail(lease, event.job_key)
+            if cached is None:
                 detail = await asyncio.to_thread(gateway.fetch_detail_for_job_event, event, registry=registry)
-                description = detail.description if detail and detail.job_url == event.job.job_url else None
-            cached = {"description": description}
+                cached = {"description": detail.description if detail and detail.job_url == event.job.job_url else None}
             self.repository.save_posting_detail(lease, key, cached)
-            return description
+            return cached["description"]
 
         check_role = listing["site"] == "linkedin" and settings.get("_roleTargetPolicy") == ROLE_TARGET_POLICY
         return _Listing(key, posting, age is not None and not age["accepted"], check_role, fetch_detail)

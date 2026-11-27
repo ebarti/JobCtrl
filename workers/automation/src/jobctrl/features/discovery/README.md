@@ -206,6 +206,10 @@ when available, and effective deadline alongside the 429. Once eligible, the
 oldest interrupted unit takes the next LinkedIn turn. A repeat throttle allows
 one different ready unit a turn. The worker records the actual retry response
 with its original deadline and request start time.
+The retry stays eligible after successful headers until the SDK page
+acknowledgement or the posting-detail write commits. That transaction records
+`DiscoverySourceRetryProgressCommitted`. A replacement worker can repeat the
+GET while the body or checkpoint is still outstanding.
 
 An explicit `discovery.search` with only `resumeFromRunId` can continue unfinished
 LinkedIn units from an older terminal rate-limit outcome. Admission verifies the

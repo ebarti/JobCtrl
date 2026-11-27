@@ -21,6 +21,7 @@ export type ExternalCall = {
   respond(value: unknown, status?: number): void;
   reply(value: unknown): void;
   disconnect(): void;
+  holdResponseBody(): void;
   invalidJson(): void;
   raw(
     body: string,

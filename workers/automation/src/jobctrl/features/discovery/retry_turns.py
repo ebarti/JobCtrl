@@ -23,13 +23,15 @@ def due_retry(state, unit_id, phase, receipt_key, requested_at):
                  and requested_at >= item["retryAtEpochSeconds"]), None)
 
 
-def record_retry_turn(state, unit_id, phase, receipt_key, requested_at, deadline):
+def record_retry_turn(state, unit_id, phase, receipt_key, requested_at, deadline, *, awaiting_progress=False):
     pending = list(state.get("pending", []))
     previous = due_retry(state, unit_id, phase, receipt_key, requested_at)
     yielded = state.get("yieldToPeerOf")
     if yielded != unit_id and any(item["unitId"] == yielded and requested_at >= item["retryAtEpochSeconds"] for item in pending):
         yielded = None
-    if previous:
+    if previous and awaiting_progress and yielded == unit_id:
+        yielded = None
+    if previous and not awaiting_progress:
         pending.remove(previous)
     if deadline is not None:
         pending.append({"unitId": unit_id, "phase": phase, "retryAtEpochSeconds": deadline,
