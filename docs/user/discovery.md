@@ -354,8 +354,11 @@ by one second until it reaches four again. JobCtrl remembers the interval
 across searches and restarts. The interrupted request can retry at its saved
 deadline once the four-second minimum has passed.
 
-The activity log records when a LinkedIn listing or detail request receives HTTP
-429, the number of responses received and the requested delay. The Jobs page
+The activity log records when LinkedIn returns HTTP 429 to a listing, a
+targeted detail, or the posting-page check for a newly found job. It shows
+separate response counts and the requested delay. A posting-page throttle
+keeps the saved job and records its failed check for an explicit retry. Later
+LinkedIn board requests wait for the same deadline. The Jobs page
 shows the next retry in your local time. JobCtrl honors a positive
 `Retry-After`, including waits longer than two minutes. When the header is
 missing, invalid or zero, JobCtrl picks a random delay for each retry. The

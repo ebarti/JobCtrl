@@ -7,15 +7,13 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
-from math import ceil
 from pathlib import Path
 import threading
 from urllib.parse import urlsplit
 
 from jobctrl.app.errors import AppError
 from jobctrl.features.discovery.adapters.board_diagnostics import board_access_error, board_rate_limit_error
-from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, excluded_title, posting_receipt_key
+from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, excluded_title, posting_receipt_key, retry_after_seconds
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY
 from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
 from jobctrl.features.discovery.adapters.checkpoints import ProviderCheckpointStore
@@ -28,21 +26,6 @@ class _Listing:
     excluded_by_age: bool
     needs_role_check: bool
     fetch_detail: Callable[[], Awaitable[str | None]]
-
-
-def _retry_after_seconds(value, received_at):
-    if not value or len(value) > 128:
-        return None
-    value = value.strip()
-    if value.isascii() and value.isdecimal():
-        return int(value)
-    try:
-        retry_at = parsedate_to_datetime(value)
-        if retry_at.tzinfo is not None:
-            return max(0, ceil((retry_at - received_at).total_seconds()))
-    except (TypeError, ValueError, OverflowError):
-        pass
-    return None
 
 
 class _BoardRequests:
@@ -95,7 +78,7 @@ class _BoardRequests:
     def observe(self, response, requested):
         phase, receipt = self._coordinates(getattr(response, "url", None))
         observed = datetime.now(timezone.utc)
-        delay = _retry_after_seconds(response.headers.get("Retry-After"), observed)
+        delay = retry_after_seconds(response.headers.get("Retry-After"), observed)
         if response.status_code == 429:
             self.limited = True
             self.advertised = delay is not None and delay > 0

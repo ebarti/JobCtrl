@@ -189,12 +189,16 @@ test("reviewed outreach records a manual send once and preserves its receipt aft
     expect(record.context).toEqual(request.body["context"]);
   }
 
+  const approvalPath = `/v1/outreach/threads/${thread.threadId}/drafts/${draft.draftId}/approve`;
   const staleApproval = await api.post(
-    `/v1/outreach/threads/${thread.threadId}/drafts/${draft.draftId}/approve`,
+    approvalPath,
     { data: { expectedFingerprint: "stale" } },
   );
   expect(staleApproval.status()).toBe(409);
+  const committedApproval = page.waitForResponse((response) =>
+    response.request().method() === "POST" && new URL(response.url()).pathname === approvalPath);
   await page.getByRole("button", { name: "Approve draft" }).click();
+  expect((await committedApproval).status()).toBe(200);
   await expect(
     page.getByRole("heading", { name: "Approved message" }),
   ).toBeVisible();

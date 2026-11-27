@@ -146,3 +146,10 @@ synthetic-workspace marker/token. Its authenticated page protocol replaces the
 external page boundary, not Jobs internals. Production uses the public browser
 acquirer. Target recurring tests are E2E-only; focused development proofs use the
 real HTTP application and PostgreSQL with controlled page/model endpoints.
+
+A successful capture envelope can attest the responding document in `finalUrl`
+and `statusCode`, with its actual `navigation.requestedAt` and
+`navigation.receivedAt` timestamps and optional target `navigation.retryAfter`
+header. An outer HTTP error belongs to the capture service. Search-triggered
+initial assessment observes only the final main-document response. Its
+Discovery receipt stores the timing and status without the URL or headers.
