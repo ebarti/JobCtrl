@@ -13,7 +13,6 @@ test("a lost preparation admission is reconciled after reload without starting i
   api,
   page,
   allowRequestFailure,
-  allowResponseError,
 }) => {
   const workspace = await json<{ workspaceId: string; databaseInstanceId: string }>(
     api, "get", "/v1/health",
@@ -65,13 +64,11 @@ test("a lost preparation admission is reconciled after reload without starting i
   const dropped = page.waitForEvent("requestfailed", {
     predicate: isAdmission,
   });
-  const missingLookup = page.waitForResponse((response) => {
-    const url = new URL(response.url());
-    return response.request().method() === "GET" &&
-      url.origin === app.baseURL &&
-      url.pathname === "/v1/action-runs/by-idempotency-key" &&
-      url.search === "?action=preparation.run" &&
-      response.status() === 404;
+  const lookups: string[] = [];
+  page.on("request", request => {
+    const url = new URL(request.url());
+    if (url.origin === app.baseURL && url.pathname === "/v1/action-runs/by-idempotency-key"
+      && url.searchParams.get("action") === "preparation.run") lookups.push(request.url());
   });
   await controls.getByRole("button", { name: "Start work" }).click();
   const request = await sent;
@@ -79,12 +76,8 @@ test("a lost preparation admission is reconciled after reload without starting i
   try {
     expect(requestId).toBeTruthy();
     expect(request.headers()["expected-database-instance-id"]).toBe(workspace.databaseInstanceId);
-    const notFound = await missingLookup;
-    await allowResponseError(notFound, {
-      method: "GET", status: 404, code: "not_found", action: "preparation.run",
-      idempotencyKey: requestId!, databaseInstanceId: workspace.databaseInstanceId,
-    });
     expect((await json<{ runs: unknown[] }>(api, "get", "/v1/action-runs?action=preparation.run")).runs).toEqual([]);
+    expect(lookups).toHaveLength(0);
   } finally {
     releaseAdmission();
   }
