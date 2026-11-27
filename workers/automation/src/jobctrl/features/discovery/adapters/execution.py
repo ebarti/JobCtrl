@@ -256,8 +256,12 @@ class DiscoveryExecutionAdapter:
         async def fetch_detail():
             if cached is not None:
                 return cached.get("description")
-            detail = await asyncio.to_thread(gateway.fetch_detail_for_job_event, event, registry=registry)
-            description = detail.description if detail and detail.job_url == event.job.job_url else None
+            description = None
+            if event.site == Site.LINKEDIN and event.job.id:
+                description = self.repository.reusable_linkedin_description(lease, event.job_key)
+            if description is None:
+                detail = await asyncio.to_thread(gateway.fetch_detail_for_job_event, event, registry=registry)
+                description = detail.description if detail and detail.job_url == event.job.job_url else None
             self.repository.save_posting_detail(lease, key, {"description": description})
             return description
 
