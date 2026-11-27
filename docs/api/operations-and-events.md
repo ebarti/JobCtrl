@@ -51,8 +51,11 @@ It requires one to 1,000 exact saved IDs and performs enrichment, role analysis,
 Requirements and Fit without acquisition, wording or resume work. The receipt's
 run joins `GET /v1/preparation/runs/{run_id}` for the frozen cohort and stage
 outcomes. A job step exposes `postingRevision` when it recorded the posting
-revision in its own input. The Jobs grid joins that revision or a preceding
-accepted posting checkpoint before showing a failure. For a job with no Fit
+revision in its own input. While independent assessments are queued or
+running, the public preparation run includes their job ID, posting revision,
+source hash and action status in `pendingSearchAssessments`. The Jobs UI joins
+that binding to the current posting or to the accepted posting revision from
+the same run. It also checks the recorded revision before showing a failure. For a job with no Fit
 score, the composed Jobs query also exposes the accepted Requirements status
 and revision when they are current for that posting. This initial-assessment recipe cannot bypass Fit's manual-refresh fence
 for previously accepted qualification. Failed work preserves accepted artifacts.

@@ -277,16 +277,27 @@ class PreparationStore:
                 "WHEN stage='fit' THEN (input_json::jsonb#>>'{_requirements_binding,posting_revision}')::integer END posting_revision "
                 "FROM preparation_steps WHERE run_id=? ORDER BY storage_order", (run_id,),
             ).fetchall()
+            request = json.loads(row["request_json"])
+            independent_search = request.get("execution_policy", {}).get("version") == "search-jobs-v1"
+            pending_search = conn.execute(
+                "SELECT h.job_id,h.posting_revision,h.source_hash,a.status FROM preparation_search_jobs h "
+                "JOIN app_action_runs a ON a.run_id=h.action_run_id "
+                "WHERE h.search_id=? AND h.status='pending' AND a.status IN ('queued','running') "
+                "ORDER BY h.admitted_order", (run_id,),
+            ).fetchall() if independent_search and row["status"] in ("queued", "running") else []
             failed_handoffs = sorted(self.failed_handoffs(run_id, conn))
             job_ids = (json.loads(row["targets_json"]) if row["targets_json"] is not None else
                        [job[0] for job in conn.execute("SELECT job_id FROM preparation_search_jobs WHERE search_id=? ORDER BY admitted_order", (run_id,))])
-        request = json.loads(row["request_json"])
         return {"runId": run_id, "status": row["status"], "recipe": request["recipe"],
                 **({"executionPolicy": request["execution_policy"]} if "execution_policy" in request else {}),
                 **({"targetRoute": request["target_route"]} if "target_route" in request else {}),
                 "scope": request["scope"], "cohortFrozen": row["targets_json"] is not None,
                 "parentRunId": row["parent_run_id"], "jobIds": job_ids,
-                **({"retryableJobIds": failed_handoffs} if request.get("execution_policy", {}).get("version") == "search-jobs-v1" else {}),
+                **({"retryableJobIds": failed_handoffs, "pendingSearchAssessments": [
+                    {"jobId": item["job_id"], "postingRevision": item["posting_revision"],
+                     "sourceHash": item["source_hash"], "status": item["status"]}
+                    for item in pending_search
+                ]} if independent_search else {}),
                 "createdAt": row["created_at"], "updatedAt": row["updated_at"],
                 "steps": [{"jobId": step["job_id"] or None, "stage": step["stage"], "status": step["status"],
                            **({"postingRevision": step["posting_revision"]} if type(step["posting_revision"]) is int else {}),

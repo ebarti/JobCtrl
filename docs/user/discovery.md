@@ -204,8 +204,10 @@ reuse accepted work for the same source content, normalized demand and Profile
 evidence. Changed inputs get their own determination. The same model lanes and
 spending limits apply while other jobs run.
 
-Select a job in **Jobs** to see its stage, current assessment and any failure
-code. **Retry fit assessment for this job** retries its unfinished stages, even
+The Jobs table and job details show when Fit is queued, when the worker is
+checking the posting and requirements, and when it is assessing Fit. These
+statuses appear while the search is still finding jobs. Select a job in **Jobs**
+to see its current assessment and any failure code. **Retry fit assessment for this job** retries its unfinished stages, even
 while the source is waiting. Its completed stages and other jobs keep their
 records. An unresolved paid request requires its receipt to be reconciled
 before another attempt. A classified non-English posting shows its recorded skip.

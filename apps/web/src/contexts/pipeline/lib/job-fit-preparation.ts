@@ -1,7 +1,8 @@
 import type { PreparationRun } from "../client.js";
 
 type Step = PreparationRun["steps"][number];
-type RunForJob = { run: PreparationRun; steps: Map<string, Step> };
+type SearchAssessment = NonNullable<PreparationRun["pendingSearchAssessments"]>[number];
+type RunForJob = { run: PreparationRun; steps: Map<string, Step>; searchAssessment?: SearchAssessment | undefined };
 type Posting = { job_id: string; revision: number; source_hash: string };
 export interface FitPreparationInput {
   job: Posting;
@@ -58,7 +59,20 @@ function explain(input: FitPreparationInput, candidates: RunForJob[]): FitPrepar
     if (revision !== job.revision || (recorded?.postingHash && !matchesPosting)) return null;
     return { label: label + " failed", detail: `${label} failed${step.errorCode ? ` (${step.errorCode})` : ""}.`, runId: run.runId };
   }
-  if (languageFromRun || !active(run) || !run.cohortFrozen || run.recipe !== "search" || !["per_job", "cohort"].includes(run.targetRoute ?? "")) return null;
+  if (languageFromRun || !active(run) || run.recipe !== "search") return null;
+  const searchAssessment = selected.searchAssessment;
+  if (run.executionPolicy?.version === "search-jobs-v1" && run.pendingSearchAssessments) {
+    if (!searchAssessment) return null;
+    const sameHandoff = searchAssessment.postingRevision === job.revision && searchAssessment.sourceHash === job.source_hash;
+    const acceptedByRun = enrich?.status === "succeeded" && enrich.result?.revision === job.revision;
+    if (!sameHandoff && !acceptedByRun) return null;
+    if (searchAssessment.status === "queued") {
+      return { label: "Fit queued", detail: "This job is in the assessment queue.", runId: run.runId };
+    }
+    if (!fit) {
+      return { label: "Checking the job", detail: "The search is checking the posting and requirements for this job.", runId: run.runId };
+    }
+  } else if (!run.cohortFrozen || !["per_job", "cohort"].includes(run.targetRoute ?? "")) return null;
   if (recorded && !matchesPosting || upstreamRevision !== undefined && upstreamRevision !== job.revision) return null;
   for (const step of steps.values()) {
     if (["pending", "running"].includes(step.status) && step.postingRevision !== undefined && step.postingRevision !== job.revision) return null;
@@ -79,12 +93,13 @@ export function jobFitPreparation(inputs: readonly FitPreparationInput[], runs: 
   for (const run of runs) {
     if (!fitRecipes.has(run.recipe)) continue;
     const members = new Map<string, Map<string, Step>>();
+    const pending = new Map(run.pendingSearchAssessments?.map((item) => [item.jobId, item]));
     for (const id of run.jobIds) {
       const history = histories.get(id);
       if (!history) continue;
       const steps = new Map<string, Step>();
       members.set(id, steps);
-      history.push({ run, steps });
+      history.push({ run, steps, searchAssessment: pending.get(id) });
     }
     if (members.size) for (const step of run.steps) {
       if (step.jobId) members.get(step.jobId)?.set(step.stage, step);

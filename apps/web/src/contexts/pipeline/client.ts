@@ -34,6 +34,10 @@ const runSchema = z.object({
   runId: z.string(), status: z.string(), recipe: z.enum([...recipeSchema.options, "search", "assess"]), parentRunId: z.string().nullable(),
   cohortFrozen: z.boolean().optional(), targetRoute: z.string().optional(),
   executionPolicy: z.object({ version: z.enum(["search-cohort-v1", "search-jobs-v1"]) }).optional(),
+  pendingSearchAssessments: z.array(z.object({
+    jobId: z.string(), postingRevision: z.number().int().positive(), sourceHash: z.string(),
+    status: z.enum(["queued", "running"]),
+  })).optional(),
   jobIds: z.array(z.string()), retryableJobIds: z.array(z.string()).optional(), createdAt: z.string(), updatedAt: z.string(), steps: z.array(stepSchema),
 });
 const executionSchema = z.object({ runId: z.string(), status: z.string(), errorCode: z.string().nullable().optional(),
