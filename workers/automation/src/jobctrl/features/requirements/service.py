@@ -24,7 +24,7 @@ from .cohort_transport import REFRESH_CATALOG_PROMPT_VERSION
 from .catalog_transport import TABLE_CATALOG_PROMPT_VERSION
 from .normalization_demand_choices import CITED_OCCURRENCE_PROMPT, DEMAND_CHOICE_PROMPT
 from .extraction_wire import (EXTRACTION_VERSION, LEGACY_EXTRACTION_VERSION,
-                              V6_EXTRACTION_VERSION, V7_EXTRACTION_VERSION, extraction_wire)
+                              V6_EXTRACTION_VERSION, V7_EXTRACTION_VERSION, V8_EXTRACTION_VERSION, extraction_wire)
 from .normalization_domain import (BACKGROUND_COHORT_PROMPT, BACKGROUND_MANUAL_PROMPT, BACKGROUND_REFRESH_PROMPT,
                                    NORMALIZATION_PROMPT_VERSION, NORMALIZATION_VERSION)
 
@@ -611,6 +611,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         legacy_fingerprint = fingerprint(request)
         v6_fingerprint = fingerprint({**request, "extraction_version": V6_EXTRACTION_VERSION})
         v7_fingerprint = fingerprint({**request, "extraction_version": V7_EXTRACTION_VERSION})
+        v8_fingerprint = fingerprint({**request, "extraction_version": V8_EXTRACTION_VERSION})
         retained = self.store.attempt_fingerprint(operation_id) if operation_id else None
         if retained == legacy_fingerprint:
             version, action_fingerprint = LEGACY_EXTRACTION_VERSION, legacy_fingerprint
@@ -618,6 +619,8 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
             version, action_fingerprint = V6_EXTRACTION_VERSION, v6_fingerprint
         elif retained == v7_fingerprint:
             version, action_fingerprint = V7_EXTRACTION_VERSION, v7_fingerprint
+        elif retained == v8_fingerprint:
+            version, action_fingerprint = V8_EXTRACTION_VERSION, v8_fingerprint
         else:
             version = EXTRACTION_VERSION
             action_fingerprint = fingerprint({**request, "extraction_version": version})

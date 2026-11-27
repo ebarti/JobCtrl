@@ -10,7 +10,8 @@ from .domain import EXTRACTION_INSTRUCTION, ExtractionSelection, RequirementErro
 LEGACY_EXTRACTION_VERSION = "requirements-v2-extract-v5-content-bound"
 V6_EXTRACTION_VERSION = "requirements-v2-extract-v6-inference-rationale"
 V7_EXTRACTION_VERSION = "requirements-v2-extract-v7-role-demands"
-EXTRACTION_VERSION = "requirements-v2-extract-v8-independent-demands"
+V8_EXTRACTION_VERSION = "requirements-v2-extract-v8-independent-demands"
+EXTRACTION_VERSION = "requirements-v2-extract-v9-incomplete-preferences"
 Rationale = Annotated[StrictStr, Field(min_length=1, max_length=2000, pattern=r"\S")]
 
 
@@ -41,8 +42,15 @@ INDEPENDENT_DEMAND_INSTRUCTION = ROLE_DEMAND_INSTRUCTION + """
 Keep independently demonstrable responsibilities separate, even when the same person or team performs them. For example, when the posting separately asks for directing an organisation and developing other leaders, return separate capabilities with their own definitions and direct evidence. Include ordinary supervision within organisation leadership when the posting does not establish an independent demand for developing leaders. Preserve any separately stated track record as professional experience without combining the corresponding skills."""
 
 
+INCOMPLETE_PREFERENCE_INSTRUCTION = INDEPENDENT_DEMAND_INSTRUCTION + """
+
+When an optional preference ends mid-phrase, extract an independently assessable demand only when the complete demand is stated in the supplied text. Cite that exact span and leave the unfinished modifier out of its definition and scope. Omit an incomplete optional fragment with no independently assessable meaning. Use unresolved and needs_review when the missing text could determine a mandatory qualification or change a material part of an otherwise assessable demand. Keep complete preferences with their original scope and evidence."""
+
+
 def extraction_wire(version):
     if version == EXTRACTION_VERSION:
+        return InferenceBoundSelection, INCOMPLETE_PREFERENCE_INSTRUCTION
+    if version == V8_EXTRACTION_VERSION:
         return InferenceBoundSelection, INDEPENDENT_DEMAND_INSTRUCTION
     if version == V7_EXTRACTION_VERSION:
         return InferenceBoundSelection, ROLE_DEMAND_INSTRUCTION

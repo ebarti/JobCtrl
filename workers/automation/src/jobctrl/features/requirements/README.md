@@ -103,7 +103,11 @@ The strict single-posting extraction response contains:
 - `languages`: `language`, nullable `proficiency` and `source_note`, and
   `evidence_refs`.
 - `unresolved`: source-owned material ambiguity (`question`, `reason`,
-  `evidence_refs`). A complete response has none.
+  `evidence_refs`). A complete response has none. When an optional preference
+  cuts off mid-phrase, the v9 instructions retain any independently assessable
+  demand supported by exact text and leave the unfinished modifier out of its
+  scope. Genuine material ambiguity still refuses acceptance. Existing attempts
+  retain the extraction instructions and version they originally used.
 
 Accepted snapshots add `contract_version: requirements-v2`, exact job/posting/
 source identities, monotonic snapshot `revision`, catalog revision, the immutable
