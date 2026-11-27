@@ -36,9 +36,12 @@ its host slot before the action settles. Other concurrent captures can finish.
 - `application_admissibility` exposes pending content quarantine, source
   revision/hash, availability and enrichment readiness without private SQL.
 
-Exact normalized URLs, exact provider identifiers and exact full content can
-establish identity. Equal title/employer alone only triggers selective provider
-detail acquisition; it cannot merge jobs. An unfamiliar refresh redirect needs
+Exact normalized URLs and provider identifiers establish identity. An Ashby
+posting or application URL binds to its employer and requisition UUID. A
+requisition takes precedence over the full-content fallback, so distinct Ashby
+openings can reuse the same description. Exact full content can identify an
+opening when the source provides no requisition. Equal title and employer
+trigger selective provider detail acquisition. An unfamiliar refresh redirect needs
 source-bound identity evidence. An unknown/different redirect preserves the last
 accepted posting.
 

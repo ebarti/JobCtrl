@@ -588,6 +588,12 @@ class DiscoveryService:
                     posting = {**posting, "description": details, "full_description": details,
                                "provenance": {**posting["provenance"], "sourceKind": "provider_detail",
                                               "detailMethod": "jobstreaming.fetch_job_detail", "sourceUrl": posting["url"]}}
+                    known = self.repository.accept_posting(
+                        lease, unit, posting, jobs=self.jobs, receipt_key=key, existing_only=True,
+                        limit=limit, cancelled=context.cancelled,
+                    )
+                    if known is not None:
+                        return known
             if posting_role_evidence(posting)["description"].strip():
                 # A different source may have settled this receipt or filled the
                 # last slot while detail or a model lane was pending.

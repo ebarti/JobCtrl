@@ -1108,7 +1108,7 @@ class DiscoveryRepository:
                 detail = json.loads(row["detail_json"])
                 description = detail.get("description")
                 if description and description.strip():
-                    return {"description": description, "reusedFromReceiptKey": detail.get("reusedFromReceiptKey", row["receipt_key"])}
+                    return {**detail, "reusedFromReceiptKey": detail.get("reusedFromReceiptKey", row["receipt_key"])}
         return None
 
     def save_posting_detail(self, lease, key, detail):

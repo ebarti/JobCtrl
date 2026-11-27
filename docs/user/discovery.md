@@ -196,6 +196,9 @@ many listings were received, already saved, excluded or still pending. A newly
 saved job and its independent assessment enter the database together. The worker
 can begin checking that job while another page or query is still pending.
 A previously saved job is counted as an observation and keeps its accepted Fit.
+If LinkedIn lists the same Ashby requisition under several cities, JobCtrl
+attaches each listing to the same job when the posting detail supplies the
+direct application URL.
 
 Each assessment uses the saved posting revision for enrichment, employer role
 analysis, Requirements and Fit. It reuses the full LinkedIn detail when the

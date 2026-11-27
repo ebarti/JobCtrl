@@ -8,6 +8,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from uuid import UUID
 
 
 def utc_now() -> str:
@@ -53,15 +54,37 @@ def normalize_url(value: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/") or "/", urlencode(query), ""))
 
 
+def _ashby_opening_url(url: str) -> str | None:
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or parsed.netloc != "jobs.ashbyhq.com":
+        return None
+    parts = parsed.path.strip("/").split("/")
+    if len(parts) not in (2, 3) or (len(parts) == 3 and parts[2] != "application"):
+        return None
+    employer, job = parts[:2]
+    if not employer or not employer.isascii() or not all(char.isalnum() or char in "-_" for char in employer):
+        return None
+    try:
+        opening = str(UUID(job))
+    except ValueError:
+        return None
+    if opening != job.lower():
+        return None
+    return f"https://jobs.ashbyhq.com/{employer}/{opening}"
+
+
 def identity_keys(posting: dict) -> tuple[str, ...]:
     keys = ["url:" + normalize_url(posting["url"])]
     if posting.get("canonical_url"):
         keys.append("url:" + normalize_url(posting["canonical_url"]))
     if posting.get("source_native_id") and posting.get("source_id"):
         keys.append("native:" + digest([posting["source_id"], posting["source_native_id"]]))
-    # Exact full content and supplied employer/title are identity evidence.
-    # A listing-only title/employer pair never merges two jobs.
-    if all(posting.get(k, "").strip() for k in ("title", "company", "description")):
+    ashby_opening = next((opening for field in ("url", "canonical_url", "application_url")
+                          if (opening := _ashby_opening_url(posting.get(field) or ""))), None)
+    if ashby_opening:
+        keys.append("url:" + ashby_opening)
+    elif all(posting.get(k, "").strip() for k in ("title", "company", "description")):
+        # Full content is the fallback when the source supplies no requisition.
         keys.append("content:" + digest([posting[k].strip() for k in ("title", "company", "description")]))
     return tuple(dict.fromkeys(keys))
 
@@ -80,6 +103,13 @@ def canonical_posting(data: dict) -> dict:
     if authority in {"user_authored", "source_bound_model"} and description:
         full_description = full_description or description
         enriched_description = enriched_description or full_description
+    try:
+        application_url = text("application_url", "applicationUrl", limit=8192)
+        application_url = posting_url(application_url) if application_url else ""
+    except ValueError:
+        if authority != "provider":
+            raise
+        application_url = ""
     result = {
         "url": posting_url(text("url", "postingUrl", "posting_url", limit=8192)),
         "canonical_url": text("canonical_url", "canonicalUrl", limit=8192),
@@ -93,7 +123,7 @@ def canonical_posting(data: dict) -> dict:
         "text": description,
         "location": text("location", limit=4000),
         "salary": text("salary", limit=4000),
-        "application_url": text("application_url", "applicationUrl", limit=8192),
+        "application_url": application_url,
         "observed_at": text("observed_at", "observedAt", default=utc_now(), limit=100),
         "active_state": text("active_state", "activeState", default="unknown", limit=50),
         "provenance": data.get("provenance") or {},
@@ -105,8 +135,6 @@ def canonical_posting(data: dict) -> dict:
     }
     if result["canonical_url"]:
         result["canonical_url"] = posting_url(result["canonical_url"])
-    if result["application_url"]:
-        result["application_url"] = posting_url(result["application_url"])
     if result["active_state"] not in {"unknown", "active", "closed", "expired", "removed", "location_incompatible"}:
         raise ValueError("Invalid posting availability state.")
     if not isinstance(result["provenance"], dict):

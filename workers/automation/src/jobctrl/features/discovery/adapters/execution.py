@@ -311,15 +311,19 @@ class DiscoveryExecutionAdapter:
 
         async def fetch_detail():
             nonlocal cached
-            if cached is not None:
-                return cached.get("description")
-            if event.site == Site.LINKEDIN and event.job.id:
-                cached = self.repository.reusable_linkedin_detail(lease, event.job_key)
             if cached is None:
-                detail = await asyncio.to_thread(gateway.fetch_detail_for_job_event, event, registry=registry)
-                cached = {"description": detail.description if detail and detail.job_url == event.job.job_url else None}
-            self.repository.save_posting_detail(lease, key, cached)
-            return cached["description"]
+                if event.site == Site.LINKEDIN and event.job.id:
+                    cached = self.repository.reusable_linkedin_detail(lease, event.job_key)
+                if cached is None:
+                    detail = await asyncio.to_thread(gateway.fetch_detail_for_job_event, event, registry=registry)
+                    if detail and detail.job_url == event.job.job_url:
+                        cached = {"description": detail.description, "application_url": detail.job_url_direct}
+                    else:
+                        cached = {"description": None}
+                self.repository.save_posting_detail(lease, key, cached)
+            if cached.get("application_url"):
+                posting["application_url"] = cached["application_url"]
+            return cached.get("description")
 
         check_role = listing["site"] == "linkedin" and settings.get("_roleTargetPolicy") == ROLE_TARGET_POLICY
         return _Listing(key, posting, age is not None and not age["accepted"], check_role, fetch_detail)
