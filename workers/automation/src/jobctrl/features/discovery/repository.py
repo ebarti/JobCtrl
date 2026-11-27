@@ -12,8 +12,9 @@ import time
 from uuid import uuid4
 
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
-from jobctrl.features.discovery.domain import BOARD_RATE_LIMIT_CODE, DEFAULT_SETTINGS, fingerprint, now, public_board_failure, search_units, validate_settings
+from jobctrl.features.discovery.domain import BOARD_RATE_LIMIT_CODE, DEFAULT_SETTINGS, fingerprint, now, posting_receipt_key, public_board_failure, search_units, validate_settings
 from jobctrl.features.discovery.qualification import posting_role_evidence, role_binding
+from jobctrl.features.discovery.retry_turns import record_retry_turn
 
 
 class DiscoveryRepository:
@@ -540,7 +541,7 @@ class DiscoveryRepository:
             # A received listing can still await a detail fetch or role decision.
             for row in conn.execute("SELECT * FROM discovery_postings WHERE run_id=? AND unit_id=? AND status='pending' ORDER BY received_order",
                                     (source, unit_id)):
-                key = "jobstreaming:" + fingerprint([run_id, unit_id, row["site"], row["job_key"]])
+                key = posting_receipt_key(run_id, unit_id, row["site"], row["job_key"])
                 conn.execute("INSERT INTO discovery_postings(run_id,unit_id,receipt_key,site,job_key,status,listing_json,detail_json) "
                              "VALUES(?,?,?,?,?,'pending',?,?)",
                              (run_id, unit_id, key, row["site"], row["job_key"], row["listing_json"], row["detail_json"]))
@@ -862,31 +863,88 @@ class DiscoveryRepository:
                          "ON CONFLICT(board) DO UPDATE SET next_request_at=excluded.next_request_at", (board, clock + interval))
         return {"cooldown": 0, "pace": 0}
 
-    def provider_response(self, lease, board, unit_id, phase, status, received, delay, interval):
+    def _board_responses(self, conn, run_id, board):
+        row = conn.execute("SELECT result_json FROM discovery_operations WHERE operation_id=?",
+                           (f"board-responses:{run_id}:{board}",)).fetchone()
+        return json.loads(row[0]) if row else {"listing": 0, "detail": 0, "other": 0}
+
+    def _save_board_responses(self, conn, run, board, observations):
+        operation = f"board-responses:{run['run_id']}:{board}"
+        conn.execute("INSERT INTO discovery_operations VALUES(?,'board_responses',?,?,?) ON CONFLICT(operation_id) "
+                     "DO UPDATE SET result_json=excluded.result_json", (operation, run["request_hash"], json.dumps(observations), now()))
+
+    def _linkedin_retry_state(self, conn, run_id, observations):
+        if "retryTurns" in observations:
+            state = observations["retryTurns"]
+            pending = state.get("pending", [])
+            receipts = [item["receiptKey"] for item in pending if item.get("receiptKey")]
+            if receipts:
+                # Another query can have supplied the same detail already. Its
+                # committed reuse or terminal intake discharges the retry.
+                remaining = {row[0] for row in conn.execute(
+                    "SELECT receipt_key FROM discovery_postings WHERE run_id=? AND receipt_key=ANY(?) "
+                    "AND status='pending' AND detail_json IS NULL", (run_id, receipts))}
+                return {**state, "pending": [item for item in pending if not item.get("receiptKey") or item["receiptKey"] in remaining]}
+            return state
+        if not any(observations.values()):
+            return {}
+        # Pre-upgrade workers saved the unit and response counters in the 429
+        # event. Recover it only if there has been no further LinkedIn response.
+        row = conn.execute("""SELECT payload_json FROM app_events WHERE aggregate_id=?
+                              AND event_type='DiscoverySourceRateLimited' AND payload_json::jsonb->>'board'='linkedin'
+                              ORDER BY event_id DESC LIMIT 1""", (run_id,)).fetchone()
+        prior = json.loads(row[0]) if row else {}
+        if prior.get("retryAtEpochSeconds") and prior.get("responses") == observations:
+            return {"pending": [{key: prior[key] for key in ("unitId", "phase", "retryAtEpochSeconds")}]}
+        return {}
+
+    def linkedin_retry_state(self, run_id):
+        with self.database.connect() as conn:
+            return self._linkedin_retry_state(conn, run_id, self._board_responses(conn, run_id, "linkedin"))
+
+    def finish_retry_peer_turn(self, lease, yielded):
+        # A peer can complete from cached listings without making a board
+        # request. Only its committed turn releases this one-time courtesy.
+        with self.database.transaction() as conn:
+            self.guard_run(conn, lease)
+            operation = f"board-responses:{lease['run_id']}:linkedin"
+            conn.execute("""UPDATE discovery_operations SET result_json=(result_json::jsonb #- '{retryTurns,yieldToPeerOf}')::text
+                            WHERE operation_id=? AND result_json::jsonb#>>'{retryTurns,yieldToPeerOf}'=?""", (operation, yielded))
+
+    def provider_response(self, lease, board, unit_id, phase, status, received, delay, interval, requested, receipt_key):
         """Commit source pacing and cumulative response counts before the SDK consumes the response."""
         with self.database.transaction() as conn:
             run = self.guard_run(conn, lease)
             if interval:
                 conn.execute("UPDATE discovery_provider_cooldowns SET next_request_at=GREATEST(next_request_at,?) WHERE board=?",
                              (received.timestamp() + interval, board))
-            operation = f"board-responses:{lease['run_id']}:{board}"
-            row = conn.execute("SELECT result_json FROM discovery_operations WHERE operation_id=?", (operation,)).fetchone()
-            counts = json.loads(row[0]) if row else {"listing": 0, "detail": 0, "other": 0}
+            observations = self._board_responses(conn, lease["run_id"], board)
+            state = self._linkedin_retry_state(conn, lease["run_id"], observations) if board == "linkedin" else None
+            counts = {key: observations[key] for key in ("listing", "detail", "other")}
             counts[phase] += 1
-            conn.execute("INSERT INTO discovery_operations VALUES(?,'board_responses',?,?,?) ON CONFLICT(operation_id) "
-                         "DO UPDATE SET result_json=excluded.result_json", (operation, run["request_hash"], json.dumps(counts), now()))
+            deadline = None
             if status == 429:
                 started = datetime.fromisoformat(run["created_at"])
-                self.record_rate_limit_response(lease, {
+                deadline = self.record_rate_limit_response(lease, {
                     "board": board, "unitId": unit_id, "phase": phase, "httpStatus": status,
                     "leaseEpoch": lease["epoch"], "responses": counts, "elapsedMs": max(0, round((received - started).total_seconds() * 1000)),
                     "receivedAt": received.isoformat(timespec="milliseconds"), "retryAfterSeconds": delay,
+                    **({"receiptKey": receipt_key} if receipt_key else {}),
                 }, received_at=received.timestamp(), connection=conn)
+            if state is not None:
+                state, previous = record_retry_turn(state, unit_id, phase, receipt_key, requested.timestamp(), deadline)
+                if previous:
+                    self.events.append(conn, "DiscoverySourceRetryResponse", {**previous,
+                        "board": board, "phase": phase, "httpStatus": status, "leaseEpoch": lease["epoch"],
+                        "requestedAt": requested.isoformat(timespec="milliseconds"), "receivedAt": received.isoformat(timespec="milliseconds")},
+                        feature="discovery", aggregate_id=lease["run_id"], stage="board_search")
+            stored = {**counts, **({"retryTurns": state} if state is not None else {})}
+            self._save_board_responses(conn, run, board, stored)
 
     def record_rate_limit_response(self, lease, observation, *, received_at=None, connection=None):
         board = observation["board"]
         with nullcontext(connection) if connection is not None else self.database.transaction() as conn:
-            self.guard_run(conn, lease)
+            run = self.guard_run(conn, lease)
             row = conn.execute("SELECT consecutive_limits FROM discovery_provider_cooldowns WHERE board=?", (board,)).fetchone()
             count = (row[0] if row else 0) + 1
             advertised = float(observation.get("retryAfterSeconds") or 0)
@@ -905,8 +963,16 @@ class DiscoveryRepository:
                 "consecutive_limits=excluded.consecutive_limits,retry_advertised=excluded.retry_advertised RETURNING retry_at",
                 (board, retry_at, count, int(advertised > 0)),
             ).fetchone()[0]
+            if board == "linkedin" and "httpStatus" not in observation:
+                # The SDK can report a typed refusal without a raw HTTP response.
+                # Preserve the unit without inventing an HTTP status or send time.
+                observations = self._board_responses(conn, lease["run_id"], board)
+                state = self._linkedin_retry_state(conn, lease["run_id"], observations)
+                observations["retryTurns"], _ = record_retry_turn(state, observation["unitId"], "acquisition", None, time.time(), deadline)
+                self._save_board_responses(conn, run, board, observations)
             self.events.append(conn, "DiscoverySourceRateLimited", {**observation, "retryAtEpochSeconds": deadline}, feature="discovery",
                                aggregate_id=lease["run_id"], level="warn", stage="board_search")
+            return deadline
 
     def defer_transient(self, lease, unit, recorded, board, delay):
         with self.database.transaction() as conn:

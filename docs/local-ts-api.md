@@ -180,6 +180,11 @@ from. Each event includes `receivedAt` (UTC), `unitId`, `phase` (`listing`,
 and cumulative `responses` for that run and board through the reported 429. `retryAfterSeconds`
 is the provider's requested delay or `null` when the header is absent or
 unusable. New events also record the effective deadline in `retryAtEpochSeconds`.
+For targeted posting details, `receiptKey` identifies the saved listing.
+`DiscoverySourceRetryResponse` joins the subsequent HTTP response to that
+deadline, unit and phase, with the receipt key when available. Its UTC
+`requestedAt` and `receivedAt` distinguish dispatch from response time, and
+`httpStatus` records the board's reply.
 The source's `politeness.rateLimitedCount`
 continues to describe recent runs that settled with a rate-limit failure.
 `partial` means at least one source unit completed or reached the new-job limit

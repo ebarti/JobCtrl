@@ -12,6 +12,7 @@ from jobctrl.app.model_capacity import wait_for_model_capacity
 from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, SOURCE_FETCH_POLICY, fingerprint, now, search_units, validate_settings
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY, match_role_targets, posting_role_evidence, read_role_decision, role_binding, role_target_sources
 from jobctrl.features.discovery.query_fairness import FAIR_QUERY_SCHEDULING, BoardQueryTurn, query_allowances
+from jobctrl.features.discovery.retry_turns import select_retry_turn
 from jobctrl.features.discovery.remote_search import validate_remote_search_scope
 from jobctrl.features.discovery.role_calls import ROLE_CALL_CUSTODY
 from jobctrl.features.discovery.targets import TargetPlanner
@@ -504,15 +505,25 @@ class DiscoveryService:
                             self.repository.save_unit(lease, unit, status="waiting_for_source", result=state.get("result", {}))
                     return {"done": False, "wakeAt": min(clock + 3600, min(deadlines.values()))}
                 counts = self.repository.board_new_jobs_by_query(lease)
-                candidate = min(available, key=lambda u: (counts.get(u["query"], 0), states.get(u["unit_id"], {}).get("updatedAt", "")))
+                fair_units = sorted(available, key=lambda u: (counts.get(u["query"], 0), states.get(u["unit_id"], {}).get("updatedAt", "")))
+                retry_state = self.repository.linkedin_retry_state(run_id) if any("linkedin" in u["sites"] for u in available) else {}
+                interrupted, yielded = select_retry_turn(fair_units, retry_state)
                 limits = query_allowances(dict.fromkeys(u["query"] for u in available), counts, remaining)
-                turn = BoardQueryTurn(limits[candidate["query"]]) if len(limits) > 1 else None
+                candidate = interrupted or next(u for u in fair_units if limits[u["query"]] > 0)
+                # A saved retry can settle one new job even when fresh-work
+                # allocation favors a sibling. Every admission still checks the global limit.
+                if interrupted and len(available) > 1:
+                    turn = BoardQueryTurn(1)
+                else:
+                    turn = BoardQueryTurn(limits[candidate["query"]]) if len(limits) > 1 else None
                 try:
                     await self.execution.run_board_unit(context, lease, candidate, execution_settings, states.get(candidate["unit_id"]), turn)
                 except AppError as error:
                     if error.code == "action_cancelled":
                         raise
                     self.repository.record_board_failure(lease, candidate, error)
+                if yielded:
+                    self.repository.finish_retry_peer_turn(lease, yielded)
                 return {"done": False, "wakeAt": 0.0}
             outcome = self.repository.finalize_bounded_units(lease, request["settings"]["newJobLimit"])
             failures = [state["result"]["failure"] for state in states.values() if state["result"].get("failure")]
