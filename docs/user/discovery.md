@@ -88,6 +88,9 @@ keyword matches before requesting the next page.
 During a saved-role LinkedIn search, an exact match to a saved posting is
 recorded as a listing observation. The search keeps the saved revision and
 skips the detail request and role check. Use the job's manual checks to refresh it.
+When several queries in one search return the same LinkedIn posting, JobCtrl
+reuses a description it already fetched for that posting, even after a worker
+restart. Each query still records its result. A new search can fetch fresh details.
 
 Saved role titles are sent to the board as written. Model-backed role checks
 begin when the search receives candidate postings. Before starting a new search

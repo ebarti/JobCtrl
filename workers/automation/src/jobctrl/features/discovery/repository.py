@@ -943,6 +943,21 @@ class DiscoveryRepository:
         return [(r["receipt_key"],json.loads(r["listing_json"]),json.loads(r["detail_json"]) if r["detail_json"] else None)
                 for r in rows]
 
+    def reusable_linkedin_description(self, lease, job_key):
+        with self.database.connect() as conn:
+            self.guard_run(conn, lease)
+            rows = conn.execute(
+                "SELECT detail_json FROM discovery_postings "
+                "WHERE run_id=? AND site='linkedin' AND job_key=? AND detail_json IS NOT NULL "
+                "ORDER BY received_order",
+                (lease["run_id"], job_key),
+            )
+            for row in rows:
+                description = json.loads(row["detail_json"]).get("description")
+                if description and description.strip():
+                    return description
+        return None
+
     def save_posting_detail(self, lease, key, detail):
         with self.database.transaction() as conn:
             self.guard_run(conn, lease)

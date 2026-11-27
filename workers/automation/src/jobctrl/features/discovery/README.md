@@ -106,6 +106,10 @@ escape hatch.
   before opening the next page. Accepting a new job, its intake receipt, the
   new-job count and its independent DBOS assessment enqueue share a transaction.
   Cursor schema/fingerprint errors fail explicitly. Epoch checks fence stale writers.
+- When LinkedIn returns the same native posting ID to overlapping queries in one run,
+  Discovery reuses the first nonblank targeted description recorded in PostgreSQL,
+  including after worker replacement. Each unit retains its own intake receipt.
+  A missing description or failed request leaves the next unit free to fetch it.
 - Discovery seeds state only for boards provided by the installed JobStreaming registry. Selection limits a search to the saved board IDs. Reopening an existing database retains its job and run history. An unfinished search with a retired active source records `discovery_source_retired` and requires a fresh launch.
 - Capture prepare/supersede creates a new 64-character review lifetime. Import
   claims, input fingerprints, canonical posting writes and acknowledgement
