@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import threading
+from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial
 from typing import Any
@@ -39,6 +40,9 @@ from jobstreaming.batch import jobs_to_dataframe
 from jobctrl.app.errors import AppError
 from jobctrl.features.discovery.remote_search import RemoteSearchConfigurationError as RemoteSearchConfigurationError
 from jobctrl.features.discovery.remote_search import provider_scope, validate_remote_search_scope
+
+
+detail_job_key: ContextVar[str | None] = ContextVar("discovery_detail_job_key", default=None)
 
 
 def supported_boards() -> tuple[str, ...]:
@@ -389,12 +393,16 @@ class JobStreamingGateway:
         acknowledgement identity when the caller reprojects the result.
         """
 
-        return fetch_job_detail(
-            event.site,
-            event.job,
-            proxies=proxies,
-            user_agent=user_agent,
-            description_format="markdown",
-            request_timeout=request_timeout,
-            registry=_normalize_tls_adapter_timeouts(registry),
-        )
+        token = detail_job_key.set(event.job_key)
+        try:
+            return fetch_job_detail(
+                event.site,
+                event.job,
+                proxies=proxies,
+                user_agent=user_agent,
+                description_format="markdown",
+                request_timeout=request_timeout,
+                registry=_normalize_tls_adapter_timeouts(registry),
+            )
+        finally:
+            detail_job_key.reset(token)

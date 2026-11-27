@@ -190,6 +190,11 @@ each fallback is at most 120 seconds. Search passes the absolute deadline to
 DBOS so offline time counts even when the worker exits before registering the
 timer. Each new 429 can defer another turn. The original run owns
 its unfinished work, criteria, budget and accepted postings across retries.
+The board-response record commits the interrupted unit, phase, detail receipt
+when available, and effective deadline alongside the 429. Once eligible, the
+oldest interrupted unit takes the next LinkedIn turn. A repeat throttle allows
+one different ready unit a turn. The worker records the actual retry response
+with its original deadline and request start time.
 
 An explicit `discovery.search` with only `resumeFromRunId` can continue unfinished
 LinkedIn units from an older terminal rate-limit outcome. Admission verifies the

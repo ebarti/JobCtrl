@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 from jobctrl.app.errors import AppError
 from jobctrl.features.discovery.adapters.board_diagnostics import board_access_error, board_rate_limit_error
-from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, fingerprint
+from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, posting_receipt_key
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY
 from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
 from jobctrl.features.discovery.adapters.checkpoints import ProviderCheckpointStore
@@ -55,13 +55,16 @@ class _BoardRequests:
                 self.limited = self.advertised = True
                 raise RateLimitError("The source is cooling down.", retry_after=slot["cooldown"])
             if not slot["pace"]:
+                requested = datetime.now(timezone.utc)
                 response = send_request(*args, **kwargs)
-                self.observe(response)
+                self.observe(response, requested)
                 return response
             self.stop.wait(slot["pace"])
         raise StreamCancelledError("Discovery stopped.")
 
-    def observe(self, response):
+    def observe(self, response, requested):
+        from jobctrl.features.discovery.adapters.jobstreaming import detail_job_key
+
         path = urlsplit(getattr(response, "url", "") or "").path
         phase = "listing"
         if self.board == "linkedin":
@@ -74,8 +77,10 @@ class _BoardRequests:
             self.advertised = delay is not None and delay > 0
         elif response.status_code in {408, 425} or 500 <= response.status_code < 600:
             self.transient_delay = delay
+        key = detail_job_key.get() if phase == "detail" else None
+        receipt = posting_receipt_key(self.lease["run_id"], self.unit_id, self.board, key) if key else None
         self.repository.provider_response(self.lease, self.board, self.unit_id, phase,
-                                          response.status_code, observed, delay, self.interval)
+                                          response.status_code, observed, delay, self.interval, requested, receipt)
 
 
 class DiscoveryExecutionAdapter:
@@ -192,7 +197,7 @@ class DiscoveryExecutionAdapter:
                 self.repository.heartbeat(lease)
                 if isinstance(event, JobEvent):
                     site = event.site.value
-                    receipt = "jobstreaming:" + fingerprint([lease["run_id"], unit["unit_id"], site, event.job_key])
+                    receipt = posting_receipt_key(lease["run_id"], unit["unit_id"], site, event.job_key)
                     listing = {"job": event.job.model_dump(mode="json"), "site": site, "key": event.job_key,
                                "emittedAt": event.emitted_at.isoformat()}
                     self.repository.record_listing(lease, unit, receipt, site, event.job_key, listing, acknowledge)

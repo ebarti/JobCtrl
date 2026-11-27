@@ -361,6 +361,12 @@ Jobs already assessed keep their scores. For an older search that already
 ended because of a rate limit, **Continue LinkedIn search** resumes its saved
 position under the current retry behavior.
 
+After the wait, the interrupted LinkedIn page or posting detail gets this
+search's next available LinkedIn turn. If the same request is throttled again, one other
+ready LinkedIn query or location can take a turn before it is retried. Other
+boards continue while LinkedIn waits. When other queries are ready, a retry
+can use one remaining new-job slot, including the last one.
+
 For a user-supplied posting URL, Jobs validates the public destination and redirects. The posting transport respects host cooldowns following server deferrals. A failed refresh retains the last accepted posting snapshot. See [Enrichment & Extraction](enrichment-and-extraction.md).
 
 ## Contact Research

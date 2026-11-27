@@ -55,6 +55,10 @@ def fingerprint(value):
     ).hexdigest()
 
 
+def posting_receipt_key(run_id, unit_id, site, job_key):
+    return "jobstreaming:" + fingerprint([run_id, unit_id, site, job_key])
+
+
 def validate_settings(value):
     result = deepcopy(value)
     for key, minimum, maximum in (
