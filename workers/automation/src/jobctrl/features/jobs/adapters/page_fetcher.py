@@ -35,7 +35,7 @@ from bs4 import BeautifulSoup, Comment
 from jobctrl.network.async_routes import AsyncPublicHttpUrlRouteGuard, await_owned, start_blocking
 from jobctrl.network.policy import ENRICHMENT_CRAWL_POLICY
 from jobctrl.network.ports import default_honest_user_agent
-from jobctrl.features.jobs.domain.capture import DetailPage
+from jobctrl.features.jobs.domain.capture import DetailPage, navigation_observer, report_navigation
 from jobctrl.network import (
     PolitenessGateway,
     PolitenessSession,
@@ -71,6 +71,30 @@ class DetailPageFetchBlocked(RuntimeError):
 
 class DetailPageFetchUnavailable(RuntimeError):
     """The browser could not acquire a page for a transient runtime reason."""
+
+
+def _observe_top_level_navigation(page, observer):
+    # HTTP redirects have separate Playwright Request objects. Attribute the
+    # final main-document response to its own host and actual dispatch time.
+    started = {}
+
+    def dispatched(request):
+        if request.is_navigation_request() and request.resource_type == "document":
+            started[request] = datetime.now(timezone.utc)
+
+    def received(response):
+        requested = started.pop(response.request, None)
+        if requested is None or response.frame != page.main_frame:
+            return
+        if 300 <= response.status < 400 and "location" in response.headers:
+            return
+        page.remove_listener("request", dispatched)
+        page.remove_listener("response", received)
+        report_navigation(observer, response.url, response.status, requested, datetime.now(timezone.utc),
+                          response.headers.get("retry-after"))
+
+    page.on("request", dispatched)
+    page.on("response", received)
 
 
 def _route_block_error(guard: PublicHttpUrlRouteGuard) -> DetailPageFetchBlocked:
@@ -296,6 +320,8 @@ class PlaywrightDetailPageFetcher:
                 context = await browser.new_context(user_agent=user_agent, extra_http_headers=request_headers)
                 page = await context.new_page()
                 route_guard = await AsyncPublicHttpUrlRouteGuard(page).install_async()
+                if observer := navigation_observer.get():
+                    _observe_top_level_navigation(page, observer)
                 status: int | None = None
                 resp = None
                 try:

@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import time
 from contextlib import nullcontext
+from functools import partial
 
 from jobctrl.app.contracts import ActionContext
 from jobctrl.app.errors import AppError, ConflictError, NotFoundError
@@ -453,6 +454,8 @@ class PreparationService:
                 posting = self.jobs.snapshot(job_id)
                 if posting["source_id"] == "jobstreaming:linkedin":
                     await self.discovery.reserve_linkedin_detail(cancelled)
+                    if search := request.get("_acquisition_run_id"):
+                        inputs["observe_navigation"] = partial(self.discovery.observe_posting_response, search, job_id, posting["revision"])
             value = await self.jobs.refresh(job_id, **inputs, receipt_key=op, cancelled=cancelled)
             return {"revision": value["revision"]}
         if stage == "role_analysis":

@@ -160,6 +160,12 @@ An explicit retry or selected-job assessment can check those postings later.
 The LinkedIn transport records each observed HTTP 429 and its effective Unix
 retry timestamp together. The `DiscoverySourceRateLimited` activity event and
 the run's `cooldowns` expose the same deadline.
+An initial assessment can observe a 429 on the top-level LinkedIn posting
+itself. Its accepted intake receipt binds the response to the search, job and
+posting revision even after acquisition has finished. Discovery counts these
+responses under `assessment` and applies the shared board cooldown and spacing.
+The assessment keeps the ordinary Jobs refresh failure and explicit retry.
+SDK listing and detail retry turns continue to belong to their interrupted unit.
 Standalone Discovery remains acquisition-only and reports
 `preparationAvailable: false`. The separate explicit `assess` preparation recipe
 recovers selected saved jobs without another acquisition.

@@ -942,42 +942,54 @@ class DiscoveryRepository:
             conn.execute("""UPDATE discovery_operations SET result_json=(result_json::jsonb #- '{retryTurns,yieldToPeerOf}')::text
                             WHERE operation_id=? AND result_json::jsonb#>>'{retryTurns,yieldToPeerOf}'=?""", (operation, yielded))
 
+    def _observe_board_response(self, conn, run, observations, board, phase, status, received, delay, interval, requested, owner):
+        if interval:
+            conn.execute("UPDATE discovery_provider_cooldowns SET next_request_at=GREATEST(next_request_at,?) WHERE board=?",
+                         (received.timestamp() + interval, board))
+        observations[phase] = observations.get(phase, 0) + 1
+        timing = {}
+        if board == "linkedin":
+            if status == 429 or 200 <= status < 300:
+                timing["ordinaryRequestIntervalSeconds"] = self._observe_linkedin_interval(conn, status)
+            requested_at = requested.isoformat(timespec="milliseconds")
+            previous = observations.get("lastRequest")
+            timing["requestedAt"] = requested_at
+            # A late response to an earlier dispatch cannot replace the latest sample.
+            if not previous or previous["requestedAt"] <= requested_at:
+                if status == 429 and previous:
+                    delta = datetime.fromisoformat(requested_at) - datetime.fromisoformat(previous["requestedAt"])
+                    timing.update(previousRunBoardRequest=previous, requestStartIntervalMs=round(delta.total_seconds() * 1000))
+                observations["lastRequest"] = {"requestedAt": requested_at, "phase": phase, "httpStatus": status}
+        if status == 429:
+            started = datetime.fromisoformat(run["created_at"])
+            counts = {key: observations[key] for key in ("listing", "detail", "other", "assessment") if key in observations}
+            return self._record_rate_limit(conn, run, {
+                "board": board, "phase": phase, "httpStatus": status, **owner, **timing, "responses": counts,
+                "elapsedMs": max(0, round((received - started).total_seconds() * 1000)),
+                "receivedAt": received.isoformat(timespec="milliseconds"), "retryAfterSeconds": delay,
+            }, received.timestamp())
+
+    def assessment_response(self, run_id, job_id, revision, response, delay):
+        with self.database.transaction() as conn:
+            run = self._acquired_posting_receipt(conn, run_id, job_id, revision, "jobstreaming:linkedin")
+            if run is None:
+                return
+            observations = self._board_responses(conn, run_id, "linkedin")
+            if "retryTurns" not in observations:
+                observations["retryTurns"] = self._linkedin_retry_state(conn, run_id, observations)
+            self._observe_board_response(conn, run, observations, "linkedin", "assessment", response.status,
+                response.received, delay, LINKEDIN_REQUEST_INTERVAL_SECONDS, response.requested,
+                {"jobId": job_id, "postingRevision": revision, "receiptKey": run["receipt_key"]})
+            self._save_board_responses(conn, run, "linkedin", observations)
+
     def provider_response(self, lease, board, unit_id, phase, status, received, delay, interval, requested, receipt_key):
         """Commit source pacing and cumulative response counts before the SDK consumes the response."""
         with self.database.transaction() as conn:
             run = self.guard_run(conn, lease)
-            if interval:
-                conn.execute("UPDATE discovery_provider_cooldowns SET next_request_at=GREATEST(next_request_at,?) WHERE board=?",
-                             (received.timestamp() + interval, board))
             observations = self._board_responses(conn, lease["run_id"], board)
             state = self._linkedin_retry_state(conn, lease["run_id"], observations) if board == "linkedin" else None
-            counts = {key: observations[key] for key in ("listing", "detail", "other")}
-            counts[phase] += 1
-            ordinary_interval = None
-            if board == "linkedin" and (status == 429 or 200 <= status < 300):
-                ordinary_interval = self._observe_linkedin_interval(conn, status)
-            timing = {}
-            if board == "linkedin":
-                requested_at = requested.isoformat(timespec="milliseconds")
-                previous = observations.get("lastRequest")
-                timing["requestedAt"] = requested_at
-                # A late response to an earlier dispatch cannot replace the latest sample.
-                if not previous or previous["requestedAt"] <= requested_at:
-                    if status == 429 and previous:
-                        delta = datetime.fromisoformat(requested_at) - datetime.fromisoformat(previous["requestedAt"])
-                        timing.update(previousRunBoardRequest=previous, requestStartIntervalMs=round(delta.total_seconds() * 1000))
-                    observations["lastRequest"] = {"requestedAt": requested_at, "phase": phase, "httpStatus": status}
-            deadline = None
-            if status == 429:
-                started = datetime.fromisoformat(run["created_at"])
-                deadline = self.record_rate_limit_response(lease, {
-                    "board": board, "unitId": unit_id, "phase": phase, "httpStatus": status,
-                    "leaseEpoch": lease["epoch"], "responses": counts, "elapsedMs": max(0, round((received - started).total_seconds() * 1000)),
-                    "receivedAt": received.isoformat(timespec="milliseconds"), "retryAfterSeconds": delay,
-                    **timing,
-                    **({"ordinaryRequestIntervalSeconds": ordinary_interval} if ordinary_interval is not None else {}),
-                    **({"receiptKey": receipt_key} if receipt_key else {}),
-                }, received_at=received.timestamp(), connection=conn)
+            owner = {"unitId": unit_id, "leaseEpoch": lease["epoch"], **({"receiptKey": receipt_key} if receipt_key else {})}
+            deadline = self._observe_board_response(conn, run, observations, board, phase, status, received, delay, interval, requested, owner)
             if state is not None:
                 state, previous = record_retry_turn(state, unit_id, phase, receipt_key, requested.timestamp(), deadline)
                 if previous:
@@ -985,43 +997,43 @@ class DiscoveryRepository:
                         "board": board, "phase": phase, "httpStatus": status, "leaseEpoch": lease["epoch"],
                         "requestedAt": requested.isoformat(timespec="milliseconds"), "receivedAt": received.isoformat(timespec="milliseconds")},
                         feature="discovery", aggregate_id=lease["run_id"], stage="board_search")
-            stored = {**counts, **({"retryTurns": state} if state is not None else {})}
-            if board == "linkedin":
-                stored["lastRequest"] = observations["lastRequest"]
-            self._save_board_responses(conn, run, board, stored)
+                observations["retryTurns"] = state
+            self._save_board_responses(conn, run, board, observations)
 
-    def record_rate_limit_response(self, lease, observation, *, received_at=None, connection=None):
+    def record_rate_limit_response(self, lease, observation):
+        with self.database.transaction() as conn:
+            return self._record_rate_limit(conn, self.guard_run(conn, lease), observation, time.time())
+
+    def _record_rate_limit(self, conn, run, observation, received_at):
         board = observation["board"]
-        with nullcontext(connection) if connection is not None else self.database.transaction() as conn:
-            run = self.guard_run(conn, lease)
-            row = conn.execute("SELECT consecutive_limits FROM discovery_provider_cooldowns WHERE board=?", (board,)).fetchone()
-            count = (row[0] if row else 0) + 1
-            advertised = float(observation.get("retryAfterSeconds") or 0)
-            base = 4 * 2 ** min(8, count - 1)
-            if advertised > 0:
-                wait = advertised
-            elif board == "linkedin":
-                ceiling = min(120, 2 * base)
-                wait = random.uniform(ceiling / 2, ceiling)
-            else:
-                wait = min(900, base)
-            retry_at = (received_at if received_at is not None else time.time()) + max(1, wait)
-            deadline = conn.execute(
-                "INSERT INTO discovery_provider_cooldowns AS c(board,retry_at,consecutive_limits,retry_advertised) VALUES(?,?,?,?) "
-                "ON CONFLICT(board) DO UPDATE SET retry_at=GREATEST(c.retry_at,c.next_request_at,excluded.retry_at), "
-                "consecutive_limits=excluded.consecutive_limits,retry_advertised=excluded.retry_advertised RETURNING retry_at",
-                (board, retry_at, count, int(advertised > 0)),
-            ).fetchone()[0]
-            if board == "linkedin" and "httpStatus" not in observation:
-                # The SDK can report a typed refusal without a raw HTTP response.
-                # Preserve the unit without inventing an HTTP status or send time.
-                observations = self._board_responses(conn, lease["run_id"], board)
-                state = self._linkedin_retry_state(conn, lease["run_id"], observations)
-                observations["retryTurns"], _ = record_retry_turn(state, observation["unitId"], "acquisition", None, time.time(), deadline)
-                self._save_board_responses(conn, run, board, observations)
-            self.events.append(conn, "DiscoverySourceRateLimited", {**observation, "retryAtEpochSeconds": deadline}, feature="discovery",
-                               aggregate_id=lease["run_id"], level="warn", stage="board_search")
-            return deadline
+        row = conn.execute("SELECT consecutive_limits FROM discovery_provider_cooldowns WHERE board=?", (board,)).fetchone()
+        count = (row[0] if row else 0) + 1
+        advertised = float(observation.get("retryAfterSeconds") or 0)
+        base = 4 * 2 ** min(8, count - 1)
+        if advertised > 0:
+            wait = advertised
+        elif board == "linkedin":
+            ceiling = min(120, 2 * base)
+            wait = random.uniform(ceiling / 2, ceiling)
+        else:
+            wait = min(900, base)
+        retry_at = received_at + max(1, wait)
+        deadline = conn.execute(
+            "INSERT INTO discovery_provider_cooldowns AS c(board,retry_at,consecutive_limits,retry_advertised) VALUES(?,?,?,?) "
+            "ON CONFLICT(board) DO UPDATE SET retry_at=GREATEST(c.retry_at,c.next_request_at,excluded.retry_at), "
+            "consecutive_limits=excluded.consecutive_limits,retry_advertised=excluded.retry_advertised RETURNING retry_at",
+            (board, retry_at, count, int(advertised > 0)),
+        ).fetchone()[0]
+        if board == "linkedin" and "httpStatus" not in observation:
+            # The SDK can report a typed refusal without a raw HTTP response.
+            # Preserve the unit without inventing an HTTP status or send time.
+            observations = self._board_responses(conn, run["run_id"], board)
+            state = self._linkedin_retry_state(conn, run["run_id"], observations)
+            observations["retryTurns"], _ = record_retry_turn(state, observation["unitId"], "acquisition", None, time.time(), deadline)
+            self._save_board_responses(conn, run, board, observations)
+        self.events.append(conn, "DiscoverySourceRateLimited", {**observation, "retryAtEpochSeconds": deadline}, feature="discovery",
+                           aggregate_id=run["run_id"], level="warn", stage="enrich" if observation["phase"] == "assessment" else "board_search")
+        return deadline
 
     def defer_transient(self, lease, unit, recorded, board, delay):
         with self.database.transaction() as conn:
@@ -1272,16 +1284,21 @@ class DiscoveryRepository:
             return conn.execute("SELECT 1 FROM discovery_intake_receipts WHERE run_id=? AND job_id=? LIMIT 1",
                                 (run_id, job_id)).fetchone() is not None
 
+    @staticmethod
+    def _acquired_posting_receipt(conn, run_id, job_id, revision, source_id):
+        return conn.execute(
+            """SELECT r.run_id,r.created_at,r.request_hash,i.receipt_key
+               FROM discovery_intake_receipts i JOIN discovery_runs r USING(run_id)
+               WHERE i.run_id=? AND i.job_id=? AND i.outcome='accepted'
+               AND (i.data_json::jsonb->>'isNew')::boolean
+               AND (i.data_json::jsonb->>'postingRevision')::integer=?
+               AND i.data_json::jsonb->>'sourceId'=? LIMIT 1""",
+            (run_id, job_id, revision, source_id),
+        ).fetchone()
+
     def acquired_posting_revision(self, run_id, job_id, revision, source_id):
         with self.database.connect() as conn:
-            return conn.execute(
-                """SELECT 1 FROM discovery_intake_receipts
-                   WHERE run_id=? AND job_id=? AND outcome='accepted'
-                   AND (data_json::jsonb->>'isNew')::boolean
-                   AND (data_json::jsonb->>'postingRevision')::integer=?
-                   AND data_json::jsonb->>'sourceId'=? LIMIT 1""",
-                (run_id, job_id, revision, source_id),
-            ).fetchone() is not None
+            return self._acquired_posting_receipt(conn, run_id, job_id, revision, source_id) is not None
 
     def source_result(self, lease, source_id, status, *, new_jobs=0, observed_jobs=0, error_code=None, connection=None):
         with nullcontext(connection) if connection is not None else self.database.transaction() as conn:
