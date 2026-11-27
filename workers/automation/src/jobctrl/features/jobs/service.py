@@ -7,6 +7,7 @@ from typing import Protocol
 
 from jobctrl.app.errors import AppError
 from jobctrl.semantic import DeterminationFailure
+from jobctrl.features.jobs.domain.capture import navigation_observer
 from jobctrl.features.jobs.domain.postings import digest, posting_url
 
 
@@ -353,7 +354,7 @@ class JobsService:
             raise
 
     async def refresh(
-        self, job_id: str, *, expected_revision=None, receipt_key=None, cancelled=None, guard=None
+        self, job_id: str, *, expected_revision=None, receipt_key=None, cancelled=None, guard=None, observe_navigation=None
     ) -> dict:
         receipt_fingerprint = digest({"operation": "refresh", "job_id": job_id, "expected_revision": expected_revision})
         if receipt_key:
@@ -367,18 +368,22 @@ class JobsService:
         current = self.get_job(job_id)
         if expected_revision is not None:
             self.assert_posting_current(job_id, expected_revision)
-        return await self.capture_external(
-            {
-                "url": current["url"],
-                "source_id": current["source_id"],
-                "source_native_id": current.get("source_native_id") or "",
-                "expectedRevision": current["revision"],
-                "receipt_key": receipt_key,
-            },
-            cancelled=cancelled,
-            guard=guard,
-            receipt_fingerprint=receipt_fingerprint,
-        )
+        token = navigation_observer.set(observe_navigation)
+        try:
+            return await self.capture_external(
+                {
+                    "url": current["url"],
+                    "source_id": current["source_id"],
+                    "source_native_id": current.get("source_native_id") or "",
+                    "expectedRevision": current["revision"],
+                    "receipt_key": receipt_key,
+                },
+                cancelled=cancelled,
+                guard=guard,
+                receipt_fingerprint=receipt_fingerprint,
+            )
+        finally:
+            navigation_observer.reset(token)
 
     async def check_availability(self, job_id, *, expected_revision=None, receipt_key=None, cancelled=None):
         fingerprint = digest({"operation": "availability", "job_id": job_id, "expected_revision": expected_revision})

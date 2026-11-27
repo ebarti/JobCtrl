@@ -1,17 +1,23 @@
 """Controlled external posting-page protocol in an authenticated owned workspace."""
 
 import asyncio
-import json
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr, model_validator
 
 from jobctrl.app.errors import AppError
 from jobctrl.app.synthetic import synthetic_boundary
 from jobctrl.network.async_routes import await_owned
-from jobctrl.features.jobs.domain.capture import DetailPage
+from jobctrl.features.jobs.domain.capture import DetailPage, navigation_observer, report_navigation
 from jobctrl.features.jobs.domain.postings import posting_url, utc_now
 from jobctrl.features.jobs.adapters.page_fetcher import DetailPageFetchBlocked, DetailPageFetchUnavailable
+
+
+class CapturedNavigation(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    requestedAt: AwareDatetime
+    receivedAt: AwareDatetime
+    retryAfter: StrictStr | None = None
 
 
 class PostingPage(BaseModel):
@@ -21,8 +27,16 @@ class PostingPage(BaseModel):
     html: StrictStr = Field(max_length=2_000_000)
     jsonLd: list = Field(default_factory=list, max_length=100)
     statusCode: StrictInt | None = None
+    navigation: CapturedNavigation | None = None
     evidenceComplete: StrictBool = False
     visibilityVerified: StrictBool = False
+
+    @model_validator(mode="after")
+    def validate_navigation(self):
+        if self.navigation and (self.statusCode is None or not 100 <= self.statusCode <= 599
+                                or self.navigation.receivedAt < self.navigation.requestedAt):
+            raise ValueError("Invalid target navigation response.")
+        return self
 
 
 class HttpPostingFetcher:
@@ -61,14 +75,20 @@ class HttpPostingFetcher:
                             502,
                         )
         try:
-            page = PostingPage.model_validate(json.loads(content))
+            page = PostingPage.model_validate_json(bytes(content))
         except (ValueError, TypeError):
             raise AppError(
                 "posting_provider_invalid_response", "The posting provider returned invalid captured-page data.", 502
             ) from None
+        final_url = posting_url(page.finalUrl)
+        if page.navigation:
+            report_navigation(navigation_observer.get(), final_url, page.statusCode, page.navigation.requestedAt,
+                              page.navigation.receivedAt, page.navigation.retryAfter)
+        if page.statusCode == 429:
+            raise DetailPageFetchBlocked("rate_limited")
         return DetailPage(
             url=url,
-            final_url=posting_url(page.finalUrl),
+            final_url=final_url,
             page_title=page.title,
             html=page.html,
             status_html=page.html,

@@ -9,7 +9,7 @@ from contextlib import nullcontext, suppress
 
 from jobctrl.app.errors import AppError, ConflictError
 from jobctrl.app.model_capacity import wait_for_model_capacity
-from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, SOURCE_FETCH_POLICY, excluded_title, fingerprint, now, search_units, validate_settings
+from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, SOURCE_FETCH_POLICY, excluded_title, fingerprint, now, retry_after_seconds, search_units, validate_settings
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY, match_role_targets, posting_role_evidence, read_role_decision, role_binding, role_target_sources
 from jobctrl.features.discovery.query_fairness import FAIR_QUERY_SCHEDULING, BoardQueryTurn, query_allowances
 from jobctrl.features.discovery.retry_turns import select_retry_turn
@@ -353,6 +353,11 @@ class DiscoveryService:
 
     def board_cooling_down(self, board):
         return self.repository.cooldown(board) > 0
+
+    def observe_posting_response(self, run_id, job_id, revision, response):
+        if response.host == "linkedin.com" or response.host.endswith(".linkedin.com"):
+            self.repository.assessment_response(run_id, job_id, revision, response,
+                                                retry_after_seconds(response.retry_after, response.received))
 
     async def reserve_linkedin_detail(self, cancelled):
         """A search assessment using the public posting URL shares board pacing."""
