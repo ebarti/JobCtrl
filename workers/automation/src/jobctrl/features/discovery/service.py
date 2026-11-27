@@ -9,7 +9,7 @@ from contextlib import nullcontext, suppress
 
 from jobctrl.app.errors import AppError, ConflictError
 from jobctrl.app.model_capacity import wait_for_model_capacity
-from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, SOURCE_FETCH_POLICY, fingerprint, now, search_units, validate_settings
+from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, SOURCE_FETCH_POLICY, excluded_title, fingerprint, now, search_units, validate_settings
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY, match_role_targets, posting_role_evidence, read_role_decision, role_binding, role_target_sources
 from jobctrl.features.discovery.query_fairness import FAIR_QUERY_SCHEDULING, BoardQueryTurn, query_allowances
 from jobctrl.features.discovery.retry_turns import select_retry_turn
@@ -560,12 +560,10 @@ class DiscoveryService:
             with suppress(asyncio.CancelledError):
                 await heartbeat
 
-    async def _admit(self, context, lease, unit, settings, posting, key, *, forced_exclusion=False, fetch_detail=None):
+    async def _admit(self, context, lease, unit, settings, posting, key, *, forced_exclusion=False, fetch_detail=None, on_role_review=None):
         decision = None
         unavailable = None
-        excluded = forced_exclusion or (posting.get("title") or "").strip().casefold() in {
-            str(x).strip().casefold() for x in settings["exactTitleExclusions"]
-        }
+        excluded = forced_exclusion or excluded_title(settings, posting.get("title"))
         if not excluded and settings.get("_roleTargetPolicy") == ROLE_TARGET_POLICY:
             limit = int(settings["newJobLimit"])
             settled = self.repository.settled_intake(lease, key, limit, context.cancelled)
@@ -605,6 +603,8 @@ class DiscoveryService:
                         if settings.get("_durableRoleChecks") else nullcontext())
                 try:
                     with wait:
+                        if on_role_review is not None:
+                            on_role_review()
                         decision = await match_role_targets(self.model, posting, plan, store=self.repository, owner=owner, guard=guard,
                                                             legacy_recovery=lease["epoch"] > 1 and settings.get("_roleCallCustody") is None)
                 except _SettledIntake as previous:

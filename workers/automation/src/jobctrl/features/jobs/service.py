@@ -205,7 +205,10 @@ class JobsService:
         return self.repository.resolve_url(url, connection=connection)
 
     def resolve_posting(self, data: dict, connection=None) -> dict | None:
-        return self.repository.resolve_posting(data, connection=connection)
+        try:
+            return self.repository.resolve_posting(data, connection=connection)
+        except ValueError:
+            raise AppError("invalid_posting", "The posting fields are invalid.") from None
 
     def read_capture_receipt(self, receipt_key: str, expected_fingerprint=None) -> dict | None:
         return self.repository.capture_receipt(receipt_key, expected_fingerprint=expected_fingerprint)

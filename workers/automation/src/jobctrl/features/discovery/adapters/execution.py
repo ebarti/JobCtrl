@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from math import ceil
@@ -13,11 +15,19 @@ from urllib.parse import urlsplit
 
 from jobctrl.app.errors import AppError
 from jobctrl.features.discovery.adapters.board_diagnostics import board_access_error, board_rate_limit_error
-from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, posting_receipt_key
+from jobctrl.features.discovery.domain import LINKEDIN_REQUEST_INTERVAL_SECONDS, excluded_title, posting_receipt_key
 from jobctrl.features.discovery.qualification import ROLE_TARGET_POLICY
 from jobctrl.features.discovery.remote_search import posting_age_evidence, provider_scope, validate_remote_search_scope
 from jobctrl.features.discovery.adapters.checkpoints import ProviderCheckpointStore
 
+
+@dataclass
+class _Listing:
+    key: str
+    posting: dict
+    excluded_by_age: bool
+    needs_role_check: bool
+    fetch_detail: Callable[[], Awaitable[str | None]]
 
 
 def _retry_after_seconds(value, received_at):
@@ -36,12 +46,13 @@ def _retry_after_seconds(value, received_at):
 
 
 class _BoardRequests:
-    def __init__(self, repository, lease, unit_id, board, stop):
+    def __init__(self, repository, lease, unit_id, board, stop, cancelled):
         self.repository = repository
         self.lease = lease
         self.unit_id = unit_id
         self.board = board
         self.stop = stop
+        self.cancelled = cancelled
         self.interval = LINKEDIN_REQUEST_INTERVAL_SECONDS if board == "linkedin" else 0
         self.limited = False
         self.advertised = False
@@ -49,12 +60,14 @@ class _BoardRequests:
 
     def send(self, send_request, *args, **kwargs):
         from jobstreaming.exception import RateLimitError, StreamCancelledError
-        while not self.stop.is_set():
+        while not self.stop.is_set() and not self.cancelled():
             slot = self.repository.reserve_board_request(self.lease, self.board, self.interval)
             if slot["cooldown"] > 0:
                 self.limited = self.advertised = True
                 raise RateLimitError("The source is cooling down.", retry_after=slot["cooldown"])
             if not slot["pace"]:
+                if self.stop.is_set() or self.cancelled():
+                    break
                 requested = datetime.now(timezone.utc)
                 response = send_request(*args, **kwargs)
                 self.observe(response, requested)
@@ -122,7 +135,7 @@ class DiscoveryExecutionAdapter:
         registry = controlled_registry(self.workspace)
         transports = {}
         for site in spec.sites:
-            observer = _BoardRequests(self.repository, lease, unit["unit_id"], site, stop)
+            observer = _BoardRequests(self.repository, lease, unit["unit_id"], site, stop, context.cancelled)
             transports[site] = observer
             registry = gateway.configure_transport(registry, site, observer)
         recorded = dict((previous or {}).get("result") or {})
@@ -132,16 +145,16 @@ class DiscoveryExecutionAdapter:
                 self.repository.save_unit(lease, unit, status="running", result=recorded)
                 await asyncio.to_thread(self._receive_page, context, lease, unit, spec, registry, gateway, stop, recorded)
                 pending = self.repository.pending_postings(lease, unit)
-            for receipt_key, listing, detail in pending:
-                if context.cancelled():
-                    raise AppError("action_cancelled", "Discovery was cancelled.", 409)
-                result = await self._process_listing(context, lease, unit, settings, spec, gateway, registry, receipt_key, listing, detail)
-                if result["budget_reached"]:
-                    self.repository.save_unit(lease, unit, status="budget_exhausted", result={**recorded, "termination": "budget_exhaustion"})
-                    return
-                if turn and turn.record(result):
-                    self.repository.save_unit(lease, unit, status="waiting_for_query_turn", result=recorded)
-                    return True
+            def restore(receipt):
+                return self._restore_listing(lease, settings, spec, gateway, registry, *receipt)
+
+            disposition = await self._drain_page(context, lease, unit, settings, pending, restore, turn, stop)
+            if disposition == "budget_exhausted":
+                self.repository.save_unit(lease, unit, status=disposition, result={**recorded, "termination": "budget_exhaustion"})
+                return
+            if disposition == "waiting_for_query_turn":
+                self.repository.save_unit(lease, unit, status=disposition, result=recorded)
+                return True
         except JobStreamingError as error:
             if context.cancelled() or stop.is_set():
                 raise AppError("action_cancelled", "Discovery was cancelled.", 409) from None
@@ -237,7 +250,51 @@ class DiscoveryExecutionAdapter:
                     return
             raise AppError("discovery_provider_incomplete", "The provider search has not completed.", 502)
 
-    async def _process_listing(self, context, lease, unit, settings, spec, gateway, registry, key, listing, cached):
+    async def _drain_page(self, context, lease, unit, settings, pending, restore, turn, stop):
+        upcoming = None
+        for index, receipt in enumerate(pending):
+            if context.cancelled():
+                raise AppError("action_cancelled", "Discovery was cancelled.", 409)
+            current = upcoming or restore(receipt)
+            upcoming = None
+            reading = None
+
+            async def read_next_detail():
+                nonlocal upcoming
+                if context.cancelled() or self.repository.budget_remaining(lease, settings["newJobLimit"]) < 2:
+                    return
+                upcoming = restore(pending[index + 1])
+                if (upcoming.needs_role_check and not upcoming.excluded_by_age
+                        and not upcoming.posting["description"].strip()
+                        and not excluded_title(settings, upcoming.posting["title"])
+                        and self.jobs.resolve_posting(upcoming.posting) is None):
+                    await upcoming.fetch_detail()
+
+            def start_read():
+                nonlocal reading
+                if index + 1 < len(pending) and (turn is None or turn.allowance - turn.created >= 2):
+                    reading = asyncio.create_task(read_next_detail())
+
+            try:
+                result = await self._process_listing(
+                    context, lease, unit, settings, current, start_read if current.needs_role_check else None,
+                )
+                # Admission of the reviewed posting commits before a later detail error can defer the unit.
+                if reading is not None:
+                    await asyncio.shield(reading)
+            except BaseException:
+                if reading is not None:
+                    if not reading.done():
+                        stop.set()
+                    await asyncio.gather(reading, return_exceptions=True)
+                raise
+            if result["budget_reached"]:
+                return "budget_exhausted"
+            if turn and turn.record(result):
+                return "waiting_for_query_turn"
+        return None
+
+    def _restore_listing(self, lease, settings, spec, gateway, registry, key, listing, cached):
         from jobstreaming import JobEvent, Site
 
         event = JobEvent(sequence=0, emitted_at=datetime.fromisoformat(listing["emittedAt"]), site=Site(listing["site"]),
@@ -259,6 +316,7 @@ class DiscoveryExecutionAdapter:
             posting["provenance"].update(postingAge=age, providerHoursOld=scope["hours_old"])
 
         async def fetch_detail():
+            nonlocal cached
             if cached is not None:
                 return cached.get("description")
             description = None
@@ -267,14 +325,19 @@ class DiscoveryExecutionAdapter:
             if description is None:
                 detail = await asyncio.to_thread(gateway.fetch_detail_for_job_event, event, registry=registry)
                 description = detail.description if detail and detail.job_url == event.job.job_url else None
-            self.repository.save_posting_detail(lease, key, {"description": description})
+            cached = {"description": description}
+            self.repository.save_posting_detail(lease, key, cached)
             return description
 
         check_role = listing["site"] == "linkedin" and settings.get("_roleTargetPolicy") == ROLE_TARGET_POLICY
-        if not check_role and (age is None or age["accepted"]) and not posting["description"] and self._needs_detail(posting):
-            posting["description"] = await fetch_detail() or ""
-        return await self._admit(context, lease, unit, settings, posting, key, forced_exclusion=age is not None and not age["accepted"],
-                                 fetch_detail=fetch_detail if check_role else None)
+        return _Listing(key, posting, age is not None and not age["accepted"], check_role, fetch_detail)
+
+    async def _process_listing(self, context, lease, unit, settings, item, on_role_review):
+        posting = item.posting
+        if not item.needs_role_check and not item.excluded_by_age and not posting["description"] and self._needs_detail(posting):
+            posting["description"] = await item.fetch_detail() or ""
+        return await self._admit(context, lease, unit, settings, posting, item.key, forced_exclusion=item.excluded_by_age,
+                                 fetch_detail=item.fetch_detail if item.needs_role_check else None, on_role_review=on_role_review)
 
     def _needs_detail(self, posting):
         return any(
