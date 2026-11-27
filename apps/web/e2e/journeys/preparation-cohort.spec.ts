@@ -123,6 +123,62 @@ test("an unresolved posting demand retains its extraction receipt and blocks Fit
     .toEqual(["jobs.role_analysis", "requirements.extract"]);
 });
 
+test.describe("requirements refusal receipts across a source upgrade", () => {
+  test.use({ sourceRevision: "9a9baa49dd5c8308879868f0d054e97c05a9e338" });
+
+  test("an upgrade locates the predecessor's own refused extraction without crediting a peer", async ({ api, app }) => {
+    await createBaseline(api);
+    const settings = await json<{ revision: number }>(api, "get", "/v1/discovery/settings");
+    await json(api, "patch", "/v1/discovery/settings", {
+      expectedRevision: settings.revision, boards: ["indeed"], hoursOld: 0, newJobLimit: 1, resultsPerSite: 1,
+    });
+    const jobs: string[] = [];
+    const priorAttempts: Record<string, unknown>[] = [];
+    for (const ordinal of [1, 2]) {
+      const source = { ...posting(ordinal), description: "Inspect each device against the specification in the appendix." };
+      const search = await action(api, "discovery.search", { queries: ["Synthetic engineer"], locations: ["Madrid"] });
+      const board = await app.external.next();
+      expect(board.path).toBe("/jobstreaming/indeed");
+      board.respond(indeedPage({ jobs: [source], cursor: null, complete: true }));
+      const page = await app.external.next();
+      expect(page.path).toBe("/posting-page");
+      respondProducer(page, [source]);
+      for (const operation of ["page_interpretation", "posting_extraction", "description_quality"]) {
+        respondProducer(await modelCall(app, operation), [source]);
+      }
+      if (ordinal === 1) {
+        respondProducer(await modelCall(app, "jobs.role_analysis"), [source]);
+        const extract = await modelCall(app, "requirements.extract");
+        const selection = typedExtraction(extract, { status: "needs_review" });
+        extract.reply({ ...selection, unresolved: [{ question: "Which specification applies?",
+          reason: "The posting refers to an absent appendix.", evidence_refs: selection.language.evidence_refs }] });
+      }
+      const result = (await completed(api, search.runId)).result as { jobIds: string[] };
+      const id = result.jobIds[0]!;
+      const attempt = await requirementsAttempt(api, id);
+      expect(attempt).toMatchObject({ job_id: id, state: "blocked", failure_code: "extraction_uncertain" });
+      expect(attempt).not.toHaveProperty("failure_details");
+      jobs.push(id);
+      priorAttempts.push(attempt);
+    }
+    const receipts = await app.requirementsExtractionReceipts();
+    expect(receipts).toMatchObject([{ ownerKey: priorAttempts[0]!.attempt_id, status: "succeeded" }]);
+    expect(priorAttempts[1]!.attempt_id).not.toBe(receipts[0]!.ownerKey);
+    const revision = priorAttempts[0]!.posting_revision;
+    await json(api, "patch", `/v1/jobs/${jobs[0]}`, { expectedRevision: revision, description: "The specification changed." });
+    const calls = app.external.calls.filter(call => call.path === "/model").length;
+    await app.upgradeSource();
+    expect(await requirementsAttempt(api, jobs[0]!)).toEqual({ ...priorAttempts[0], failure_details: { receiptId: receipts[0]!.receiptId } });
+    expect(await requirementsAttempt(api, jobs[1]!)).toEqual(priorAttempts[1]);
+    for (const id of jobs) {
+      expect(await json(api, "get", `/v1/jobs/${id}/requirements`)).toBeNull();
+      expect(await json(api, "get", `/v1/jobs/${id}/fit`)).toMatchObject({ score: null });
+    }
+    expect(await app.requirementsExtractionReceipts()).toEqual(receipts);
+    expect(app.external.calls.filter(call => call.path === "/model")).toHaveLength(calls);
+  });
+});
+
 test("a refused extraction and cancellation settle only the corresponding Requirements attempts", async ({ api, app }) => {
   await createBaseline(api);
   const rejectedJob = await captureReusePosting(api, "refused-extraction", COMMON_DEMAND);

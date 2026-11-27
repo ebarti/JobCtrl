@@ -526,8 +526,10 @@ catalog refusal is 503 `requirements_catalog_unavailable` with safe metadata.
 The attempt stores these details transactionally under its exact completion.
 `GET /v1/jobs/{job_id}/requirements/attempts/latest` reports them for first-use
 and refresh failures, including the gateway receipt ID when a provider fails
-or a settled extraction fails source validation. A
-legacy attempt without recorded details keeps its original failure code.
+or a settled extraction fails source validation. For a legacy blocked extraction
+the read checks its recorded dispatch owner, gateway input fingerprint, refusal
+code and full-text binding at the attempt's posting revision. It returns the ID
+only for a single matching receipt and preserves the original failure code.
 
 ## Verification
 

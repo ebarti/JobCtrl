@@ -245,8 +245,9 @@ works before the first accepted snapshot. `failure_code` identifies a refusal.
 Where recorded, `failure_details` preserves the source-free counts, catalog
 revision, reason and model error from a complete-input refusal, or the gateway
 receipt ID for a dispatched provider failure or an extraction rejected during
-source validation. Historical attempts report only
-the fields that were recorded. The original Requirements read remains an
+source validation. For an older blocked extraction, the read can recover the ID
+when its dispatch owner, gateway input fingerprint, validation code and exact
+posting revision identify one retained receipt. The original Requirements read remains an
 optional accepted snapshot.
 
 Consolidation uses semantic policy `requirements-capability-demand-v2`. Explicit

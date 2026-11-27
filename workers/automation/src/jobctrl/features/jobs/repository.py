@@ -51,6 +51,16 @@ class PostgresJobsRepository:
         with nullcontext(connection) if connection is not None else self.database.connect() as conn:
             return self._snapshot(conn, job_id, include_deleted=include_deleted)
 
+    def posting_text_at_revision(self, job_id, revision, connection):
+        row = connection.execute(
+            "SELECT p.data_json FROM jobs_postings p JOIN jobs_jobs j USING(job_id) "
+            "WHERE p.job_id=? AND p.revision=? AND j.deleted_at IS NULL", (job_id, revision),
+        ).fetchone()
+        if row is None:
+            return None
+        posting = json.loads(row["data_json"])
+        return posting.get("text") or posting.get("description")
+
     def snapshots(self, job_ids, *, connection=None, include_deleted=False):
         ids = list(dict.fromkeys(job_ids))
         if len(ids) > 1000 or not all(isinstance(job_id, str) for job_id in ids):

@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic import ValidationError
 
 from jobctrl.app.errors import AppError
-from jobctrl.app.model_shared_work import reject_shared_result
+from jobctrl.app.model_shared_work import owned_validation_refusal, reject_shared_result
 
 from .domain import CONTRACT_VERSION, RequirementError, fingerprint
 
@@ -18,6 +18,15 @@ class RequirementModelAdapter:
 
     def receipt(self, receipt_id):
         return self.gateway.receipt(receipt_id)
+
+    @staticmethod
+    def refused_extraction_receipt(attempt_id, source_id, code, connection):
+        operation = "requirements.extract"
+        # Search uses the stage operation ID. A standalone extraction prefixes its own attempt ID.
+        refusal = owned_validation_refusal(connection, (attempt_id, f"{operation}:{attempt_id}"), operation, code)
+        if refusal and refusal["binding_key"] == f"{operation}:{refusal['prompt_version']}:{source_id}":
+            return refusal["receipt_id"]
+        return None
 
     def coordinate_work(self, keys, cancelled):
         return self.gateway.coordinate_work(keys, cancelled)

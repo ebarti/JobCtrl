@@ -85,7 +85,20 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
     def latest_job_attempt(self, job_id: str) -> dict | None:
         with self.store.read_session() as connection:
             self.jobs.get_posting_snapshot(job_id, connection=connection)
-            return self.store.latest_attempt(job_id, connection)
+            return self._latest_attempt(job_id, connection)
+
+    def _latest_attempt(self, job_id, connection):
+        attempt = self.store.latest_attempt(job_id, connection)
+        if not attempt or attempt["state"] != "blocked" or "failure_details" in attempt:
+            return attempt
+        text = self.jobs.posting_text_at_revision(job_id, attempt["posting_revision"], connection)
+        if text:
+            receipt_id = self.model.refused_extraction_receipt(
+                attempt["attempt_id"], self._content_source(text)["source_id"], attempt["failure_code"], connection,
+            )
+            if receipt_id:
+                attempt["failure_details"] = {"receiptId": receipt_id}
+        return attempt
 
     def get_job_requirements(self, job_id: str, connection=None) -> dict:
         if connection is None:
@@ -103,7 +116,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         if current_contract(snapshot) and snapshot.get("normalization_version") != NORMALIZATION_VERSION:
             stale = True
             reasons = ["consolidation_required"]
-        return {**snapshot, "stale": stale, "stale_reasons": reasons, "latest_attempt": self.store.latest_attempt(job_id, connection)}
+        return {**snapshot, "stale": stale, "stale_reasons": reasons, "latest_attempt": self._latest_attempt(job_id, connection)}
 
     def job_bindings(self, job_ids, connection=None, *, postings=None, scored=None) -> dict:
         """Bounded list-query authority without per-job feature/private reads.
@@ -572,7 +585,7 @@ class RequirementsService(RequirementsCohortService, CatalogNormalizationService
         except (ConflictError, NotFoundError):
             stale = True
         return {**accepted, "stale": stale, "stale_reasons": ["source_or_requirement_changed"] if stale else [],
-                "latest_attempt": self.store.latest_attempt(accepted["job_id"]), "reused_action": True}
+                "latest_attempt": self.latest_job_attempt(accepted["job_id"]), "reused_action": True}
 
     async def refresh(
         self, job_id: str, *, expected_posting_revision: int, expected_revision: int,

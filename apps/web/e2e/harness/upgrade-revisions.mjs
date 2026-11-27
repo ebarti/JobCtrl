@@ -17,4 +17,5 @@ export const upgradeRevisions = Object.freeze([
   "29d571dd2556e4add85964ec35a67a3172f5eb90",
   "17f9ce5be1de2f21735fb27d5dfe8f6d1b7c8118",
   "8505435bbbf11d516c4b42b83df1337643b27456",
+  "9a9baa49dd5c8308879868f0d054e97c05a9e338",
 ]);

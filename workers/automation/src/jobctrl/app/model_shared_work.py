@@ -17,6 +17,17 @@ CREATE INDEX app_shared_model_work_receipt ON app_shared_model_work(receipt_id);
 """
 
 
+def owned_validation_refusal(connection, owner_keys, operation, failure_code):
+    rows = connection.execute(
+        "SELECT c.receipt_id,c.prompt_version,s.binding_key FROM app_model_operation_receipts m "
+        "JOIN app_model_calls c ON c.receipt_id=m.receipt_id AND c.operation=m.operation "
+        "AND c.input_fingerprint=m.input_fingerprint JOIN app_shared_model_work s ON s.receipt_id=c.receipt_id "
+        "WHERE m.owner_key=ANY(?::text[]) AND m.operation=? AND c.status='succeeded' AND s.validation_error=? LIMIT 2",
+        (list(owner_keys), operation, failure_code),
+    ).fetchall()
+    return rows[0] if len(rows) == 1 else None
+
+
 @asynccontextmanager
 async def coordinate_work(database, keys, cancelled):
     """Hold only the named dependencies. Writers and independent provider calls remain free."""
