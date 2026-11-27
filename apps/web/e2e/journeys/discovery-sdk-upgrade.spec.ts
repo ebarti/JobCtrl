@@ -23,7 +23,7 @@ test("retired employer feeds remain unavailable while saved jobs and board state
   await app.restartApi();
   const after = await json<Registry>(api, "get", sourcesUrl);
   expect(after.sources.map((s) => s.sourceId).sort()).toEqual(
-    ["bayt", "bdjobs", "glassdoor", "google", "indeed", "linkedin", "naukri", "zip_recruiter"].map((id) => "jobstreaming:" + id),
+    ["bayt", "bdjobs", "glassdoor", "google", "indeed", "lennysjobs", "linkedin", "naukri", "zip_recruiter"].map((id) => "jobstreaming:" + id),
   );
   expect(after.sources.find((s) => s.sourceId === linkedIn.sourceId)).toMatchObject({ state: "disabled", revision: linkedIn.revision + 1 });
   expect(await json(api, "get", "/v1/jobs/" + saved.job_id)).toMatchObject({ job_id: saved.job_id, title: "Previously saved technical role" });

@@ -113,9 +113,19 @@ combinations.
 
 New workspaces select LinkedIn and Lenny’s Jobs. Existing workspaces keep
 their saved boards. You can add Lenny’s Jobs, Indeed or ZipRecruiter under
-**Search preferences → Job boards**. Set `JOBSTREAMING_LENNYSJOBS_LISTINGS_URL`
-in the worker environment to your native TrueUp search connection and restart
-the worker. Each saved role and location gets a separate search.
+**Search preferences → Job boards**. Each saved role and location gets a separate search.
+
+To connect Lenny’s Jobs, ask TrueUp which native search URL and authentication
+it authorizes for your worker. Its terms require written consent for automated
+searches. [TrueUp terms and contact details](https://jobs.trueup.io/terms)
+
+For a source checkout, set `JOBSTREAMING_LENNYSJOBS_LISTINGS_URL` to that full
+URL in the `.env` file inside your JobCtrl workspace (`JOBCTRL_DIR`). Start or
+restart the app with `corepack pnpm dev`, then choose **Jobs → Start search**.
+Open **Search details** to see the result for Lenny’s Jobs. A missing-connection
+message means the worker started without that setting. The current adapter
+accepts a URL. A connection requiring a separate API-key header needs adapter
+support for that header.
 
 For Lenny’s Jobs, an exact board category such as **Software Engineering** uses
 the category filter. A role such as **Director of Engineering** uses the
